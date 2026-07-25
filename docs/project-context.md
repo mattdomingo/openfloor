@@ -10,7 +10,7 @@ The main product surface is structured current state: sessions, tasks, agents, p
 
 ## Initial user and proof point
 
-The first user is a small software team already using Codex or Claude Code. The first convincing demo should show three humans joining at different times, dispatching parallel backend, frontend, test, and review work, resolving an overlap, integrating isolated patches in a controlled order, and understanding the session without reading a transcript.
+The first user is a small software team already using Codex or Claude Code. The first convincing demo should show Matt, Ryan, and Ali joining at different times, dispatching parallel backend, frontend, test, and review work, resolving an overlap, integrating isolated patches in a controlled order, and understanding the session without reading a transcript.
 
 ## Repository state at project start
 
