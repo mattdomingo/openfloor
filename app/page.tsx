@@ -6,6 +6,7 @@ type AgentStatus = "running" | "reviewing" | "blocked" | "complete";
 type PanelId = "tasks" | "agents" | "repository";
 type CenterMode = "activity" | "codebase";
 type AgentLayout = "focus" | "all";
+type ComposerView = "you" | "matt" | "ryan" | "ali" | "all";
 
 type Agent = {
   id: string;
@@ -81,12 +82,10 @@ const initialAgents: Agent[] = [
   },
 ];
 
-const taskRows = [
-  { id: "OF-17", title: "Define session event protocol", owner: "Atlas", state: "Active", tone: "orange" },
-  { id: "OF-18", title: "Build agent activity cards", owner: "Nova", state: "Active", tone: "yellow" },
-  { id: "OF-19", title: "Cover reducer transitions", owner: "Sentry", state: "Blocked", tone: "red" },
-  { id: "OF-20", title: "Review integrated candidate", owner: "Proof", state: "Review", tone: "blue" },
-  { id: "OF-21", title: "Add reconnect recovery", owner: "Unassigned", state: "Queued", tone: "gray" },
+const initialAssignments = [
+  { id: "matt", name: "Matt", initials: "M", color: "coral", agent: "Atlas · Backend", task: "Define the session event protocol and reconnect replay contract.", state: "Active", tone: "orange" },
+  { id: "ryan", name: "Ryan", initials: "R", color: "yellow", agent: "Nova · Frontend", task: "Build agent activity cards and wire live status transitions.", state: "Active", tone: "yellow" },
+  { id: "ali", name: "Ali", initials: "A", color: "green", agent: "Proof · Reviewer", task: "Review integrated changes and resolve status naming inconsistencies.", state: "Review", tone: "blue" },
 ];
 
 const fileRows = [
@@ -95,12 +94,6 @@ const fileRows = [
   { path: "app/session/AgentCard.tsx", agent: "Nova · Proof", add: 192, del: 12, state: "modified" },
   { path: "app/session/activity.css", agent: "Nova", add: 77, del: 4, state: "modified" },
   { path: "tests/session-reducer.test.ts", agent: "Sentry", add: 63, del: 0, state: "pending" },
-];
-
-const activity = [
-  { time: "10:42", actor: "Orchestrator", text: "narrowed Proof’s review scope" },
-  { time: "10:40", actor: "Proof", text: "requested access to session reducer" },
-  { time: "10:38", actor: "Atlas", text: "modified server/session/reducer.ts" },
 ];
 
 const liveScripts = [
@@ -214,6 +207,9 @@ export default function Home() {
   const [expandedPanel, setExpandedPanel] = useState<PanelId | null>(null);
   const [draggedPanel, setDraggedPanel] = useState<PanelId | null>(null);
   const [draftSteps, setDraftSteps] = useState([22, 17, 12]);
+  const [composerView, setComposerView] = useState<ComposerView>("you");
+  const [sessionGoal, setSessionGoal] = useState("Ship realtime presence and agent activity with a shared event model, isolated agent worktrees, and a reviewable combined repository state.");
+  const [assignments, setAssignments] = useState(initialAssignments);
   const [dispatch, setDispatch] = useState("");
   const [notice, setNotice] = useState("Ali joined · caught up from session state");
   const workspaceRef = useRef<HTMLDivElement>(null);
@@ -248,6 +244,16 @@ export default function Home() {
     setAgentLayout("focus");
     setDispatch("");
     setNotice(`Task dispatched · Orbit is planning “${task}”`);
+  }
+
+  function updateAssignment(id: string, task: string) {
+    setAssignments((current) => current.map((assignment) => assignment.id === id ? { ...assignment, task } : assignment));
+  }
+
+  function changeCenterMode(value: string) {
+    const mode = value as CenterMode;
+    setCenterMode(mode);
+    if (mode === "codebase") setAgentLayout("focus");
   }
 
   function movePanel(panel: PanelId, direction: -1 | 1) {
@@ -302,7 +308,7 @@ export default function Home() {
 
   function agentCard(agent: Agent, full = false) {
     return (
-      <button key={agent.id} className={`agent-card ${full ? "full" : ""} ${selectedAgent === agent.id ? "selected" : ""}`} onClick={() => setSelectedAgent(agent.id)} style={{ "--agent-color": agent.color } as React.CSSProperties}>
+      <article key={agent.id} className={`agent-card ${full ? "full" : ""} ${agentLayout === "focus" && selectedAgent === agent.id ? "selected" : ""}`} style={{ "--agent-color": agent.color } as React.CSSProperties}>
         <div className="agent-topline">
           <span className="agent-glyph">{agent.name.slice(0, 1)}</span>
           <span className="agent-name"><strong>{agent.name}</strong><small>{agent.role}</small></span>
@@ -314,22 +320,32 @@ export default function Home() {
         <div className="agent-files"><span>⌘</span><span>{agent.files[0]}</span>{agent.files.length > 1 && <b>+{agent.files.length - 1}</b>}</div>
         {full && <div className="mini-plan"><span className="done">✓ Contract</span><span className="done">✓ Scope</span><span className="active">● Implementing</span><span>○ Checks</span></div>}
         <div className="agent-footer"><span>Launched by {agent.owner}</span><span>{agent.time}</span></div>
-      </button>
+      </article>
     );
   }
 
   function tasksPanel() {
     return (
       <aside className="tasks-panel panel">
-        {panelHeader("tasks", "PLAN", "5 tasks")}
-        <div className="task-list">
-          {taskRows.map((task, index) => (
-            <button className="task-row" key={task.id} onClick={() => setNotice(`${task.id} · ${task.title}`)}>
-              <span className="task-track"><i className={`task-node ${task.tone}`} />{index < taskRows.length - 1 && <i className="task-line" />}</span>
-              <span className="task-copy"><span className="task-id">{task.id}</span><strong>{task.title}</strong><span>{task.owner}</span></span>
-              <span className={`state-tag ${task.tone}`}>{task.state}</span>
-            </button>
-          ))}
+        {panelHeader("tasks", "SESSION BRIEF", "Goal & ownership")}
+        <div className="session-brief">
+          <label className="goal-editor">
+            <span><span className="eyebrow">OVERALL GOAL</span><em>Editable by everyone</em></span>
+            <textarea value={sessionGoal} onChange={(event) => setSessionGoal(event.target.value)} onBlur={() => setNotice("Session goal updated for everyone")} aria-label="Editable session goal" />
+          </label>
+          <div className="assignment-heading"><span className="eyebrow">ENGINEER OWNERSHIP</span><span>{assignments.length} people</span></div>
+          <div className="assignment-list">
+            {assignments.map((assignment) => (
+              <label className="assignment-card" key={assignment.id}>
+                <span className={`avatar ${assignment.color}`}>{assignment.initials}</span>
+                <span className="assignment-copy">
+                  <span><strong>{assignment.name}</strong><em>{assignment.agent}</em></span>
+                  <textarea value={assignment.task} onChange={(event) => updateAssignment(assignment.id, event.target.value)} onBlur={() => setNotice(`${assignment.name}’s assignment updated for everyone`)} aria-label={`Edit ${assignment.name}'s assignment`} />
+                </span>
+                <span className={`state-tag ${assignment.tone}`}>{assignment.state}</span>
+              </label>
+            ))}
+          </div>
         </div>
         <div className="decision-card"><span className="eyebrow">LATEST DECISION</span><strong>WebSocket reconnects replay from the last acknowledged event.</strong><span>Decided by Matt · 8m ago</span></div>
       </aside>
@@ -339,16 +355,18 @@ export default function Home() {
   function agentsPanel() {
     const centerControls = (
       <div className="center-controls">
-        <SegmentedControl label="Agent view" value={centerMode} onChange={(value) => setCenterMode(value as CenterMode)} options={[{ value: "activity", label: "Activity" }, { value: "codebase", label: "Codebase" }]} />
-        <SegmentedControl label="Agent layout" value={agentLayout} onChange={(value) => setAgentLayout(value as AgentLayout)} options={[{ value: "focus", label: "Focused" }, { value: "all", label: "All agents" }]} />
+        <SegmentedControl label="Agent view" value={centerMode} onChange={changeCenterMode} options={[{ value: "activity", label: "Activity" }, { value: "codebase", label: "Codebase" }]} />
+        {centerMode === "activity" && <SegmentedControl label="Agent layout" value={agentLayout} onChange={(value) => setAgentLayout(value as AgentLayout)} options={[{ value: "focus", label: "Focused" }, { value: "all", label: "All agents" }]} />}
       </div>
     );
     return (
       <section className="agents-panel panel">
         {panelHeader("agents", "ACTIVE FLOOR", `${agents.filter((agent) => agent.status !== "complete").length} agents working`, centerControls)}
-        <div className="agent-picker" aria-label="Select an agent">
-          {agents.map((agent) => <button key={agent.id} className={selected.id === agent.id ? "active" : ""} onClick={() => setSelectedAgent(agent.id)}><StatusDot status={agent.status} />{agent.name}</button>)}
-        </div>
+        {(centerMode === "codebase" || (centerMode === "activity" && agentLayout === "focus")) && (
+          <div className="agent-picker" aria-label="Select an agent">
+            {agents.map((agent) => <button key={agent.id} className={selected.id === agent.id ? "active" : ""} onClick={() => setSelectedAgent(agent.id)}><StatusDot status={agent.status} />{agent.name}</button>)}
+          </div>
+        )}
 
         {centerMode === "activity" ? (
           <>
@@ -358,7 +376,7 @@ export default function Home() {
               <div className="resolved-banner"><span>✓</span><strong>Scope resolved</strong><p>Atlas owns the reducer. Proof will review its patch read-only.</p></div>
             )}
             {agentLayout === "all" ? (
-              <div className="agent-scroll" aria-label="All active agents">{agents.map((agent) => agentCard(agent, true))}</div>
+              <div className="agent-grid-all" aria-label="All active agents">{agents.map((agent) => agentCard(agent, true))}</div>
             ) : (
               <div className="focused-agent-stage">
                 {agentCard(selected, true)}
@@ -371,7 +389,6 @@ export default function Home() {
           </>
         ) : (
           <div className="code-workbench">
-            {agentLayout === "all" && <div className="worktree-strip">{agents.map((agent) => <button key={agent.id} className={selected.id === agent.id ? "active" : ""} onClick={() => setSelectedAgent(agent.id)} style={{ "--agent-color": agent.color } as React.CSSProperties}><b>{agent.name}</b><span>{agent.branch}</span></button>)}</div>}
             <div className="code-layout">
               <aside className="file-explorer">
                 <div className="explorer-title"><span>WORKTREE</span><b>{selected.name}</b></div>
@@ -416,6 +433,27 @@ export default function Home() {
     );
   }
 
+  function userComposer(compact = false) {
+    return (
+      <form className={`participant-compose you-compose ${compact ? "compact" : ""}`} onSubmit={submitTask}>
+        <div className="compose-identity"><span className="avatar you">Y</span><span><strong>You</strong><small>Main session input</small></span><em>ready</em></div>
+        <textarea value={dispatch} onChange={(event) => setDispatch(event.target.value)} placeholder="Dispatch a task, reply to a teammate, or steer the session…" aria-label="Your session message" />
+        <div className="compose-actions"><button type="button" onClick={() => setNotice("Attach repository context")}>⌘ Attach context</button><span>Session context on</span><button type="submit" className="send-button" aria-label="Send your session message">↑</button></div>
+      </form>
+    );
+  }
+
+  function teammateComposer(draft: typeof liveScripts[number], index: number) {
+    const visibleText = draft.text.slice(0, Math.min(draftSteps[index], draft.text.length));
+    return (
+      <label className="participant-compose teammate-compose" key={draft.name}>
+        <span className="compose-identity"><i className={`avatar ${draft.color}`}>{draft.name.slice(0, 1)}</i><span><strong>{draft.name}</strong><small>Live draft</small></span><em><u /> typing</em></span>
+        <textarea value={visibleText} readOnly aria-label={`${draft.name} live draft`} />
+        <span className="watching-note">Visible only while {draft.name} is composing</span>
+      </label>
+    );
+  }
+
   const panels: Record<PanelId, () => ReactNode> = { tasks: tasksPanel, agents: agentsPanel, repository: repositoryPanel };
 
   return (
@@ -437,16 +475,14 @@ export default function Home() {
         ))}
       </div>
 
-      <section className="command-dock">
-        <div className="activity-strip"><span className="eyebrow">SESSION PULSE</span><div className="activity-items">{activity.map((item) => <span key={item.time}><b>{item.actor}</b> {item.text} <time>{item.time}</time></span>)}</div><button onClick={() => setNotice("Activity history opened")}>Full history</button></div>
-        <div className="live-drafts">
-          <div className="live-drafts-label"><span className="eyebrow">LIVE DRAFTS</span><strong>See teammates think</strong></div>
-          {liveScripts.map((draft, index) => {
-            const visibleText = draft.text.slice(0, Math.min(draftSteps[index], draft.text.length));
-            return <label className="draft-box" key={draft.name}><span><i className={`avatar ${draft.color}`}>{draft.name.slice(0, 1)}</i><b>{draft.name}</b><em><u /> typing</em></span><textarea value={visibleText} readOnly aria-label={`${draft.name} live draft`} /></label>;
-          })}
+      <section className="collaboration-dock">
+        <div className="collaboration-dock-inner">
+          <div className="collaboration-heading"><div><span className="eyebrow">LIVE FLOOR</span><strong>{composerView === "all" ? "Everyone composing" : composerView === "you" ? "Your session input" : `${composerView.slice(0, 1).toUpperCase()}${composerView.slice(1)} is typing`}</strong></div><SegmentedControl label="Participant composer" value={composerView} onChange={(value) => setComposerView(value as ComposerView)} options={[{ value: "you", label: "You" }, { value: "matt", label: "Matt" }, { value: "ryan", label: "Ryan" }, { value: "ali", label: "Ali" }, { value: "all", label: "All" }]} /></div>
+          <div className={`composer-stage ${composerView === "all" ? "show-all" : "show-one"}`}>
+            {(composerView === "you" || composerView === "all") && userComposer(composerView === "all")}
+            {liveScripts.map((draft, index) => (composerView === "all" || composerView === draft.name.toLowerCase()) ? teammateComposer(draft, index) : null)}
+          </div>
         </div>
-        <form className="dispatch-form" onSubmit={submitTask}><span className="prompt-glyph">⌁</span><input value={dispatch} onChange={(event) => setDispatch(event.target.value)} placeholder="Dispatch a task, reply to a teammate, or steer the session…" aria-label="Dispatch a task or steer the session" /><div className="dispatch-tools"><button type="button" onClick={() => setNotice("Attach repository context")}>⌘</button><span>Session context on</span><button type="submit" className="send-button" aria-label="Dispatch task">↑</button></div></form>
       </section>
 
       <div className="toast" role="status"><span>●</span>{notice}</div>

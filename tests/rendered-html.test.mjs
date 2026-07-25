@@ -29,10 +29,14 @@ test("server-renders the OpenFloor session control plane", async () => {
   assert.match(html, /Participants: Matt, Ryan, and Ali/);
   assert.match(html, /Codebase/);
   assert.match(html, /All agents/);
-  assert.match(html, /LIVE DRAFTS/);
-  assert.match(html, /See teammates think/);
-  assert.match(html, /Dispatch a task or steer the session/);
+  assert.match(html, /LIVE FLOOR/);
+  assert.match(html, /Your session input/);
+  assert.match(html, /Main session input/);
+  assert.match(html, /Editable session goal/);
+  assert.match(html, /ENGINEER OWNERSHIP/);
+  assert.match(html, /Dispatch a task, reply to a teammate, or steer the session/);
   assert.match(html, /Candidate branch/);
+  assert.doesNotMatch(html, /SESSION PULSE/);
   assert.doesNotMatch(html, /Ollie/);
   assert.doesNotMatch(html, /codex-preview|Your site is taking shape/);
 });
@@ -41,6 +45,6 @@ test("emits product social metadata from the request origin", async () => {
   const response = await render();
   const html = await response.text();
   assert.match(html, /property="og:title" content="OpenFloor"/);
-  assert.match(html, /property="og:image" content="http:\/\/localhost:3000\/og-v2.png"/);
+  assert.match(html, /property="og:image" content="http:\/\/localhost:3000\/og-v3.png"/);
   assert.match(html, /name="twitter:card" content="summary_large_image"/);
 });

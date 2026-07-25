@@ -22,13 +22,13 @@ export async function generateMetadata(): Promise<Metadata> {
       type: "website",
       title: "OpenFloor",
       description: "Multiplayer development for agent teams.",
-      images: [{ url: `${origin}/og-v2.png`, width: 1200, height: 630, alt: "OpenFloor — multiplayer development for agent teams" }],
+      images: [{ url: `${origin}/og-v3.png`, width: 1200, height: 630, alt: "OpenFloor — multiplayer development for agent teams" }],
     },
     twitter: {
       card: "summary_large_image",
       title: "OpenFloor",
       description: "Multiplayer development for agent teams.",
-      images: [`${origin}/og-v2.png`],
+      images: [`${origin}/og-v3.png`],
     },
   };
 }
