@@ -242,6 +242,11 @@
   border-color: color-mix(in srgb, var(--text-primary) 35%, transparent);
 }
 
+.icon-button[data-size="sm"] {
+  width: 22px;
+  height: 22px;
+}
+
 .segmented {
   display: flex;
   gap: 2px;
@@ -405,6 +410,29 @@
 .state-tag[data-tone="review"] {
   background: var(--status-review-soft);
   color: var(--status-review);
+}
+
+.kind-tag {
+  display: inline-block;
+  margin-left: var(--space-2);
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-sm);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.kind-tag[data-kind="orchestrator"] {
+  background: var(--status-review-soft);
+  color: var(--status-review);
+}
+
+.kind-tag[data-kind="qa"] {
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 
 .state-tag[data-tone="blocked"] {
@@ -609,6 +637,12 @@
   background: var(--surface-raised);
   text-align: left;
   box-shadow: var(--elevation-1);
+  cursor: pointer;
+}
+
+.agent-card:hover {
+  border-color: color-mix(in srgb, var(--agent-color) 45%, var(--line-strong));
+  box-shadow: var(--elevation-2);
 }
 
 .agent-card[data-selected="true"] {
@@ -642,6 +676,19 @@
   width: 34px;
   height: 34px;
   font-size: var(--text-md);
+}
+
+.agent-glyph[data-size="sm"] {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  font-size: 10px;
+}
+
+.agent-head-trailing {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
 }
 
 .agent-identity {
@@ -748,6 +795,59 @@
   border-top: 1px solid var(--line-soft);
   color: var(--text-tertiary);
   font-size: var(--text-xs);
+}
+
+/* Chat history --------------------------------------------------------- */
+
+.chat-thread {
+  display: grid;
+  gap: var(--space-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.chat-message {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--space-3);
+}
+
+.chat-bubble {
+  min-width: 0;
+  padding: var(--space-3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+}
+
+.chat-message[data-role="response"] .chat-bubble {
+  border-left: 3px solid var(--agent-color);
+  background: var(--surface-panel);
+}
+
+.chat-bubble-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-bottom: var(--space-1);
+}
+
+.chat-bubble-head strong {
+  font-size: var(--text-sm);
+  font-weight: 650;
+}
+
+.chat-bubble-head span {
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+}
+
+.chat-bubble p {
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  line-height: 1.5;
 }
 
 /* One continuous surface for the focused agent. */
@@ -1315,6 +1415,13 @@
   background: var(--surface-raised);
   box-shadow: var(--elevation-1);
   overflow: hidden;
+  text-align: left;
+  cursor: pointer;
+}
+
+.code-card:hover {
+  border-color: color-mix(in srgb, var(--agent-color) 45%, var(--line-strong));
+  box-shadow: var(--elevation-2);
 }
 
 .code-card-head {

@@ -1,5 +1,6 @@
 export type AgentStatus = "running" | "reviewing" | "blocked" | "complete";
 export type AgentAutonomy = "suggest" | "auto-edit" | "autopilot";
+export type AgentKind = "worker" | "orchestrator" | "qa";
 export type PanelId = "brief" | "floor" | "queue";
 export type RailId = Exclude<PanelId, "floor">;
 export type CenterMode = "activity" | "codebase";
@@ -31,6 +32,9 @@ export type Agent = {
   baseBranch: string;
   checks: string[];
   reviewRequired: boolean;
+  kind: AgentKind;
+  /* Set only on Q's ephemeral sub-agents, pointing back at "q". */
+  parentId?: string;
 };
 
 /* What the create-agent form collects before an agent joins the floor. */
@@ -141,6 +145,17 @@ export type Conflict = {
   theirs: ConflictSide;
   aiSteps: ConflictStep[];
   resolutionLines: string[];
+};
+
+export type ChatRole = "prompt" | "response";
+
+export type ChatMessage = {
+  id: string;
+  role: ChatRole;
+  author: string;
+  authorTone?: string;
+  text: string;
+  time: string;
 };
 
 export const sessionTitle = "Realtime presence";
@@ -254,6 +269,7 @@ export const initialAgents: Agent[] = [
     baseBranch: sessionFacts.branch,
     checks: ["types", "unit"],
     reviewRequired: true,
+    kind: "worker",
   },
   {
     id: "nova",
@@ -273,6 +289,7 @@ export const initialAgents: Agent[] = [
     baseBranch: sessionFacts.branch,
     checks: ["types", "lint"],
     reviewRequired: true,
+    kind: "worker",
   },
   {
     id: "sentry",
@@ -292,6 +309,7 @@ export const initialAgents: Agent[] = [
     baseBranch: sessionFacts.branch,
     checks: ["types", "unit", "lint"],
     reviewRequired: false,
+    kind: "worker",
   },
   {
     id: "proof",
@@ -311,6 +329,47 @@ export const initialAgents: Agent[] = [
     baseBranch: sessionFacts.branch,
     checks: ["types"],
     reviewRequired: false,
+    kind: "worker",
+  },
+  {
+    id: "openmind",
+    name: "OpenMind",
+    role: "Orchestrator",
+    task: "Sequencing session work",
+    owner: "System",
+    color: "#4c6d88",
+    status: "running",
+    progress: 100,
+    detail: "Sequencing Atlas → Nova → Sentry integration and watching for scope conflicts.",
+    files: [],
+    branch: sessionFacts.branch,
+    time: "24m",
+    model: "Frontier XL",
+    autonomy: "autopilot",
+    baseBranch: sessionFacts.branch,
+    checks: [],
+    reviewRequired: false,
+    kind: "orchestrator",
+  },
+  {
+    id: "q",
+    name: "Q",
+    role: "Q&A service",
+    task: "Answering questions from the team",
+    owner: "System",
+    color: "#8b6bb1",
+    status: "running",
+    progress: 100,
+    detail: "Waiting for questions.",
+    files: [],
+    branch: sessionFacts.branch,
+    time: "24m",
+    model: "Swift",
+    autonomy: "autopilot",
+    baseBranch: sessionFacts.branch,
+    checks: [],
+    reviewRequired: false,
+    kind: "qa",
   },
 ];
 
@@ -731,6 +790,144 @@ export function agentCodeFiles(agent: Agent): { path: string; lines: string[] }[
   return agentFileLibrary[agent.id] ?? [codeByAgent[agent.id] ?? codeByAgent.atlas];
 }
 
+/* Prompts sent to each agent and the responses it gave, oldest first. */
+export const agentChatHistory: Record<string, ChatMessage[]> = {
+  atlas: [
+    {
+      id: "atlas-1",
+      role: "prompt",
+      author: "Matt",
+      authorTone: "matt",
+      text: "Define the session event protocol and reconnect replay contract.",
+      time: "12m ago",
+    },
+    {
+      id: "atlas-2",
+      role: "response",
+      author: "Atlas",
+      text: "Reading the task contract and claiming server/events/schema.ts and server/session/reducer.ts.",
+      time: "11m ago",
+    },
+    {
+      id: "atlas-3",
+      role: "prompt",
+      author: "Matt",
+      authorTone: "matt",
+      text: "Atlas, keep the event envelope backwards compatible with reconnect replay.",
+      time: "3m ago",
+    },
+    {
+      id: "atlas-4",
+      role: "response",
+      author: "Atlas",
+      text: "Added causationId and sequence fields without breaking the existing payload shape. Running type and unit checks now.",
+      time: "1m ago",
+    },
+    {
+      id: "atlas-5",
+      role: "prompt",
+      author: "You",
+      authorTone: "you",
+      text: "After the event schema lands, add a short note on how reconnect clients should ack the last sequence without replaying completed steps.",
+      time: "just now",
+    },
+  ],
+  nova: [
+    {
+      id: "nova-1",
+      role: "prompt",
+      author: "Ryan",
+      authorTone: "ryan",
+      text: "Build agent activity cards and wire live status transitions.",
+      time: "8m ago",
+    },
+    {
+      id: "nova-2",
+      role: "response",
+      author: "Nova",
+      text: "Mapping the task to the session view before editing app/session/AgentCard.tsx.",
+      time: "7m ago",
+    },
+    {
+      id: "nova-3",
+      role: "prompt",
+      author: "Ryan",
+      authorTone: "ryan",
+      text: "Nova, add the blocked state before you prepare the frontend patch.",
+      time: "4m ago",
+    },
+    {
+      id: "nova-4",
+      role: "response",
+      author: "Nova",
+      text: "Wired live status transitions and added progress/blocked-state styling to activity.css.",
+      time: "2m ago",
+    },
+    {
+      id: "nova-5",
+      role: "prompt",
+      author: "You",
+      authorTone: "you",
+      text: "Nova should add an empty state for agents with no claimed write scope yet.",
+      time: "just now",
+    },
+  ],
+  sentry: [
+    {
+      id: "sentry-1",
+      role: "prompt",
+      author: "Matt",
+      authorTone: "matt",
+      text: "Cover the event reducer replay ordering once Atlas's payload shape lands.",
+      time: "6m ago",
+    },
+    {
+      id: "sentry-2",
+      role: "response",
+      author: "Sentry",
+      text: "Reading existing coverage to find the gaps worth closing. Blocked on Atlas's payload shape for now.",
+      time: "5m ago",
+    },
+    {
+      id: "sentry-3",
+      role: "prompt",
+      author: "Ryan",
+      authorTone: "ryan",
+      text: "Sentry: wait for Atlas payload shape, then fill the reducer replay fixtures.",
+      time: "3m ago",
+    },
+  ],
+  proof: [
+    {
+      id: "proof-1",
+      role: "prompt",
+      author: "Ali",
+      authorTone: "ali",
+      text: "Review integrated changes and resolve status naming inconsistencies.",
+      time: "4m ago",
+    },
+    {
+      id: "proof-2",
+      role: "response",
+      author: "Proof",
+      text: "Checking task boundaries and combined type safety between Atlas's reducer and Nova's cards.",
+      time: "3m ago",
+    },
+    {
+      id: "proof-3",
+      role: "prompt",
+      author: "Ali",
+      authorTone: "ali",
+      text: "Proof, review naming consistency between agent.status and card badges once Nova lands.",
+      time: "2m ago",
+    },
+  ],
+};
+
+export function agentChatMessages(agent: Agent): ChatMessage[] {
+  return agentChatHistory[agent.id] ?? [];
+}
+
 const planLabels = ["Read contract", "Claim scope", "Implement", "Run checks", "Prepare patch"];
 
 export function planSteps(agent: Agent): Step[] {
@@ -790,6 +987,7 @@ export function agentFromDraft(draft: AgentDraft, sequence: number): Agent {
     baseBranch: draft.baseBranch,
     checks: draft.checks,
     reviewRequired: draft.reviewRequired,
+    kind: "worker",
   };
 }
 
@@ -801,6 +999,39 @@ export function statusTone(status: AgentStatus): string {
   if (status === "blocked") return "blocked";
   if (status === "reviewing") return "review";
   return "running";
+}
+
+export function agentKindLabel(agent: Agent): string {
+  if (agent.kind === "orchestrator") return "Orchestrator";
+  if (agent.kind === "qa") return agent.parentId ? "Q&A · sub-agent" : "Q&A";
+  return "Worker";
+}
+
+/* A short-lived agent Q spins up to answer a question while its primary thread is busy. */
+export function spawnQSubAgent(question: string, owner: string, sequence: number): Agent {
+  const shortQuestion = question.length > 60 ? `${question.slice(0, 57)}…` : question;
+
+  return {
+    id: `q-sub-${sequence}`,
+    name: `Q · sub-${sequence}`,
+    role: "Q&A sub-agent",
+    task: shortQuestion,
+    owner,
+    color: "#8b6bb1",
+    status: "running",
+    progress: 50,
+    detail: `Answering: "${shortQuestion}"`,
+    files: [],
+    branch: sessionFacts.branch,
+    time: "now",
+    model: "Swift",
+    autonomy: "autopilot",
+    baseBranch: sessionFacts.branch,
+    checks: [],
+    reviewRequired: false,
+    kind: "qa",
+    parentId: "q",
+  };
 }
 
 /* Scopes the candidate-branch review data down to one agent's own contribution. */

@@ -28,6 +28,7 @@ export function FloorDock({
   onResolveConflict,
   onOpenChecks,
   selectedAgentName,
+  askMode = false,
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -43,6 +44,7 @@ export function FloorDock({
   onResolveConflict: () => void;
   onOpenChecks: () => void;
   selectedAgentName: string;
+  askMode?: boolean;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -66,7 +68,7 @@ export function FloorDock({
             <Avatar initials="Y" tone="you" />
             <div className="composer-who">
               <strong>You</strong>
-              <span>Queue for {selectedAgentName}</span>
+              <span>{askMode ? `Ask ${selectedAgentName}` : `Queue for ${selectedAgentName}`}</span>
             </div>
             <div className="floor-presence">
               <span>Drafting on the floor</span>
@@ -82,8 +84,8 @@ export function FloorDock({
             ref={textareaRef}
             value={value}
             onChange={(event) => onChange(event.target.value)}
-            placeholder={`Describe work to queue for ${selectedAgentName}…`}
-            aria-label="Prompt to add to the queue"
+            placeholder={askMode ? `Ask ${selectedAgentName} a question…` : `Describe work to queue for ${selectedAgentName}…`}
+            aria-label={askMode ? "Question for Q" : "Prompt to add to the queue"}
           />
 
           <div className="composer-foot">
@@ -99,8 +101,8 @@ export function FloorDock({
               <span className="button-label">Attach context</span>
             </button>
             <SegmentedControl label="Teammate drafts" value={dockMode} options={dockModeOptions} onChange={onDockModeChange} />
-            <button type="submit" className="send" aria-label="Add to queue" title="Add to queue">
-              <span className="button-label send-label">Add to queue</span>
+            <button type="submit" className="send" aria-label={askMode ? "Ask" : "Add to queue"} title={askMode ? "Ask" : "Add to queue"}>
+              <span className="button-label send-label">{askMode ? "Ask" : "Add to queue"}</span>
               <Icon name="send" />
             </button>
           </div>

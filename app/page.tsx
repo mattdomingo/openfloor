@@ -18,6 +18,7 @@ import {
   initialAgents,
   initialAssignments,
   initialQueue,
+  spawnQSubAgent,
 } from "@/components/session/data";
 import { Icon } from "@/components/session/primitives";
 import { PanelChrome } from "@/components/session/Rail";
@@ -55,6 +56,8 @@ export default function Home() {
   const [draftTicks, setDraftTicks] = useState([18, -70, -150]);
   const [notice, setNotice] = useState("Ali joined · caught up from session state");
   const [toastVisible, setToastVisible] = useState(true);
+  const [qBusy, setQBusy] = useState(false);
+  const [qSubSequence, setQSubSequence] = useState(0);
   const workspaceRef = useRef<HTMLDivElement>(null);
 
   const selectedAgent = agents.find((agent) => agent.id === selectedAgentId) ?? agents[0];
@@ -120,10 +123,53 @@ export default function Home() {
     notify("Scope resolved · Proof redirected to read-only review");
   }
 
+  function askQ(question: string) {
+    if (!qBusy) {
+      setQBusy(true);
+      setAgents((current) =>
+        current.map((agent) => (agent.id === "q" ? { ...agent, detail: `Answering: "${question}"` } : agent)),
+      );
+      notify("Q is answering your question");
+
+      window.setTimeout(() => {
+        setQBusy(false);
+        setAgents((current) =>
+          current.map((agent) => (agent.id === "q" ? { ...agent, detail: "Waiting for questions." } : agent)),
+        );
+      }, 6000);
+      return;
+    }
+
+    const sequence = qSubSequence + 1;
+    setQSubSequence(sequence);
+    const subAgent = spawnQSubAgent(question, "You", sequence);
+    setAgents((current) => [...current, subAgent]);
+    notify(`Q is busy · spun up ${subAgent.name} for your question`);
+
+    window.setTimeout(() => {
+      setAgents((current) =>
+        current.map((agent) =>
+          agent.id === subAgent.id ? { ...agent, status: "complete", detail: "Answer ready, merging back into Q." } : agent,
+        ),
+      );
+
+      window.setTimeout(() => {
+        setAgents((current) => current.filter((agent) => agent.id !== subAgent.id));
+        notify(`${subAgent.name} merged back into Q`);
+      }, 2500);
+    }, 6000);
+  }
+
   function enqueuePrompt(event: FormEvent) {
     event.preventDefault();
     const prompt = message.trim();
     if (!prompt) return;
+
+    if (selectedAgent.kind === "qa") {
+      askQ(prompt);
+      setMessage("");
+      return;
+    }
 
     const position = queue.reduce((max, item) => Math.max(max, item.position), 0) + 1;
     const item: QueueItem = {
@@ -323,6 +369,7 @@ export default function Home() {
             onResolveConflict={resolveConflict}
             onOpenChecks={openReview}
             selectedAgentName={selectedAgent.name}
+            askMode={selectedAgent.kind === "qa"}
           />
         </>
       )}

@@ -1,27 +1,75 @@
 "use client";
 
-import { CSSProperties } from "react";
-import { Agent, autonomyLabel, planSteps } from "./data";
+import { CSSProperties, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from "react";
+import { Agent, agentKindLabel, autonomyLabel, planSteps } from "./data";
 import { Icon, StatusDot, Stepper } from "./primitives";
 
 function agentStyle(agent: Agent) {
   return { "--agent-color": agent.color } as CSSProperties;
 }
 
-export function AgentCard({ agent, selected, onFocus }: { agent: Agent; selected: boolean; onFocus: () => void }) {
+export function AgentCard({
+  agent,
+  selected,
+  onFocus,
+  onHistory,
+}: {
+  agent: Agent;
+  selected: boolean;
+  onFocus: () => void;
+  onHistory: () => void;
+}) {
+  function openHistory(event: ReactMouseEvent) {
+    event.stopPropagation();
+    onHistory();
+  }
+
+  function onKeyDown(event: ReactKeyboardEvent) {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    onFocus();
+  }
+
   return (
-    <article className="agent-card" data-selected={selected ? "true" : "false"} style={agentStyle(agent)}>
+    <article
+      className="agent-card"
+      data-selected={selected ? "true" : "false"}
+      style={agentStyle(agent)}
+      role="button"
+      tabIndex={0}
+      onClick={onFocus}
+      onKeyDown={onKeyDown}
+    >
       <div className="agent-head">
         <span className="agent-glyph" aria-hidden="true">
           {agent.name.slice(0, 1)}
         </span>
         <span className="agent-identity">
-          <strong>{agent.name}</strong>
+          <strong>
+            {agent.name}
+            {agent.kind !== "worker" && (
+              <span className="kind-tag" data-kind={agent.kind}>
+                {agentKindLabel(agent)}
+              </span>
+            )}
+          </strong>
           <span>{agent.role}</span>
         </span>
-        <span className="agent-state">
-          <StatusDot status={agent.status} />
-          {agent.status}
+        <span className="agent-head-trailing">
+          <span className="agent-state">
+            <StatusDot status={agent.status} />
+            {agent.status}
+          </span>
+          <button
+            type="button"
+            className="icon-button"
+            data-size="sm"
+            aria-label={`View ${agent.name}'s chat history`}
+            title="Chat history"
+            onClick={openHistory}
+          >
+            <Icon name="message" size={13} />
+          </button>
         </span>
       </div>
 
@@ -37,27 +85,36 @@ export function AgentCard({ agent, selected, onFocus }: { agent: Agent; selected
 
       <p className="agent-detail-line">{agent.detail}</p>
 
-      <div className="agent-scope">
-        <Icon name="file" size={12} />
-        <span>{agent.files[0]}</span>
-        {agent.files.length > 1 && <b>+{agent.files.length - 1}</b>}
-      </div>
+      {agent.kind === "worker" && (
+        <>
+          <div className="agent-scope">
+            <Icon name="file" size={12} />
+            <span>{agent.files[0]}</span>
+            {agent.files.length > 1 && <b>+{agent.files.length - 1}</b>}
+          </div>
 
-      <Stepper steps={planSteps(agent)} compact />
+          <Stepper steps={planSteps(agent)} compact />
+        </>
+      )}
 
       <div className="agent-foot">
         <span>
           Launched by {agent.owner} · {agent.time}
         </span>
-        <button type="button" className="button" data-size="sm" data-variant="quiet" onClick={onFocus}>
-          Focus
-        </button>
       </div>
     </article>
   );
 }
 
-export function AgentSpotlight({ agent, onNotice }: { agent: Agent; onNotice: (notice: string) => void }) {
+export function AgentSpotlight({
+  agent,
+  onNotice,
+  onHistory,
+}: {
+  agent: Agent;
+  onNotice: (notice: string) => void;
+  onHistory: () => void;
+}) {
   return (
     <article className="spotlight" style={agentStyle(agent)}>
       <div className="spotlight-head">
@@ -67,6 +124,11 @@ export function AgentSpotlight({ agent, onNotice }: { agent: Agent; onNotice: (n
         <div className="agent-identity">
           <h3>
             {agent.name} · {agent.task}
+            {agent.kind !== "worker" && (
+              <span className="kind-tag" data-kind={agent.kind}>
+                {agentKindLabel(agent)}
+              </span>
+            )}
           </h3>
           <span>
             {agent.role} · launched by {agent.owner}
@@ -90,19 +152,23 @@ export function AgentSpotlight({ agent, onNotice }: { agent: Agent; onNotice: (n
         <p className="agent-detail-line">{agent.detail}</p>
       </div>
 
-      <div className="spotlight-row">
-        <span className="label">Plan</span>
-        <Stepper steps={planSteps(agent)} />
-      </div>
+      {agent.kind === "worker" && (
+        <>
+          <div className="spotlight-row">
+            <span className="label">Plan</span>
+            <Stepper steps={planSteps(agent)} />
+          </div>
 
-      <div className="spotlight-row">
-        <span className="label">Write scope</span>
-        <div className="scope-list">
-          {agent.files.map((file) => (
-            <code key={file}>{file}</code>
-          ))}
-        </div>
-      </div>
+          <div className="spotlight-row">
+            <span className="label">Write scope</span>
+            <div className="scope-list">
+              {agent.files.map((file) => (
+                <code key={file}>{file}</code>
+              ))}
+            </div>
+          </div>
+        </>
+      )}
 
       <div className="spotlight-row">
         <span className="label">Configuration</span>
@@ -123,6 +189,9 @@ export function AgentSpotlight({ agent, onNotice }: { agent: Agent; onNotice: (n
           {agent.branch}
         </span>
         <span>{agent.time} ago</span>
+        <button type="button" className="button" data-size="sm" data-variant="quiet" onClick={onHistory}>
+          Chat history
+        </button>
         <button
           type="button"
           className="button"

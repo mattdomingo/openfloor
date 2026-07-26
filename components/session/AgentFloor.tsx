@@ -5,6 +5,7 @@ import { Agent, AgentDraft, AgentLayout, CenterMode, suggestAgentName } from "./
 import { Icon, SegmentedControl, StatusDot } from "./primitives";
 import { Panel, PanelChrome } from "./Rail";
 import { AgentCard, AgentSpotlight } from "./AgentCard";
+import { AgentChatHistory } from "./AgentChatHistory";
 import { CodeGrid, CodeWorkbench } from "./CodeWorkbench";
 import { CreateAgentDialog } from "./CreateAgentDialog";
 
@@ -32,9 +33,16 @@ export function AgentFloor({
   onNotice: (notice: string) => void;
 }) {
   const [creating, setCreating] = useState(false);
+  const [historyAgentId, setHistoryAgentId] = useState<string | null>(null);
   const createButtonRef = useRef<HTMLButtonElement>(null);
   const working = agents.filter((agent) => agent.status !== "complete").length;
   const showPicker = agentLayout === "focus";
+  const historyAgent = agents.find((agent) => agent.id === historyAgentId) ?? null;
+
+  // Only workers have code/worktrees; the orchestrator and Q&A service sit out of codebase mode.
+  const workerAgents = agents.filter((agent) => agent.kind === "worker");
+  const pickerAgents = centerMode === "codebase" ? workerAgents : agents;
+  const codebaseAgent = selected.kind === "worker" ? selected : workerAgents[0];
 
   function closeDialog() {
     setCreating(false);
@@ -77,7 +85,7 @@ export function AgentFloor({
             <>
               <span className="chip-divider" aria-hidden="true" />
               <div className="chip-group" role="group" aria-label="Select an agent">
-                {agents.map((agent) => (
+                {pickerAgents.map((agent) => (
                   <button
                     key={agent.id}
                     type="button"
@@ -97,14 +105,14 @@ export function AgentFloor({
         {centerMode === "codebase" ? (
           agentLayout === "all" ? (
             <CodeGrid
-              agents={agents}
+              agents={workerAgents}
               onFocusAgent={(id) => {
                 onSelect(id);
                 onAgentLayout("focus");
               }}
             />
           ) : (
-            <CodeWorkbench key={selected.id} agent={selected} onNotice={onNotice} />
+            <CodeWorkbench key={codebaseAgent.id} agent={codebaseAgent} onNotice={onNotice} />
           )
         ) : agentLayout === "all" ? (
           <div className="agent-grid">
@@ -117,11 +125,12 @@ export function AgentFloor({
                   onSelect(agent.id);
                   onAgentLayout("focus");
                 }}
+                onHistory={() => setHistoryAgentId(agent.id)}
               />
             ))}
           </div>
         ) : (
-          <AgentSpotlight agent={selected} onNotice={onNotice} />
+          <AgentSpotlight agent={selected} onNotice={onNotice} onHistory={() => setHistoryAgentId(selected.id)} />
         )}
       </Panel>
 
@@ -135,6 +144,8 @@ export function AgentFloor({
           }}
         />
       )}
+
+      {historyAgent && <AgentChatHistory agent={historyAgent} onClose={() => setHistoryAgentId(null)} />}
     </>
   );
 }

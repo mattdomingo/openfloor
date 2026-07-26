@@ -1,6 +1,6 @@
 "use client";
 
-import { CSSProperties, ReactNode } from "react";
+import { CSSProperties, KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
 import { Agent } from "./data";
 import { Icon, StatusDot } from "./primitives";
 import { CodeCycleProgress, useAgentCodeCycle } from "./useAgentCodeCycle";
@@ -159,8 +159,21 @@ function CodePreviewCard({ agent, onFocus }: { agent: Agent; onFocus: () => void
   const openName = activeFile.path.split("/").pop() ?? activeFile.path;
   const hiddenCount = Math.max(activeFile.lines.length - GRID_PREVIEW_LINES, 0);
 
+  function onKeyDown(event: ReactKeyboardEvent) {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    onFocus();
+  }
+
   return (
-    <article className="code-card" style={{ "--agent-color": agent.color } as CSSProperties}>
+    <article
+      className="code-card"
+      style={{ "--agent-color": agent.color } as CSSProperties}
+      role="button"
+      tabIndex={0}
+      onClick={onFocus}
+      onKeyDown={onKeyDown}
+    >
       <div className="code-card-head">
         <span className="agent-glyph" aria-hidden="true">
           {agent.name.slice(0, 1)}
@@ -191,9 +204,6 @@ function CodePreviewCard({ agent, onFocus }: { agent: Agent; onFocus: () => void
           {files.length > 1 ? ` (${fileIndex + 1}/${files.length})` : ""}
           {hiddenCount > 0 ? ` · +${hiddenCount} more lines` : ""}
         </span>
-        <button type="button" className="button" data-size="sm" data-variant="quiet" onClick={onFocus}>
-          Open worktree
-        </button>
       </div>
     </article>
   );

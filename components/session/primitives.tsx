@@ -24,7 +24,8 @@ export type IconName =
   | "plus"
   | "close"
   | "more"
-  | "pencil";
+  | "pencil"
+  | "message";
 
 const glyphs: Record<IconName, ReactNode> = {
   grip: (
@@ -90,6 +91,7 @@ const glyphs: Record<IconName, ReactNode> = {
       <path d="M9.4 4.4 11.6 6.6" />
     </>
   ),
+  message: <path d="M3.2 4.5h9.6a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1H8l-2.6 2.3v-2.3H3.2a1 1 0 0 1-1-1v-5a1 1 0 0 1 1-1z" />,
 };
 
 export function Icon({ name, size = 14 }: { name: IconName; size?: number }) {
