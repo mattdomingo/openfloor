@@ -7,7 +7,10 @@
   flex-direction: column;
   width: 100%;
   min-width: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
   background: var(--surface-panel);
+  box-shadow: var(--elevation-1);
   overflow: hidden;
 }
 
@@ -18,7 +21,8 @@
   flex: none;
   min-height: 52px;
   padding: var(--space-3) var(--space-4);
-  border-bottom: 1px solid var(--line-soft);
+  border-bottom: 1px solid var(--line-strong);
+  background: var(--surface-header);
 }
 
 .panel-title {
@@ -70,7 +74,8 @@
 .panel-foot {
   flex: none;
   padding: var(--space-3) var(--space-4);
-  border-top: 1px solid var(--line-soft);
+  border-top: 1px solid var(--line-strong);
+  background: var(--surface-header);
 }
 
 /* Panel chrome is revealed on hover or keyboard focus. */
@@ -79,7 +84,7 @@
   align-items: center;
   gap: 1px;
   padding-left: var(--space-2);
-  border-left: 1px solid var(--line-soft);
+  border-left: 1px solid var(--line-strong);
   opacity: 0;
   transition: opacity 0.15s ease;
 }
@@ -123,13 +128,14 @@
 
 .rail-collapsed {
   display: flex;
+  flex: 1 1 auto;
   flex-direction: column;
   align-items: center;
   gap: var(--space-3);
   width: 100%;
   padding: var(--space-3) 0;
   border: 0;
-  background: var(--surface-panel);
+  background: var(--surface-header);
   color: var(--text-secondary);
 }
 
@@ -447,9 +453,10 @@
   grid-template-columns: auto minmax(0, 1fr);
   gap: var(--space-2) var(--space-3);
   padding: var(--space-3);
-  border: 1px solid var(--line-soft);
+  border: 1px solid var(--line-strong);
   border-radius: var(--radius-md);
   background: var(--surface-raised);
+  box-shadow: var(--elevation-1);
 }
 
 .owner-card:focus-within {
@@ -502,10 +509,11 @@
   flex-direction: column;
   gap: var(--space-2);
   padding: var(--space-3);
-  border: 1px solid var(--line-soft);
+  border: 1px solid var(--line-strong);
   border-left: 2px solid var(--status-review);
   border-radius: var(--radius-sm);
   background: var(--surface-raised);
+  box-shadow: var(--elevation-1);
 }
 
 .decision strong {
@@ -541,7 +549,7 @@
   gap: var(--space-3);
   min-width: 0;
   padding: var(--space-3);
-  border: 1px solid var(--line-soft);
+  border: 1px solid var(--line-strong);
   border-left: 2px solid var(--agent-color);
   border-radius: var(--radius-md);
   background: var(--surface-raised);
@@ -691,7 +699,7 @@
 /* One continuous surface for the focused agent. */
 .spotlight {
   margin: var(--space-4);
-  border: 1px solid var(--line-soft);
+  border: 1px solid var(--line-strong);
   border-left: 2px solid var(--agent-color);
   border-radius: var(--radius-md);
   background: var(--surface-raised);

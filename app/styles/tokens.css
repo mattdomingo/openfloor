@@ -1,11 +1,13 @@
 /* Design tokens. Every value used in the interface should resolve to one of these. */
 
 :root {
-  /* Surfaces. Four warm papers, each with one job. */
-  --surface-page: #f1ede3;
-  --surface-panel: #f9f6ef;
-  --surface-raised: #fffdf8;
-  --surface-sunken: #eae5d9;
+  /* Surfaces. Each warm paper reads as a distinct layer, darkest to lightest:
+     canvas, chrome band, window body, floating card. */
+  --surface-page: #e3dac4;
+  --surface-header: #efe6d1;
+  --surface-panel: #f8f3e6;
+  --surface-raised: #ffffff;
+  --surface-sunken: #e8ded2;
 
   /* Inverse surfaces, used only by the code workbench. */
   --surface-inverse: #1d211d;
@@ -20,9 +22,10 @@
   --text-inverse-secondary: #97a098;
   --text-inverse-tertiary: #6d756e;
 
-  /* Lines */
-  --line-strong: #d3cbbd;
-  --line-soft: #e6dfd2;
+  /* Lines. Strong lines draw window boundaries; soft lines separate rows
+     within a surface. Both are tuned to read clearly on every surface above. */
+  --line-strong: #b9ab8c;
+  --line-soft: #d9cdb3;
   --line-inverse: #383e39;
 
   /* Accent. One accent for the product; never used to decorate. */
@@ -78,8 +81,8 @@
   --font-serif: Georgia, "Times New Roman", serif;
 
   /* Elevation. Two levels. */
-  --elevation-1: 0 1px 2px rgba(46, 38, 27, 0.05);
-  --elevation-2: 0 10px 30px rgba(46, 38, 27, 0.12);
+  --elevation-1: 0 1px 2px rgba(40, 32, 18, 0.1), 0 1px 0 rgba(40, 32, 18, 0.04);
+  --elevation-2: 0 16px 36px rgba(40, 32, 18, 0.18);
 
   /* Layout metrics */
   --topbar-height: 52px;
