@@ -1,17 +1,17 @@
 /* Design tokens. Every value used in the interface should resolve to one of these. */
 
 :root {
-  /* Surfaces. Warm workshop paper, darkest to lightest:
-     page canvas → chrome/objective band → panel body → floating card.
+  /* Surfaces. Each warm paper reads as a distinct layer, darkest to lightest:
+     canvas, chrome band, window body, floating card.
      App bands use these deliberately:
        topbar  = raised (clean tool chrome)
        objective = header (warm content strip)
        workspace = page (recessed floor for panels) */
-  --surface-page: #c9bea3;
-  --surface-header: #e8dcc4;
-  --surface-panel: #f6f0e2;
-  --surface-raised: #fffdf8;
-  --surface-sunken: #ddd2bb;
+  --surface-page: #e3dac4;
+  --surface-header: #efe6d1;
+  --surface-panel: #f8f3e6;
+  --surface-raised: #fbf6e9;
+  --surface-sunken: #e8ded2;
 
   /* Inverse surfaces, used only by the code workbench. */
   --surface-inverse: #1d211d;
@@ -21,15 +21,15 @@
   /* Text */
   --text-primary: #1f241f;
   --text-secondary: #6a6961;
-  --text-tertiary: #8f8b80;
+  --text-tertiary: #928f86;
   --text-inverse: #e8ede8;
   --text-inverse-secondary: #97a098;
   --text-inverse-tertiary: #6d756e;
 
   /* Lines. Strong lines draw window boundaries; soft lines separate rows
-     within a surface. Tuned for contrast on page, header, and panel. */
-  --line-strong: #ae9f7f;
-  --line-soft: #d0c3a8;
+     within a surface. Both are tuned to read clearly on every surface above. */
+  --line-strong: #b9ab8c;
+  --line-soft: #d9cdb3;
   --line-inverse: #383e39;
 
   /* Accent. One accent for the product; never used to decorate. */
