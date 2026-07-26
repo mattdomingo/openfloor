@@ -1,8 +1,8 @@
 "use client";
 
-import { ReactNode } from "react";
+import { CSSProperties, ReactNode } from "react";
 import { Agent, codeByAgent } from "./data";
-import { Icon } from "./primitives";
+import { Icon, StatusDot } from "./primitives";
 
 const tokenPattern = /("[^"]*")|\b(export|type|extends|function|return|const|case|new|describe|it|expect)\b/g;
 
@@ -120,5 +120,69 @@ export function CodeWorkbench({ agent, onNotice }: { agent: Agent; onNotice: (no
         </div>
       </section>
     </div>
+  );
+}
+
+const GRID_PREVIEW_LINES = 10;
+
+export function CodeGrid({ agents, onFocusAgent }: { agents: Agent[]; onFocusAgent: (id: string) => void }) {
+  return (
+    <div className="code-grid">
+      {agents.map((agent) => (
+        <CodePreviewCard key={agent.id} agent={agent} onFocus={() => onFocusAgent(agent.id)} />
+      ))}
+    </div>
+  );
+}
+
+function CodePreviewCard({ agent, onFocus }: { agent: Agent; onFocus: () => void }) {
+  const source = codeByAgent[agent.id] ?? codeByAgent.atlas;
+  const openName = source.path.split("/").pop() ?? source.path;
+  const preview = source.lines.slice(0, GRID_PREVIEW_LINES);
+  const hiddenCount = source.lines.length - preview.length;
+
+  return (
+    <article className="code-card" style={{ "--agent-color": agent.color } as CSSProperties}>
+      <div className="code-card-head">
+        <span className="agent-glyph" aria-hidden="true">
+          {agent.name.slice(0, 1)}
+        </span>
+        <span className="agent-identity">
+          <strong>{agent.name}</strong>
+          <span>{agent.branch}</span>
+        </span>
+        <span className="agent-state">
+          <StatusDot status={agent.status} />
+        </span>
+      </div>
+
+      <div className="code-card-body">
+        <div className="editor-tabs">
+          <span data-active="true">
+            <Icon name="file" size={11} />
+            {openName}
+          </span>
+        </div>
+        <div className="editor-breadcrumb">{source.path.split("/").join("  ›  ")}</div>
+        <pre className="code code-card-preview">
+          {preview.map((line, index) => (
+            <span className="code-line" key={`${index}-${line}`}>
+              <i>{index + 1}</i>
+              <code>{highlight(line)}</code>
+            </span>
+          ))}
+        </pre>
+      </div>
+
+      <div className="code-card-foot">
+        <span>
+          {hiddenCount > 0 ? `+${hiddenCount} more lines · ` : ""}
+          {agent.files.length} {agent.files.length === 1 ? "file" : "files"} in scope
+        </span>
+        <button type="button" className="button" data-size="sm" data-variant="quiet" onClick={onFocus}>
+          Open worktree
+        </button>
+      </div>
+    </article>
   );
 }

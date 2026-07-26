@@ -159,11 +159,6 @@ export default function Home() {
     setAssignments((current) => current.map((assignment) => (assignment.id === id ? { ...assignment, task } : assignment)));
   }
 
-  function changeCenterMode(mode: CenterMode) {
-    setCenterMode(mode);
-    if (mode === "codebase") setAgentLayout("focus");
-  }
-
   function openReview() {
     setScreen("review");
     notify("Opened candidate branch review");
@@ -265,7 +260,7 @@ export default function Home() {
         selected={selectedAgent}
         onSelect={setSelectedAgentId}
         centerMode={centerMode}
-        onCenterMode={changeCenterMode}
+        onCenterMode={setCenterMode}
         agentLayout={agentLayout}
         onAgentLayout={setAgentLayout}
         onCreateAgent={createAgent}

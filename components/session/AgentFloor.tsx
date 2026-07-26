@@ -5,7 +5,7 @@ import { Agent, AgentDraft, AgentLayout, CenterMode, suggestAgentName } from "./
 import { Icon, SegmentedControl, StatusDot } from "./primitives";
 import { Panel, PanelChrome } from "./Rail";
 import { AgentCard, AgentSpotlight } from "./AgentCard";
-import { CodeWorkbench } from "./CodeWorkbench";
+import { CodeGrid, CodeWorkbench } from "./CodeWorkbench";
 import { CreateAgentDialog } from "./CreateAgentDialog";
 
 export function AgentFloor({
@@ -34,7 +34,7 @@ export function AgentFloor({
   const [creating, setCreating] = useState(false);
   const createButtonRef = useRef<HTMLButtonElement>(null);
   const working = agents.filter((agent) => agent.status !== "complete").length;
-  const showPicker = centerMode === "codebase" || agentLayout === "focus";
+  const showPicker = agentLayout === "focus";
 
   function closeDialog() {
     setCreating(false);
@@ -52,17 +52,15 @@ export function AgentFloor({
           { value: "codebase", label: "Codebase" },
         ]}
       />
-      {centerMode === "activity" && (
-        <SegmentedControl
-          label="Agent layout"
-          value={agentLayout}
-          onChange={onAgentLayout}
-          options={[
-            { value: "focus", label: "Focused" },
-            { value: "all", label: "All agents" },
-          ]}
-        />
-      )}
+      <SegmentedControl
+        label="Agent layout"
+        value={agentLayout}
+        onChange={onAgentLayout}
+        options={[
+          { value: "focus", label: "Focused" },
+          { value: "all", label: "All agents" },
+        ]}
+      />
     </div>
   );
 
@@ -97,7 +95,17 @@ export function AgentFloor({
         </div>
 
         {centerMode === "codebase" ? (
-          <CodeWorkbench agent={selected} onNotice={onNotice} />
+          agentLayout === "all" ? (
+            <CodeGrid
+              agents={agents}
+              onFocusAgent={(id) => {
+                onSelect(id);
+                onAgentLayout("focus");
+              }}
+            />
+          ) : (
+            <CodeWorkbench agent={selected} onNotice={onNotice} />
+          )
         ) : agentLayout === "all" ? (
           <div className="agent-grid">
             {agents.map((agent) => (
