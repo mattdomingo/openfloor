@@ -1,8 +1,9 @@
 "use client";
 
 import { FormEvent, useEffect, useRef } from "react";
-import { Draft, DockMode, participants } from "./data";
+import { Agent, Check, Draft, DockMode, participants } from "./data";
 import { Avatar, Icon, SegmentedControl } from "./primitives";
+import { AttentionStrip } from "./AttentionStrip";
 
 export type FloorLane = Draft & { text: string; typing: boolean };
 
@@ -21,6 +22,11 @@ export function FloorDock({
   onDockModeChange,
   lanes,
   typingIds,
+  agents,
+  checks,
+  conflictResolved,
+  onResolveConflict,
+  onOpenChecks,
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -30,6 +36,11 @@ export function FloorDock({
   onDockModeChange: (mode: DockMode) => void;
   lanes: FloorLane[];
   typingIds: Set<string>;
+  agents: Agent[];
+  checks: Check[];
+  conflictResolved: boolean;
+  onResolveConflict: () => void;
+  onOpenChecks: () => void;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -39,6 +50,14 @@ export function FloorDock({
 
   return (
     <section className="dock" aria-label="Open floor" data-mode={dockMode}>
+      <AttentionStrip
+        agents={agents}
+        checks={checks}
+        conflictResolved={conflictResolved}
+        onResolveConflict={onResolveConflict}
+        onOpenChecks={onOpenChecks}
+        onNotice={onNotice}
+      />
       <div className="dock-inner">
         <form className="composer" onSubmit={onSubmit}>
           <div className="composer-head">
@@ -86,7 +105,12 @@ export function FloorDock({
 
         {dockMode !== "focus" &&
           lanes.map((lane) => (
-            <div className="lane" key={lane.id} data-typing={lane.typing ? "true" : "false"} aria-label={lane.typing ? `${lane.name} is typing` : `${lane.name}'s last message`}>
+            <div
+              className="lane"
+              key={lane.id}
+              data-typing={lane.typing ? "true" : "false"}
+              aria-label={lane.typing ? `${lane.name} is typing` : `${lane.name}'s last message`}
+            >
               <div className="lane-head">
                 <Avatar initials={lane.initials} tone={lane.tone} typing={lane.typing} />
                 <strong>{lane.name}</strong>

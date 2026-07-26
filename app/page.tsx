@@ -2,22 +2,26 @@
 
 import { CSSProperties, FormEvent, PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
+  AgentDraft,
   AgentLayout,
   CenterMode,
   DockMode,
   PanelId,
   RailId,
+  agentBranchName,
+  agentFromDraft,
   checks,
   defaultGoal,
   drafts,
   initialAgents,
   initialAssignments,
+  sessionFacts,
+  suggestAgentName,
 } from "@/components/session/data";
 import { Icon } from "@/components/session/primitives";
 import { PanelChrome } from "@/components/session/Rail";
 import { TopBar } from "@/components/session/TopBar";
 import { ObjectiveBar } from "@/components/session/ObjectiveBar";
-import { AttentionStrip } from "@/components/session/AttentionStrip";
 import { BriefRail } from "@/components/session/BriefRail";
 import { AgentFloor } from "@/components/session/AgentFloor";
 import { RepositoryRail } from "@/components/session/RepositoryRail";
@@ -118,11 +122,12 @@ export default function Home() {
     const task = message.trim();
     if (!task) return;
     const id = `worker-${agents.length + 1}`;
+    const name = suggestAgentName(agents);
     setAgents((current) => [
       ...current,
       {
         id,
-        name: "Orbit",
+        name,
         role: "Worker",
         task,
         owner: "You",
@@ -131,14 +136,28 @@ export default function Home() {
         progress: 9,
         detail: "Reading task contract and preparing an isolated worktree",
         files: ["Scope not claimed yet"],
-        branch: "of/orbit-new-task",
+        branch: agentBranchName(name, task),
         time: "now",
+        model: "Frontier",
+        autonomy: "auto-edit",
+        baseBranch: sessionFacts.branch,
+        checks: ["types", "unit", "lint"],
+        reviewRequired: true,
       },
     ]);
     setSelectedAgentId(id);
     setAgentLayout("focus");
     setMessage("");
-    notify(`Task dispatched · Orbit is planning “${task}”`);
+    notify(`Task dispatched · ${name} is planning “${task}”`);
+  }
+
+  function createAgent(draft: AgentDraft) {
+    const agent = agentFromDraft(draft, agents.length + 1);
+    setAgents((current) => [...current, agent]);
+    setSelectedAgentId(agent.id);
+    setCenterMode("activity");
+    setAgentLayout("focus");
+    notify(`${agent.name} joined the floor · ${agent.branch}`);
   }
 
   function updateAssignment(id: string, task: string) {
@@ -256,6 +275,7 @@ export default function Home() {
         onCenterMode={changeCenterMode}
         agentLayout={agentLayout}
         onAgentLayout={setAgentLayout}
+        onCreateAgent={createAgent}
         onNotice={notify}
       />
     );
@@ -266,15 +286,6 @@ export default function Home() {
       <TopBar onNotice={notify} />
 
       <ObjectiveBar goal={sessionGoal} onGoalChange={setSessionGoal} onNotice={notify} />
-
-      <AttentionStrip
-        agents={agents}
-        checks={checks}
-        conflictResolved={conflictResolved}
-        onResolveConflict={resolveConflict}
-        onOpenChecks={openChecks}
-        onNotice={notify}
-      />
 
       <div className="workspace" data-expanded={expandedPanel ? "true" : "false"} ref={workspaceRef}>
         {panelOrder.map((panel, index) => {
@@ -314,6 +325,11 @@ export default function Home() {
         onDockModeChange={setDockMode}
         lanes={lanes}
         typingIds={typingIds}
+        agents={agents}
+        checks={checks}
+        conflictResolved={conflictResolved}
+        onResolveConflict={resolveConflict}
+        onOpenChecks={openChecks}
       />
 
       <div className="toast" role="status" data-visible={toastVisible ? "true" : "false"}>

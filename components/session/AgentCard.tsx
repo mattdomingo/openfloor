@@ -1,7 +1,7 @@
 "use client";
 
 import { CSSProperties } from "react";
-import { Agent, planSteps } from "./data";
+import { Agent, autonomyLabel, planSteps } from "./data";
 import { Icon, StatusDot, Stepper } from "./primitives";
 
 function agentStyle(agent: Agent) {
@@ -101,6 +101,19 @@ export function AgentSpotlight({ agent, onNotice }: { agent: Agent; onNotice: (n
           {agent.files.map((file) => (
             <code key={file}>{file}</code>
           ))}
+        </div>
+      </div>
+
+      <div className="spotlight-row">
+        <span className="label">Configuration</span>
+        <div className="config-list">
+          <span>{agent.model}</span>
+          <span>{autonomyLabel(agent.autonomy)}</span>
+          <span>
+            {agent.checks.length} {agent.checks.length === 1 ? "check" : "checks"} before patch
+          </span>
+          <span>{agent.reviewRequired ? "Review required" : "Review optional"}</span>
+          <span>from {agent.baseBranch}</span>
         </div>
       </div>
 

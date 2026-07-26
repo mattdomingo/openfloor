@@ -30,6 +30,7 @@ test("server-renders the OpenFloor session control plane", async () => {
   assert.match(html, /Participants: Matt, Ryan, and Ali/);
   assert.match(html, /Codebase/);
   assert.match(html, /All agents/);
+  assert.match(html, /New agent/);
   assert.match(html, /Open floor/);
   assert.match(html, /Dispatch and steer/);
   assert.match(html, /On the floor/);

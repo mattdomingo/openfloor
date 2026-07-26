@@ -1,4 +1,4 @@
-/* Page frame: top bar, objective, attention strip, workspace rails, floor dock. */
+/* Page frame: top bar, objective, workspace rails, floor dock. */
 
 .app-shell {
   display: flex;
@@ -238,133 +238,6 @@
 
 /* Attention strip ------------------------------------------------------- */
 
-.attention {
-  display: grid;
-  grid-template-columns: 168px minmax(0, 1fr);
-  gap: var(--space-4);
-  align-items: start;
-  flex: none;
-  padding: var(--space-2) var(--space-6);
-  border-bottom: 1px solid var(--line-strong);
-  background: var(--surface-panel);
-}
-
-.attention[data-empty="true"] {
-  align-items: center;
-  padding: var(--space-3) var(--space-6);
-}
-
-.attention-heading {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding-top: var(--space-1);
-}
-
-.attention-heading strong {
-  font-size: var(--text-sm);
-  font-weight: 650;
-}
-
-.attention-count {
-  display: grid;
-  place-items: center;
-  min-width: 18px;
-  height: 18px;
-  padding: 0 5px;
-  border-radius: var(--radius-pill);
-  background: var(--accent);
-  color: var(--accent-contrast);
-  font-family: var(--font-mono);
-  font-size: 10px;
-  font-weight: 700;
-}
-
-.attention-list {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(272px, 1fr));
-  gap: var(--space-2);
-}
-
-.attention-item {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  gap: var(--space-3);
-  align-items: center;
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--line-strong);
-  border-radius: var(--radius-md);
-  background: var(--surface-raised);
-  box-shadow: var(--elevation-1);
-}
-
-.attention-item[data-kind="conflict"] {
-  border-color: var(--accent-line);
-  background: var(--accent-soft);
-}
-
-.attention-mark {
-  display: grid;
-  place-items: center;
-  width: 26px;
-  height: 26px;
-  border-radius: 50%;
-  background: var(--status-waiting-soft);
-  color: var(--status-waiting);
-}
-
-.attention-item[data-kind="conflict"] .attention-mark {
-  background: color-mix(in srgb, var(--accent) 16%, transparent);
-  color: var(--accent);
-}
-
-.attention-item[data-kind="blocked"] .attention-mark {
-  background: var(--status-blocked-soft);
-  color: var(--status-blocked);
-}
-
-.attention-copy {
-  min-width: 0;
-}
-
-.attention-copy strong {
-  display: block;
-  font-size: var(--text-sm);
-  font-weight: 650;
-  line-height: 1.35;
-}
-
-.attention-copy p {
-  margin-top: 2px;
-  color: var(--text-secondary);
-  font-size: var(--text-xs);
-  line-height: 1.45;
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  overflow: hidden;
-}
-
-.attention-copy code {
-  padding: 1px 4px;
-  border-radius: 3px;
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
-  font-size: 10px;
-  font-weight: 600;
-}
-
-.attention-clear {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  color: var(--text-secondary);
-  font-size: var(--text-sm);
-}
-
-.attention-clear .icon {
-  color: var(--status-running);
-}
-
 /* Workspace ------------------------------------------------------------- */
 
 .workspace {
@@ -434,6 +307,7 @@
   background: color-mix(in srgb, var(--surface-header) 97%, transparent);
   backdrop-filter: blur(16px);
   box-shadow: 0 -6px 24px rgba(40, 32, 18, 0.1);
+  overflow: visible;
 }
 
 .dock-inner {
@@ -441,6 +315,7 @@
   align-items: stretch;
   gap: var(--space-3);
   padding: var(--space-2) var(--space-6);
+  overflow: visible;
 }
 
 /* Toast ----------------------------------------------------------------- */
@@ -492,10 +367,6 @@
     max-width: none;
   }
 
-  .attention {
-    grid-template-columns: minmax(0, 1fr);
-    gap: var(--space-2);
-  }
 }
 
 @media (max-width: 900px) {
@@ -514,8 +385,7 @@
     display: none;
   }
 
-  .objective,
-  .attention {
+  .objective {
     padding: var(--space-4);
   }
 

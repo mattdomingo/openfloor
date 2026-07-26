@@ -1,4 +1,5 @@
 export type AgentStatus = "running" | "reviewing" | "blocked" | "complete";
+export type AgentAutonomy = "suggest" | "auto-edit" | "autopilot";
 export type PanelId = "brief" | "floor" | "repository";
 export type RailId = Exclude<PanelId, "floor">;
 export type CenterMode = "activity" | "codebase";
@@ -21,6 +22,27 @@ export type Agent = {
   files: string[];
   branch: string;
   time: string;
+  model: string;
+  autonomy: AgentAutonomy;
+  baseBranch: string;
+  checks: string[];
+  reviewRequired: boolean;
+};
+
+/* What the create-agent form collects before an agent joins the floor. */
+export type AgentDraft = {
+  name: string;
+  roleId: string;
+  task: string;
+  owner: string;
+  color: string;
+  model: string;
+  autonomy: AgentAutonomy;
+  baseBranch: string;
+  branch: string;
+  scope: string;
+  checks: string[];
+  reviewRequired: boolean;
 };
 
 export type Assignment = {
@@ -76,6 +98,81 @@ export const participants = [
   { id: "ali", name: "Ali", initials: "A", tone: "ali" },
 ];
 
+/* Role presets seed the rest of the form: colour, model, scope, and opening step. */
+export const agentRolePresets = [
+  {
+    id: "backend",
+    label: "Backend worker",
+    color: "#c9552f",
+    model: "frontier-xl",
+    scope: "server/",
+    detail: "Reading the task contract and preparing an isolated worktree",
+  },
+  {
+    id: "frontend",
+    label: "Frontend worker",
+    color: "#b8862a",
+    model: "frontier",
+    scope: "app/session/",
+    detail: "Mapping the task to the session view before editing",
+  },
+  {
+    id: "test",
+    label: "Test worker",
+    color: "#4a7d68",
+    model: "swift",
+    scope: "tests/",
+    detail: "Reading existing coverage to find the gaps worth closing",
+  },
+  {
+    id: "reviewer",
+    label: "Reviewer",
+    color: "#4e6f8a",
+    model: "frontier",
+    scope: "server/\napp/",
+    detail: "Waiting for the first patch to review read-only",
+  },
+  {
+    id: "docs",
+    label: "Docs worker",
+    color: "#8b6bb1",
+    model: "swift",
+    scope: "docs/\nREADME.md",
+    detail: "Collecting the decisions that need to be written down",
+  },
+];
+
+export const agentModels = [
+  { id: "frontier-xl", label: "Frontier XL", detail: "Deepest reasoning · protocol and schema design" },
+  { id: "frontier", label: "Frontier", detail: "Balanced default for feature work" },
+  { id: "swift", label: "Swift", detail: "Fast mechanical edits, refactors, and scaffolding" },
+];
+
+export const autonomyOptions: { value: AgentAutonomy; label: string; detail: string }[] = [
+  { value: "suggest", label: "Suggest only", detail: "Proposes diffs and waits for you to apply each one." },
+  { value: "auto-edit", label: "Auto-edit worktree", detail: "Edits its own worktree freely, asks before pushing." },
+  { value: "autopilot", label: "Autopilot", detail: "Runs until checks pass, then requests review." },
+];
+
+export const checkOptions = [
+  { id: "types", label: "Type check" },
+  { id: "unit", label: "Unit tests" },
+  { id: "lint", label: "Lint" },
+  { id: "integration", label: "Integration suite" },
+];
+
+export const agentColorOptions = [
+  { value: "#c9552f", label: "Clay" },
+  { value: "#b8862a", label: "Ochre" },
+  { value: "#4a7d68", label: "Moss" },
+  { value: "#4e6f8a", label: "Slate" },
+  { value: "#8b6bb1", label: "Plum" },
+];
+
+export const baseBranchOptions = [sessionFacts.branch, "main"];
+
+const agentNamePool = ["Orbit", "Vector", "Quill", "Cinder", "Harbor", "Lumen", "Pilot"];
+
 export const initialAgents: Agent[] = [
   {
     id: "atlas",
@@ -90,6 +187,11 @@ export const initialAgents: Agent[] = [
     files: ["server/events/schema.ts", "server/session/reducer.ts"],
     branch: "of/atlas-session-events",
     time: "12m",
+    model: "Frontier XL",
+    autonomy: "auto-edit",
+    baseBranch: sessionFacts.branch,
+    checks: ["types", "unit"],
+    reviewRequired: true,
   },
   {
     id: "nova",
@@ -104,6 +206,11 @@ export const initialAgents: Agent[] = [
     files: ["app/session/AgentCard.tsx", "app/session/activity.css"],
     branch: "of/nova-agent-cards",
     time: "8m",
+    model: "Frontier",
+    autonomy: "autopilot",
+    baseBranch: sessionFacts.branch,
+    checks: ["types", "lint"],
+    reviewRequired: true,
   },
   {
     id: "sentry",
@@ -118,6 +225,11 @@ export const initialAgents: Agent[] = [
     files: ["tests/session-reducer.test.ts"],
     branch: "of/sentry-reducer-tests",
     time: "6m",
+    model: "Swift",
+    autonomy: "autopilot",
+    baseBranch: sessionFacts.branch,
+    checks: ["types", "unit", "lint"],
+    reviewRequired: false,
   },
   {
     id: "proof",
@@ -132,6 +244,11 @@ export const initialAgents: Agent[] = [
     files: ["server/session/reducer.ts", "app/session/AgentCard.tsx"],
     branch: "of/proof-integrated-review",
     time: "4m",
+    model: "Frontier",
+    autonomy: "suggest",
+    baseBranch: sessionFacts.branch,
+    checks: ["types"],
+    reviewRequired: false,
   },
 ];
 
@@ -298,6 +415,60 @@ export function planSteps(agent: Agent): Step[] {
     label,
     state: index < activeIndex ? "done" : index === activeIndex ? "active" : "todo",
   }));
+}
+
+function slug(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+/* Worktree branch name in the shape the session already uses: of/<name>-<task>. */
+export function agentBranchName(name: string, task: string): string {
+  const parts = [slug(name), slug(task).split("-").slice(0, 3).join("-")].filter(Boolean);
+
+  return `of/${parts.join("-") || "new-agent"}`;
+}
+
+export function suggestAgentName(taken: Agent[]): string {
+  const used = new Set(taken.map((agent) => agent.name.toLowerCase()));
+  const free = agentNamePool.find((name) => !used.has(name.toLowerCase()));
+
+  return free ?? `Agent ${taken.length + 1}`;
+}
+
+export function agentFromDraft(draft: AgentDraft, sequence: number): Agent {
+  const preset = agentRolePresets.find((option) => option.id === draft.roleId) ?? agentRolePresets[0];
+  const model = agentModels.find((option) => option.id === draft.model) ?? agentModels[1];
+  const files = draft.scope
+    .split(/[\n,]/)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+
+  return {
+    id: `agent-${sequence}`,
+    name: draft.name.trim() || preset.label,
+    role: preset.label,
+    task: draft.task.trim(),
+    owner: draft.owner,
+    color: draft.color,
+    status: draft.roleId === "reviewer" ? "reviewing" : "running",
+    progress: 4,
+    detail: preset.detail,
+    files: files.length > 0 ? files : ["No scope claimed yet"],
+    branch: draft.branch.trim() || agentBranchName(draft.name, draft.task),
+    time: "now",
+    model: model.label,
+    autonomy: draft.autonomy,
+    baseBranch: draft.baseBranch,
+    checks: draft.checks,
+    reviewRequired: draft.reviewRequired,
+  };
+}
+
+export function autonomyLabel(autonomy: AgentAutonomy): string {
+  return autonomyOptions.find((option) => option.value === autonomy)?.label ?? autonomy;
 }
 
 export function statusTone(status: AgentStatus): string {

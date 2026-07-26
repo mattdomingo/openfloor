@@ -1,6 +1,6 @@
 "use client";
 
-import { ReactNode } from "react";
+import { ReactNode, useEffect, useId, useRef, useState } from "react";
 import { Agent, Check, scopeConflict } from "./data";
 import { Icon, IconName } from "./primitives";
 
@@ -21,7 +21,7 @@ const marks: Record<AttentionKind, IconName> = {
   decision: "pencil",
 };
 
-export function AttentionStrip({
+function collectItems({
   agents,
   checks,
   conflictResolved,
@@ -35,7 +35,7 @@ export function AttentionStrip({
   onResolveConflict: () => void;
   onOpenChecks: () => void;
   onNotice: (notice: string) => void;
-}) {
+}): AttentionItem[] {
   const items: AttentionItem[] = [];
 
   if (!conflictResolved) {
@@ -74,32 +74,74 @@ export function AttentionStrip({
     });
   }
 
-  if (items.length === 0) {
-    const working = agents.filter((agent) => agent.status !== "complete").length;
-    return (
-      <section className="attention" data-empty="true" aria-label="Needs you">
-        <div className="attention-heading">
-          <strong>Nothing needs you</strong>
-        </div>
-        <p className="attention-clear">
-          <Icon name="check" />
-          {working} agents working, no conflicts, all checks green.
-        </p>
-      </section>
-    );
-  }
+  return items;
+}
+
+export function AttentionStrip({
+  agents,
+  checks,
+  conflictResolved,
+  onResolveConflict,
+  onOpenChecks,
+  onNotice,
+}: {
+  agents: Agent[];
+  checks: Check[];
+  conflictResolved: boolean;
+  onResolveConflict: () => void;
+  onOpenChecks: () => void;
+  onNotice: (notice: string) => void;
+}) {
+  const items = collectItems({ agents, checks, conflictResolved, onResolveConflict, onOpenChecks, onNotice });
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const listId = useId();
+  const panelOpen = open && items.length > 0;
+
+  useEffect(() => {
+    if (!panelOpen) return;
+
+    function onPointerDown(event: PointerEvent) {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    }
+
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") setOpen(false);
+    }
+
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [panelOpen]);
+
+  if (items.length === 0) return null;
 
   return (
-    <section className="attention" aria-label="Needs you">
-      <div className="attention-heading">
-        <strong>Needs you</strong>
-        <span className="attention-count">{items.length}</span>
-      </div>
-      <ul className="attention-list">
+    <div className="attention" data-open={panelOpen ? "true" : "false"} ref={rootRef}>
+      <button
+        type="button"
+        className="attention-trigger"
+        aria-expanded={panelOpen}
+        aria-controls={listId}
+        aria-label={
+          panelOpen
+            ? "Close alerts"
+            : `Needs you, ${items.length} ${items.length === 1 ? "alert" : "alerts"}`
+        }
+        onClick={() => setOpen((current) => !current)}
+      >
+        <Icon name={panelOpen ? "close" : "alert"} size={12} />
+        {!panelOpen && <span className="attention-count">{items.length}</span>}
+      </button>
+
+      <ul className="attention-list" id={listId} aria-label="Needs you" hidden={!panelOpen}>
         {items.map((item) => (
           <li key={item.id} className="attention-item" data-kind={item.kind}>
             <span className="attention-mark">
-              <Icon name={marks[item.kind]} />
+              <Icon name={marks[item.kind]} size={12} />
             </span>
             <div className="attention-copy">
               <strong>{item.title}</strong>
@@ -111,7 +153,10 @@ export function AttentionStrip({
                 className="button"
                 data-size="sm"
                 data-variant={item.action.primary ? "primary" : "quiet"}
-                onClick={item.action.onClick}
+                onClick={() => {
+                  item.action?.onClick();
+                  setOpen(false);
+                }}
               >
                 {item.action.label}
               </button>
@@ -119,6 +164,6 @@ export function AttentionStrip({
           </li>
         ))}
       </ul>
-    </section>
+    </div>
   );
 }

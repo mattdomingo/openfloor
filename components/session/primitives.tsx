@@ -22,6 +22,7 @@ export type IconName =
   | "attach"
   | "external"
   | "plus"
+  | "close"
   | "more"
   | "pencil";
 
@@ -75,6 +76,7 @@ const glyphs: Record<IconName, ReactNode> = {
   attach: <path d="M10.6 5.6 6 10.2a1.9 1.9 0 0 0 2.7 2.7l4.6-4.6a3.3 3.3 0 0 0-4.7-4.7L3.7 8.5" />,
   external: <path d="M6 3.5h6.5V10M12.5 3.5 6 10" />,
   plus: <path d="M8 3.8v8.4M3.8 8h8.4" />,
+  close: <path d="M4.4 4.4l7.2 7.2M11.6 4.4l-7.2 7.2" />,
   more: (
     <>
       <circle cx="4" cy="8" r="1" fill="currentColor" stroke="none" />

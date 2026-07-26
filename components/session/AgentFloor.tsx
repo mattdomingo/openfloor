@@ -1,10 +1,12 @@
 "use client";
 
-import { Agent, AgentLayout, CenterMode } from "./data";
-import { SegmentedControl, StatusDot } from "./primitives";
+import { useRef, useState } from "react";
+import { Agent, AgentDraft, AgentLayout, CenterMode, suggestAgentName } from "./data";
+import { Icon, SegmentedControl, StatusDot } from "./primitives";
 import { Panel, PanelChrome } from "./Rail";
 import { AgentCard, AgentSpotlight } from "./AgentCard";
 import { CodeWorkbench } from "./CodeWorkbench";
+import { CreateAgentDialog } from "./CreateAgentDialog";
 
 export function AgentFloor({
   chrome,
@@ -15,6 +17,7 @@ export function AgentFloor({
   onCenterMode,
   agentLayout,
   onAgentLayout,
+  onCreateAgent,
   onNotice,
 }: {
   chrome: PanelChrome;
@@ -25,10 +28,18 @@ export function AgentFloor({
   onCenterMode: (mode: CenterMode) => void;
   agentLayout: AgentLayout;
   onAgentLayout: (layout: AgentLayout) => void;
+  onCreateAgent: (draft: AgentDraft) => void;
   onNotice: (notice: string) => void;
 }) {
+  const [creating, setCreating] = useState(false);
+  const createButtonRef = useRef<HTMLButtonElement>(null);
   const working = agents.filter((agent) => agent.status !== "complete").length;
   const showPicker = centerMode === "codebase" || agentLayout === "focus";
+
+  function closeDialog() {
+    setCreating(false);
+    createButtonRef.current?.focus();
+  }
 
   const controls = (
     <div className="floor-controls">
@@ -56,43 +67,65 @@ export function AgentFloor({
   );
 
   return (
-    <Panel chrome={chrome} title="Agent floor" meta={`${working} working`} badge={`${working}`} actions={controls}>
-      {showPicker && (
-        <div className="chip-row" role="group" aria-label="Select an agent">
-          {agents.map((agent) => (
-            <button
-              key={agent.id}
-              type="button"
-              className="chip"
-              aria-pressed={selected.id === agent.id}
-              onClick={() => onSelect(agent.id)}
-            >
-              <StatusDot status={agent.status} />
-              {agent.name}
-            </button>
-          ))}
+    <>
+      <Panel chrome={chrome} title="Agent floor" meta={`${working} working`} badge={`${working}`} actions={controls}>
+        <div className="chip-row">
+          <button ref={createButtonRef} type="button" className="chip chip-create" onClick={() => setCreating(true)}>
+            <Icon name="plus" size={11} />
+            New agent
+          </button>
+          {showPicker && (
+            <>
+              <span className="chip-divider" aria-hidden="true" />
+              <div className="chip-group" role="group" aria-label="Select an agent">
+                {agents.map((agent) => (
+                  <button
+                    key={agent.id}
+                    type="button"
+                    className="chip"
+                    aria-pressed={selected.id === agent.id}
+                    onClick={() => onSelect(agent.id)}
+                  >
+                    <StatusDot status={agent.status} />
+                    {agent.name}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
         </div>
-      )}
 
-      {centerMode === "codebase" ? (
-        <CodeWorkbench agent={selected} onNotice={onNotice} />
-      ) : agentLayout === "all" ? (
-        <div className="agent-grid">
-          {agents.map((agent) => (
-            <AgentCard
-              key={agent.id}
-              agent={agent}
-              selected={selected.id === agent.id}
-              onFocus={() => {
-                onSelect(agent.id);
-                onAgentLayout("focus");
-              }}
-            />
-          ))}
-        </div>
-      ) : (
-        <AgentSpotlight agent={selected} onNotice={onNotice} />
+        {centerMode === "codebase" ? (
+          <CodeWorkbench agent={selected} onNotice={onNotice} />
+        ) : agentLayout === "all" ? (
+          <div className="agent-grid">
+            {agents.map((agent) => (
+              <AgentCard
+                key={agent.id}
+                agent={agent}
+                selected={selected.id === agent.id}
+                onFocus={() => {
+                  onSelect(agent.id);
+                  onAgentLayout("focus");
+                }}
+              />
+            ))}
+          </div>
+        ) : (
+          <AgentSpotlight agent={selected} onNotice={onNotice} />
+        )}
+      </Panel>
+
+      {creating && (
+        <CreateAgentDialog
+          suggestedName={suggestAgentName(agents)}
+          onClose={closeDialog}
+          onCreate={(draft) => {
+            onCreateAgent(draft);
+            closeDialog();
+          }}
+        />
       )}
-    </Panel>
+    </>
   );
 }
