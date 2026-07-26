@@ -120,6 +120,27 @@ export type IntegrationWarning = {
   title: string;
   detail: string;
   severity: "conflict" | "warning";
+  agents: string[];
+  conflictId?: string;
+};
+
+export type DiffLine = { type: "context" | "add" | "remove"; text: string };
+
+export type ConflictSide = {
+  agentId: string;
+  agentName: string;
+  lines: string[];
+};
+
+export type ConflictStep = { title: string; detail: string };
+
+export type Conflict = {
+  id: string;
+  path: string;
+  ours: ConflictSide;
+  theirs: ConflictSide;
+  aiSteps: ConflictStep[];
+  resolutionLines: string[];
 };
 
 export const sessionTitle = "Realtime presence";
@@ -425,16 +446,81 @@ export const integrationWarnings: IntegrationWarning[] = [
     title: "Overlapping write on server/session/reducer.ts",
     detail: "Atlas and Proof both touched this file. Proof's pass is marked read-only pending resolution.",
     severity: "conflict",
+    agents: ["Atlas", "Proof"],
+    conflictId: "scope-overlap",
   },
   {
     id: "pending-tests",
     title: "Sentry tests are still pending",
     detail: "Coverage for reconnect replay will land after Atlas finalizes the payload shape.",
     severity: "warning",
+    agents: ["Sentry"],
   },
 ];
 
-export const diffPreview = {
+export const conflicts: Conflict[] = [
+  {
+    id: "scope-overlap",
+    path: "server/session/reducer.ts",
+    ours: {
+      agentId: "atlas",
+      agentName: "Atlas",
+      lines: [
+        'case "agent.status_changed": {',
+        "  return updateAgent(state, agent.id, {",
+        "    status: event.payload.status,",
+        "    currentStep: event.payload.currentStep,",
+        "    updatedAt: event.occurredAt,",
+        "  });",
+        "}",
+      ],
+    },
+    theirs: {
+      agentId: "proof",
+      agentName: "Proof",
+      lines: [
+        'case "agent.status_changed": {',
+        "  return updateAgent(state, agent.id, {",
+        "    ...event.payload,",
+        "    status: normalizeStatus(event.payload.status),",
+        "  });",
+        "}",
+      ],
+    },
+    aiSteps: [
+      {
+        title: "Atlas restructured the update",
+        detail:
+          "Atlas expanded the single event.payload spread into explicit status, currentStep, and updatedAt fields so the reducer only writes fields it knows about.",
+      },
+      {
+        title: "Proof normalized the status value",
+        detail:
+          "Proof's read-only pass wraps the incoming status through normalizeStatus() so card badges and agent.status agree on casing, but kept the original spread instead of Atlas's explicit fields.",
+      },
+      {
+        title: "Combine both intents",
+        detail:
+          "Keep Atlas's explicit field list to avoid writing unexpected payload keys, and apply Proof's normalizeStatus() to the status field so naming stays consistent.",
+      },
+      {
+        title: "Suggested resolution",
+        detail: "Apply the merged version below, then confirm Sentry's reducer suite covers a case-mismatched status transition.",
+      },
+    ],
+    resolutionLines: [
+      'case "agent.status_changed": {',
+      "  return updateAgent(state, agent.id, {",
+      "    status: normalizeStatus(event.payload.status),",
+      "    currentStep: event.payload.currentStep,",
+      "    updatedAt: event.occurredAt,",
+      "  });",
+      "}",
+    ],
+  },
+];
+
+export const diffPreview: { path: string; agent: string; lines: DiffLine[] } = {
   path: "server/session/reducer.ts",
   agent: "Atlas · Proof",
   lines: [
@@ -673,4 +759,24 @@ export function statusTone(status: AgentStatus): string {
   if (status === "blocked") return "blocked";
   if (status === "reviewing") return "review";
   return "running";
+}
+
+/* Scopes the candidate-branch review data down to one agent's own contribution. */
+export function agentReviewChanges(agent: Agent): CandidateChange[] {
+  return candidateChanges.filter((change) => agent.files.includes(change.path));
+}
+
+export function agentReviewChecks(agent: Agent): ReviewCheck[] {
+  return reviewChecks.filter((check) => agent.checks.includes(check.id));
+}
+
+export function agentReviewWarnings(agent: Agent): IntegrationWarning[] {
+  return integrationWarnings.filter((warning) => warning.agents.includes(agent.name));
+}
+
+export function agentDiffLines(agent: Agent): { path: string; lines: DiffLine[] } | null {
+  const code = codeByAgent[agent.id];
+  if (!code) return null;
+
+  return { path: code.path, lines: code.lines.map((text) => ({ type: "add", text })) };
 }

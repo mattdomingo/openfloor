@@ -281,7 +281,7 @@ export default function Home() {
       <ObjectiveBar goal={sessionGoal} onGoalChange={setSessionGoal} onNotice={notify} />
 
       {screen === "review" ? (
-        <ReviewScreen conflictResolved={conflictResolved} onNotice={notify} />
+        <ReviewScreen agents={agents} conflictResolved={conflictResolved} onNotice={notify} onResolveConflict={resolveConflict} />
       ) : (
         <>
           <div className="workspace" data-expanded={expandedPanel ? "true" : "false"} ref={workspaceRef}>

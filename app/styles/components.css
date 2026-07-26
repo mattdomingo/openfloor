@@ -2143,6 +2143,59 @@
   box-shadow: var(--elevation-1);
 }
 
+.review-branch-toggle {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  grid-column: 1 / -1;
+}
+
+.review-agent-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.review-agent-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-pill, 999px);
+  background: var(--surface-panel);
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  font-weight: 600;
+}
+
+.review-agent-chip:hover {
+  background: var(--surface-raised);
+}
+
+.review-agent-chip[data-selected="true"] {
+  border-color: var(--agent-color);
+  background: color-mix(in srgb, var(--agent-color) 18%, var(--surface-raised));
+  color: var(--text-primary);
+}
+
+.review-agent-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--agent-color);
+}
+
+.review-note {
+  align-self: end;
+  max-width: 30ch;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  line-height: 1.4;
+  text-align: right;
+}
+
 .review-hero-copy h2 {
   display: inline-flex;
   align-items: center;
@@ -2181,6 +2234,18 @@
 
 .review-hero-facts strong[data-status="changes-requested"] {
   color: var(--accent);
+}
+
+.review-hero-facts strong[data-tone="running"] {
+  color: var(--status-running);
+}
+
+.review-hero-facts strong[data-tone="review"] {
+  color: var(--status-review);
+}
+
+.review-hero-facts strong[data-tone="blocked"] {
+  color: var(--status-blocked);
 }
 
 .review-hero-facts .add {
@@ -2334,6 +2399,24 @@
   background: var(--accent-soft);
 }
 
+.review-warning-resolve {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+}
+
+.review-warning-cta {
+  display: inline-block;
+  margin-top: var(--space-2);
+  color: var(--accent);
+  font-size: var(--text-xs);
+  font-weight: 650;
+}
+
 .review-warning-list strong,
 .review-check-list strong {
   display: block;
@@ -2366,6 +2449,98 @@
   color: var(--text-secondary);
   font-size: var(--text-sm);
   line-height: 1.45;
+}
+
+/* Conflict resolver ------------------------------------------------------ */
+
+.conflict-resolver {
+  width: min(880px, calc(100vw - 2 * var(--space-5)));
+}
+
+.conflict-resolver .dialog-title p {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-family: var(--font-mono);
+}
+
+.conflict-manual,
+.conflict-ai {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.conflict-panes {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+
+.conflict-pane {
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.conflict-pane-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--line-soft);
+  background: var(--surface-header);
+  font-size: var(--text-xs);
+}
+
+.conflict-pane .review-code {
+  margin: var(--space-3);
+}
+
+.conflict-actions {
+  display: flex;
+  justify-content: center;
+}
+
+.conflict-result textarea {
+  min-height: 140px;
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.conflict-ai-steps {
+  display: grid;
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.conflict-ai-step {
+  padding: var(--space-3);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-md);
+  background: var(--surface-panel);
+}
+
+.conflict-ai-step strong {
+  display: block;
+  font-size: var(--text-sm);
+  font-weight: 650;
+}
+
+.conflict-ai-step p {
+  margin-top: var(--space-1);
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+}
+
+@media (max-width: 720px) {
+  .conflict-panes {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 /* Responsive ------------------------------------------------------------ */
