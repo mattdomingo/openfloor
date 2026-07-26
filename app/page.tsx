@@ -133,6 +133,7 @@ export default function Home() {
       authorTone: "you",
       agentId: selectedAgent.id,
       agentName: selectedAgent.name,
+      agentColor: selectedAgent.color,
       position,
       status: "queued",
       queuedAt: "just now",

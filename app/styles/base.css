@@ -43,6 +43,13 @@ button {
   border-radius: var(--radius-sm);
 }
 
+/* Text fields keep a quiet caret; no accent focus ring while typing. */
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  box-shadow: none;
+}
+
 code,
 pre {
   font-family: var(--font-mono);

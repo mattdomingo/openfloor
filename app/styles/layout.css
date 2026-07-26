@@ -22,7 +22,7 @@
   flex: none;
   padding: 0 var(--space-6);
   border-bottom: 1px solid var(--line-strong);
-  background: color-mix(in srgb, var(--surface-header) 96%, transparent);
+  background: color-mix(in srgb, var(--surface-raised) 92%, transparent);
   backdrop-filter: blur(14px);
   position: sticky;
   top: 0;
@@ -147,7 +147,7 @@
   width: 26px;
   height: 26px;
   margin-left: -6px;
-  border: 2px solid var(--surface-header);
+  border: 2px solid var(--surface-raised);
 }
 
 .presence .avatar:first-child {
@@ -162,8 +162,9 @@
   justify-content: space-between;
   gap: var(--space-6);
   flex: none;
-  padding: var(--space-2) var(--space-6);
+  padding: var(--space-3) var(--space-6);
   border-bottom: 1px solid var(--line-strong);
+  background: var(--surface-header);
 }
 
 .objective-main {
@@ -257,7 +258,7 @@
   position: absolute;
   inset: 4px;
   border-radius: 50%;
-  background: var(--surface-page);
+  background: var(--surface-header);
 }
 
 .progress-ring b {
@@ -336,7 +337,7 @@
   z-index: 20;
   min-height: var(--dock-height);
   border-top: 1px solid var(--line-strong);
-  background: color-mix(in srgb, var(--surface-header) 97%, transparent);
+  background: color-mix(in srgb, var(--surface-raised) 94%, transparent);
   backdrop-filter: blur(16px);
   box-shadow: 0 -6px 24px rgba(40, 32, 18, 0.1);
   overflow: visible;

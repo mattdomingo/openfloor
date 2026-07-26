@@ -20,6 +20,7 @@
   gap: var(--space-3);
   flex: none;
   min-height: 52px;
+  min-width: 0;
   padding: var(--space-3) var(--space-4);
   border-bottom: 1px solid var(--line-strong);
   background: var(--surface-header);
@@ -29,7 +30,9 @@
   display: flex;
   align-items: baseline;
   gap: var(--space-2);
+  flex: 1 1 auto;
   min-width: 0;
+  overflow: hidden;
 }
 
 .panel-title h2 {
@@ -40,17 +43,19 @@
 }
 
 .panel-title span {
+  overflow: hidden;
   font-family: var(--font-mono);
   font-size: var(--text-xs);
   color: var(--text-tertiary);
   white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .panel-actions {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  margin-left: auto;
+  flex: 0 0 auto;
   min-width: 0;
 }
 
@@ -247,6 +252,9 @@
 }
 
 .segmented button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   padding: 4px var(--space-2);
   border: 0;
   border-radius: 3px;
@@ -299,8 +307,7 @@
 
 /* Sticky so the switcher and the create action stay reachable while the
    floor scrolls. */
-.floor-lede,
-.queue-lede {
+.floor-lede {
   flex: none;
   padding: var(--space-2) var(--space-4) 0;
   color: var(--text-tertiary);
@@ -976,14 +983,16 @@
 }
 
 .check-mark {
-  display: grid;
-  place-items: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   width: 22px;
   height: 22px;
   flex: none;
   border-radius: 50%;
   background: var(--status-running-soft);
   color: var(--status-running);
+  line-height: 0;
 }
 
 .check-mark[data-state="waiting"] {
@@ -1947,7 +1956,23 @@
   }
 }
 
-/* Prompt queue ---------------------------------------------------------- */
+/* Queue ----------------------------------------------------------------- */
+
+.queue-toolbar {
+  display: flex;
+  align-items: center;
+  flex: none;
+  padding: var(--space-3) var(--space-4) 0;
+}
+
+.queue-toolbar .segmented {
+  width: 100%;
+}
+
+.queue-toolbar .segmented button {
+  flex: 1 1 0;
+  justify-content: center;
+}
 
 .queue-list {
   display: flex;
@@ -1971,8 +1996,18 @@
 
 .queue-item-head {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: var(--space-2);
+  justify-content: space-between;
+  gap: var(--space-1) var(--space-2);
+  min-width: 0;
+}
+
+.queue-identity {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
   min-width: 0;
 }
 
@@ -1983,23 +2018,7 @@
   color: var(--text-secondary);
 }
 
-.queue-status {
-  padding: 1px 6px;
-  border-radius: var(--radius-pill);
-  background: var(--status-waiting-soft);
-  color: var(--status-waiting);
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.02em;
-}
-
-.queue-status[data-status="waiting"] {
-  background: var(--status-review-soft);
-  color: var(--status-review);
-}
-
 .queue-time {
-  margin-left: auto;
   color: var(--text-tertiary);
   font-size: 10px;
   white-space: nowrap;
@@ -2035,15 +2054,10 @@
   color: var(--text-primary);
 }
 
-.queue-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-1);
-}
-
 .queue-chip {
   display: inline-flex;
   align-items: center;
+  max-width: 100%;
   padding: 2px 8px;
   border: 1px solid var(--line-soft);
   border-radius: var(--radius-pill);
@@ -2051,6 +2065,7 @@
   color: var(--text-secondary);
   font-size: 10px;
   font-weight: 650;
+  white-space: nowrap;
 }
 
 .queue-chip[data-kind="author"][data-tone="you"] {
@@ -2075,8 +2090,8 @@
 }
 
 .queue-chip[data-kind="agent"] {
-  border-color: var(--line-strong);
-  background: var(--surface-sunken);
+  border-color: color-mix(in srgb, var(--agent-color) 50%, var(--line-soft));
+  background: color-mix(in srgb, var(--agent-color) 24%, var(--surface-raised));
   color: var(--text-primary);
 }
 
@@ -2112,6 +2127,7 @@
   gap: var(--space-3);
   padding: var(--space-3) var(--space-4) var(--space-4);
   overflow: auto;
+  background: var(--surface-page);
 }
 
 .review-hero {
@@ -2326,7 +2342,7 @@
 }
 
 .review-warning-list p,
-.review-check-list span {
+.review-check-list li > div span {
   display: block;
   margin-top: 2px;
   color: var(--text-secondary);
@@ -2336,9 +2352,13 @@
 
 .review-check-list li {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-columns: 22px minmax(0, 1fr);
   gap: var(--space-3);
   align-items: start;
+}
+
+.review-check-list .check-mark {
+  margin-top: 1px;
 }
 
 .review-empty {

@@ -1,13 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type CSSProperties } from "react";
 import { QueueItem, QueueScope } from "./data";
 import { SegmentedControl } from "./primitives";
 import { Panel, PanelChrome } from "./Rail";
 
 const scopeOptions: { value: QueueScope; label: string }[] = [
-  { value: "mine", label: "Your queue" },
-  { value: "team", label: "Team queue" },
+  { value: "mine", label: "You" },
+  { value: "team", label: "Team" },
 ];
 
 export function PromptQueue({
@@ -27,21 +27,11 @@ export function PromptQueue({
   const visible = scope === "mine" ? items.filter((item) => item.author === "You") : items;
   const sorted = [...visible].sort((a, b) => a.position - b.position);
 
-  const controls = (
-    <SegmentedControl label="Queue scope" value={scope} onChange={onScope} options={scopeOptions} />
-  );
-
   return (
-    <Panel
-      chrome={chrome}
-      title="Prompt queue"
-      meta={`${sorted.length} waiting`}
-      badge={`${sorted.length}`}
-      actions={controls}
-    >
-      <p className="queue-lede">
-        Submitted prompts waiting for an agent. Live drafts stay in the floor; active work stays on the agent floor.
-      </p>
+    <Panel chrome={chrome} title="Queue" meta={`${sorted.length} waiting`} badge={`${sorted.length}`}>
+      <div className="queue-toolbar">
+        <SegmentedControl label="Queue scope" value={scope} onChange={onScope} options={scopeOptions} />
+      </div>
 
       {sorted.length === 0 ? (
         <div className="queue-empty">
@@ -60,11 +50,20 @@ export function PromptQueue({
             return (
               <li key={item.id} className="queue-item">
                 <div className="queue-item-head">
-                  <span className="queue-position" aria-label={`Queue position ${item.position}`}>
-                    #{item.position}
-                  </span>
-                  <span className="queue-status" data-status={item.status}>
-                    {item.status === "waiting" ? "Waiting" : "Queued"}
+                  <span className="queue-identity">
+                    <span className="queue-position" aria-label={`Queue position ${item.position}`}>
+                      #{item.position}
+                    </span>
+                    <span className="queue-chip" data-kind="author" data-tone={item.authorTone}>
+                      {item.author}
+                    </span>
+                    <span
+                      className="queue-chip"
+                      data-kind="agent"
+                      style={{ "--agent-color": item.agentColor } as CSSProperties}
+                    >
+                      {item.agentName}
+                    </span>
                   </span>
                   <span className="queue-time">{item.queuedAt}</span>
                 </div>
@@ -81,14 +80,6 @@ export function PromptQueue({
                     {open ? "Show less" : "Show more"}
                   </button>
                 )}
-                <div className="queue-meta">
-                  <span className="queue-chip" data-kind="author" data-tone={item.authorTone}>
-                    {item.author}
-                  </span>
-                  <span className="queue-chip" data-kind="agent">
-                    {item.agentName}
-                  </span>
-                </div>
               </li>
             );
           })}

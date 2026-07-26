@@ -69,7 +69,7 @@ export function AgentFloor({
   return (
     <>
       <Panel chrome={chrome} title="Agent floor" meta={`Activity · ${working} working`} badge={`${working}`} actions={controls}>
-        <p className="floor-lede">Agents currently performing work. Submitted prompts wait in the Prompt queue.</p>
+        <p className="floor-lede">Agents currently performing work. Submitted prompts wait in the Queue.</p>
         <div className="chip-row">
           <button ref={createButtonRef} type="button" className="chip chip-create" onClick={() => setCreating(true)}>
             <Icon name="plus" size={11} />

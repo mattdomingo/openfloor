@@ -92,6 +92,7 @@ export type QueueItem = {
   authorTone: string;
   agentId: string;
   agentName: string;
+  agentColor: string;
   position: number;
   status: QueueStatus;
   queuedAt: string;
@@ -456,6 +457,7 @@ export const initialQueue: QueueItem[] = [
     authorTone: "matt",
     agentId: "atlas",
     agentName: "Atlas",
+    agentColor: "#c9552f",
     position: 1,
     status: "queued",
     queuedAt: "6m ago",
@@ -467,6 +469,7 @@ export const initialQueue: QueueItem[] = [
     authorTone: "you",
     agentId: "nova",
     agentName: "Nova",
+    agentColor: "#b8862a",
     position: 2,
     status: "queued",
     queuedAt: "4m ago",
@@ -478,6 +481,7 @@ export const initialQueue: QueueItem[] = [
     authorTone: "ryan",
     agentId: "sentry",
     agentName: "Sentry",
+    agentColor: "#4a7d68",
     position: 3,
     status: "waiting",
     queuedAt: "3m ago",
@@ -489,6 +493,7 @@ export const initialQueue: QueueItem[] = [
     authorTone: "ali",
     agentId: "proof",
     agentName: "Proof",
+    agentColor: "#4e6f8a",
     position: 4,
     status: "queued",
     queuedAt: "2m ago",
@@ -501,6 +506,7 @@ export const initialQueue: QueueItem[] = [
     authorTone: "you",
     agentId: "atlas",
     agentName: "Atlas",
+    agentColor: "#c9552f",
     position: 5,
     status: "queued",
     queuedAt: "1m ago",
