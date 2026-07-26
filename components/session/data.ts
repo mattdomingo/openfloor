@@ -3,6 +3,7 @@ export type PanelId = "brief" | "floor" | "repository";
 export type RailId = Exclude<PanelId, "floor">;
 export type CenterMode = "activity" | "codebase";
 export type AgentLayout = "focus" | "all";
+export type DockMode = "focus" | "persistent" | "live";
 export type FileState = "modified" | "attention" | "pending";
 export type CheckState = "passed" | "waiting" | "failed";
 export type StepState = "done" | "active" | "todo";

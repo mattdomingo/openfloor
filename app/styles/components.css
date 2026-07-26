@@ -1345,6 +1345,11 @@
   background: color-mix(in srgb, var(--surface-raised) 60%, transparent);
 }
 
+.lane[data-typing="false"] {
+  border-style: solid;
+  background: var(--surface-raised);
+}
+
 .lane-head {
   display: flex;
   align-items: center;
@@ -1373,6 +1378,10 @@
   font-style: normal;
 }
 
+.lane[data-typing="false"] .lane-head em {
+  color: var(--text-tertiary);
+}
+
 .lane p {
   flex: 1 1 auto;
   margin-top: var(--space-2);
@@ -1380,6 +1389,10 @@
   font-size: var(--text-xs);
   line-height: 1.45;
   overflow: hidden;
+}
+
+.lane[data-typing="false"] p {
+  color: var(--text-tertiary);
 }
 
 .lane p::after {
@@ -1390,6 +1403,10 @@
   margin-left: 2px;
   background: var(--text-secondary);
   vertical-align: -2px;
+}
+
+.lane[data-typing="false"] p::after {
+  background: var(--text-tertiary);
 }
 
 @media (prefers-reduced-motion: no-preference) {
@@ -1466,10 +1483,6 @@
     grid-template-columns: 170px minmax(0, 1fr);
     overflow-x: auto;
   }
-
-  .lane {
-    display: none;
-  }
 }
 
 @media (max-width: 620px) {
@@ -1496,5 +1509,19 @@
   .diff-stat {
     grid-column: 2;
     justify-content: flex-start;
+  }
+
+  .lane {
+    flex: 0 0 auto;
+  }
+}
+
+@media (max-width: 480px) {
+  .composer-foot .button-label {
+    display: none;
+  }
+
+  .composer-foot .segmented button {
+    padding: 4px 6px;
   }
 }

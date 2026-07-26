@@ -4,6 +4,7 @@ import { CSSProperties, FormEvent, PointerEvent as ReactPointerEvent, useEffect,
 import {
   AgentLayout,
   CenterMode,
+  DockMode,
   PanelId,
   RailId,
   checks,
@@ -20,7 +21,7 @@ import { AttentionStrip } from "@/components/session/AttentionStrip";
 import { BriefRail } from "@/components/session/BriefRail";
 import { AgentFloor } from "@/components/session/AgentFloor";
 import { RepositoryRail } from "@/components/session/RepositoryRail";
-import { FloorDock, LiveDraft } from "@/components/session/FloorDock";
+import { FloorDock, FloorLane } from "@/components/session/FloorDock";
 
 const RAIL_COLLAPSED_WIDTH = 40;
 const RAIL_MIN_WIDTH = 250;
@@ -43,6 +44,7 @@ export default function Home() {
   const [draggedPanel, setDraggedPanel] = useState<PanelId | null>(null);
   const [sessionGoal, setSessionGoal] = useState(defaultGoal);
   const [message, setMessage] = useState("");
+  const [dockMode, setDockMode] = useState<DockMode>("live");
   const [draftTicks, setDraftTicks] = useState([18, -70, -150]);
   const [notice, setNotice] = useState("Ali joined · caught up from session state");
   const [toastVisible, setToastVisible] = useState(true);
@@ -65,17 +67,34 @@ export default function Home() {
     return () => window.clearTimeout(timer);
   }, [notice, toastVisible]);
 
-  const liveDrafts = useMemo<LiveDraft[]>(
+  const typingState = useMemo(
     () =>
-      drafts
-        .map((draft, index) => ({
-          ...draft,
-          visibleText: draft.text.slice(0, Math.max(0, Math.min(draftTicks[index], draft.text.length))),
-        }))
-        .filter((draft, index) => draftTicks[index] > 0 && draftTicks[index] < draft.text.length + 40)
-        .slice(0, MAX_LIVE_LANES),
+      drafts.map((draft, index) => {
+        const tick = draftTicks[index];
+        const typing = tick > 0 && tick < draft.text.length + 40;
+        const visibleText = draft.text.slice(0, Math.max(0, Math.min(tick, draft.text.length)));
+        return { ...draft, typing, visibleText };
+      }),
     [draftTicks],
   );
+
+  const typingIds = useMemo(
+    () => new Set(typingState.filter((draft) => draft.typing).map((draft) => draft.id)),
+    [typingState],
+  );
+
+  const lanes = useMemo<FloorLane[]>(() => {
+    if (dockMode === "focus") return [];
+    const toLane = ({ visibleText, typing, ...rest }: (typeof typingState)[number]): FloorLane => ({
+      ...rest,
+      typing,
+      text: typing ? visibleText : "",
+    });
+    if (dockMode === "live") {
+      return typingState.filter((draft) => draft.typing).slice(0, MAX_LIVE_LANES).map(toLane);
+    }
+    return typingState.map(toLane);
+  }, [dockMode, typingState]);
 
   function notify(message: string) {
     setNotice(message);
@@ -286,7 +305,16 @@ export default function Home() {
         })}
       </div>
 
-      <FloorDock value={message} onChange={setMessage} onSubmit={submitTask} onNotice={notify} liveDrafts={liveDrafts} />
+      <FloorDock
+        value={message}
+        onChange={setMessage}
+        onSubmit={submitTask}
+        onNotice={notify}
+        dockMode={dockMode}
+        onDockModeChange={setDockMode}
+        lanes={lanes}
+        typingIds={typingIds}
+      />
 
       <div className="toast" role="status" data-visible={toastVisible ? "true" : "false"}>
         <Icon name="circle" size={7} />

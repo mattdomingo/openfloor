@@ -1,28 +1,44 @@
 "use client";
 
-import { FormEvent } from "react";
-import { Draft, participants } from "./data";
-import { Avatar, Icon } from "./primitives";
+import { FormEvent, useEffect, useRef } from "react";
+import { Draft, DockMode, participants } from "./data";
+import { Avatar, Icon, SegmentedControl } from "./primitives";
 
-export type LiveDraft = Draft & { visibleText: string };
+export type FloorLane = Draft & { text: string; typing: boolean };
+
+const dockModeOptions: { value: DockMode; label: string }[] = [
+  { value: "focus", label: "Focus" },
+  { value: "persistent", label: "Everyone" },
+  { value: "live", label: "Typing" },
+];
 
 export function FloorDock({
   value,
   onChange,
   onSubmit,
   onNotice,
-  liveDrafts,
+  dockMode,
+  onDockModeChange,
+  lanes,
+  typingIds,
 }: {
   value: string;
   onChange: (value: string) => void;
   onSubmit: (event: FormEvent) => void;
   onNotice: (notice: string) => void;
-  liveDrafts: LiveDraft[];
+  dockMode: DockMode;
+  onDockModeChange: (mode: DockMode) => void;
+  lanes: FloorLane[];
+  typingIds: Set<string>;
 }) {
-  const typingIds = new Set(liveDrafts.map((draft) => draft.id));
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    if (dockMode === "focus") textareaRef.current?.focus();
+  }, [dockMode]);
 
   return (
-    <section className="dock" aria-label="Open floor">
+    <section className="dock" aria-label="Open floor" data-mode={dockMode}>
       <div className="dock-inner">
         <form className="composer" onSubmit={onSubmit}>
           <div className="composer-head">
@@ -42,6 +58,7 @@ export function FloorDock({
           </div>
 
           <textarea
+            ref={textareaRef}
             value={value}
             onChange={(event) => onChange(event.target.value)}
             placeholder="Dispatch a task, reply to a teammate, or steer the session…"
@@ -49,30 +66,38 @@ export function FloorDock({
           />
 
           <div className="composer-foot">
-            <button type="button" className="button" data-size="sm" data-variant="quiet" onClick={() => onNotice("Attach repository context")}>
+            <button
+              type="button"
+              className="button"
+              data-size="sm"
+              data-variant="quiet"
+              aria-label="Attach context"
+              onClick={() => onNotice("Attach repository context")}
+            >
               <Icon name="attach" size={12} />
-              Attach context
+              <span className="button-label">Attach context</span>
             </button>
-            <span>Session context on</span>
+            <SegmentedControl label="Teammate drafts" value={dockMode} options={dockModeOptions} onChange={onDockModeChange} />
             <button type="submit" className="send" aria-label="Send your session message">
               <Icon name="send" />
             </button>
           </div>
         </form>
 
-        {liveDrafts.map((draft) => (
-          <div className="lane" key={draft.id} aria-label={`${draft.name} is typing`}>
-            <div className="lane-head">
-              <Avatar initials={draft.initials} tone={draft.tone} />
-              <strong>{draft.name}</strong>
-              <em>
-                <Icon name="circle" size={6} />
-                typing
-              </em>
+        {dockMode !== "focus" &&
+          lanes.map((lane) => (
+            <div className="lane" key={lane.id} data-typing={lane.typing ? "true" : "false"} aria-label={lane.typing ? `${lane.name} is typing` : `${lane.name}'s last message`}>
+              <div className="lane-head">
+                <Avatar initials={lane.initials} tone={lane.tone} typing={lane.typing} />
+                <strong>{lane.name}</strong>
+                <em>
+                  <Icon name="circle" size={6} />
+                  {lane.typing ? "typing" : "idle"}
+                </em>
+              </div>
+              <p>{lane.text}</p>
             </div>
-            <p>{draft.visibleText}</p>
-          </div>
-        ))}
+          ))}
       </div>
     </section>
   );
