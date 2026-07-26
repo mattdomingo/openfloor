@@ -1,13 +1,17 @@
 export type AgentStatus = "running" | "reviewing" | "blocked" | "complete";
 export type AgentAutonomy = "suggest" | "auto-edit" | "autopilot";
-export type PanelId = "brief" | "floor" | "repository";
+export type PanelId = "brief" | "floor" | "queue";
 export type RailId = Exclude<PanelId, "floor">;
 export type CenterMode = "activity" | "codebase";
 export type AgentLayout = "focus" | "all";
 export type DockMode = "focus" | "persistent" | "live";
+export type WorkspaceScreen = "workspace" | "review";
+export type QueueScope = "mine" | "team";
+export type QueueStatus = "queued" | "waiting";
 export type FileState = "modified" | "attention" | "pending";
 export type CheckState = "passed" | "waiting" | "failed";
 export type StepState = "done" | "active" | "todo";
+export type ReviewStatus = "awaiting" | "changes-requested" | "approved";
 
 export type Agent = {
   id: string;
@@ -80,6 +84,42 @@ export type Draft = {
 };
 
 export type Step = { label: string; state: StepState };
+
+export type QueueItem = {
+  id: string;
+  prompt: string;
+  author: string;
+  authorTone: string;
+  agentId: string;
+  agentName: string;
+  position: number;
+  status: QueueStatus;
+  queuedAt: string;
+};
+
+export type ReviewCheck = {
+  id: string;
+  name: string;
+  detail: string;
+  state: CheckState;
+};
+
+export type CandidateChange = {
+  id: string;
+  path: string;
+  agent: string;
+  add: number;
+  del: number;
+  state: FileState;
+  summary: string;
+};
+
+export type IntegrationWarning = {
+  id: string;
+  title: string;
+  detail: string;
+  severity: "conflict" | "warning";
+};
 
 export const sessionTitle = "Realtime presence";
 
@@ -314,6 +354,158 @@ export const checks: Check[] = [
 ];
 
 export const integrationOrder = ["Atlas", "Nova", "Sentry"];
+
+export const candidateBranch = {
+  name: "openfloor/session-presence",
+  sha: "a3f8c21",
+  base: "main",
+  message: "Normalize session events and agent activity cards",
+};
+
+export const candidateChanges: CandidateChange[] = [
+  {
+    id: "schema",
+    path: "server/events/schema.ts",
+    agent: "Atlas",
+    add: 84,
+    del: 6,
+    state: "modified",
+    summary: "Adds reconnect replay envelope fields and sequence acknowledgements.",
+  },
+  {
+    id: "reducer",
+    path: "server/session/reducer.ts",
+    agent: "Atlas · Proof",
+    add: 126,
+    del: 18,
+    state: "attention",
+    summary: "Merges Atlas lifecycle events with Proof's read-only status naming pass.",
+  },
+  {
+    id: "cards",
+    path: "app/session/AgentCard.tsx",
+    agent: "Nova · Proof",
+    add: 192,
+    del: 12,
+    state: "modified",
+    summary: "Wires live agent status transitions into the session activity cards.",
+  },
+  {
+    id: "activity-css",
+    path: "app/session/activity.css",
+    agent: "Nova",
+    add: 77,
+    del: 4,
+    state: "modified",
+    summary: "Adds progress and blocked-state styling for the activity floor.",
+  },
+  {
+    id: "tests",
+    path: "tests/session-reducer.test.ts",
+    agent: "Sentry",
+    add: 63,
+    del: 0,
+    state: "pending",
+    summary: "Covers replay ordering once the event payload shape lands.",
+  },
+];
+
+export const reviewChecks: ReviewCheck[] = [
+  { id: "types", name: "Type check", detail: "Passed · 32s", state: "passed" },
+  { id: "unit", name: "Unit tests", detail: "48 passed · 1m 14s", state: "passed" },
+  { id: "lint", name: "Lint", detail: "No warnings · 18s", state: "passed" },
+  { id: "build", name: "Build", detail: "Passed · 51s", state: "passed" },
+  { id: "integration", name: "Integration suite", detail: "Waiting on OF-19", state: "waiting" },
+];
+
+export const integrationWarnings: IntegrationWarning[] = [
+  {
+    id: "scope-overlap",
+    title: "Overlapping write on server/session/reducer.ts",
+    detail: "Atlas and Proof both touched this file. Proof's pass is marked read-only pending resolution.",
+    severity: "conflict",
+  },
+  {
+    id: "pending-tests",
+    title: "Sentry tests are still pending",
+    detail: "Coverage for reconnect replay will land after Atlas finalizes the payload shape.",
+    severity: "warning",
+  },
+];
+
+export const diffPreview = {
+  path: "server/session/reducer.ts",
+  agent: "Atlas · Proof",
+  lines: [
+    { type: "context", text: 'case "agent.status_changed": {' },
+    { type: "remove", text: "  return updateAgent(state, agent.id, event.payload);" },
+    { type: "add", text: "  return updateAgent(state, agent.id, {" },
+    { type: "add", text: "    status: event.payload.status," },
+    { type: "add", text: "    currentStep: event.payload.currentStep," },
+    { type: "add", text: "    updatedAt: event.occurredAt," },
+    { type: "add", text: "  });" },
+    { type: "context", text: "}" },
+  ],
+};
+
+export const initialQueue: QueueItem[] = [
+  {
+    id: "q-1",
+    prompt: "Have Atlas document the reconnect replay contract before Sentry extends coverage.",
+    author: "Matt",
+    authorTone: "matt",
+    agentId: "atlas",
+    agentName: "Atlas",
+    position: 1,
+    status: "queued",
+    queuedAt: "6m ago",
+  },
+  {
+    id: "q-2",
+    prompt: "Nova should add an empty state for agents with no claimed write scope yet.",
+    author: "You",
+    authorTone: "you",
+    agentId: "nova",
+    agentName: "Nova",
+    position: 2,
+    status: "queued",
+    queuedAt: "4m ago",
+  },
+  {
+    id: "q-3",
+    prompt: "Sentry: wait for Atlas payload shape, then fill the reducer replay fixtures.",
+    author: "Ryan",
+    authorTone: "ryan",
+    agentId: "sentry",
+    agentName: "Sentry",
+    position: 3,
+    status: "waiting",
+    queuedAt: "3m ago",
+  },
+  {
+    id: "q-4",
+    prompt: "Proof, review naming consistency between agent.status and card badges once Nova lands.",
+    author: "Ali",
+    authorTone: "ali",
+    agentId: "proof",
+    agentName: "Proof",
+    position: 4,
+    status: "queued",
+    queuedAt: "2m ago",
+  },
+  {
+    id: "q-5",
+    prompt:
+      "After the event schema lands, ask Atlas to add a short note on how reconnect clients should ack the last sequence without replaying completed agent steps.",
+    author: "You",
+    authorTone: "you",
+    agentId: "atlas",
+    agentName: "Atlas",
+    position: 5,
+    status: "queued",
+    queuedAt: "1m ago",
+  },
+];
 
 export const drafts: Draft[] = [
   {

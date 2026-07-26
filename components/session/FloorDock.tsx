@@ -27,6 +27,7 @@ export function FloorDock({
   conflictResolved,
   onResolveConflict,
   onOpenChecks,
+  selectedAgentName,
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -41,6 +42,7 @@ export function FloorDock({
   conflictResolved: boolean;
   onResolveConflict: () => void;
   onOpenChecks: () => void;
+  selectedAgentName: string;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -64,10 +66,10 @@ export function FloorDock({
             <Avatar initials="Y" tone="you" />
             <div className="composer-who">
               <strong>You</strong>
-              <span>Dispatch and steer</span>
+              <span>Queue for {selectedAgentName}</span>
             </div>
             <div className="floor-presence">
-              <span>On the floor</span>
+              <span>Drafting on the floor</span>
               <div className="presence">
                 {participants.map((person) => (
                   <Avatar key={person.id} initials={person.initials} tone={person.tone} typing={typingIds.has(person.id)} />
@@ -80,8 +82,8 @@ export function FloorDock({
             ref={textareaRef}
             value={value}
             onChange={(event) => onChange(event.target.value)}
-            placeholder="Dispatch a task, reply to a teammate, or steer the session…"
-            aria-label="Your session message"
+            placeholder={`Describe work to queue for ${selectedAgentName}…`}
+            aria-label="Prompt to add to the queue"
           />
 
           <div className="composer-foot">
@@ -97,7 +99,8 @@ export function FloorDock({
               <span className="button-label">Attach context</span>
             </button>
             <SegmentedControl label="Teammate drafts" value={dockMode} options={dockModeOptions} onChange={onDockModeChange} />
-            <button type="submit" className="send" aria-label="Send your session message">
+            <button type="submit" className="send" aria-label="Add to queue" title="Add to queue">
+              <span className="button-label send-label">Add to queue</span>
               <Icon name="send" />
             </button>
           </div>

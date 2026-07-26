@@ -7,16 +7,17 @@ import {
   CenterMode,
   DockMode,
   PanelId,
+  QueueItem,
+  QueueScope,
   RailId,
-  agentBranchName,
+  WorkspaceScreen,
   agentFromDraft,
   checks,
   defaultGoal,
   drafts,
   initialAgents,
   initialAssignments,
-  sessionFacts,
-  suggestAgentName,
+  initialQueue,
 } from "@/components/session/data";
 import { Icon } from "@/components/session/primitives";
 import { PanelChrome } from "@/components/session/Rail";
@@ -24,7 +25,8 @@ import { TopBar } from "@/components/session/TopBar";
 import { ObjectiveBar } from "@/components/session/ObjectiveBar";
 import { BriefRail } from "@/components/session/BriefRail";
 import { AgentFloor } from "@/components/session/AgentFloor";
-import { RepositoryRail } from "@/components/session/RepositoryRail";
+import { PromptQueue } from "@/components/session/PromptQueue";
+import { ReviewScreen } from "@/components/session/ReviewScreen";
 import { FloorDock, FloorLane } from "@/components/session/FloorDock";
 
 const RAIL_COLLAPSED_WIDTH = 40;
@@ -33,17 +35,18 @@ const RAIL_MAX_WIDTH = 520;
 const MAX_LIVE_LANES = 2;
 
 export default function Home() {
+  const [screen, setScreen] = useState<WorkspaceScreen>("workspace");
   const [agents, setAgents] = useState(initialAgents);
   const [assignments, setAssignments] = useState(initialAssignments);
+  const [queue, setQueue] = useState<QueueItem[]>(initialQueue);
+  const [queueScope, setQueueScope] = useState<QueueScope>("team");
   const [selectedAgentId, setSelectedAgentId] = useState("atlas");
   const [conflictResolved, setConflictResolved] = useState(false);
   const [centerMode, setCenterMode] = useState<CenterMode>("activity");
   const [agentLayout, setAgentLayout] = useState<AgentLayout>("focus");
-  const [repoTab, setRepoTab] = useState<"changes" | "checks">("changes");
-  const [fileFilter, setFileFilter] = useState<"all" | "attention">("all");
-  const [panelOrder, setPanelOrder] = useState<PanelId[]>(["brief", "floor", "repository"]);
-  const [railWidths, setRailWidths] = useState<Record<RailId, number>>({ brief: 306, repository: 326 });
-  const [collapsedRails, setCollapsedRails] = useState<Record<RailId, boolean>>({ brief: false, repository: false });
+  const [panelOrder, setPanelOrder] = useState<PanelId[]>(["brief", "floor", "queue"]);
+  const [railWidths, setRailWidths] = useState<Record<RailId, number>>({ brief: 306, queue: 326 });
+  const [collapsedRails, setCollapsedRails] = useState<Record<RailId, boolean>>({ brief: false, queue: false });
   const [expandedPanel, setExpandedPanel] = useState<PanelId | null>(null);
   const [draggedPanel, setDraggedPanel] = useState<PanelId | null>(null);
   const [sessionGoal, setSessionGoal] = useState(defaultGoal);
@@ -117,38 +120,29 @@ export default function Home() {
     notify("Scope resolved · Proof redirected to read-only review");
   }
 
-  function submitTask(event: FormEvent) {
+  function enqueuePrompt(event: FormEvent) {
     event.preventDefault();
-    const task = message.trim();
-    if (!task) return;
-    const id = `worker-${agents.length + 1}`;
-    const name = suggestAgentName(agents);
-    setAgents((current) => [
-      ...current,
-      {
-        id,
-        name,
-        role: "Worker",
-        task,
-        owner: "You",
-        color: "#8b6bb1",
-        status: "running",
-        progress: 9,
-        detail: "Reading task contract and preparing an isolated worktree",
-        files: ["Scope not claimed yet"],
-        branch: agentBranchName(name, task),
-        time: "now",
-        model: "Frontier",
-        autonomy: "auto-edit",
-        baseBranch: sessionFacts.branch,
-        checks: ["types", "unit", "lint"],
-        reviewRequired: true,
-      },
-    ]);
-    setSelectedAgentId(id);
-    setAgentLayout("focus");
+    const prompt = message.trim();
+    if (!prompt) return;
+
+    const position = queue.reduce((max, item) => Math.max(max, item.position), 0) + 1;
+    const item: QueueItem = {
+      id: `q-${Date.now()}`,
+      prompt,
+      author: "You",
+      authorTone: "you",
+      agentId: selectedAgent.id,
+      agentName: selectedAgent.name,
+      position,
+      status: "queued",
+      queuedAt: "just now",
+    };
+
+    setQueue((current) => [...current, item]);
+    setQueueScope("mine");
+    setCollapsedRails((current) => ({ ...current, queue: false }));
     setMessage("");
-    notify(`Task dispatched · ${name} is planning “${task}”`);
+    notify(`Queued for ${selectedAgent.name} · #${position}`);
   }
 
   function createAgent(draft: AgentDraft) {
@@ -169,10 +163,9 @@ export default function Home() {
     if (mode === "codebase") setAgentLayout("focus");
   }
 
-  function openChecks() {
-    setRepoTab("checks");
-    setCollapsedRails((current) => ({ ...current, repository: false }));
-    notify("Showing deterministic checks for the candidate branch");
+  function openReview() {
+    setScreen("review");
+    notify("Opened candidate branch review");
   }
 
   function movePanel(panel: PanelId, direction: -1 | 1) {
@@ -253,15 +246,14 @@ export default function Home() {
     if (panel === "brief") {
       return <BriefRail chrome={chrome} assignments={assignments} onAssignmentChange={updateAssignment} onNotice={notify} />;
     }
-    if (panel === "repository") {
+    if (panel === "queue") {
       return (
-        <RepositoryRail
+        <PromptQueue
           chrome={chrome}
-          tab={repoTab}
-          onTab={setRepoTab}
-          filter={fileFilter}
-          onFilter={setFileFilter}
-          onNotice={notify}
+          items={queue}
+          scope={queueScope}
+          onScope={setQueueScope}
+          selectedAgentName={selectedAgent.name}
         />
       );
     }
@@ -282,55 +274,62 @@ export default function Home() {
   }
 
   return (
-    <main className="app-shell">
-      <TopBar onNotice={notify} />
+    <main className="app-shell" data-screen={screen}>
+      <TopBar screen={screen} onScreen={setScreen} onNotice={notify} />
 
       <ObjectiveBar goal={sessionGoal} onGoalChange={setSessionGoal} onNotice={notify} />
 
-      <div className="workspace" data-expanded={expandedPanel ? "true" : "false"} ref={workspaceRef}>
-        {panelOrder.map((panel, index) => {
-          const next = panelOrder[index + 1];
-          const showHandle = !expandedPanel && next !== undefined && !(isCollapsed(panel) && panel !== "floor");
-          return (
-            <div
-              key={panel}
-              className="panel-slot"
-              style={slotStyle(panel)}
-              data-expanded={expandedPanel === panel ? "true" : "false"}
-              data-collapsed={isCollapsed(panel) ? "true" : "false"}
-              data-dragging={draggedPanel === panel ? "true" : "false"}
-              onDragOver={(event) => event.preventDefault()}
-              onDrop={() => dropPanel(panel)}
-            >
-              {renderPanel(panel, chromeFor(panel, index))}
-              {showHandle && (
+      {screen === "review" ? (
+        <ReviewScreen conflictResolved={conflictResolved} onNotice={notify} />
+      ) : (
+        <>
+          <div className="workspace" data-expanded={expandedPanel ? "true" : "false"} ref={workspaceRef}>
+            {panelOrder.map((panel, index) => {
+              const next = panelOrder[index + 1];
+              const showHandle = !expandedPanel && next !== undefined && !(isCollapsed(panel) && panel !== "floor");
+              return (
                 <div
-                  className="resize-handle"
-                  role="separator"
-                  aria-label={`Resize ${panel} panel`}
-                  onPointerDown={(event) => startResize(panel, next, event)}
-                />
-              )}
-            </div>
-          );
-        })}
-      </div>
+                  key={panel}
+                  className="panel-slot"
+                  style={slotStyle(panel)}
+                  data-expanded={expandedPanel === panel ? "true" : "false"}
+                  data-collapsed={isCollapsed(panel) ? "true" : "false"}
+                  data-dragging={draggedPanel === panel ? "true" : "false"}
+                  onDragOver={(event) => event.preventDefault()}
+                  onDrop={() => dropPanel(panel)}
+                >
+                  {renderPanel(panel, chromeFor(panel, index))}
+                  {showHandle && (
+                    <div
+                      className="resize-handle"
+                      role="separator"
+                      aria-label={`Resize ${panel} panel`}
+                      onPointerDown={(event) => startResize(panel, next, event)}
+                    />
+                  )}
+                </div>
+              );
+            })}
+          </div>
 
-      <FloorDock
-        value={message}
-        onChange={setMessage}
-        onSubmit={submitTask}
-        onNotice={notify}
-        dockMode={dockMode}
-        onDockModeChange={setDockMode}
-        lanes={lanes}
-        typingIds={typingIds}
-        agents={agents}
-        checks={checks}
-        conflictResolved={conflictResolved}
-        onResolveConflict={resolveConflict}
-        onOpenChecks={openChecks}
-      />
+          <FloorDock
+            value={message}
+            onChange={setMessage}
+            onSubmit={enqueuePrompt}
+            onNotice={notify}
+            dockMode={dockMode}
+            onDockModeChange={setDockMode}
+            lanes={lanes}
+            typingIds={typingIds}
+            agents={agents}
+            checks={checks}
+            conflictResolved={conflictResolved}
+            onResolveConflict={resolveConflict}
+            onOpenChecks={openReview}
+            selectedAgentName={selectedAgent.name}
+          />
+        </>
+      )}
 
       <div className="toast" role="status" data-visible={toastVisible ? "true" : "false"}>
         <Icon name="circle" size={7} />

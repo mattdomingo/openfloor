@@ -1,9 +1,17 @@
 "use client";
 
-import { participants, sessionTitle } from "./data";
+import { participants, sessionTitle, WorkspaceScreen } from "./data";
 import { Avatar, Icon } from "./primitives";
 
-export function TopBar({ onNotice }: { onNotice: (notice: string) => void }) {
+export function TopBar({
+  screen,
+  onScreen,
+  onNotice,
+}: {
+  screen: WorkspaceScreen;
+  onScreen: (screen: WorkspaceScreen) => void;
+  onNotice: (notice: string) => void;
+}) {
   return (
     <header className="topbar">
       <div className="brand">
@@ -14,6 +22,15 @@ export function TopBar({ onNotice }: { onNotice: (notice: string) => void }) {
         </span>
         OPENFLOOR
       </div>
+
+      <nav className="screen-nav" aria-label="Workspace screens">
+        <button type="button" aria-pressed={screen === "workspace"} onClick={() => onScreen("workspace")}>
+          Workspace
+        </button>
+        <button type="button" aria-pressed={screen === "review"} onClick={() => onScreen("review")}>
+          Review
+        </button>
+      </nav>
 
       <nav className="session-path" aria-label="Session location">
         <span>Sessions</span>
@@ -31,7 +48,7 @@ export function TopBar({ onNotice }: { onNotice: (notice: string) => void }) {
             <Avatar key={person.id} initials={person.initials} tone={person.tone} />
           ))}
         </div>
-        <button type="button" className="button" onClick={() => onNotice("Invite link copied to clipboard")}>
+        <button type="button" className="button invite-button" onClick={() => onNotice("Invite link copied to clipboard")}>
           <Icon name="plus" />
           Invite
         </button>
