@@ -1,0 +1,89 @@
+/* Design tokens. Every value used in the interface should resolve to one of these. */
+
+:root {
+  /* Surfaces. Four warm papers, each with one job. */
+  --surface-page: #f1ede3;
+  --surface-panel: #f9f6ef;
+  --surface-raised: #fffdf8;
+  --surface-sunken: #eae5d9;
+
+  /* Inverse surfaces, used only by the code workbench. */
+  --surface-inverse: #1d211d;
+  --surface-inverse-raised: #262b26;
+  --surface-inverse-sunken: #171a17;
+
+  /* Text */
+  --text-primary: #1f241f;
+  --text-secondary: #6a6961;
+  --text-tertiary: #928f86;
+  --text-inverse: #e8ede8;
+  --text-inverse-secondary: #97a098;
+  --text-inverse-tertiary: #6d756e;
+
+  /* Lines */
+  --line-strong: #d3cbbd;
+  --line-soft: #e6dfd2;
+  --line-inverse: #383e39;
+
+  /* Accent. One accent for the product; never used to decorate. */
+  --accent: #cf5330;
+  --accent-hover: #b8462a;
+  --accent-soft: #f9e6dd;
+  --accent-line: #e6b39c;
+  --accent-contrast: #fffdf8;
+
+  /* Status. Reserved for agent, check, and file state. */
+  --status-running: #3d7b61;
+  --status-running-soft: #e3efe7;
+  --status-blocked: #b8453a;
+  --status-blocked-soft: #f8e3de;
+  --status-review: #4c6d88;
+  --status-review-soft: #e2eaf0;
+  --status-waiting: #8b8578;
+  --status-waiting-soft: #ebe6da;
+
+  /* Identity tints for people. Not semantic, only recognition. */
+  --who-1: #dd8368;
+  --who-2: #d9b153;
+  --who-3: #7ba593;
+  --who-ink: #262b26;
+
+  /* Spacing, on a 4px grid. */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 32px;
+  --space-8: 48px;
+
+  /* Radius. Three values only. */
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-pill: 999px;
+
+  /* Type scale */
+  --text-xs: 11px;
+  --text-sm: 12px;
+  --text-md: 14px;
+  --text-lg: 16px;
+  --text-xl: 20px;
+  --text-display: clamp(18px, 1.45vw, 21px);
+
+  /* Families. Serif is reserved for the session objective. Mono is reserved
+     for machine values: paths, branches, counts, and code. */
+  --font-sans: var(--font-geist-sans), "Helvetica Neue", Arial, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, SFMono-Regular, monospace;
+  --font-serif: Georgia, "Times New Roman", serif;
+
+  /* Elevation. Two levels. */
+  --elevation-1: 0 1px 2px rgba(46, 38, 27, 0.05);
+  --elevation-2: 0 10px 30px rgba(46, 38, 27, 0.12);
+
+  /* Layout metrics */
+  --topbar-height: 52px;
+  --dock-height: 129px;
+  --rail-collapsed-width: 40px;
+  --focus-ring: 0 0 0 2px var(--surface-raised), 0 0 0 4px var(--accent-line);
+}

@@ -21,7 +21,8 @@ test("server-renders the OpenFloor session control plane", async () => {
   const html = await response.text();
   assert.match(html, /<title>OpenFloor — Multiplayer agent development<\/title>/i);
   assert.match(html, /Ship realtime presence and agent activity/);
-  assert.match(html, /PLANNED SCOPE CONFLICT/);
+  assert.match(html, /Needs you/);
+  assert.match(html, /both claim/);
   assert.match(html, /Atlas/);
   assert.match(html, /Nova/);
   assert.match(html, /Sentry/);
@@ -29,11 +30,11 @@ test("server-renders the OpenFloor session control plane", async () => {
   assert.match(html, /Participants: Matt, Ryan, and Ali/);
   assert.match(html, /Codebase/);
   assert.match(html, /All agents/);
-  assert.match(html, /LIVE FLOOR/);
-  assert.match(html, /Your session input/);
-  assert.match(html, /Main session input/);
-  assert.match(html, /Editable session goal/);
-  assert.match(html, /ENGINEER OWNERSHIP/);
+  assert.match(html, /Open floor/);
+  assert.match(html, /Dispatch and steer/);
+  assert.match(html, /On the floor/);
+  assert.match(html, /Edit session objective/);
+  assert.match(html, /Ownership/);
   assert.match(html, /Dispatch a task, reply to a teammate, or steer the session/);
   assert.match(html, /Candidate branch/);
   assert.doesNotMatch(html, /SESSION PULSE/);
