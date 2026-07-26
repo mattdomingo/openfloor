@@ -104,7 +104,7 @@ export function AgentFloor({
               }}
             />
           ) : (
-            <CodeWorkbench agent={selected} onNotice={onNotice} />
+            <CodeWorkbench key={selected.id} agent={selected} onNotice={onNotice} />
           )
         ) : agentLayout === "all" ? (
           <div className="agent-grid">

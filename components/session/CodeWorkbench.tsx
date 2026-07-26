@@ -1,8 +1,9 @@
 "use client";
 
 import { CSSProperties, ReactNode } from "react";
-import { Agent, codeByAgent } from "./data";
+import { Agent } from "./data";
 import { Icon, StatusDot } from "./primitives";
+import { CodeCycleProgress, useAgentCodeCycle } from "./useAgentCodeCycle";
 
 const tokenPattern = /("[^"]*")|\b(export|type|extends|function|return|const|case|new|describe|it|expect)\b/g;
 
@@ -24,6 +25,30 @@ function highlight(line: string): ReactNode[] {
   if (cursor < line.length) parts.push(line.slice(cursor));
 
   return parts.length > 0 ? parts : [line || " "];
+}
+
+/* Renders only the lines typed so far, with a blinking caret at the in-progress line. */
+function TypedCode({ lines, progress, limit }: { lines: string[]; progress: CodeCycleProgress; limit?: number }) {
+  const visibleCount = Math.min(progress.line + 1, limit ?? lines.length);
+  const visible = lines.slice(0, visibleCount);
+
+  return (
+    <pre className="code">
+      {visible.map((line, index) => {
+        const isCurrent = index === progress.line;
+        const text = isCurrent ? line.slice(0, progress.chars) : line;
+        return (
+          <span className="code-line" key={index}>
+            <i>{index + 1}</i>
+            <code>
+              {highlight(text)}
+              {isCurrent && <span className="type-caret" aria-hidden="true" />}
+            </code>
+          </span>
+        );
+      })}
+    </pre>
+  );
 }
 
 type TreeEntry = { key: string; label: string; depth: number; file: boolean; selected: boolean };
@@ -53,9 +78,8 @@ function buildTree(agent: Agent, openPath: string): TreeEntry[] {
 }
 
 export function CodeWorkbench({ agent, onNotice }: { agent: Agent; onNotice: (notice: string) => void }) {
-  const source = codeByAgent[agent.id] ?? codeByAgent.atlas;
-  const openName = source.path.split("/").pop() ?? source.path;
-  const tree = buildTree(agent, source.path);
+  const { files, fileIndex, activeFile, progress } = useAgentCodeCycle(agent);
+  const tree = buildTree(agent, activeFile.path);
 
   return (
     <div className="workbench">
@@ -92,38 +116,33 @@ export function CodeWorkbench({ agent, onNotice }: { agent: Agent; onNotice: (no
         </div>
       </aside>
 
-      <section className="editor" aria-label={`${source.path} in ${agent.name} worktree`}>
+      <section className="editor" aria-label={`${activeFile.path} in ${agent.name} worktree`}>
         <div className="editor-tabs">
-          <span data-active="true">
-            <Icon name="file" size={11} />
-            {openName}
-          </span>
+          {files.map((file, index) => (
+            <span key={file.path} data-active={index === fileIndex ? "true" : undefined}>
+              <Icon name="file" size={11} />
+              {file.path.split("/").pop()}
+            </span>
+          ))}
           <span>
             Changes <b>{agent.files.length}</b>
           </span>
         </div>
-        <div className="editor-breadcrumb">{source.path.split("/").join("  ›  ")}</div>
-        <pre className="code">
-          {source.lines.map((line, index) => (
-            <span className="code-line" key={`${index}-${line}`}>
-              <i>{index + 1}</i>
-              <code>{highlight(line)}</code>
-            </span>
-          ))}
-        </pre>
+        <div className="editor-breadcrumb">{activeFile.path.split("/").join("  ›  ")}</div>
+        <TypedCode lines={activeFile.lines} progress={progress} />
         <div className="editor-status">
           <span>
             <Icon name="branch" size={11} />
             {agent.branch}
           </span>
-          <span>UTF-8 · TypeScript · Ln 12, Col 18</span>
+          <span>UTF-8 · TypeScript · Ln {progress.line + 1}, Col {progress.chars}</span>
         </div>
       </section>
     </div>
   );
 }
 
-const GRID_PREVIEW_LINES = 10;
+const GRID_PREVIEW_LINES = 16;
 
 export function CodeGrid({ agents, onFocusAgent }: { agents: Agent[]; onFocusAgent: (id: string) => void }) {
   return (
@@ -136,10 +155,9 @@ export function CodeGrid({ agents, onFocusAgent }: { agents: Agent[]; onFocusAge
 }
 
 function CodePreviewCard({ agent, onFocus }: { agent: Agent; onFocus: () => void }) {
-  const source = codeByAgent[agent.id] ?? codeByAgent.atlas;
-  const openName = source.path.split("/").pop() ?? source.path;
-  const preview = source.lines.slice(0, GRID_PREVIEW_LINES);
-  const hiddenCount = source.lines.length - preview.length;
+  const { files, fileIndex, activeFile, progress } = useAgentCodeCycle(agent);
+  const openName = activeFile.path.split("/").pop() ?? activeFile.path;
+  const hiddenCount = Math.max(activeFile.lines.length - GRID_PREVIEW_LINES, 0);
 
   return (
     <article className="code-card" style={{ "--agent-color": agent.color } as CSSProperties}>
@@ -163,21 +181,15 @@ function CodePreviewCard({ agent, onFocus }: { agent: Agent; onFocus: () => void
             {openName}
           </span>
         </div>
-        <div className="editor-breadcrumb">{source.path.split("/").join("  ›  ")}</div>
-        <pre className="code code-card-preview">
-          {preview.map((line, index) => (
-            <span className="code-line" key={`${index}-${line}`}>
-              <i>{index + 1}</i>
-              <code>{highlight(line)}</code>
-            </span>
-          ))}
-        </pre>
+        <div className="editor-breadcrumb">{activeFile.path.split("/").join("  ›  ")}</div>
+        <TypedCode lines={activeFile.lines} progress={progress} limit={GRID_PREVIEW_LINES} />
       </div>
 
       <div className="code-card-foot">
         <span>
-          {hiddenCount > 0 ? `+${hiddenCount} more lines · ` : ""}
-          {agent.files.length} {agent.files.length === 1 ? "file" : "files"} in scope
+          Editing {openName}
+          {files.length > 1 ? ` (${fileIndex + 1}/${files.length})` : ""}
+          {hiddenCount > 0 ? ` · +${hiddenCount} more lines` : ""}
         </span>
         <button type="button" className="button" data-size="sm" data-variant="quiet" onClick={onFocus}>
           Open worktree

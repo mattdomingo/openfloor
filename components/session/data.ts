@@ -689,6 +689,48 @@ export const codeByAgent: Record<string, { path: string; lines: string[] }> = {
   },
 };
 
+/* Every file an agent moves between while it works, for the codebase-mode "live edit" animation. */
+export const agentFileLibrary: Record<string, { path: string; lines: string[] }[]> = {
+  atlas: [
+    codeByAgent.atlas,
+    {
+      path: "server/session/reducer.ts",
+      lines: conflicts.find((conflict) => conflict.id === "scope-overlap")!.ours.lines,
+    },
+  ],
+  nova: [
+    codeByAgent.nova,
+    {
+      path: "app/session/activity.css",
+      lines: [
+        '.agent-card[data-status="blocked"] {',
+        "  border-left-color: var(--status-blocked);",
+        "}",
+        "",
+        ".agent-card .progress-track i {",
+        "  transition: width 220ms ease;",
+        "}",
+        "",
+        '.agent-card[data-status="running"] .status-dot {',
+        "  animation: pulse 1.6s ease-in-out infinite;",
+        "}",
+      ],
+    },
+  ],
+  sentry: [codeByAgent.sentry],
+  proof: [
+    {
+      path: "server/session/reducer.ts",
+      lines: conflicts.find((conflict) => conflict.id === "scope-overlap")!.theirs.lines,
+    },
+    codeByAgent.nova,
+  ],
+};
+
+export function agentCodeFiles(agent: Agent): { path: string; lines: string[] }[] {
+  return agentFileLibrary[agent.id] ?? [codeByAgent[agent.id] ?? codeByAgent.atlas];
+}
+
 const planLabels = ["Read contract", "Claim scope", "Implement", "Run checks", "Prepare patch"];
 
 export function planSteps(agent: Agent): Step[] {
