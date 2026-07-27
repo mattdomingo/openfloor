@@ -72,7 +72,8 @@
   flex: none;
 }
 
-.panel-body > .workbench {
+.panel-body > .workbench,
+.panel-body > .team-chat {
   flex: 1 1 auto;
 }
 
@@ -608,6 +609,90 @@
 .decision span {
   color: var(--text-tertiary);
   font-size: var(--text-xs);
+}
+
+/* Team chat --------------------------------------------------------------- */
+
+.team-chat {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: var(--space-3) var(--space-4);
+}
+
+.team-chat-list {
+  flex: 1 1 auto;
+  min-height: 120px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.team-chat-message {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--space-2);
+}
+
+.team-chat-body {
+  min-width: 0;
+}
+
+.team-chat-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.team-chat-head strong {
+  font-size: var(--text-sm);
+  font-weight: 650;
+}
+
+.team-chat-head span {
+  color: var(--text-tertiary);
+  font-size: 10px;
+}
+
+.team-chat-message p {
+  margin-top: 2px;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  line-height: 1.45;
+}
+
+.team-chat-composer {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-2);
+  flex: none;
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--line-soft);
+}
+
+.team-chat-composer textarea {
+  flex: 1 1 auto;
+  min-height: 32px;
+  max-height: 96px;
+  padding: 6px var(--space-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-panel);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--text-sm);
+  line-height: 1.4;
+  resize: none;
+}
+
+.team-chat-composer textarea::placeholder {
+  color: var(--text-tertiary);
+}
+
+.team-chat-composer .icon-button {
+  flex: none;
 }
 
 /* Agent floor ----------------------------------------------------------- */
@@ -1699,6 +1784,74 @@
   font-size: var(--text-xs);
 }
 
+.target-menu {
+  position: relative;
+}
+
+.target-menu-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px var(--space-2) 1px 6px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-panel);
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.target-menu-trigger:hover,
+.target-menu-trigger[aria-expanded="true"] {
+  border-color: color-mix(in srgb, var(--text-primary) 35%, transparent);
+  color: var(--text-primary);
+}
+
+.target-menu-list {
+  position: absolute;
+  bottom: calc(100% + var(--space-1));
+  left: 0;
+  z-index: 30;
+  min-width: 170px;
+  max-height: 240px;
+  overflow-y: auto;
+  margin: 0;
+  padding: var(--space-1);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  box-shadow: var(--elevation-2);
+  list-style: none;
+}
+
+.target-menu-list li {
+  margin: 0;
+}
+
+.target-menu-list button {
+  display: block;
+  width: 100%;
+  padding: var(--space-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.target-menu-list button:hover {
+  background: var(--surface-header);
+}
+
+.target-menu-list button[data-selected="true"] {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 650;
+}
+
 .floor-presence {
   display: flex;
   align-items: center;
@@ -1719,24 +1872,92 @@
   box-shadow: 0 0 0 2px var(--status-running);
 }
 
-.composer textarea {
-  width: 100%;
+.mention-field {
+  position: relative;
   flex: 1 1 auto;
-  height: 36px;
+  min-width: 0;
   min-height: 36px;
   margin: var(--space-1) 0;
+}
+
+.mention-highlight,
+.mention-input {
+  position: absolute;
+  inset: 0;
   padding: 0;
   border: 0;
+  font-family: inherit;
+  font-size: var(--text-md);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.mention-highlight {
+  overflow: hidden;
+  color: var(--text-primary);
+  pointer-events: none;
+}
+
+.mention-tag {
+  color: var(--accent);
+  font-weight: 650;
+  background: var(--accent-soft);
+  border-radius: 3px;
+}
+
+.mention-input {
+  width: 100%;
+  overflow-y: auto;
   background: none;
   outline: none;
   resize: none;
-  color: var(--text-primary);
-  font-size: var(--text-md);
-  line-height: 1.5;
+  color: transparent;
+  caret-color: var(--text-primary);
 }
 
-.composer textarea::placeholder {
+.mention-input::placeholder {
   color: var(--text-tertiary);
+}
+
+.mention-suggestions {
+  position: absolute;
+  bottom: calc(100% + var(--space-2));
+  left: 0;
+  z-index: 30;
+  min-width: 200px;
+  max-height: 220px;
+  overflow-y: auto;
+  margin: 0;
+  padding: var(--space-1);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  box-shadow: var(--elevation-2);
+  list-style: none;
+}
+
+.mention-suggestions li {
+  margin: 0;
+}
+
+.mention-suggestions button {
+  display: block;
+  width: 100%;
+  padding: var(--space-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.mention-suggestions button:hover,
+.mention-suggestions button[data-active="true"] {
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 
 .composer-foot {
@@ -2628,6 +2849,16 @@
   color: var(--text-secondary);
   font-size: var(--text-sm);
   line-height: 1.45;
+}
+
+.review-team-chat {
+  max-height: 360px;
+}
+
+.review-team-chat .team-chat {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: var(--space-3) var(--space-4);
 }
 
 /* Conflict resolver ------------------------------------------------------ */

@@ -7,6 +7,7 @@ import {
   Conflict,
   ReviewCheck,
   ReviewStatus,
+  TeamChatMessage,
   agentDiffLines,
   agentReviewChanges,
   agentReviewChecks,
@@ -22,6 +23,7 @@ import {
 } from "./data";
 import { ConflictResolver } from "./ConflictResolver";
 import { Icon, SegmentedControl } from "./primitives";
+import { TeamChat } from "./TeamChat";
 
 type ReviewViewMode = "candidate" | "agent";
 
@@ -44,11 +46,15 @@ export function ReviewScreen({
   conflictResolved,
   onNotice,
   onResolveConflict,
+  teamChat,
+  onSendTeamMessage,
 }: {
   agents: Agent[];
   conflictResolved: boolean;
   onNotice: (notice: string) => void;
   onResolveConflict: () => void;
+  teamChat: TeamChatMessage[];
+  onSendTeamMessage: (text: string) => void;
 }) {
   const [viewMode, setViewMode] = useState<ReviewViewMode>("candidate");
   const [viewedAgentId, setViewedAgentId] = useState(agents[0]?.id ?? "");
@@ -337,6 +343,14 @@ export function ReviewScreen({
                 </li>
               ))}
             </ul>
+          </section>
+
+          <section className="review-pane review-team-chat" aria-label="Team chat">
+            <div className="review-pane-head">
+              <h3>Team chat</h3>
+              <span>{teamChat.length}</span>
+            </div>
+            <TeamChat messages={teamChat} onSend={onSendTeamMessage} />
           </section>
         </aside>
       </div>

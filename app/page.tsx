@@ -10,6 +10,8 @@ import {
   QueueItem,
   QueueScope,
   RailId,
+  TeamChatMessage,
+  TeamPanelView,
   WorkspaceScreen,
   agentFromDraft,
   checks,
@@ -18,6 +20,10 @@ import {
   initialAgents,
   initialAssignments,
   initialQueue,
+  initialTeamChat,
+  pickAgentForOpenMind,
+  resolveAgentMention,
+  routableAgents,
   spawnQSubAgent,
 } from "@/components/session/data";
 import { Icon } from "@/components/session/primitives";
@@ -46,7 +52,7 @@ export default function Home() {
   const [centerMode, setCenterMode] = useState<CenterMode>("activity");
   const [agentLayout, setAgentLayout] = useState<AgentLayout>("focus");
   const [panelOrder, setPanelOrder] = useState<PanelId[]>(["brief", "floor", "queue"]);
-  const [railWidths, setRailWidths] = useState<Record<RailId, number>>({ brief: 306, queue: 326 });
+  const [railWidths, setRailWidths] = useState<Record<RailId, number>>({ brief: 340, queue: 326 });
   const [collapsedRails, setCollapsedRails] = useState<Record<RailId, boolean>>({ brief: false, queue: false });
   const [expandedPanel, setExpandedPanel] = useState<PanelId | null>(null);
   const [draggedPanel, setDraggedPanel] = useState<PanelId | null>(null);
@@ -58,9 +64,16 @@ export default function Home() {
   const [toastVisible, setToastVisible] = useState(true);
   const [qBusy, setQBusy] = useState(false);
   const [qSubSequence, setQSubSequence] = useState(0);
+  const [queueTarget, setQueueTarget] = useState<string | null>(null);
+  const [teamChat, setTeamChat] = useState<TeamChatMessage[]>(initialTeamChat);
+  const [teamPanelView, setTeamPanelView] = useState<TeamPanelView>("goals");
   const workspaceRef = useRef<HTMLDivElement>(null);
 
   const selectedAgent = agents.find((agent) => agent.id === selectedAgentId) ?? agents[0];
+  const addressable = routableAgents(agents);
+  const mentionedAgent = resolveAgentMention(message, agents);
+  const dropdownAgent = queueTarget ? (agents.find((agent) => agent.id === queueTarget) ?? null) : null;
+  const previewTargetAgent = mentionedAgent ?? dropdownAgent;
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -165,7 +178,12 @@ export default function Home() {
     const prompt = message.trim();
     if (!prompt) return;
 
-    if (selectedAgent.kind === "qa") {
+    const mentioned = resolveAgentMention(prompt, agents);
+    const explicit = mentioned ?? dropdownAgent;
+    const routedByOpenMind = !explicit;
+    const targetAgent = explicit ?? pickAgentForOpenMind(agents);
+
+    if (targetAgent.kind === "qa") {
       askQ(prompt);
       setMessage("");
       return;
@@ -177,9 +195,9 @@ export default function Home() {
       prompt,
       author: "You",
       authorTone: "you",
-      agentId: selectedAgent.id,
-      agentName: selectedAgent.name,
-      agentColor: selectedAgent.color,
+      agentId: targetAgent.id,
+      agentName: targetAgent.name,
+      agentColor: targetAgent.color,
       position,
       status: "queued",
       queuedAt: "just now",
@@ -189,7 +207,11 @@ export default function Home() {
     setQueueScope("mine");
     setCollapsedRails((current) => ({ ...current, queue: false }));
     setMessage("");
-    notify(`Queued for ${selectedAgent.name} · #${position}`);
+    notify(
+      routedByOpenMind
+        ? `OpenMind routed your prompt to ${targetAgent.name} · #${position}`
+        : `Queued for ${targetAgent.name} · #${position}`,
+    );
   }
 
   function createAgent(draft: AgentDraft) {
@@ -203,6 +225,16 @@ export default function Home() {
 
   function updateAssignment(id: string, task: string) {
     setAssignments((current) => current.map((assignment) => (assignment.id === id ? { ...assignment, task } : assignment)));
+  }
+
+  function sendTeamMessage(text: string) {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+
+    setTeamChat((current) => [
+      ...current,
+      { id: `tc-${Date.now()}`, authorId: "you", authorName: "You", authorTone: "you", text: trimmed, time: "just now" },
+    ]);
   }
 
   function openReview() {
@@ -286,7 +318,18 @@ export default function Home() {
 
   function renderPanel(panel: PanelId, chrome: PanelChrome) {
     if (panel === "brief") {
-      return <BriefRail chrome={chrome} assignments={assignments} onAssignmentChange={updateAssignment} onNotice={notify} />;
+      return (
+        <BriefRail
+          chrome={chrome}
+          assignments={assignments}
+          onAssignmentChange={updateAssignment}
+          onNotice={notify}
+          view={teamPanelView}
+          onViewChange={setTeamPanelView}
+          messages={teamChat}
+          onSendMessage={sendTeamMessage}
+        />
+      );
     }
     if (panel === "queue") {
       return (
@@ -322,7 +365,14 @@ export default function Home() {
       <ObjectiveBar goal={sessionGoal} onGoalChange={setSessionGoal} onNotice={notify} />
 
       {screen === "review" ? (
-        <ReviewScreen agents={agents} conflictResolved={conflictResolved} onNotice={notify} onResolveConflict={resolveConflict} />
+        <ReviewScreen
+          agents={agents}
+          conflictResolved={conflictResolved}
+          onNotice={notify}
+          onResolveConflict={resolveConflict}
+          teamChat={teamChat}
+          onSendTeamMessage={sendTeamMessage}
+        />
       ) : (
         <>
           <div className="workspace" data-expanded={expandedPanel ? "true" : "false"} ref={workspaceRef}>
@@ -368,8 +418,10 @@ export default function Home() {
             conflictResolved={conflictResolved}
             onResolveConflict={resolveConflict}
             onOpenChecks={openReview}
-            selectedAgentName={selectedAgent.name}
-            askMode={selectedAgent.kind === "qa"}
+            routableAgents={addressable}
+            queueTarget={queueTarget}
+            onQueueTargetChange={setQueueTarget}
+            previewTargetAgent={previewTargetAgent}
           />
         </>
       )}

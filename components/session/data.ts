@@ -13,6 +13,16 @@ export type FileState = "modified" | "attention" | "pending";
 export type CheckState = "passed" | "waiting" | "failed";
 export type StepState = "done" | "active" | "todo";
 export type ReviewStatus = "awaiting" | "changes-requested" | "approved";
+export type TeamPanelView = "goals" | "chat";
+
+export type TeamChatMessage = {
+  id: string;
+  authorId: string;
+  authorName: string;
+  authorTone: string;
+  text: string;
+  time: string;
+};
 
 export type Agent = {
   id: string;
@@ -416,6 +426,65 @@ export const latestDecision = {
   statement: "WebSocket reconnects replay from the last acknowledged event.",
   attribution: "Decided by Matt · 8m ago",
 };
+
+export const initialTeamChat: TeamChatMessage[] = [
+  {
+    id: "tc-1",
+    authorId: "matt",
+    authorName: "Matt",
+    authorTone: "matt",
+    text: "Kicking off the presence work — Atlas is on the event protocol, Nova's on the activity cards.",
+    time: "24m ago",
+  },
+  {
+    id: "tc-2",
+    authorId: "ryan",
+    authorName: "Ryan",
+    authorTone: "ryan",
+    text: "Sounds good. I'll keep Nova scoped to AgentCard.tsx and activity.css only.",
+    time: "22m ago",
+  },
+  {
+    id: "tc-3",
+    authorId: "ali",
+    authorName: "Ali",
+    authorTone: "ali",
+    text: "Joining now — I'll have Proof review once Atlas and Nova both have something to look at.",
+    time: "18m ago",
+  },
+  {
+    id: "tc-4",
+    authorId: "matt",
+    authorName: "Matt",
+    authorTone: "matt",
+    text: "Heads up, Atlas and Proof both touched reducer.ts. Flagging it as a conflict on the floor.",
+    time: "9m ago",
+  },
+  {
+    id: "tc-5",
+    authorId: "ali",
+    authorName: "Ali",
+    authorTone: "ali",
+    text: "Saw it — Proof's pass is read-only, so keeping Atlas as owner should resolve it cleanly.",
+    time: "8m ago",
+  },
+  {
+    id: "tc-6",
+    authorId: "ryan",
+    authorName: "Ryan",
+    authorTone: "ryan",
+    text: "Nova's almost done with the blocked-state styling. Sentry can pick up reducer fixtures right after.",
+    time: "4m ago",
+  },
+  {
+    id: "tc-7",
+    authorId: "matt",
+    authorName: "Matt",
+    authorTone: "matt",
+    text: "Nice. Once checks are green I'll open the candidate branch for review.",
+    time: "2m ago",
+  },
+];
 
 export const changedFiles: ChangedFile[] = [
   { path: "server/events/schema.ts", agent: "Atlas", add: 84, del: 6, state: "modified" },
@@ -1005,6 +1074,33 @@ export function agentKindLabel(agent: Agent): string {
   if (agent.kind === "orchestrator") return "Orchestrator";
   if (agent.kind === "qa") return agent.parentId ? "Q&A · sub-agent" : "Q&A";
   return "Worker";
+}
+
+/* Agents a person can address directly, either by @mention or from the composer dropdown.
+   Excludes OpenMind (the implicit auto-router) and Q's ephemeral sub-agents. */
+export function routableAgents(agents: Agent[]): Agent[] {
+  return agents.filter((agent) => agent.kind !== "orchestrator" && !agent.parentId);
+}
+
+/* Matches one "@Name" token. Shared by routing and by the composer's highlight/autocomplete. */
+export const MENTION_TOKEN = /@([A-Za-z][\w-]*)/;
+
+/* Finds the first "@Name" in the text that matches an agent's name, case-insensitively. */
+export function resolveAgentMention(text: string, agents: Agent[]): Agent | null {
+  const match = text.match(MENTION_TOKEN);
+  if (!match) return null;
+
+  const mentioned = match[1].toLowerCase();
+  return routableAgents(agents).find((agent) => agent.name.toLowerCase() === mentioned) ?? null;
+}
+
+/* OpenMind's default pick when nobody names an agent: whoever's blocked, else whoever has the least progress. */
+export function pickAgentForOpenMind(agents: Agent[]): Agent {
+  const workers = agents.filter((agent) => agent.kind === "worker");
+  const blocked = workers.find((agent) => agent.status === "blocked");
+  if (blocked) return blocked;
+
+  return workers.reduce((leastDone, agent) => (agent.progress < leastDone.progress ? agent : leastDone), workers[0]);
 }
 
 /* A short-lived agent Q spins up to answer a question while its primary thread is busy. */

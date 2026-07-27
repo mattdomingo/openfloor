@@ -4,6 +4,8 @@ import { FormEvent, useEffect, useRef } from "react";
 import { Agent, Check, Draft, DockMode, participants } from "./data";
 import { Avatar, Icon, SegmentedControl } from "./primitives";
 import { AttentionStrip } from "./AttentionStrip";
+import { AgentTargetMenu } from "./AgentTargetMenu";
+import { MentionComposer } from "./MentionComposer";
 
 export type FloorLane = Draft & { text: string; typing: boolean };
 
@@ -27,8 +29,10 @@ export function FloorDock({
   conflictResolved,
   onResolveConflict,
   onOpenChecks,
-  selectedAgentName,
-  askMode = false,
+  routableAgents,
+  queueTarget,
+  onQueueTargetChange,
+  previewTargetAgent,
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -43,14 +47,19 @@ export function FloorDock({
   conflictResolved: boolean;
   onResolveConflict: () => void;
   onOpenChecks: () => void;
-  selectedAgentName: string;
-  askMode?: boolean;
+  routableAgents: Agent[];
+  queueTarget: string | null;
+  onQueueTargetChange: (id: string | null) => void;
+  previewTargetAgent: Agent | null;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const askMode = previewTargetAgent?.kind === "qa";
 
   useEffect(() => {
     if (dockMode === "focus") textareaRef.current?.focus();
   }, [dockMode]);
+
+  const targetCopy = previewTargetAgent ? previewTargetAgent.name : "OpenMind picks";
 
   return (
     <section className="dock" aria-label="Open floor" data-mode={dockMode}>
@@ -68,7 +77,8 @@ export function FloorDock({
             <Avatar initials="Y" tone="you" />
             <div className="composer-who">
               <strong>You</strong>
-              <span>{askMode ? `Ask ${selectedAgentName}` : `Queue for ${selectedAgentName}`}</span>
+              <AgentTargetMenu value={queueTarget} onChange={onQueueTargetChange} agents={routableAgents} />
+              <span>{askMode ? `Ask ${targetCopy}` : `Queue for ${targetCopy}`}</span>
             </div>
             <div className="floor-presence">
               <span>Drafting on the floor</span>
@@ -80,12 +90,19 @@ export function FloorDock({
             </div>
           </div>
 
-          <textarea
-            ref={textareaRef}
+          <MentionComposer
             value={value}
-            onChange={(event) => onChange(event.target.value)}
-            placeholder={askMode ? `Ask ${selectedAgentName} a question…` : `Describe work to queue for ${selectedAgentName}…`}
-            aria-label={askMode ? "Question for Q" : "Prompt to add to the queue"}
+            onChange={onChange}
+            textareaRef={textareaRef}
+            agents={routableAgents}
+            placeholder={
+              askMode
+                ? `Ask ${targetCopy} a question…`
+                : previewTargetAgent
+                  ? `Describe work to queue for ${targetCopy}…`
+                  : "Describe work, @mention an agent, or let OpenMind route it…"
+            }
+            ariaLabel={askMode ? "Question for Q" : "Prompt to add to the queue"}
           />
 
           <div className="composer-foot">
