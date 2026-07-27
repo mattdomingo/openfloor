@@ -322,6 +322,8 @@ export function Workspace({ sessionTitle }: { sessionTitle: string }) {
         <BriefRail
           chrome={chrome}
           assignments={assignments}
+          agents={agents}
+          queue={queue}
           onAssignmentChange={updateAssignment}
           onNotice={notify}
           view={teamPanelView}

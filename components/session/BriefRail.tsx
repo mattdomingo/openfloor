@@ -1,13 +1,16 @@
 "use client";
 
-import { Assignment, TeamChatMessage, TeamPanelView, latestDecision } from "./data";
-import { Avatar, SegmentedControl } from "./primitives";
+import { CSSProperties, useState } from "react";
+import { Agent, Assignment, QueueItem, TeamChatMessage, TeamPanelView, latestDecision } from "./data";
+import { Avatar, Icon, SegmentedControl } from "./primitives";
 import { Panel, PanelChrome } from "./Rail";
 import { TeamChat } from "./TeamChat";
 
 export function BriefRail({
   chrome,
   assignments,
+  agents,
+  queue,
   onAssignmentChange,
   onNotice,
   view,
@@ -17,6 +20,8 @@ export function BriefRail({
 }: {
   chrome: PanelChrome;
   assignments: Assignment[];
+  agents: Agent[];
+  queue: QueueItem[];
   onAssignmentChange: (id: string, task: string) => void;
   onNotice: (notice: string) => void;
   view: TeamPanelView;
@@ -24,6 +29,17 @@ export function BriefRail({
   messages: TeamChatMessage[];
   onSendMessage: (text: string) => void;
 }) {
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+
+  function toggleExpanded(id: string) {
+    setExpandedIds((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
   const controls = (
     <SegmentedControl
       label="Team panel view"
@@ -48,24 +64,88 @@ export function BriefRail({
               <span className="value">Editable by everyone</span>
             </div>
             <div className="owner-list">
-              {assignments.map((assignment) => (
-                <div className="owner-card" key={assignment.id}>
-                  <Avatar initials={assignment.initials} tone={assignment.tone} />
-                  <div className="owner-head">
-                    <strong>{assignment.name}</strong>
-                    <span className="value">{assignment.agent}</span>
-                    <span className="state-tag" data-tone={assignment.stateTone}>
-                      {assignment.state}
-                    </span>
+              {assignments.map((assignment) => {
+                const expanded = expandedIds.has(assignment.id);
+                const spawnedAgents = agents.filter((agent) => agent.owner === assignment.name);
+                const pastPrompts = queue.filter((item) => item.author === assignment.name);
+
+                return (
+                  <div className="owner-card" key={assignment.id} data-expanded={expanded ? "true" : "false"}>
+                    <button
+                      type="button"
+                      className="owner-card-toggle"
+                      aria-expanded={expanded}
+                      onClick={() => toggleExpanded(assignment.id)}
+                    >
+                      <Avatar initials={assignment.initials} tone={assignment.tone} />
+                      <span className="owner-head">
+                        <strong>{assignment.name}</strong>
+                        <span className="state-tag" data-tone={assignment.stateTone}>
+                          {assignment.state}
+                        </span>
+                      </span>
+                      <Icon name="chevronDown" size={12} className="owner-card-chevron" />
+                    </button>
+
+                    <textarea
+                      value={assignment.task}
+                      aria-label={`Assignment for ${assignment.name}`}
+                      onChange={(event) => onAssignmentChange(assignment.id, event.target.value)}
+                      onBlur={() => onNotice(`${assignment.name}'s assignment updated for everyone`)}
+                    />
+
+                    {expanded && (
+                      <div className="owner-detail">
+                        <div className="owner-detail-section">
+                          <span className="label">Agents spun up</span>
+                          {spawnedAgents.length === 0 ? (
+                            <p className="owner-detail-empty">Hasn&apos;t launched an agent yet.</p>
+                          ) : (
+                            <ul className="owner-agent-list">
+                              {spawnedAgents.map((spawned) => (
+                                <li key={spawned.id}>
+                                  <span
+                                    className="agent-glyph"
+                                    aria-hidden="true"
+                                    style={{ "--agent-color": spawned.color } as CSSProperties}
+                                  >
+                                    {spawned.name.slice(0, 1)}
+                                  </span>
+                                  <span className="owner-agent-copy">
+                                    <strong>{spawned.name}</strong>
+                                    <span>
+                                      {spawned.role} · {spawned.status}
+                                    </span>
+                                  </span>
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        </div>
+
+                        <div className="owner-detail-section">
+                          <span className="label">Past prompts</span>
+                          {pastPrompts.length === 0 ? (
+                            <p className="owner-detail-empty">No prompts sent yet.</p>
+                          ) : (
+                            <ul className="owner-prompt-list">
+                              {pastPrompts.map((item) => (
+                                <li key={item.id}>
+                                  <div className="owner-prompt-head">
+                                    <span className="value">→ {item.agentName}</span>
+                                    <span>{item.queuedAt}</span>
+                                  </div>
+                                  <p>{item.prompt}</p>
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        </div>
+                      </div>
+                    )}
                   </div>
-                  <textarea
-                    value={assignment.task}
-                    aria-label={`Assignment for ${assignment.name}`}
-                    onChange={(event) => onAssignmentChange(assignment.id, event.target.value)}
-                    onBlur={() => onNotice(`${assignment.name}'s assignment updated for everyone`)}
-                  />
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
 

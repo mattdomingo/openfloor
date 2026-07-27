@@ -94,10 +94,10 @@ const glyphs: Record<IconName, ReactNode> = {
   message: <path d="M3.2 4.5h9.6a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1H8l-2.6 2.3v-2.3H3.2a1 1 0 0 1-1-1v-5a1 1 0 0 1 1-1z" />,
 };
 
-export function Icon({ name, size = 14 }: { name: IconName; size?: number }) {
+export function Icon({ name, size = 14, className }: { name: IconName; size?: number; className?: string }) {
   return (
     <svg
-      className="icon"
+      className={className ? `icon ${className}` : "icon"}
       width={size}
       height={size}
       viewBox="0 0 16 16"

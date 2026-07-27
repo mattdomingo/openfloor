@@ -532,9 +532,9 @@
 }
 
 .owner-card {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: var(--space-2) var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
   padding: var(--space-3);
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-md);
@@ -545,6 +545,20 @@
 .owner-card:focus-within {
   border-color: var(--line-strong);
   box-shadow: var(--elevation-1);
+}
+
+.owner-card-toggle {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
 }
 
 .owner-head {
@@ -559,18 +573,20 @@
   font-weight: 650;
 }
 
-.owner-head .value {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .owner-head .state-tag {
   margin-left: auto;
 }
 
+.owner-card-chevron {
+  color: var(--text-tertiary);
+  transition: transform 120ms ease;
+}
+
+.owner-card[data-expanded="true"] .owner-card-chevron {
+  transform: rotate(180deg);
+}
+
 .owner-card textarea {
-  grid-column: 1 / -1;
   width: 100%;
   min-height: 48px;
   padding: 0;
@@ -585,6 +601,89 @@
 
 .owner-card textarea:focus {
   color: var(--text-primary);
+}
+
+.owner-detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--line-soft);
+}
+
+.owner-detail-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.owner-detail-empty {
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  line-height: 1.4;
+}
+
+.owner-agent-list,
+.owner-prompt-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.owner-agent-list li {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.owner-agent-copy {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.owner-agent-copy strong {
+  font-size: var(--text-sm);
+  font-weight: 650;
+}
+
+.owner-agent-copy span {
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+}
+
+.owner-prompt-list li {
+  padding: var(--space-2);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-sm);
+  background: var(--surface-panel);
+}
+
+.owner-prompt-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.owner-prompt-head .value {
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+}
+
+.owner-prompt-head span:last-child {
+  color: var(--text-tertiary);
+  font-size: 10px;
+}
+
+.owner-prompt-list p {
+  margin-top: 2px;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  line-height: 1.4;
 }
 
 .decision {

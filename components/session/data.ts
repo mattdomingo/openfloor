@@ -68,7 +68,6 @@ export type Assignment = {
   name: string;
   initials: string;
   tone: string;
-  agent: string;
   task: string;
   state: string;
   stateTone: string;
@@ -389,7 +388,6 @@ export const initialAssignments: Assignment[] = [
     name: "Matt",
     initials: "M",
     tone: "matt",
-    agent: "Atlas · Backend",
     task: "Define the session event protocol and reconnect replay contract.",
     state: "Active",
     stateTone: "running",
@@ -399,7 +397,6 @@ export const initialAssignments: Assignment[] = [
     name: "Ryan",
     initials: "R",
     tone: "ryan",
-    agent: "Nova · Frontend",
     task: "Build agent activity cards and wire live status transitions.",
     state: "Active",
     stateTone: "running",
@@ -409,7 +406,6 @@ export const initialAssignments: Assignment[] = [
     name: "Ali",
     initials: "A",
     tone: "ali",
-    agent: "Proof · Reviewer",
     task: "Review integrated changes and resolve status naming inconsistencies.",
     state: "Review",
     stateTone: "review",
