@@ -1,27 +1,27 @@
 "use client";
 
-import { participants, sessionTitle, WorkspaceScreen } from "./data";
+import Link from "next/link";
+import { participants, WorkspaceScreen } from "./data";
 import { Avatar, Icon } from "./primitives";
 
 export function TopBar({
   screen,
   onScreen,
   onNotice,
+  sessionTitle,
 }: {
   screen: WorkspaceScreen;
   onScreen: (screen: WorkspaceScreen) => void;
   onNotice: (notice: string) => void;
+  sessionTitle: string;
 }) {
   return (
     <header className="topbar">
-      <div className="brand">
-        <span className="brand-mark" aria-hidden="true">
-          <span />
-          <span />
-          <span />
-        </span>
+      <Link href="/home" className="brand">
+        {/* eslint-disable-next-line @next/next/no-img-element -- static mark, no next/image config in this Vite host */}
+        <img className="brand-mark" src="/openfloor-mark.png" alt="" aria-hidden="true" />
         OPENFLOOR
-      </div>
+      </Link>
 
       <nav className="screen-nav" aria-label="Workspace screens">
         <button type="button" aria-pressed={screen === "workspace"} onClick={() => onScreen("workspace")}>
@@ -33,7 +33,7 @@ export function TopBar({
       </nav>
 
       <nav className="session-path" aria-label="Session location">
-        <span>Sessions</span>
+        <Link href="/home">Sessions</Link>
         <span aria-hidden="true">/</span>
         <strong>{sessionTitle}</strong>
         <span className="live-pill">

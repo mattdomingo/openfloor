@@ -17,7 +17,7 @@ export async function generateMetadata(): Promise<Metadata> {
     metadataBase: new URL(origin),
     title: "OpenFloor — Multiplayer agent development",
     description: "A shared control plane for teams coordinating coding agents against one software objective.",
-    icons: { icon: "/favicon.svg", shortcut: "/favicon.svg" },
+    icons: { icon: "/openfloor-mark.png", shortcut: "/openfloor-mark.png" },
     openGraph: {
       type: "website",
       title: "OpenFloor",
