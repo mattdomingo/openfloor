@@ -108,9 +108,20 @@ export function AgentCard({
 }
 
 /* The callout at the top of a focused agent, explaining what that agent is waiting on. */
-function AgentAlert({ agent, onNotice }: { agent: Agent; onNotice: (notice: string) => void }) {
+function AgentAlert({
+  agent,
+  onNotice,
+  onAnswer,
+}: {
+  agent: Agent;
+  onNotice: (notice: string) => void;
+  onAnswer: (agent: Agent) => void;
+}) {
   const alert = statusAlert(agent);
   if (!alert) return null;
+
+  /* Answering happens in the composer, not in a toast. */
+  const act = agent.status === "needs-input" ? () => onAnswer(agent) : () => onNotice(alert.notice);
 
   return (
     <div className="agent-alert" data-status={agent.status} role="status">
@@ -119,7 +130,7 @@ function AgentAlert({ agent, onNotice }: { agent: Agent; onNotice: (notice: stri
         <strong>{alert.title}</strong>
         <p>{alert.body}</p>
       </div>
-      <button type="button" className="button" data-size="sm" onClick={() => onNotice(alert.notice)}>
+      <button type="button" className="button" data-size="sm" onClick={act}>
         {alert.action}
       </button>
     </div>
@@ -130,14 +141,16 @@ export function AgentSpotlight({
   agent,
   onNotice,
   onHistory,
+  onAnswer,
 }: {
   agent: Agent;
   onNotice: (notice: string) => void;
   onHistory: () => void;
+  onAnswer: (agent: Agent) => void;
 }) {
   return (
     <article className="spotlight" data-status={agent.status} style={agentStyle(agent)}>
-      <AgentAlert agent={agent} onNotice={onNotice} />
+      <AgentAlert agent={agent} onNotice={onNotice} onAnswer={onAnswer} />
 
       <div className="spotlight-head">
         <span className="agent-glyph" data-size="lg" aria-hidden="true">

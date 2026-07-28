@@ -29,6 +29,7 @@ function collectItems({
   onResolveConflict,
   onOpenChecks,
   onNotice,
+  onAnswer,
 }: {
   agents: Agent[];
   checks: Check[];
@@ -36,6 +37,7 @@ function collectItems({
   onResolveConflict: () => void;
   onOpenChecks: () => void;
   onNotice: (notice: string) => void;
+  onAnswer: (agent: Agent) => void;
 }): AttentionItem[] {
   const items: AttentionItem[] = [];
 
@@ -62,7 +64,11 @@ function collectItems({
       kind: agent.status,
       title: agent.status === "blocked" ? `${agent.name} is blocked` : `${agent.name} needs your input`,
       detail: alert.body,
-      action: { label: alert.action, onClick: () => onNotice(alert.notice) },
+      action: {
+        label: alert.action,
+        /* Answering happens in the composer, not in a toast. */
+        onClick: agent.status === "needs-input" ? () => onAnswer(agent) : () => onNotice(alert.notice),
+      },
     });
   }
 
@@ -87,6 +93,7 @@ export function AttentionStrip({
   onResolveConflict,
   onOpenChecks,
   onNotice,
+  onAnswer,
 }: {
   agents: Agent[];
   checks: Check[];
@@ -94,8 +101,9 @@ export function AttentionStrip({
   onResolveConflict: () => void;
   onOpenChecks: () => void;
   onNotice: (notice: string) => void;
+  onAnswer: (agent: Agent) => void;
 }) {
-  const items = collectItems({ agents, checks, conflictResolved, onResolveConflict, onOpenChecks, onNotice });
+  const items = collectItems({ agents, checks, conflictResolved, onResolveConflict, onOpenChecks, onNotice, onAnswer });
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const listId = useId();

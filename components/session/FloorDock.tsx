@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useRef } from "react";
+import { FormEvent, RefObject, useEffect } from "react";
 import { Agent, Check, Draft, DockMode, participants } from "./data";
 import { Avatar, Icon, SegmentedControl } from "./primitives";
 import { AttentionStrip } from "./AttentionStrip";
@@ -33,11 +33,15 @@ export function FloorDock({
   queueTarget,
   onQueueTargetChange,
   previewTargetAgent,
+  textareaRef,
+  onAnswer,
 }: {
   value: string;
   onChange: (value: string) => void;
   onSubmit: (event: FormEvent) => void;
   onNotice: (notice: string) => void;
+  textareaRef: RefObject<HTMLTextAreaElement | null>;
+  onAnswer: (agent: Agent) => void;
   dockMode: DockMode;
   onDockModeChange: (mode: DockMode) => void;
   lanes: FloorLane[];
@@ -52,12 +56,11 @@ export function FloorDock({
   onQueueTargetChange: (id: string | null) => void;
   previewTargetAgent: Agent | null;
 }) {
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const askMode = previewTargetAgent?.kind === "qa";
 
   useEffect(() => {
     if (dockMode === "focus") textareaRef.current?.focus();
-  }, [dockMode]);
+  }, [dockMode, textareaRef]);
 
   const targetCopy = previewTargetAgent ? previewTargetAgent.name : "OpenMind picks";
 
@@ -70,6 +73,7 @@ export function FloorDock({
         onResolveConflict={onResolveConflict}
         onOpenChecks={onOpenChecks}
         onNotice={onNotice}
+        onAnswer={onAnswer}
       />
       <div className="dock-inner">
         <form className="composer" onSubmit={onSubmit}>

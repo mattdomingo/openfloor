@@ -2,6 +2,7 @@
 
 import { CSSProperties, FormEvent, PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
+  Agent,
   AgentDraft,
   AgentLayout,
   CenterMode,
@@ -72,6 +73,7 @@ export function Workspace({ sessionTitle }: { sessionTitle: string }) {
   const [teamChat, setTeamChat] = useState<TeamChatMessage[]>(initialTeamChat);
   const [teamPanelView, setTeamPanelView] = useState<TeamPanelView>("goals");
   const workspaceRef = useRef<HTMLDivElement>(null);
+  const composerRef = useRef<HTMLTextAreaElement>(null);
 
   const globalQueueOrder = useMemo(() => {
     const autoIds = [...queue].sort((a, b) => a.position - b.position).map((item) => item.id);
@@ -195,6 +197,20 @@ export function Workspace({ sessionTitle }: { sessionTitle: string }) {
     }, 6000);
   }
 
+  /* Sends the user to the composer with the agent already mentioned, so answering a
+     needs-input agent is one click from either the spotlight or the attention strip. */
+  function answerAgent(agent: Agent) {
+    const mention = `@${agent.name} `;
+    setMessage((current) => (current.startsWith(mention) ? current : mention + current.trimStart()));
+
+    requestAnimationFrame(() => {
+      const node = composerRef.current;
+      if (!node) return;
+      node.focus();
+      node.setSelectionRange(node.value.length, node.value.length);
+    });
+  }
+
   function enqueuePrompt(event: FormEvent) {
     event.preventDefault();
     const prompt = message.trim();
@@ -204,6 +220,19 @@ export function Workspace({ sessionTitle }: { sessionTitle: string }) {
     const explicit = mentioned ?? dropdownAgent;
     const routedByOpenMind = !explicit;
     const targetAgent = explicit ?? pickAgentForOpenMind(agents);
+
+    /* Answering the agent is what it was waiting on, so it goes back to work. */
+    if (targetAgent.status === "needs-input") {
+      const answer = prompt.replace(`@${targetAgent.name}`, "").trim();
+      const shortAnswer = answer.length > 60 ? `${answer.slice(0, 57)}…` : answer;
+      setAgents((current) =>
+        current.map((agent) =>
+          agent.id === targetAgent.id
+            ? { ...agent, status: "writing", alert: undefined, detail: `Picking up your answer: "${shortAnswer}"` }
+            : agent,
+        ),
+      );
+    }
 
     if (targetAgent.kind === "qa") {
       askQ(prompt);
@@ -396,6 +425,7 @@ export function Workspace({ sessionTitle }: { sessionTitle: string }) {
         onAgentLayout={setAgentLayout}
         onCreateAgent={createAgent}
         onNotice={notify}
+        onAnswer={answerAgent}
       />
     );
   }
@@ -464,6 +494,8 @@ export function Workspace({ sessionTitle }: { sessionTitle: string }) {
             queueTarget={queueTarget}
             onQueueTargetChange={setQueueTarget}
             previewTargetAgent={previewTargetAgent}
+            textareaRef={composerRef}
+            onAnswer={answerAgent}
           />
         </>
       )}

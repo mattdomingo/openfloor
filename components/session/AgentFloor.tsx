@@ -20,6 +20,7 @@ export function AgentFloor({
   onAgentLayout,
   onCreateAgent,
   onNotice,
+  onAnswer,
 }: {
   chrome: PanelChrome;
   agents: Agent[];
@@ -31,6 +32,7 @@ export function AgentFloor({
   onAgentLayout: (layout: AgentLayout) => void;
   onCreateAgent: (draft: AgentDraft) => void;
   onNotice: (notice: string) => void;
+  onAnswer: (agent: Agent) => void;
 }) {
   const [creating, setCreating] = useState(false);
   const [historyAgentId, setHistoryAgentId] = useState<string | null>(null);
@@ -130,7 +132,12 @@ export function AgentFloor({
             ))}
           </div>
         ) : (
-          <AgentSpotlight agent={selected} onNotice={onNotice} onHistory={() => setHistoryAgentId(selected.id)} />
+          <AgentSpotlight
+            agent={selected}
+            onNotice={onNotice}
+            onAnswer={onAnswer}
+            onHistory={() => setHistoryAgentId(selected.id)}
+          />
         )}
       </Panel>
 
