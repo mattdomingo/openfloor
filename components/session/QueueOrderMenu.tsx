@@ -5,7 +5,7 @@ import { QueueOrderMode } from "./data";
 import { Icon } from "./primitives";
 
 const options: { value: QueueOrderMode; label: string; hint: string }[] = [
-  { value: "auto", label: "Auto", hint: "Ordered by submission" },
+  { value: "auto", label: "Auto", hint: "OpenMind orders" },
   { value: "manual", label: "Manual", hint: "Drag to reorder" },
 ];
 
