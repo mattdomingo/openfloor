@@ -2319,7 +2319,9 @@
   background: color-mix(in srgb, var(--surface-raised) 60%, transparent);
 }
 
-.lane[data-typing="false"] {
+/* Idle lanes stay dashed and recessed; a lane firms up to a solid outline
+   while its teammate is actually writing. */
+.lane[data-typing="true"] {
   border-style: solid;
   background: var(--surface-raised);
 }
