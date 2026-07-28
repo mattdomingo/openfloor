@@ -1,5 +1,6 @@
 "use client";
 
+import { BASE_PATH } from "@/components/basePath";
 import Link from "next/link";
 import { participants, WorkspaceScreen } from "./data";
 import { Avatar, Icon } from "./primitives";
@@ -19,7 +20,7 @@ export function TopBar({
     <header className="topbar">
       <Link href="/home" className="brand">
         {/* eslint-disable-next-line @next/next/no-img-element -- static mark, no next/image config in this Vite host */}
-        <img className="brand-mark" src="/app/openfloor-mark.png" alt="" aria-hidden="true" />
+        <img className="brand-mark" src={`${BASE_PATH}/openfloor-mark.png`} alt="" aria-hidden="true" />
         OPENFLOOR
       </Link>
 

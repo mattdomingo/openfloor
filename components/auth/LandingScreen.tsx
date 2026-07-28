@@ -1,5 +1,6 @@
 "use client";
 
+import { BASE_PATH } from "@/components/basePath";
 import { FormEvent, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { SegmentedControl } from "@/components/session/primitives";
@@ -65,7 +66,7 @@ export function LandingScreen() {
     <main className="landing">
       <div className="landing-hero">
         {/* eslint-disable-next-line @next/next/no-img-element -- static mark, no next/image config in this Vite host */}
-        <img className="landing-logo" src="/app/openfloor-lockup.png" alt="OpenFloor" />
+        <img className="landing-logo" src={`${BASE_PATH}/openfloor-lockup.png`} alt="OpenFloor" />
         <p>
           A shared control plane for teams coordinating coding agents against one software objective — dispatch work,
           resolve overlaps, and review integrated changes together.

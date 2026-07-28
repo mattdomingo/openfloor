@@ -1,5 +1,6 @@
 "use client";
 
+import { BASE_PATH } from "@/components/basePath";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { MockUser, clearMockUser } from "@/components/auth/mockAuth";
@@ -37,7 +38,7 @@ export function HomeScreen({ user }: { user: MockUser }) {
       <header className="topbar">
         <Link href="/home" className="brand">
           {/* eslint-disable-next-line @next/next/no-img-element -- static mark, no next/image config in this Vite host */}
-          <img className="brand-mark" src="/app/openfloor-mark.png" alt="" aria-hidden="true" />
+          <img className="brand-mark" src={`${BASE_PATH}/openfloor-mark.png`} alt="" aria-hidden="true" />
           OPENFLOOR
         </Link>
 

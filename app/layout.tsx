@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { headers } from "next/headers";
+import { BASE_PATH } from "@/components/basePath";
 import "./globals.css";
 
 const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
@@ -23,18 +24,18 @@ export async function generateMetadata(): Promise<Metadata> {
     // openfloor-mark.png is 736x256, so a browser shrank it to a sliver in the
     // square tab slot. favicon.svg is the same mark drawn for that slot, and is
     // byte-identical to the one the marketing site serves.
-    icons: { icon: "/app/favicon.svg", shortcut: "/app/favicon.svg" },
+    icons: { icon: `${BASE_PATH}/favicon.svg`, shortcut: `${BASE_PATH}/favicon.svg` },
     openGraph: {
       type: "website",
       title: "OpenFloor",
       description: "Multiplayer development for agent teams.",
-      images: [{ url: `${origin}/app/og-v3.png`, width: 1200, height: 630, alt: "OpenFloor — multiplayer development for agent teams" }],
+      images: [{ url: `${origin}${BASE_PATH}/og-v3.png`, width: 1200, height: 630, alt: "OpenFloor — multiplayer development for agent teams" }],
     },
     twitter: {
       card: "summary_large_image",
       title: "OpenFloor",
       description: "Multiplayer development for agent teams.",
-      images: [`${origin}/app/og-v3.png`],
+      images: [`${origin}${BASE_PATH}/og-v3.png`],
     },
   };
 }
