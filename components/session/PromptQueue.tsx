@@ -99,6 +99,11 @@ export function PromptQueue({
                     >
                       {item.agentName}
                     </span>
+                    {item.routedByOpenMind && (
+                      <span className="queue-chip" data-kind="router" title="OpenMind picked this agent">
+                        OpenMind
+                      </span>
+                    )}
                   </span>
                   <span className="queue-time">{item.queuedAt}</span>
                 </div>

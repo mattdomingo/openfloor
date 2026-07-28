@@ -223,9 +223,12 @@ export function Workspace({ sessionTitle }: { sessionTitle: string }) {
       position,
       status: "queued",
       queuedAt: "just now",
+      routedByOpenMind,
     };
 
     setQueue((current) => [...current, item]);
+    /* Routing is invisible unless the floor moves to whoever OpenMind picked. */
+    if (routedByOpenMind) setSelectedAgentId(targetAgent.id);
     setQueueScope("mine");
     setCollapsedRails((current) => ({ ...current, queue: false }));
     setMessage("");
