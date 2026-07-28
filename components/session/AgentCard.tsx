@@ -1,7 +1,7 @@
 "use client";
 
 import { CSSProperties, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from "react";
-import { Agent, agentKindLabel, autonomyLabel, planSteps } from "./data";
+import { Agent, agentKindLabel, autonomyLabel, planSteps, statusAlert, statusLabel } from "./data";
 import { Icon, StatusDot, Stepper } from "./primitives";
 
 function agentStyle(agent: Agent) {
@@ -34,6 +34,7 @@ export function AgentCard({
     <article
       className="agent-card"
       data-selected={selected ? "true" : "false"}
+      data-status={agent.status}
       style={agentStyle(agent)}
       role="button"
       tabIndex={0}
@@ -58,7 +59,7 @@ export function AgentCard({
         <span className="agent-head-trailing">
           <span className="agent-state">
             <StatusDot status={agent.status} />
-            {agent.status}
+            {statusLabel(agent.status)}
           </span>
           <button
             type="button"
@@ -106,6 +107,25 @@ export function AgentCard({
   );
 }
 
+/* The callout at the top of a focused agent, explaining what that agent is waiting on. */
+function AgentAlert({ agent, onNotice }: { agent: Agent; onNotice: (notice: string) => void }) {
+  const alert = statusAlert(agent);
+  if (!alert) return null;
+
+  return (
+    <div className="agent-alert" data-status={agent.status} role="status">
+      <Icon name="alert" size={14} />
+      <div className="agent-alert-body">
+        <strong>{alert.title}</strong>
+        <p>{alert.body}</p>
+      </div>
+      <button type="button" className="button" data-size="sm" onClick={() => onNotice(alert.notice)}>
+        {alert.action}
+      </button>
+    </div>
+  );
+}
+
 export function AgentSpotlight({
   agent,
   onNotice,
@@ -116,7 +136,9 @@ export function AgentSpotlight({
   onHistory: () => void;
 }) {
   return (
-    <article className="spotlight" style={agentStyle(agent)}>
+    <article className="spotlight" data-status={agent.status} style={agentStyle(agent)}>
+      <AgentAlert agent={agent} onNotice={onNotice} />
+
       <div className="spotlight-head">
         <span className="agent-glyph" data-size="lg" aria-hidden="true">
           {agent.name.slice(0, 1)}
@@ -136,7 +158,7 @@ export function AgentSpotlight({
         </div>
         <span className="agent-state">
           <StatusDot status={agent.status} />
-          {agent.status}
+          {statusLabel(agent.status)}
         </span>
       </div>
 

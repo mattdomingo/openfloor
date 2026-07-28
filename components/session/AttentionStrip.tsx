@@ -1,10 +1,10 @@
 "use client";
 
 import { ReactNode, useEffect, useId, useRef, useState } from "react";
-import { Agent, Check, scopeConflict } from "./data";
+import { Agent, Check, scopeConflict, statusAlert } from "./data";
 import { Icon, IconName } from "./primitives";
 
-type AttentionKind = "conflict" | "blocked" | "check" | "decision";
+type AttentionKind = "conflict" | "blocked" | "needs-input" | "check" | "decision";
 
 type AttentionItem = {
   id: string;
@@ -17,6 +17,7 @@ type AttentionItem = {
 const marks: Record<AttentionKind, IconName> = {
   conflict: "alert",
   blocked: "alert",
+  "needs-input": "pencil",
   check: "clock",
   decision: "pencil",
 };
@@ -53,13 +54,15 @@ function collectItems({
   }
 
   for (const agent of agents) {
-    if (agent.status !== "blocked") continue;
+    if (agent.status !== "blocked" && agent.status !== "needs-input") continue;
+    const alert = statusAlert(agent);
+    if (!alert) continue;
     items.push({
-      id: `blocked-${agent.id}`,
-      kind: "blocked",
-      title: `${agent.name} is blocked`,
-      detail: agent.detail,
-      action: { label: "Nudge owner", onClick: () => onNotice(`${agent.owner} was asked to unblock ${agent.name}`) },
+      id: `${agent.status}-${agent.id}`,
+      kind: agent.status,
+      title: agent.status === "blocked" ? `${agent.name} is blocked` : `${agent.name} needs your input`,
+      detail: alert.body,
+      action: { label: alert.action, onClick: () => onNotice(alert.notice) },
     });
   }
 

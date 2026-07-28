@@ -102,7 +102,12 @@ pre {
   background: var(--status-review);
 }
 
-.status-dot[data-status="complete"] {
+.status-dot[data-status="needs-input"] {
+  background: var(--status-attention);
+}
+
+.status-dot[data-status="complete"],
+.status-dot[data-status="idle"] {
   background: var(--status-waiting);
 }
 
@@ -134,7 +139,7 @@ pre {
 }
 
 @media (prefers-reduced-motion: no-preference) {
-  .status-dot[data-status="running"] {
+  .status-dot[data-status="writing"] {
     animation: pulse 2s ease-in-out infinite;
   }
 

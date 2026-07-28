@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useRef, useState } from "react";
+import { FormEvent, KeyboardEvent, useEffect, useRef, useState } from "react";
 import { TeamChatMessage } from "./data";
 import { Avatar, Icon } from "./primitives";
 
@@ -19,6 +19,13 @@ export function TeamChat({ messages, onSend }: { messages: TeamChatMessage[]; on
     if (!text) return;
     onSend(text);
     setDraft("");
+  }
+
+  function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      event.currentTarget.form?.requestSubmit();
+    }
   }
 
   return (
@@ -42,6 +49,7 @@ export function TeamChat({ messages, onSend }: { messages: TeamChatMessage[]; on
         <textarea
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
+          onKeyDown={handleKeyDown}
           placeholder="Message the team…"
           aria-label="Message the team"
           rows={1}

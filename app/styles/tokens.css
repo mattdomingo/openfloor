@@ -48,6 +48,8 @@
   --status-review-soft: #e2eaf0;
   --status-waiting: #8b8578;
   --status-waiting-soft: #ebe6da;
+  --status-attention: #b5761f;
+  --status-attention-soft: #f6e9d2;
 
   /* Identity tints for people. Not semantic, only recognition. */
   --who-1: #dd8368;

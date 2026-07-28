@@ -91,7 +91,13 @@ export function MentionComposer({
   }
 
   function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
-    if (!showSuggestions) return;
+    if (!showSuggestions) {
+      if (event.key === "Enter" && !event.shiftKey) {
+        event.preventDefault();
+        event.currentTarget.form?.requestSubmit();
+      }
+      return;
+    }
 
     if (event.key === "ArrowDown") {
       event.preventDefault();

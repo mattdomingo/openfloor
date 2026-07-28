@@ -1,7 +1,7 @@
 "use client";
 
 import { CSSProperties, useState } from "react";
-import { Agent, Assignment, QueueItem, TeamChatMessage, TeamPanelView, latestDecision } from "./data";
+import { Agent, Assignment, QueueItem, TeamChatMessage, TeamPanelView, latestDecision, statusLabel } from "./data";
 import { Avatar, Icon, SegmentedControl } from "./primitives";
 import { Panel, PanelChrome } from "./Rail";
 import { TeamChat } from "./TeamChat";
@@ -114,7 +114,7 @@ export function BriefRail({
                                   <span className="owner-agent-copy">
                                     <strong>{spawned.name}</strong>
                                     <span>
-                                      {spawned.role} · {spawned.status}
+                                      {spawned.role} · {statusLabel(spawned.status)}
                                     </span>
                                   </span>
                                 </li>

@@ -35,7 +35,7 @@ export function AgentFloor({
   const [creating, setCreating] = useState(false);
   const [historyAgentId, setHistoryAgentId] = useState<string | null>(null);
   const createButtonRef = useRef<HTMLButtonElement>(null);
-  const working = agents.filter((agent) => agent.status !== "complete").length;
+  const working = agents.filter((agent) => agent.status !== "complete" && agent.status !== "idle").length;
   const showPicker = agentLayout === "focus";
   const historyAgent = agents.find((agent) => agent.id === historyAgentId) ?? null;
 

@@ -1,4 +1,4 @@
-export type AgentStatus = "running" | "reviewing" | "blocked" | "complete";
+export type AgentStatus = "writing" | "needs-input" | "blocked" | "idle" | "reviewing" | "complete";
 export type AgentAutonomy = "suggest" | "auto-edit" | "autopilot";
 export type AgentKind = "worker" | "orchestrator" | "qa";
 export type PanelId = "brief" | "floor" | "queue";
@@ -44,6 +44,8 @@ export type Agent = {
   checks: string[];
   reviewRequired: boolean;
   kind: AgentKind;
+  /* Shown in the focus-view callout for needs-input, blocked, and idle. */
+  alert?: string;
   /* Set only on Q's ephemeral sub-agents, pointing back at "q". */
   parentId?: string;
 };
@@ -268,7 +270,7 @@ export const initialAgents: Agent[] = [
     task: "Session event protocol",
     owner: "Matt",
     color: "#c9552f",
-    status: "running",
+    status: "writing",
     progress: 72,
     detail: "Normalizing task and agent lifecycle events",
     files: ["server/events/schema.ts", "server/session/reducer.ts"],
@@ -288,9 +290,10 @@ export const initialAgents: Agent[] = [
     task: "Agent activity cards",
     owner: "Ryan",
     color: "#b8862a",
-    status: "running",
+    status: "needs-input",
     progress: 58,
     detail: "Wiring live status transitions to the session view",
+    alert: "Should a blocked card keep its progress bar, or swap it for the blocker reason?",
     files: ["app/session/AgentCard.tsx", "app/session/activity.css"],
     branch: "of/nova-agent-cards",
     time: "8m",
@@ -311,6 +314,7 @@ export const initialAgents: Agent[] = [
     status: "blocked",
     progress: 34,
     detail: "Waiting on event payload shape from Atlas",
+    alert: "Atlas has not landed the event payload shape yet, so the reducer tests cannot be written.",
     files: ["tests/session-reducer.test.ts"],
     branch: "of/sentry-reducer-tests",
     time: "6m",
@@ -328,9 +332,10 @@ export const initialAgents: Agent[] = [
     task: "Integrated change review",
     owner: "Ali",
     color: "#4e6f8a",
-    status: "reviewing",
+    status: "idle",
     progress: 41,
     detail: "Checking task boundaries and combined type safety",
+    alert: "Nothing left to review until Atlas and Nova push their next commits.",
     files: ["server/session/reducer.ts", "app/session/AgentCard.tsx"],
     branch: "of/proof-integrated-review",
     time: "4m",
@@ -348,7 +353,7 @@ export const initialAgents: Agent[] = [
     task: "Sequencing session work",
     owner: "System",
     color: "#4c6d88",
-    status: "running",
+    status: "writing",
     progress: 100,
     detail: "Sequencing Atlas → Nova → Sentry integration and watching for scope conflicts.",
     files: [],
@@ -368,7 +373,7 @@ export const initialAgents: Agent[] = [
     task: "Answering questions from the team",
     owner: "System",
     color: "#8b6bb1",
-    status: "running",
+    status: "writing",
     progress: 100,
     detail: "Waiting for questions.",
     files: [],
@@ -836,7 +841,7 @@ export const agentFileLibrary: Record<string, { path: string; lines: string[] }[
         "  transition: width 220ms ease;",
         "}",
         "",
-        '.agent-card[data-status="running"] .status-dot {',
+        '.agent-card[data-status="writing"] .status-dot {',
         "  animation: pulse 1.6s ease-in-out infinite;",
         "}",
       ],
@@ -1042,7 +1047,7 @@ export function agentFromDraft(draft: AgentDraft, sequence: number): Agent {
     task: draft.task.trim(),
     owner: draft.owner,
     color: draft.color,
-    status: draft.roleId === "reviewer" ? "reviewing" : "running",
+    status: draft.roleId === "reviewer" ? "reviewing" : "writing",
     progress: 4,
     detail: preset.detail,
     files: files.length > 0 ? files : ["No scope claimed yet"],
@@ -1061,10 +1066,46 @@ export function autonomyLabel(autonomy: AgentAutonomy): string {
   return autonomyOptions.find((option) => option.value === autonomy)?.label ?? autonomy;
 }
 
+/* Returns a `.state-tag[data-tone]` name, not a status — the two vocabularies differ. */
 export function statusTone(status: AgentStatus): string {
   if (status === "blocked") return "blocked";
+  if (status === "needs-input") return "attention";
+  if (status === "idle" || status === "complete") return "waiting";
   if (status === "reviewing") return "review";
   return "running";
+}
+
+export function statusLabel(status: AgentStatus): string {
+  return status === "needs-input" ? "needs input" : status;
+}
+
+/* The callout shown on a focused agent. Null for states that need nothing from a human. */
+export function statusAlert(agent: Agent): { title: string; body: string; action: string; notice: string } | null {
+  if (agent.status === "needs-input") {
+    return {
+      title: "Needs your input",
+      body: agent.alert ?? `${agent.name} is waiting on an answer before it can keep going.`,
+      action: "Answer",
+      notice: `${agent.name} was told you are drafting an answer`,
+    };
+  }
+  if (agent.status === "blocked") {
+    return {
+      title: "Blocked",
+      body: agent.alert ?? agent.detail,
+      action: "Nudge owner",
+      notice: `${agent.owner} was asked to unblock ${agent.name}`,
+    };
+  }
+  if (agent.status === "idle") {
+    return {
+      title: "Idle",
+      body: agent.alert ?? `${agent.name} has no work queued right now.`,
+      action: "Resume",
+      notice: `${agent.name} was asked to pick up new work`,
+    };
+  }
+  return null;
 }
 
 export function agentKindLabel(agent: Agent): string {
@@ -1111,7 +1152,7 @@ export function spawnQSubAgent(question: string, owner: string, sequence: number
     task: shortQuestion,
     owner,
     color: "#8b6bb1",
-    status: "running",
+    status: "writing",
     progress: 50,
     detail: `Answering: "${shortQuestion}"`,
     files: [],

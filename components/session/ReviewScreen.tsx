@@ -19,6 +19,7 @@ import {
   integrationWarnings,
   repoSummary,
   reviewChecks,
+  statusLabel,
   statusTone,
 } from "./data";
 import { ConflictResolver } from "./ConflictResolver";
@@ -163,7 +164,7 @@ export function ReviewScreen({
               </div>
               <div>
                 <span className="label">Status</span>
-                <strong data-tone={statusTone(viewedAgent.status)}>{viewedAgent.status}</strong>
+                <strong data-tone={statusTone(viewedAgent.status)}>{statusLabel(viewedAgent.status)}</strong>
               </div>
             </>
           ) : (
