@@ -1,9 +1,10 @@
 "use client";
 
 import { useState, type CSSProperties } from "react";
-import { QueueItem, QueueScope } from "./data";
-import { SegmentedControl } from "./primitives";
+import { QueueItem, QueueOrderMode, QueueScope } from "./data";
+import { Icon, SegmentedControl } from "./primitives";
 import { Panel, PanelChrome } from "./Rail";
+import { QueueOrderMenu } from "./QueueOrderMenu";
 
 const scopeOptions: { value: QueueScope; label: string }[] = [
   { value: "mine", label: "You" },
@@ -15,20 +16,39 @@ export function PromptQueue({
   items,
   scope,
   onScope,
+  orderMode,
+  onOrderMode,
+  draggedItemId,
+  onItemDragStart,
+  onItemDragEnd,
+  onItemDrop,
   selectedAgentName,
 }: {
   chrome: PanelChrome;
   items: QueueItem[];
   scope: QueueScope;
   onScope: (scope: QueueScope) => void;
+  orderMode: QueueOrderMode;
+  onOrderMode: (mode: QueueOrderMode) => void;
+  draggedItemId: string | null;
+  onItemDragStart: (id: string) => void;
+  onItemDragEnd: () => void;
+  onItemDrop: (targetId: string) => void;
   selectedAgentName: string;
 }) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
-  const visible = scope === "mine" ? items.filter((item) => item.author === "You") : items;
-  const sorted = [...visible].sort((a, b) => a.position - b.position);
+  const canReorder = scope === "team";
+  const manual = orderMode === "manual" && canReorder;
+  const sorted = scope === "mine" ? items.filter((item) => item.author === "You") : items;
 
   return (
-    <Panel chrome={chrome} title="Queue" meta={`${sorted.length} waiting`} badge={`${sorted.length}`}>
+    <Panel
+      chrome={chrome}
+      title="Queue"
+      meta={`${sorted.length} waiting`}
+      badge={`${sorted.length}`}
+      actions={canReorder ? <QueueOrderMenu mode={orderMode} onChange={onOrderMode} /> : undefined}
+    >
       <div className="queue-toolbar">
         <SegmentedControl label="Queue scope" value={scope} onChange={onScope} options={scopeOptions} />
       </div>
@@ -48,9 +68,24 @@ export function PromptQueue({
             const long = item.prompt.length > 110;
             const open = expanded[item.id] === true;
             return (
-              <li key={item.id} className="queue-item">
+              <li
+                key={item.id}
+                className="queue-item"
+                data-manual={manual ? "true" : undefined}
+                data-dragging={draggedItemId === item.id ? "true" : undefined}
+                draggable={manual}
+                onDragStart={manual ? () => onItemDragStart(item.id) : undefined}
+                onDragEnd={manual ? onItemDragEnd : undefined}
+                onDragOver={manual ? (event) => event.preventDefault() : undefined}
+                onDrop={manual ? () => onItemDrop(item.id) : undefined}
+              >
                 <div className="queue-item-head">
                   <span className="queue-identity">
+                    {manual && (
+                      <span className="queue-grip" title="Drag to reorder" aria-hidden="true">
+                        <Icon name="grip" />
+                      </span>
+                    )}
                     <span className="queue-position" aria-label={`Queue position ${item.position}`}>
                       #{item.position}
                     </span>

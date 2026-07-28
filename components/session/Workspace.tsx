@@ -8,6 +8,7 @@ import {
   DockMode,
   PanelId,
   QueueItem,
+  QueueOrderMode,
   QueueScope,
   RailId,
   TeamChatMessage,
@@ -47,6 +48,9 @@ export function Workspace({ sessionTitle }: { sessionTitle: string }) {
   const [assignments, setAssignments] = useState(initialAssignments);
   const [queue, setQueue] = useState<QueueItem[]>(initialQueue);
   const [queueScope, setQueueScope] = useState<QueueScope>("team");
+  const [queueOrderMode, setQueueOrderMode] = useState<QueueOrderMode>("auto");
+  const [manualQueueOrder, setManualQueueOrder] = useState<string[]>([]);
+  const [draggedQueueItem, setDraggedQueueItem] = useState<string | null>(null);
   const [selectedAgentId, setSelectedAgentId] = useState("atlas");
   const [conflictResolved, setConflictResolved] = useState(false);
   const [centerMode, setCenterMode] = useState<CenterMode>("activity");
@@ -68,6 +72,24 @@ export function Workspace({ sessionTitle }: { sessionTitle: string }) {
   const [teamChat, setTeamChat] = useState<TeamChatMessage[]>(initialTeamChat);
   const [teamPanelView, setTeamPanelView] = useState<TeamPanelView>("goals");
   const workspaceRef = useRef<HTMLDivElement>(null);
+
+  const globalQueueOrder = useMemo(() => {
+    const autoIds = [...queue].sort((a, b) => a.position - b.position).map((item) => item.id);
+    if (queueOrderMode === "auto") return autoIds;
+    const known = manualQueueOrder.filter((id) => queue.some((item) => item.id === id));
+    const knownSet = new Set(known);
+    const rest = autoIds.filter((id) => !knownSet.has(id));
+    return [...known, ...rest];
+  }, [queue, queueOrderMode, manualQueueOrder]);
+
+  const orderedQueue = useMemo(
+    () =>
+      globalQueueOrder.map((id, index) => {
+        const item = queue.find((entry) => entry.id === id)!;
+        return { ...item, position: index + 1 };
+      }),
+    [globalQueueOrder, queue],
+  );
 
   const selectedAgent = agents.find((agent) => agent.id === selectedAgentId) ?? agents[0];
   const addressable = routableAgents(agents);
@@ -263,6 +285,18 @@ export function Workspace({ sessionTitle }: { sessionTitle: string }) {
     setDraggedPanel(null);
   }
 
+  function dropQueueItem(targetId: string) {
+    if (!draggedQueueItem || draggedQueueItem === targetId) {
+      setDraggedQueueItem(null);
+      return;
+    }
+    const next = globalQueueOrder.filter((id) => id !== draggedQueueItem);
+    const targetIndex = next.indexOf(targetId);
+    next.splice(targetIndex, 0, draggedQueueItem);
+    setManualQueueOrder(next);
+    setDraggedQueueItem(null);
+  }
+
   function toggleRail(rail: RailId) {
     setCollapsedRails((current) => ({ ...current, [rail]: !current[rail] }));
   }
@@ -337,9 +371,15 @@ export function Workspace({ sessionTitle }: { sessionTitle: string }) {
       return (
         <PromptQueue
           chrome={chrome}
-          items={queue}
+          items={orderedQueue}
           scope={queueScope}
           onScope={setQueueScope}
+          orderMode={queueOrderMode}
+          onOrderMode={setQueueOrderMode}
+          draggedItemId={draggedQueueItem}
+          onItemDragStart={setDraggedQueueItem}
+          onItemDragEnd={() => setDraggedQueueItem(null)}
+          onItemDrop={dropQueueItem}
           selectedAgentName={selectedAgent.name}
         />
       );

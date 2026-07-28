@@ -25,7 +25,8 @@ export type IconName =
   | "close"
   | "more"
   | "pencil"
-  | "message";
+  | "message"
+  | "sliders";
 
 const glyphs: Record<IconName, ReactNode> = {
   grip: (
@@ -92,6 +93,16 @@ const glyphs: Record<IconName, ReactNode> = {
     </>
   ),
   message: <path d="M3.2 4.5h9.6a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1H8l-2.6 2.3v-2.3H3.2a1 1 0 0 1-1-1v-5a1 1 0 0 1 1-1z" />,
+  sliders: (
+    <>
+      <path d="M4 13V7.6M4 5.2V3" />
+      <circle cx="4" cy="6.4" r="1.3" fill="currentColor" stroke="none" />
+      <path d="M8 13V9.6M8 7.2V3" />
+      <circle cx="8" cy="8.4" r="1.3" fill="currentColor" stroke="none" />
+      <path d="M12 13V10.6M12 8.2V3" />
+      <circle cx="12" cy="9.4" r="1.3" fill="currentColor" stroke="none" />
+    </>
+  ),
 };
 
 export function Icon({ name, size = 14, className }: { name: IconName; size?: number; className?: string }) {

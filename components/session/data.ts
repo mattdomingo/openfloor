@@ -8,6 +8,7 @@ export type AgentLayout = "focus" | "all";
 export type DockMode = "focus" | "persistent" | "live";
 export type WorkspaceScreen = "workspace" | "review";
 export type QueueScope = "mine" | "team";
+export type QueueOrderMode = "auto" | "manual";
 export type QueueStatus = "queued" | "waiting";
 export type FileState = "modified" | "attention" | "pending";
 export type CheckState = "passed" | "waiting" | "failed";

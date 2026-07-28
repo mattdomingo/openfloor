@@ -15,6 +15,7 @@
 }
 
 .panel-head {
+  position: relative;
   display: flex;
   align-items: center;
   gap: var(--space-3);
@@ -1951,6 +1952,84 @@
   font-weight: 650;
 }
 
+.queue-order-trigger {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-panel);
+  color: var(--text-secondary);
+}
+
+.queue-order-trigger:hover,
+.queue-order-trigger[aria-expanded="true"] {
+  border-color: color-mix(in srgb, var(--text-primary) 35%, transparent);
+  color: var(--text-primary);
+}
+
+.queue-order-trigger[data-active="true"] {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--line-strong));
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.queue-order-list {
+  position: absolute;
+  top: calc(100% + var(--space-1));
+  right: var(--space-4);
+  z-index: 30;
+  min-width: 190px;
+  margin: 0;
+  padding: var(--space-1);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  box-shadow: var(--elevation-2);
+  list-style: none;
+}
+
+.queue-order-list li {
+  margin: 0;
+}
+
+.queue-order-list button {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  width: 100%;
+  padding: var(--space-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-primary);
+  text-align: left;
+}
+
+.queue-order-list button:hover {
+  background: var(--surface-header);
+}
+
+.queue-order-list button[data-selected="true"] {
+  background: var(--accent-soft);
+}
+
+.queue-order-list button span {
+  font-size: var(--text-sm);
+  font-weight: 650;
+}
+
+.queue-order-list button[data-selected="true"] span {
+  color: var(--accent);
+}
+
+.queue-order-list button small {
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+}
+
 .floor-presence {
   display: flex;
   align-items: center;
@@ -2491,6 +2570,21 @@
   border-radius: var(--radius-md);
   background: var(--surface-raised);
   box-shadow: var(--elevation-1);
+}
+
+.queue-item[data-manual="true"] {
+  cursor: grab;
+}
+
+.queue-item[data-dragging="true"] {
+  opacity: 0.5;
+}
+
+.queue-grip {
+  display: inline-flex;
+  align-items: center;
+  color: var(--text-tertiary);
+  cursor: grab;
 }
 
 .queue-item-head {
