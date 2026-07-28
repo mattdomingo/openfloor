@@ -112,6 +112,8 @@ export type QueueItem = {
   position: number;
   status: QueueStatus;
   queuedAt: string;
+  /* Set when OpenMind chose the agent instead of the author naming one. */
+  routedByOpenMind?: boolean;
 };
 
 export type ReviewCheck = {
@@ -1132,13 +1134,14 @@ export function resolveAgentMention(text: string, agents: Agent[]): Agent | null
   return routableAgents(agents).find((agent) => agent.name.toLowerCase() === mentioned) ?? null;
 }
 
-/* OpenMind's default pick when nobody names an agent: whoever's blocked, else whoever has the least progress. */
+/* OpenMind's pick when nobody names an agent. The real router will read the prompt against what
+   each worker owns; for the demo it picks at random from whoever is still able to take work. */
 export function pickAgentForOpenMind(agents: Agent[]): Agent {
   const workers = agents.filter((agent) => agent.kind === "worker");
-  const blocked = workers.find((agent) => agent.status === "blocked");
-  if (blocked) return blocked;
+  const available = workers.filter((agent) => agent.status !== "complete");
+  const pool = available.length > 0 ? available : workers;
 
-  return workers.reduce((leastDone, agent) => (agent.progress < leastDone.progress ? agent : leastDone), workers[0]);
+  return pool[Math.floor(Math.random() * pool.length)];
 }
 
 /* A short-lived agent Q spins up to answer a question while its primary thread is busy. */

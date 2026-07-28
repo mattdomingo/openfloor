@@ -2826,6 +2826,13 @@
   color: var(--text-primary);
 }
 
+.queue-chip[data-kind="router"] {
+  border-style: dashed;
+  border-color: var(--line-strong);
+  background: transparent;
+  color: var(--text-secondary);
+}
+
 .queue-empty {
   margin: var(--space-4);
   padding: var(--space-5) var(--space-4);
