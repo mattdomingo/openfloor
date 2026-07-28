@@ -37,7 +37,7 @@ export function HomeScreen({ user }: { user: MockUser }) {
       <header className="topbar">
         <Link href="/home" className="brand">
           {/* eslint-disable-next-line @next/next/no-img-element -- static mark, no next/image config in this Vite host */}
-          <img className="brand-mark" src="/openfloor-mark.png" alt="" aria-hidden="true" />
+          <img className="brand-mark" src="/app/openfloor-mark.png" alt="" aria-hidden="true" />
           OPENFLOOR
         </Link>
 

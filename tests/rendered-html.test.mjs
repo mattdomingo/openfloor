@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-async function render(path = "/") {
+// The app is mounted under /app so it can share opnflr.com with the marketing
+// site. Paths here are app-relative; fetchPath() is the raw URL the Worker sees.
+const BASE_PATH = "/app";
+
+async function fetchPath(path) {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
   workerUrl.searchParams.set("test", `${process.pid}-${Date.now()}`);
   const { default: worker } = await import(workerUrl.href);
@@ -11,6 +15,10 @@ async function render(path = "/") {
     { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) } },
     { waitUntil() {}, passThroughOnException() {} },
   );
+}
+
+async function render(path = "/") {
+  return fetchPath(path === "/" ? BASE_PATH : BASE_PATH + path);
 }
 
 test("server-renders the OpenFloor landing page", async () => {
@@ -45,6 +53,16 @@ test("emits product social metadata from the request origin", async () => {
   const response = await render("/");
   const html = await response.text();
   assert.match(html, /property="og:title" content="OpenFloor"/);
-  assert.match(html, /property="og:image" content="http:\/\/localhost:3000\/og-v3.png"/);
+  assert.match(html, /property="og:image" content="http:\/\/localhost:3000\/app\/og-v3.png"/);
   assert.match(html, /name="twitter:card" content="summary_large_image"/);
+});
+
+// The marketing site owns every other path on opnflr.com. If the app ever
+// answers outside its prefix the two deploys are fighting over the same URL,
+// and whichever Cloudflare picks first wins — so pin the mount point.
+test("serves nothing outside its basePath", async () => {
+  for (const path of ["/", "/home", "/why", "/session/realtime-presence"]) {
+    const response = await fetchPath(path);
+    assert.equal(response.status, 404, `expected 404 for un-prefixed ${path}`);
+  }
 });

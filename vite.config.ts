@@ -11,9 +11,11 @@ const { d1, r2 } = hostingConfig;
 // macOS Seatbelt blocks FSEvents, so Codex previews need polling for HMR.
 const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === "seatbelt";
 
+// compatibility_flags now lives in wrangler.jsonc, which the Cloudflare plugin
+// merges on top of this. Setting nodejs_compat in both appends rather than
+// dedupes, and the runtime rejects a flag it sees twice.
 const localBindingConfig = {
   main: "./worker/index.ts",
-  compatibility_flags: ["nodejs_compat"],
   d1_databases: d1
     ? [
         {

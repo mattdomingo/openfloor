@@ -42,9 +42,11 @@
 
 .brand-mark {
   display: block;
-  width: 26px;
-  height: 26px;
-  object-fit: contain;
+  /* The mark is 736x256, so a square box letterboxed it down to 26x9. Size it
+     by height and let the width follow, which lands on the 57.5x20 the
+     marketing site's nav uses. */
+  height: 20px;
+  width: auto;
 }
 
 .session-path {
