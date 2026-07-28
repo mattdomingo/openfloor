@@ -54,7 +54,7 @@ export function Workspace({ sessionTitle }: { sessionTitle: string }) {
   const [selectedAgentId, setSelectedAgentId] = useState("atlas");
   const [conflictResolved, setConflictResolved] = useState(false);
   const [centerMode, setCenterMode] = useState<CenterMode>("activity");
-  const [agentLayout, setAgentLayout] = useState<AgentLayout>("focus");
+  const [agentLayout, setAgentLayout] = useState<AgentLayout>("all");
   const [panelOrder, setPanelOrder] = useState<PanelId[]>(["brief", "floor", "queue"]);
   const [railWidths, setRailWidths] = useState<Record<RailId, number>>({ brief: 340, queue: 326 });
   const [collapsedRails, setCollapsedRails] = useState<Record<RailId, boolean>>({ brief: false, queue: false });
