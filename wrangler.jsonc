@@ -17,9 +17,15 @@
   // arrive at the apex and would hit Pages. The marketing site addresses its
   // own hashed files under /dist, never /assets, so claiming this one prefix
   // costs it nothing.
+  //
+  // "/app" and "/app/*" is the precise pair, but a pattern with no wildcard has
+  // to match the whole URL including the query string, so opnflr.com/app?utm=x
+  // fell through to Pages and served the marketing page. Query strings cannot
+  // go in a pattern either (the API rejects them), so the prefix wildcard is
+  // the only form that covers them. It also matches /approach and anything
+  // else starting with "app", which test.mjs in the site repo now guards.
   "routes": [
-    { "pattern": "opnflr.com/app", "zone_name": "opnflr.com" },
-    { "pattern": "opnflr.com/app/*", "zone_name": "opnflr.com" },
+    { "pattern": "opnflr.com/app*", "zone_name": "opnflr.com" },
     { "pattern": "opnflr.com/assets/_vinext_fonts/*", "zone_name": "opnflr.com" }
   ],
 
