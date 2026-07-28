@@ -88,7 +88,7 @@ export function ConflictResolver({
               <section className="conflict-pane">
                 <div className="conflict-pane-head">
                   <strong>Current change · {conflict.ours.agentName}</strong>
-                  <button type="button" className="button" data-variant="quiet" onClick={acceptCurrent}>
+                  <button type="button" className="button" data-size="sm" onClick={acceptCurrent}>
                     Accept current
                   </button>
                 </div>
@@ -105,7 +105,7 @@ export function ConflictResolver({
               <section className="conflict-pane">
                 <div className="conflict-pane-head">
                   <strong>Incoming change · {conflict.theirs.agentName}</strong>
-                  <button type="button" className="button" data-variant="quiet" onClick={acceptIncoming}>
+                  <button type="button" className="button" data-size="sm" onClick={acceptIncoming}>
                     Accept incoming
                   </button>
                 </div>
@@ -121,7 +121,7 @@ export function ConflictResolver({
             </div>
 
             <div className="conflict-actions">
-              <button type="button" className="button" data-variant="quiet" onClick={acceptBoth}>
+              <button type="button" className="button" data-size="sm" onClick={acceptBoth}>
                 Accept both
               </button>
             </div>

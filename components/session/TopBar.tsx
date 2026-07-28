@@ -52,7 +52,12 @@ export function TopBar({
           <Icon name="plus" />
           Invite
         </button>
-        <button type="button" className="icon-button" aria-label="Session menu">
+        <button
+          type="button"
+          className="icon-button"
+          aria-label="Session menu"
+          onClick={() => onNotice("Session settings · rename, archive, and access")}
+        >
           <Icon name="more" />
         </button>
       </div>

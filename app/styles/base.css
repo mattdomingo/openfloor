@@ -37,6 +37,41 @@ button {
   cursor: pointer;
 }
 
+/* One motion contract for everything you can touch: colour and elevation ease
+   on the same curve, so no control in the product snaps while its neighbour
+   glides. Components add their own transforms on top. */
+button,
+a,
+input,
+select,
+textarea,
+summary,
+[role="button"],
+.chip,
+.panel,
+.agent-card,
+.code-card,
+.session-card,
+.owner-card,
+.queue-item,
+.lane,
+.decision,
+.attention-item {
+  transition: var(--transition-interactive);
+}
+
+/* Press feedback. Small enough to feel physical, not bouncy. */
+.button:active,
+.icon-button:active,
+.chip:active,
+.send:active,
+.attention-trigger:active,
+.segmented button:active,
+.screen-nav button:active {
+  transform: scale(0.97);
+  transition-duration: var(--dur-snap);
+}
+
 :focus-visible {
   outline: none;
   box-shadow: var(--focus-ring);
@@ -151,5 +186,18 @@ pre {
     50% {
       box-shadow: 0 0 0 4px rgba(61, 123, 97, 0);
     }
+  }
+}
+
+/* Motion is decoration everywhere in this interface — no state is conveyed by
+   movement alone, so it is safe to switch all of it off at once. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }

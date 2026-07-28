@@ -5,11 +5,6 @@
   flex-direction: column;
   height: 100vh;
   overflow-y: auto;
-  padding-bottom: var(--dock-height);
-}
-
-.app-shell[data-screen="review"] {
-  padding-bottom: 0;
 }
 
 /* Top bar --------------------------------------------------------------- */
@@ -197,15 +192,30 @@
   color: var(--accent);
 }
 
+/* Editing marks itself with a rule in the gutter rather than by indenting the
+   text: the objective stays on exactly the same baseline it was reading on. */
+.objective-main:has(.objective-input) {
+  position: relative;
+}
+
+.objective-main:has(.objective-input)::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: calc(-1 * var(--space-2));
+  width: 2px;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+}
+
 .objective-input {
   display: block;
   width: 100%;
-  min-height: 84px;
+  min-height: 56px;
+  margin: 0;
   padding: 0;
   border: 0;
-  border-left: 2px solid var(--accent);
-  padding-left: var(--space-3);
-  margin-left: -14px;
   background: none;
   outline: none;
   resize: none;
@@ -258,8 +268,6 @@
   font-weight: 700;
 }
 
-/* Attention strip ------------------------------------------------------- */
-
 /* Workspace ------------------------------------------------------------- */
 
 .workspace {
@@ -273,10 +281,32 @@
   overflow: hidden;
 }
 
+/* Switching between Workspace and Review swaps the whole body; a short fade
+   reads as one surface changing rather than two screens cutting. */
+@media (prefers-reduced-motion: no-preference) {
+  .workspace,
+  .review-screen {
+    animation: screen-in var(--dur-float) var(--ease-out);
+  }
+
+  @keyframes screen-in {
+    from {
+      opacity: 0;
+    }
+  }
+}
+
 .panel-slot {
   position: relative;
   display: flex;
   min-width: 0;
+  transition: flex-basis var(--dur-float) var(--ease-out), opacity var(--dur-base) var(--ease-standard);
+}
+
+/* Dragging the divider sets the width every frame; easing it would lag the
+   pointer, so the transition is suspended for the duration of the drag. */
+.workspace[data-resizing="true"] .panel-slot {
+  transition: none;
 }
 
 .panel-slot[data-dragging="true"] {
@@ -318,18 +348,28 @@
 
 /* Floor dock ------------------------------------------------------------ */
 
+/* The dock sits in the page flow, not over it: the workspace ends where the
+   dock begins, so nothing above is ever covered by the composer. */
 .dock {
-  position: fixed;
-  left: 0;
-  right: 0;
-  bottom: 0;
+  position: relative;
   z-index: 20;
-  min-height: var(--dock-height);
+  flex: none;
   border-top: 1px solid var(--line-strong);
-  background: color-mix(in srgb, var(--surface-raised) 90%, transparent);
-  backdrop-filter: blur(16px);
-  box-shadow: 0 -6px 24px rgba(40, 32, 18, 0.1);
-  overflow: visible;
+  background: var(--surface-raised);
+  box-shadow: 0 -6px 24px rgba(40, 32, 18, 0.08);
+}
+
+/* A reserved band across the top of the dock. Alerts anchor at its left, the
+   status line reads out at its right — both keep a fixed slot, so neither one
+   floats over the workspace and neither shifts the layout when it changes. */
+.dock-rail {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  height: var(--dock-rail-height);
+  padding: 0 var(--space-6);
+  border-bottom: 1px solid var(--line-soft);
+  background: var(--surface-header);
 }
 
 .dock-inner {
@@ -337,42 +377,48 @@
   align-items: stretch;
   gap: var(--space-3);
   padding: var(--space-2) var(--space-6);
-  overflow: visible;
 }
 
-/* Toast ----------------------------------------------------------------- */
+/* Status line ------------------------------------------------------------
+   The running commentary on what just happened. It always sits in a band of
+   its own — the dock rail on the workspace, .status-bar on review — so a
+   notice never lands on top of the thing it is describing. */
 
-.toast {
-  position: fixed;
-  right: var(--space-6);
-  bottom: calc(var(--dock-height) + var(--space-4));
-  z-index: 40;
+.status-bar {
+  display: flex;
+  align-items: center;
+  flex: none;
+  height: var(--dock-rail-height);
+  padding: 0 var(--space-6);
+  border-top: 1px solid var(--line-strong);
+  background: var(--surface-raised);
+}
+
+.status-line {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  max-width: min(420px, calc(100vw - var(--space-8)));
-  padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-md);
-  background: var(--surface-inverse);
-  color: var(--text-inverse);
+  min-width: 0;
+  margin-left: auto;
+  color: var(--text-secondary);
   font-size: var(--text-xs);
-  box-shadow: var(--elevation-2);
-  pointer-events: none;
+  transition: opacity var(--dur-float) var(--ease-out), transform var(--dur-float) var(--ease-out);
 }
 
-.toast .icon {
-  color: #82b79a;
+.status-line span {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
-.toast[data-visible="false"] {
+.status-line .icon {
+  color: var(--status-running);
+}
+
+.status-line[data-visible="false"] {
   opacity: 0;
-  transform: translateY(6px);
-}
-
-@media (prefers-reduced-motion: no-preference) {
-  .toast {
-    transition: opacity 0.35s ease, transform 0.35s ease;
-  }
+  transform: translateY(3px);
 }
 
 /* Responsive ------------------------------------------------------------ */
@@ -398,8 +444,23 @@
     justify-content: flex-start;
   }
 
+  /* Stacked columns can't share a fixed frame, so the screen scrolls as one. */
+  .review-screen {
+    overflow: auto;
+  }
+
   .review-grid {
     grid-template-columns: minmax(0, 1fr);
+    align-items: start;
+  }
+
+  .review-side {
+    overflow: visible;
+  }
+
+  .review-diff > .review-code {
+    flex: none;
+    max-height: 420px;
   }
 }
 
@@ -408,7 +469,6 @@
     height: auto;
     min-height: 100vh;
     overflow-y: visible;
-    padding-bottom: 0;
   }
 
   .topbar {
@@ -446,18 +506,13 @@
     display: none;
   }
 
-  .dock {
-    position: sticky;
-    min-height: 0;
+  .dock-rail,
+  .status-bar {
+    padding: 0 var(--space-4);
   }
 
   .dock-inner {
     padding: var(--space-3) var(--space-4);
-  }
-
-  .toast {
-    right: var(--space-4);
-    bottom: var(--space-4);
   }
 }
 

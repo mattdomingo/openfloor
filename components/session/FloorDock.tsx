@@ -6,6 +6,7 @@ import { Avatar, Icon, SegmentedControl } from "./primitives";
 import { AttentionStrip } from "./AttentionStrip";
 import { AgentTargetMenu } from "./AgentTargetMenu";
 import { MentionComposer } from "./MentionComposer";
+import { StatusLine } from "./StatusLine";
 
 export type FloorLane = Draft & { text: string; typing: boolean };
 
@@ -35,6 +36,8 @@ export function FloorDock({
   previewTargetAgent,
   textareaRef,
   onAnswer,
+  notice,
+  noticeVisible,
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -42,6 +45,8 @@ export function FloorDock({
   onNotice: (notice: string) => void;
   textareaRef: RefObject<HTMLTextAreaElement | null>;
   onAnswer: (agent: Agent) => void;
+  notice: string;
+  noticeVisible: boolean;
   dockMode: DockMode;
   onDockModeChange: (mode: DockMode) => void;
   lanes: FloorLane[];
@@ -66,15 +71,21 @@ export function FloorDock({
 
   return (
     <section className="dock" aria-label="Open floor" data-mode={dockMode}>
-      <AttentionStrip
-        agents={agents}
-        checks={checks}
-        conflictResolved={conflictResolved}
-        onResolveConflict={onResolveConflict}
-        onOpenChecks={onOpenChecks}
-        onNotice={onNotice}
-        onAnswer={onAnswer}
-      />
+      {/* Alerts and the running status share a reserved band above the
+          composer, so neither ever sits on top of the workspace. */}
+      <div className="dock-rail">
+        <AttentionStrip
+          agents={agents}
+          checks={checks}
+          conflictResolved={conflictResolved}
+          onResolveConflict={onResolveConflict}
+          onOpenChecks={onOpenChecks}
+          onNotice={onNotice}
+          onAnswer={onAnswer}
+        />
+        <StatusLine notice={notice} visible={noticeVisible} />
+      </div>
+
       <div className="dock-inner">
         <form className="composer" onSubmit={onSubmit}>
           <div className="composer-head">

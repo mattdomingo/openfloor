@@ -137,44 +137,45 @@ export function AttentionStrip({
         className="attention-trigger"
         aria-expanded={panelOpen}
         aria-controls={listId}
-        aria-label={
-          panelOpen
-            ? "Close alerts"
-            : `Needs you, ${items.length} ${items.length === 1 ? "alert" : "alerts"}`
-        }
         onClick={() => setOpen((current) => !current)}
       >
-        <Icon name={panelOpen ? "close" : "alert"} size={12} />
-        {!panelOpen && <span className="attention-count">{items.length}</span>}
+        <Icon name="alert" size={12} />
+        <span className="attention-trigger-label">Needs you</span>
+        <span className="attention-count">{items.length}</span>
+        <Icon name="chevronDown" size={12} className="attention-caret" />
       </button>
 
-      <ul className="attention-list" id={listId} aria-label="Needs you" hidden={!panelOpen}>
-        {items.map((item) => (
-          <li key={item.id} className="attention-item" data-kind={item.kind}>
-            <span className="attention-mark">
-              <Icon name={marks[item.kind]} size={12} />
-            </span>
-            <div className="attention-copy">
-              <strong>{item.title}</strong>
-              <p>{item.detail}</p>
-            </div>
-            {item.action && (
-              <button
-                type="button"
-                className="button"
-                data-size="sm"
-                data-variant={item.action.primary ? "primary" : "quiet"}
-                onClick={() => {
-                  item.action?.onClick();
-                  setOpen(false);
-                }}
-              >
-                {item.action.label}
-              </button>
-            )}
-          </li>
-        ))}
-      </ul>
+      {/* A single anchored card, not a row of floating tiles: it opens upward
+          from the trigger, scrolls internally, and covers nothing beside it. */}
+      <div className="attention-panel" id={listId} role="group" aria-label="Needs you" hidden={!panelOpen}>
+        <ul className="attention-list">
+          {items.map((item) => (
+            <li key={item.id} className="attention-item" data-kind={item.kind}>
+              <span className="attention-mark">
+                <Icon name={marks[item.kind]} size={12} />
+              </span>
+              <div className="attention-copy">
+                <strong>{item.title}</strong>
+                <p>{item.detail}</p>
+              </div>
+              {item.action && (
+                <button
+                  type="button"
+                  className="button"
+                  data-size="sm"
+                  data-variant={item.action.primary ? "primary" : undefined}
+                  onClick={() => {
+                    item.action?.onClick();
+                    setOpen(false);
+                  }}
+                >
+                  {item.action.label}
+                </button>
+              )}
+            </li>
+          ))}
+        </ul>
+      </div>
     </div>
   );
 }

@@ -52,8 +52,10 @@ export function BriefRail({
     />
   );
 
+  /* No meta line on this panel: Goals/Chat leaves the head too tight for one,
+     and the roster below already answers "how many people". */
   return (
-    <Panel chrome={chrome} title="Team" meta={`${assignments.length} people`} badge={`${assignments.length}`} actions={controls}>
+    <Panel chrome={chrome} title="Team" badge={`${assignments.length}`} actions={controls}>
       {view === "chat" ? (
         <TeamChat messages={messages} onSend={onSendMessage} />
       ) : (

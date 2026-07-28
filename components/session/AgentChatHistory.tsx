@@ -18,8 +18,9 @@ export function AgentChatHistory({ agent, onClose }: { agent: Agent; onClose: ()
         <div className="dialog-title">
           <h2>Chat history</h2>
           <p>
-            {agent.name} <Icon name="branch" size={12} />
-            {agent.branch}
+            <span>{agent.name}</span>
+            <Icon name="branch" size={12} />
+            <span className="value">{agent.branch}</span>
           </p>
         </div>
         <button type="button" className="dialog-close" onClick={onClose} aria-label="Close">

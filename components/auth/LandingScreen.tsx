@@ -85,7 +85,7 @@ export function LandingScreen() {
         />
 
         {tab === "login" && (
-          <form className="landing-form" onSubmit={submitLogin}>
+          <form key="login" className="landing-form" onSubmit={submitLogin}>
             <label className="field">
               <span className="label">Email</span>
               <input
@@ -113,7 +113,7 @@ export function LandingScreen() {
         )}
 
         {tab === "register" && (
-          <form className="landing-form" onSubmit={submitRegister}>
+          <form key="register" className="landing-form" onSubmit={submitRegister}>
             <label className="field">
               <span className="label">Name</span>
               <input value={name} onChange={(event) => setName(event.target.value)} required autoComplete="name" />
@@ -158,7 +158,7 @@ export function LandingScreen() {
         )}
 
         {tab === "join" && (
-          <form className="landing-form" onSubmit={submitJoin}>
+          <form key="join" className="landing-form" onSubmit={submitJoin}>
             <p className="landing-hint">Paste a session code and password from a teammate to jump straight in.</p>
             <label className="field">
               <span className="label">Your name</span>

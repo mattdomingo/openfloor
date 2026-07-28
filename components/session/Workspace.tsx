@@ -28,7 +28,6 @@ import {
   routableAgents,
   spawnQSubAgent,
 } from "./data";
-import { Icon } from "./primitives";
 import { PanelChrome } from "./Rail";
 import { TopBar } from "./TopBar";
 import { ObjectiveBar } from "./ObjectiveBar";
@@ -37,6 +36,7 @@ import { AgentFloor } from "./AgentFloor";
 import { PromptQueue } from "./PromptQueue";
 import { ReviewScreen } from "./ReviewScreen";
 import { FloorDock, FloorLane } from "./FloorDock";
+import { StatusBar } from "./StatusLine";
 
 const RAIL_COLLAPSED_WIDTH = 40;
 const RAIL_MIN_WIDTH = 250;
@@ -61,6 +61,7 @@ export function Workspace({ sessionTitle }: { sessionTitle: string }) {
   const [collapsedRails, setCollapsedRails] = useState<Record<RailId, boolean>>({ brief: false, queue: false });
   const [expandedPanel, setExpandedPanel] = useState<PanelId | null>(null);
   const [draggedPanel, setDraggedPanel] = useState<PanelId | null>(null);
+  const [resizing, setResizing] = useState(false);
   const [sessionGoal, setSessionGoal] = useState(defaultGoal);
   const [message, setMessage] = useState("");
   const [dockMode, setDockMode] = useState<DockMode>("live");
@@ -340,12 +341,16 @@ export function Workspace({ sessionTitle }: { sessionTitle: string }) {
     const direction = rail === left ? 1 : -1;
     const startX = event.clientX;
     const startWidth = railWidths[rail];
+    /* Panels ease to new widths when a rail collapses; while the divider is
+       being dragged they must track the pointer exactly instead. */
+    setResizing(true);
 
     const onMove = (moveEvent: PointerEvent) => {
       const next = startWidth + direction * (moveEvent.clientX - startX);
       setRailWidths((current) => ({ ...current, [rail]: Math.max(RAIL_MIN_WIDTH, Math.min(RAIL_MAX_WIDTH, next)) }));
     };
     const onUp = () => {
+      setResizing(false);
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
     };
@@ -450,7 +455,12 @@ export function Workspace({ sessionTitle }: { sessionTitle: string }) {
         />
       ) : (
         <>
-          <div className="workspace" data-expanded={expandedPanel ? "true" : "false"} ref={workspaceRef}>
+          <div
+            className="workspace"
+            data-expanded={expandedPanel ? "true" : "false"}
+            data-resizing={resizing ? "true" : "false"}
+            ref={workspaceRef}
+          >
             {panelOrder.map((panel, index) => {
               const next = panelOrder[index + 1];
               const showHandle = !expandedPanel && next !== undefined && !(isCollapsed(panel) && panel !== "floor");
@@ -499,14 +509,14 @@ export function Workspace({ sessionTitle }: { sessionTitle: string }) {
             previewTargetAgent={previewTargetAgent}
             textareaRef={composerRef}
             onAnswer={answerAgent}
+            notice={notice}
+            noticeVisible={toastVisible}
           />
         </>
       )}
 
-      <div className="toast" role="status" data-visible={toastVisible ? "true" : "false"}>
-        <Icon name="circle" size={7} />
-        {notice}
-      </div>
+      {/* Review has no dock, so it carries the same status band on its own. */}
+      {screen === "review" && <StatusBar notice={notice} visible={toastVisible} />}
     </main>
   );
 }
