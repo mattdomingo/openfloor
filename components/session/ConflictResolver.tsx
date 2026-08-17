@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import { Conflict } from "./data";
+import { CSSProperties, useEffect, useMemo, useRef, useState } from "react";
+import { Agent, Conflict, ConflictSide } from "./data";
 import { Icon, SegmentedControl } from "./primitives";
 
 type ResolverMode = "manual" | "ai";
+type AcceptChoice = "current" | "incoming" | "both";
 
 const CONFLICT_MARKERS = ["<<<<<<<", "=======", ">>>>>>>"];
 
@@ -20,16 +21,19 @@ function markerText(conflict: Conflict): string {
 
 export function ConflictResolver({
   conflict,
+  agents,
   onResolve,
   onClose,
 }: {
   conflict: Conflict;
+  agents: Agent[];
   onResolve: (conflictId: string) => void;
   onClose: () => void;
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const [mode, setMode] = useState<ResolverMode>("manual");
   const [result, setResult] = useState(() => markerText(conflict));
+  const [choice, setChoice] = useState<AcceptChoice | null>(null);
 
   useEffect(() => {
     dialogRef.current?.showModal();
@@ -37,16 +41,20 @@ export function ConflictResolver({
 
   const hasMarkers = useMemo(() => CONFLICT_MARKERS.some((marker) => result.includes(marker)), [result]);
 
-  function acceptCurrent() {
-    setResult(conflict.ours.lines.join("\n"));
+  function agentColor(side: ConflictSide): string {
+    return agents.find((agent) => agent.id === side.agentId)?.color ?? "var(--accent)";
   }
 
-  function acceptIncoming() {
-    setResult(conflict.theirs.lines.join("\n"));
+  function accept(kind: AcceptChoice) {
+    if (kind === "current") setResult(conflict.ours.lines.join("\n"));
+    else if (kind === "incoming") setResult(conflict.theirs.lines.join("\n"));
+    else setResult([...conflict.ours.lines, ...conflict.theirs.lines].join("\n"));
+    setChoice(kind);
   }
 
-  function acceptBoth() {
-    setResult([...conflict.ours.lines, ...conflict.theirs.lines].join("\n"));
+  function reset() {
+    setResult(markerText(conflict));
+    setChoice(null);
   }
 
   function markResolved() {
@@ -54,7 +62,43 @@ export function ConflictResolver({
   }
 
   function applySuggested() {
-    onResolve(conflict.id);
+    setResult(conflict.resolutionLines.join("\n"));
+    setChoice(null);
+    setMode("manual");
+  }
+
+  function renderPane(side: ConflictSide, other: ConflictSide, label: string, kind: AcceptChoice) {
+    const otherLines = new Set(other.lines);
+    return (
+      <section className="conflict-pane" data-side={kind} style={{ "--agent-color": agentColor(side) } as CSSProperties}>
+        <div className="conflict-pane-head">
+          <strong>
+            <span className="conflict-agent-dot" aria-hidden="true" />
+            {label} · {side.agentName}
+          </strong>
+          <button
+            type="button"
+            className="button"
+            data-size="sm"
+            data-selected={choice === kind ? "true" : "false"}
+            onClick={() => accept(kind)}
+          >
+            Accept {kind}
+          </button>
+        </div>
+        <pre className="review-code">
+          {side.lines.map((text, index) => {
+            const diverges = !otherLines.has(text);
+            return (
+              <span key={index} className="review-line" data-diverges={diverges ? "true" : undefined}>
+                <i>{diverges ? "+" : " "}</i>
+                <code>{text}</code>
+              </span>
+            );
+          })}
+        </pre>
+      </section>
+    );
   }
 
   return (
@@ -85,43 +129,21 @@ export function ConflictResolver({
         {mode === "manual" ? (
           <div className="conflict-manual">
             <div className="conflict-panes">
-              <section className="conflict-pane">
-                <div className="conflict-pane-head">
-                  <strong>Current change · {conflict.ours.agentName}</strong>
-                  <button type="button" className="button" data-size="sm" onClick={acceptCurrent}>
-                    Accept current
-                  </button>
-                </div>
-                <pre className="review-code">
-                  {conflict.ours.lines.map((text, index) => (
-                    <span key={index} className="review-line" data-type="add">
-                      <i>+</i>
-                      <code>{text}</code>
-                    </span>
-                  ))}
-                </pre>
-              </section>
-
-              <section className="conflict-pane">
-                <div className="conflict-pane-head">
-                  <strong>Incoming change · {conflict.theirs.agentName}</strong>
-                  <button type="button" className="button" data-size="sm" onClick={acceptIncoming}>
-                    Accept incoming
-                  </button>
-                </div>
-                <pre className="review-code">
-                  {conflict.theirs.lines.map((text, index) => (
-                    <span key={index} className="review-line" data-type="add">
-                      <i>+</i>
-                      <code>{text}</code>
-                    </span>
-                  ))}
-                </pre>
-              </section>
+              {renderPane(conflict.ours, conflict.theirs, "Current change", "current")}
+              {renderPane(conflict.theirs, conflict.ours, "Incoming change", "incoming")}
             </div>
 
             <div className="conflict-actions">
-              <button type="button" className="button" data-size="sm" onClick={acceptBoth}>
+              <button type="button" className="button" data-size="sm" data-variant="quiet" onClick={reset}>
+                Reset
+              </button>
+              <button
+                type="button"
+                className="button"
+                data-size="sm"
+                data-selected={choice === "both" ? "true" : "false"}
+                onClick={() => accept("both")}
+              >
                 Accept both
               </button>
             </div>
@@ -132,7 +154,10 @@ export function ConflictResolver({
                 className="field-mono"
                 rows={8}
                 value={result}
-                onChange={(event) => setResult(event.target.value)}
+                onChange={(event) => {
+                  setResult(event.target.value);
+                  setChoice(null);
+                }}
                 spellCheck={false}
               />
             </label>
@@ -165,6 +190,11 @@ export function ConflictResolver({
       </div>
 
       <div className="dialog-foot">
+        {mode === "manual" && hasMarkers && (
+          <span className="conflict-markers-hint">
+            <Icon name="alert" size={12} /> Conflict markers remain
+          </span>
+        )}
         <button type="button" className="button" data-variant="quiet" onClick={onClose}>
           Cancel
         </button>
