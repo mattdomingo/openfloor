@@ -15,7 +15,7 @@ import {
   candidateBranch,
   candidateChanges,
   conflicts,
-  diffPreview,
+  diffPreviews,
   integrationWarnings,
   repoSummary,
   reviewChecks,
@@ -80,7 +80,11 @@ export function ReviewScreen({
     [changes],
   );
   const agentDiff = viewedAgent ? agentDiffLines(viewedAgent) : null;
-  const showAgentDiff = Boolean(viewedAgent && agentDiff && selected?.path === agentDiff.path);
+  /* Agent branches fall back to the agent's isolated worktree code when the
+     integrated candidate has no per-file diff for the selection. */
+  const preview = selected
+    ? diffPreviews[selected.id] ?? (viewedAgent && agentDiff && selected.path === agentDiff.path ? agentDiff : undefined)
+    : undefined;
   const openConflict: Conflict | undefined = conflicts.find((entry) => entry.id === openConflictId);
 
   function selectViewMode(mode: ReviewViewMode) {
@@ -265,28 +269,23 @@ export function ReviewScreen({
             )}
           </div>
           {selected && <p className="review-summary">{selected.summary}</p>}
-          {viewedAgent ? (
-            showAgentDiff && agentDiff ? (
-              <pre className="review-code" aria-label={`Diff preview for ${agentDiff.path}`}>
-                {agentDiff.lines.map((line, index) => (
-                  <span key={`${index}-${line.text}`} className="review-line" data-type={line.type}>
-                    <i>{line.type === "add" ? "+" : line.type === "remove" ? "−" : " "}</i>
-                    <code>{line.text}</code>
-                  </span>
-                ))}
-              </pre>
-            ) : (
-              selected && <p className="review-empty">No isolated diff preview available for this file yet.</p>
-            )
-          ) : (
-            <pre className="review-code" aria-label={`Diff preview for ${diffPreview.path}`}>
-              {diffPreview.lines.map((line, index) => (
+          {preview ? (
+            <pre className="review-code" aria-label={`Diff preview for ${preview.path}`}>
+              {preview.lines.map((line, index) => (
                 <span key={`${index}-${line.text}`} className="review-line" data-type={line.type}>
                   <i>{line.type === "add" ? "+" : line.type === "remove" ? "−" : " "}</i>
                   <code>{line.text}</code>
                 </span>
               ))}
             </pre>
+          ) : (
+            selected && (
+              <p className="review-empty">
+                {viewedAgent
+                  ? "No isolated diff preview available for this file yet."
+                  : "No diff preview available for this file yet."}
+              </p>
+            )
           )}
         </section>
 
@@ -357,7 +356,7 @@ export function ReviewScreen({
       </div>
 
       {openConflict && (
-        <ConflictResolver conflict={openConflict} onResolve={resolveConflict} onClose={() => setOpenConflictId(null)} />
+        <ConflictResolver conflict={openConflict} agents={agents} onResolve={resolveConflict} onClose={() => setOpenConflictId(null)} />
       )}
     </section>
   );

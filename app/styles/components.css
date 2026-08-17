@@ -3427,9 +3427,58 @@
   margin: var(--space-3);
 }
 
+/* Each side's pane carries its agent's color so ours vs theirs read apart. */
+.conflict-pane[data-side] .conflict-pane-head {
+  background: color-mix(in srgb, var(--agent-color) 12%, var(--surface-header));
+  border-bottom-color: color-mix(in srgb, var(--agent-color) 35%, var(--line-soft));
+}
+
+.conflict-pane-head strong {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.conflict-agent-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-pill);
+  background: var(--agent-color);
+}
+
+/* Shared lines stay neutral; only the lines the other side lacks light up,
+   tinted by the owning agent's color. */
+.conflict-pane .review-line[data-diverges="true"] {
+  background: color-mix(in srgb, var(--agent-color) 22%, transparent);
+}
+
+.conflict-pane .review-line[data-diverges="true"] i,
+.conflict-pane .review-line[data-diverges="true"] code {
+  color: color-mix(in srgb, var(--agent-color) 45%, var(--text-inverse));
+}
+
+.conflict-resolver .button[data-selected="true"] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
 .conflict-actions {
   display: flex;
   justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.conflict-markers-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin-right: auto;
+  color: var(--status-attention);
+  font-size: var(--text-xs);
+  font-weight: 600;
 }
 
 .conflict-result textarea {
