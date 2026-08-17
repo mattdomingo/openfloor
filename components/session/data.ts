@@ -24,7 +24,12 @@ export type TeamChatMessage = {
   authorTone: string;
   text: string;
   time: string;
+  /* Set on direct messages: the teammate id the DM thread belongs to. */
+  dmWith?: string;
 };
+
+/* "team" for the shared channel, otherwise a teammate id. */
+export type ChatThread = "team" | string;
 
 export type Agent = {
   id: string;
@@ -460,6 +465,33 @@ export const initialTeamChat: TeamChatMessage[] = [
     time: "18m ago",
   },
   {
+    id: "dm-1",
+    authorId: "matt",
+    authorName: "Matt",
+    authorTone: "matt",
+    text: "Between us — should Sentry keep waiting on Atlas, or start the fixtures against a stubbed payload?",
+    time: "11m ago",
+    dmWith: "matt",
+  },
+  {
+    id: "dm-2",
+    authorId: "you",
+    authorName: "You",
+    authorTone: "you",
+    text: "Stub it. If the shape shifts we only rewrite the fixture builder, not every test.",
+    time: "10m ago",
+    dmWith: "matt",
+  },
+  {
+    id: "dm-3",
+    authorId: "matt",
+    authorName: "Matt",
+    authorTone: "matt",
+    text: "Agreed — I'll tell Sentry to stop blocking on the payload shape.",
+    time: "10m ago",
+    dmWith: "matt",
+  },
+  {
     id: "tc-4",
     authorId: "matt",
     authorName: "Matt",
@@ -492,6 +524,25 @@ export const initialTeamChat: TeamChatMessage[] = [
     time: "2m ago",
   },
 ];
+
+/* Canned DM replies, rotated by how long the thread already is. */
+export const dmReplies: Record<string, string[]> = {
+  matt: [
+    "Good timing — I was about to ping you about the replay contract.",
+    "Yeah, agreed. I'll fold that into Atlas's next prompt.",
+    "Give me five minutes, wrapping up the event schema notes.",
+  ],
+  ryan: [
+    "Nova's mid-run right now, but I can queue that after the blocked-state pass.",
+    "Makes sense — I'll keep the card layout as is until review.",
+    "Fair. I'll rename it before Proof complains.",
+  ],
+  ali: [
+    "Looking at the reducer diff now — status naming is consistent so far.",
+    "I'd rather keep Proof read-only until the conflict is resolved.",
+    "Will do. Flag me when the candidate branch is ready.",
+  ],
+};
 
 export const changedFiles: ChangedFile[] = [
   { path: "server/events/schema.ts", agent: "Atlas", add: 84, del: 6, state: "modified" },
@@ -1048,6 +1099,23 @@ export const agentChatHistory: Record<string, ChatMessage[]> = {
       time: "3m ago",
     },
   ],
+  q: [
+    {
+      id: "q-h-1",
+      role: "prompt",
+      author: "Ryan",
+      authorTone: "ryan",
+      text: "How do reconnecting clients avoid replaying events they already processed?",
+      time: "16m ago",
+    },
+    {
+      id: "q-h-2",
+      role: "response",
+      author: "Q",
+      text: "They ack the last sequence number they saw; the server replays only events after it, and the reducer treats replays as idempotent.",
+      time: "16m ago",
+    },
+  ],
   proof: [
     {
       id: "proof-1",
@@ -1077,6 +1145,19 @@ export const agentChatHistory: Record<string, ChatMessage[]> = {
 
 export function agentChatMessages(agent: Agent): ChatMessage[] {
   return agentChatHistory[agent.id] ?? [];
+}
+
+const qAnswerPool = [
+  "Every session event carries a monotonic sequence number, so reconnecting clients ack the last sequence they saw and the server replays only what came after it.",
+  "Agent scopes are claimed per file path: each agent lists the paths it intends to write, and the orchestrator flags any overlap as a conflict before edits collide.",
+  "Reconnect replay starts from the last acknowledged event, so completed agent steps are never re-run — the reducer treats replayed events as idempotent.",
+  "Queued prompts are session state: each item keeps its author, target agent, and position until the agent picks it up, even across reconnects.",
+  "The candidate branch is rebuilt from each agent's worktree in integration order, so a failing check points at the last agent merged rather than the whole set.",
+];
+
+/* Deterministic pick so the same question always gets the same answer. */
+export function pickQAnswer(question: string): string {
+  return qAnswerPool[question.length % qAnswerPool.length];
 }
 
 const planLabels = ["Read contract", "Claim scope", "Implement", "Run checks", "Prepare patch"];

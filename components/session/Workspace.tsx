@@ -6,6 +6,8 @@ import {
   AgentDraft,
   AgentLayout,
   CenterMode,
+  ChatMessage,
+  ChatThread,
   DockMode,
   PanelId,
   QueueItem,
@@ -19,12 +21,15 @@ import {
   agentFromDraft,
   checks,
   defaultGoal,
+  dmReplies,
   drafts,
   initialAgents,
   initialAssignments,
   initialQueue,
   initialTeamChat,
+  participants,
   pickAgentForOpenMind,
+  pickQAnswer,
   resolveAgentMention,
   routableAgents,
   spawnQSubAgent,
@@ -76,7 +81,9 @@ export function Workspace({ sessionTitle }: { sessionTitle: string }) {
   const [qSubSequence, setQSubSequence] = useState(0);
   const [queueTarget, setQueueTarget] = useState<string | null>(null);
   const [teamChat, setTeamChat] = useState<TeamChatMessage[]>(initialTeamChat);
+  const [chatThread, setChatThread] = useState<ChatThread>("team");
   const [teamPanelView, setTeamPanelView] = useState<TeamPanelView>("goals");
+  const [qMessages, setQMessages] = useState<ChatMessage[]>([]);
   const workspaceRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
 
@@ -166,6 +173,16 @@ export function Workspace({ sessionTitle }: { sessionTitle: string }) {
   }
 
   function askQ(question: string) {
+    setQMessages((current) => [
+      ...current,
+      { id: `qm-${Date.now()}`, role: "prompt", author: "You", authorTone: "you", text: question, time: "just now" },
+    ]);
+    const appendAnswer = () =>
+      setQMessages((current) => [
+        ...current,
+        { id: `qm-${Date.now()}`, role: "response", author: "Q", text: pickQAnswer(question), time: "just now" },
+      ]);
+
     if (!qBusy) {
       setQBusy(true);
       setAgents((current) =>
@@ -178,6 +195,8 @@ export function Workspace({ sessionTitle }: { sessionTitle: string }) {
         setAgents((current) =>
           current.map((agent) => (agent.id === "q" ? { ...agent, detail: "Waiting for questions." } : agent)),
         );
+        appendAnswer();
+        notify("Q answered — open Q's chat history");
       }, 6000);
       return;
     }
@@ -194,6 +213,8 @@ export function Workspace({ sessionTitle }: { sessionTitle: string }) {
           agent.id === subAgent.id ? { ...agent, status: "complete", detail: "Answer ready, merging back into Q." } : agent,
         ),
       );
+      /* The sub-agent's answer merges back into Q's own history. */
+      appendAnswer();
 
       window.setTimeout(() => {
         setAgents((current) => current.filter((agent) => agent.id !== subAgent.id));
@@ -304,14 +325,37 @@ export function Workspace({ sessionTitle }: { sessionTitle: string }) {
     setAssignments((current) => current.map((assignment) => (assignment.id === id ? { ...assignment, task } : assignment)));
   }
 
-  function sendTeamMessage(text: string) {
+  function sendTeamMessage(text: string, thread: ChatThread = "team") {
     const trimmed = text.trim();
     if (!trimmed) return;
 
+    const dmWith = thread === "team" ? undefined : thread;
     setTeamChat((current) => [
       ...current,
-      { id: `tc-${Date.now()}`, authorId: "you", authorName: "You", authorTone: "you", text: trimmed, time: "just now" },
+      { id: `tc-${Date.now()}`, authorId: "you", authorName: "You", authorTone: "you", text: trimmed, time: "just now", dmWith },
     ]);
+
+    /* DMs feel alive: the teammate answers with a canned line a few seconds later. */
+    const teammate = dmWith ? participants.find((person) => person.id === dmWith) : undefined;
+    if (!teammate) return;
+    window.setTimeout(() => {
+      setTeamChat((current) => {
+        const lines = dmReplies[teammate.id];
+        const count = current.filter((message) => message.dmWith === teammate.id).length;
+        return [
+          ...current,
+          {
+            id: `tc-${Date.now()}`,
+            authorId: teammate.id,
+            authorName: teammate.name,
+            authorTone: teammate.tone,
+            text: lines[count % lines.length],
+            time: "just now",
+            dmWith: teammate.id,
+          },
+        ];
+      });
+    }, 4000);
   }
 
   function openReview() {
@@ -460,6 +504,8 @@ export function Workspace({ sessionTitle }: { sessionTitle: string }) {
           onViewChange={setTeamPanelView}
           messages={teamChat}
           onSendMessage={sendTeamMessage}
+          chatThread={chatThread}
+          onChatThreadChange={setChatThread}
         />
       );
     }
@@ -497,6 +543,7 @@ export function Workspace({ sessionTitle }: { sessionTitle: string }) {
         onCreateAgent={createAgent}
         onNotice={notify}
         onAnswer={answerAgent}
+        qMessages={qMessages}
       />
     );
   }

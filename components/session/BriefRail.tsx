@@ -1,7 +1,7 @@
 "use client";
 
 import { CSSProperties, useState } from "react";
-import { Agent, Assignment, QueueItem, TeamChatMessage, TeamPanelView, latestDecision, statusLabel } from "./data";
+import { Agent, Assignment, ChatThread, QueueItem, TeamChatMessage, TeamPanelView, latestDecision, statusLabel } from "./data";
 import { Avatar, Icon, SegmentedControl } from "./primitives";
 import { Panel, PanelChrome } from "./Rail";
 import { TeamChat } from "./TeamChat";
@@ -17,6 +17,8 @@ export function BriefRail({
   onViewChange,
   messages,
   onSendMessage,
+  chatThread,
+  onChatThreadChange,
 }: {
   chrome: PanelChrome;
   assignments: Assignment[];
@@ -27,7 +29,9 @@ export function BriefRail({
   view: TeamPanelView;
   onViewChange: (view: TeamPanelView) => void;
   messages: TeamChatMessage[];
-  onSendMessage: (text: string) => void;
+  onSendMessage: (text: string, thread: ChatThread) => void;
+  chatThread: ChatThread;
+  onChatThreadChange: (thread: ChatThread) => void;
 }) {
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
 
@@ -57,7 +61,7 @@ export function BriefRail({
   return (
     <Panel chrome={chrome} title="Team" badge={`${assignments.length}`} actions={controls}>
       {view === "chat" ? (
-        <TeamChat messages={messages} onSend={onSendMessage} />
+        <TeamChat messages={messages} onSend={onSendMessage} thread={chatThread} onThreadChange={onChatThreadChange} />
       ) : (
         <>
           <div className="rail-section">

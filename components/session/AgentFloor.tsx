@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { Agent, AgentDraft, AgentLayout, CenterMode, suggestAgentName } from "./data";
+import { Agent, AgentDraft, AgentLayout, CenterMode, ChatMessage, suggestAgentName } from "./data";
 import { Icon, SegmentedControl, StatusDot } from "./primitives";
 import { Panel, PanelChrome } from "./Rail";
 import { AgentCard, AgentSpotlight } from "./AgentCard";
@@ -21,6 +21,7 @@ export function AgentFloor({
   onCreateAgent,
   onNotice,
   onAnswer,
+  qMessages,
 }: {
   chrome: PanelChrome;
   agents: Agent[];
@@ -33,6 +34,7 @@ export function AgentFloor({
   onCreateAgent: (draft: AgentDraft) => void;
   onNotice: (notice: string) => void;
   onAnswer: (agent: Agent) => void;
+  qMessages: ChatMessage[];
 }) {
   const [creating, setCreating] = useState(false);
   const [historyAgentId, setHistoryAgentId] = useState<string | null>(null);
@@ -153,7 +155,13 @@ export function AgentFloor({
         />
       )}
 
-      {historyAgent && <AgentChatHistory agent={historyAgent} onClose={() => setHistoryAgentId(null)} />}
+      {historyAgent && (
+        <AgentChatHistory
+          agent={historyAgent}
+          extraMessages={historyAgent.id === "q" ? qMessages : undefined}
+          onClose={() => setHistoryAgentId(null)}
+        />
+      )}
     </>
   );
 }
