@@ -2,7 +2,9 @@
 
 import { BASE_PATH } from "@/components/basePath";
 import Link from "next/link";
+import { useRef, useState } from "react";
 import { participants, WorkspaceScreen } from "./data";
+import { InviteDialog } from "./InviteDialog";
 import { Avatar, Icon } from "./primitives";
 
 export function TopBar({
@@ -16,6 +18,14 @@ export function TopBar({
   onNotice: (notice: string) => void;
   sessionTitle: string;
 }) {
+  const [inviting, setInviting] = useState(false);
+  const inviteButtonRef = useRef<HTMLButtonElement>(null);
+
+  function closeInvite() {
+    setInviting(false);
+    inviteButtonRef.current?.focus();
+  }
+
   return (
     <header className="topbar">
       <Link href="/home" className="brand">
@@ -49,7 +59,7 @@ export function TopBar({
             <Avatar key={person.id} initials={person.initials} tone={person.tone} />
           ))}
         </div>
-        <button type="button" className="button invite-button" onClick={() => onNotice("Invite link copied to clipboard")}>
+        <button type="button" ref={inviteButtonRef} className="button invite-button" onClick={() => setInviting(true)}>
           <Icon name="plus" />
           Invite
         </button>
@@ -62,6 +72,8 @@ export function TopBar({
           <Icon name="more" />
         </button>
       </div>
+
+      {inviting && <InviteDialog onNotice={onNotice} onClose={closeInvite} />}
     </header>
   );
 }
