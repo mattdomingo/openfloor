@@ -355,6 +355,7 @@ export function Workspace({ sessionTitle }: { sessionTitle: string }) {
           },
         ];
       });
+      notify(`${teammate.name} replied`);
     }, 4000);
   }
 
@@ -377,11 +378,9 @@ export function Workspace({ sessionTitle }: { sessionTitle: string }) {
   /* Collapses adjacent same-agent cards in the visible order into one card,
      letting the doomed cards animate out before the queue state swaps. */
   function mergeQueueNow() {
-    const byId = new Map(queue.map((item) => [item.id, item]));
     const merged: QueueItem[] = [];
     const removed: string[] = [];
-    for (const id of globalQueueOrder) {
-      const item = byId.get(id)!;
+    for (const item of orderedQueue) {
       const last = merged[merged.length - 1];
       if (last && last.agentId === item.agentId) {
         merged[merged.length - 1] = {
@@ -399,12 +398,13 @@ export function Workspace({ sessionTitle }: { sessionTitle: string }) {
       return;
     }
 
+    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     setMergingIds(removed);
     window.setTimeout(() => {
       setMergingIds([]);
       setQueue(merged);
       notify(`Queue merged · ${removed.length} prompt${removed.length === 1 ? "" : "s"} folded in`);
-    }, 260); /* matches --dur-float */
+    }, reduced ? 0 : 260); /* matches --dur-float */
   }
 
   function dropPanel(target: PanelId) {

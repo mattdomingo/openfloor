@@ -14,12 +14,15 @@ export function useDialogDismiss(onClose: () => void) {
     dialogRef.current?.showModal();
   }, []);
 
+  /* The timer ends in native close(), not the onClose prop: close() restores focus to the
+     trigger and fires the close event, which reaches the parent through the element's own
+     onClose handler — so this effect needs no dependency on the (per-render) callback. */
   useEffect(() => {
     if (!closing) return;
     const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    const timer = window.setTimeout(onClose, reduced ? 0 : 180); /* --dur-base */
+    const timer = window.setTimeout(() => dialogRef.current?.close(), reduced ? 0 : 180); /* --dur-base */
     return () => window.clearTimeout(timer);
-  }, [closing, onClose]);
+  }, [closing]);
 
   return {
     dismiss: () => setClosing(true),

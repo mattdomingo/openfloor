@@ -1,6 +1,6 @@
 "use client";
 
-import { CSSProperties, KeyboardEvent as ReactKeyboardEvent, ReactNode, useEffect, useRef } from "react";
+import { CSSProperties, ReactNode, useEffect, useRef } from "react";
 import { Agent } from "./data";
 import { Icon, StatusDot } from "./primitives";
 import { CodeCycleMode, CodeCycleProgress, useAgentCodeCycle } from "./useAgentCodeCycle";
@@ -190,28 +190,16 @@ function CodePreviewCard({ agent, onFocus, onHistory }: { agent: Agent; onFocus:
   const { files, fileIndex, activeFile, progress, mode } = useAgentCodeCycle(agent);
   const openName = activeFile.path.split("/").pop() ?? activeFile.path;
 
-  function onKeyDown(event: ReactKeyboardEvent) {
-    if (event.target !== event.currentTarget) return;
-    if (event.key !== "Enter" && event.key !== " ") return;
-    event.preventDefault();
-    onFocus();
-  }
-
   return (
-    <article
-      className="code-card"
-      style={{ "--agent-color": agent.color } as CSSProperties}
-      role="button"
-      tabIndex={0}
-      onClick={onFocus}
-      onKeyDown={onKeyDown}
-    >
+    <article className="code-card" style={{ "--agent-color": agent.color } as CSSProperties} onClick={onFocus}>
       <div className="code-card-head">
         <span className="agent-glyph" aria-hidden="true">
           {agent.name.slice(0, 1)}
         </span>
         <span className="agent-identity">
-          <strong>{agent.name}</strong>
+          <button type="button" className="code-card-focus" onClick={onFocus}>
+            {agent.name}
+          </button>
           <span>{agent.branch}</span>
         </span>
         <span className="agent-state">

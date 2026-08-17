@@ -150,7 +150,6 @@ export function AgentFloor({
           onClose={closeDialog}
           onCreate={(draft) => {
             onCreateAgent(draft);
-            closeDialog();
           }}
         />
       )}
@@ -158,7 +157,7 @@ export function AgentFloor({
       {historyAgent && (
         <AgentChatHistory
           agent={historyAgent}
-          extraMessages={historyAgent.id === "q" ? qMessages : undefined}
+          extraMessages={historyAgent.id === "q" || historyAgent.parentId === "q" ? qMessages : undefined}
           onClose={() => setHistoryAgentId(null)}
         />
       )}

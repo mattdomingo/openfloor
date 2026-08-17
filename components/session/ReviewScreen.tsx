@@ -80,10 +80,14 @@ export function ReviewScreen({
     [changes],
   );
   const agentDiff = viewedAgent ? agentDiffLines(viewedAgent) : null;
-  /* Agent branches fall back to the agent's isolated worktree code when the
-     integrated candidate has no per-file diff for the selection. */
+  /* Candidate mode previews the integrated diff per file; an agent branch only
+     shows the agent's own isolated worktree diff, never the combined one. */
   const preview = selected
-    ? diffPreviews[selected.id] ?? (viewedAgent && agentDiff && selected.path === agentDiff.path ? agentDiff : undefined)
+    ? viewedAgent
+      ? agentDiff && selected.path === agentDiff.path
+        ? agentDiff
+        : undefined
+      : diffPreviews[selected.id]
     : undefined;
   const openConflict: Conflict | undefined = conflicts.find((entry) => entry.id === openConflictId);
 
@@ -101,7 +105,6 @@ export function ReviewScreen({
   function resolveConflict(conflictId: string) {
     if (conflictId === "scope-overlap") onResolveConflict();
     setResolvedConflictIds((current) => new Set(current).add(conflictId));
-    setOpenConflictId(null);
     onNotice(`Conflict resolved on ${conflicts.find((entry) => entry.id === conflictId)?.path ?? "candidate branch"}`);
   }
 
@@ -348,7 +351,7 @@ export function ReviewScreen({
           <section className="review-pane review-team-chat" aria-label="Team chat">
             <div className="review-pane-head">
               <h3>Team chat</h3>
-              <span>{teamChat.length}</span>
+              <span>{teamChat.filter((message) => !message.dmWith).length}</span>
             </div>
             <TeamChat messages={teamChat} onSend={onSendTeamMessage} />
           </section>

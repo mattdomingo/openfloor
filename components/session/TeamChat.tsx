@@ -55,6 +55,7 @@ export function TeamChat({
           type="button"
           className="team-chat-thread"
           data-selected={activeThread === "team" ? "true" : "false"}
+          aria-pressed={activeThread === "team"}
           onClick={() => setThread("team")}
         >
           Team
@@ -65,6 +66,7 @@ export function TeamChat({
             type="button"
             className="team-chat-thread"
             data-selected={activeThread === person.id ? "true" : "false"}
+            aria-pressed={activeThread === person.id}
             onClick={() => setThread(person.id)}
           >
             <Avatar initials={person.initials} tone={person.tone} />

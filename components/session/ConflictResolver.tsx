@@ -55,6 +55,7 @@ export function ConflictResolver({
 
   function markResolved() {
     onResolve(conflict.id);
+    dismiss();
   }
 
   function applySuggested() {
@@ -77,6 +78,7 @@ export function ConflictResolver({
             className="button"
             data-size="sm"
             data-selected={choice === kind ? "true" : "false"}
+            aria-pressed={choice === kind}
             onClick={() => accept(kind)}
           >
             Accept {kind}
@@ -138,6 +140,7 @@ export function ConflictResolver({
                 className="button"
                 data-size="sm"
                 data-selected={choice === "both" ? "true" : "false"}
+                aria-pressed={choice === "both"}
                 onClick={() => accept("both")}
               >
                 Accept both

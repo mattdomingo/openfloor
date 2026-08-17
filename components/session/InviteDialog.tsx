@@ -73,7 +73,6 @@ export function InviteDialog({ onNotice, onClose }: { onNotice: (notice: string)
                 <li key={person.id}>
                   <Avatar initials={person.initials} tone={person.tone} />
                   {person.name}
-                  {person.id === "ali" && <span className="invite-you">You</span>}
                 </li>
               ))}
             </ul>

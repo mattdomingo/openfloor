@@ -20,12 +20,14 @@ export function QueueOrderMenu({
   mergeMode,
   onMergeMode,
   onMergeNow,
+  canReorder,
 }: {
   mode: QueueOrderMode;
   onChange: (mode: QueueOrderMode) => void;
   mergeMode: QueueMergeMode;
   onMergeMode: (mode: QueueMergeMode) => void;
   onMergeNow: () => void;
+  canReorder: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -65,7 +67,7 @@ export function QueueOrderMenu({
       <button
         type="button"
         className="queue-order-trigger"
-        aria-haspopup="true"
+        aria-label="Queue settings"
         aria-expanded={open}
         aria-controls={listId}
         title={`Queue settings · ${mode === "auto" ? "Auto order" : "Manual order"} · ${
@@ -79,33 +81,39 @@ export function QueueOrderMenu({
 
       {open && (
         <div className="queue-order-list" id={listId} role="group" aria-label="Queue settings">
-          <span className="queue-order-label" aria-hidden="true">
-            Ordering
-          </span>
-          <ul role="listbox" aria-label="Queue ordering">
-            {orderOptions.map((option) => (
-              <li key={option.value} role="option" aria-selected={mode === option.value}>
-                <button
-                  type="button"
-                  data-selected={mode === option.value ? "true" : "false"}
-                  onClick={() => chooseOrder(option.value)}
-                >
-                  <span>{option.label}</span>
-                  <small>{option.hint}</small>
-                </button>
-              </li>
-            ))}
-          </ul>
+          {canReorder && (
+            <>
+              <span className="queue-order-label" aria-hidden="true">
+                Ordering
+              </span>
+              <ul>
+                {orderOptions.map((option) => (
+                  <li key={option.value}>
+                    <button
+                      type="button"
+                      data-selected={mode === option.value ? "true" : "false"}
+                      aria-pressed={mode === option.value}
+                      onClick={() => chooseOrder(option.value)}
+                    >
+                      <span>{option.label}</span>
+                      <small>{option.hint}</small>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
 
           <span className="queue-order-label" aria-hidden="true">
             Merge prompts
           </span>
-          <ul role="listbox" aria-label="Merge prompts">
+          <ul>
             {mergeOptions.map((option) => (
-              <li key={option.value} role="option" aria-selected={mergeMode === option.value}>
+              <li key={option.value}>
                 <button
                   type="button"
                   data-selected={mergeMode === option.value ? "true" : "false"}
+                  aria-pressed={mergeMode === option.value}
                   onClick={() => chooseMerge(option.value)}
                 >
                   <span>{option.label}</span>

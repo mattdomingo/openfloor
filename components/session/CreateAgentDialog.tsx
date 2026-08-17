@@ -83,6 +83,7 @@ export function CreateAgentDialog({
       checks,
       reviewRequired,
     });
+    dismiss();
   }
 
   // Escape, Cancel, and the close button dismiss; a stray backdrop click must not

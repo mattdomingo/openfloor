@@ -63,6 +63,7 @@ export function PromptQueue({
           mergeMode={mergeMode}
           onMergeMode={onMergeMode}
           onMergeNow={onMergeNow}
+          canReorder={canReorder}
         />
       }
     >
@@ -82,7 +83,7 @@ export function PromptQueue({
       ) : (
         <ul className="queue-list">
           {sorted.map((item) => {
-            const long = (item.mergedFrom?.join(" ") ?? item.prompt).length > 110;
+            const long = (item.mergedFrom?.length ?? 0) > 3 || (item.mergedFrom?.join(" ") ?? item.prompt).length > 110;
             const open = expanded[item.id] === true;
             return (
               <li
