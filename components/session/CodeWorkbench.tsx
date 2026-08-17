@@ -1,9 +1,9 @@
 "use client";
 
-import { CSSProperties, KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
+import { CSSProperties, KeyboardEvent as ReactKeyboardEvent, ReactNode, useEffect, useRef } from "react";
 import { Agent } from "./data";
 import { Icon, StatusDot } from "./primitives";
-import { CodeCycleProgress, useAgentCodeCycle } from "./useAgentCodeCycle";
+import { CodeCycleMode, CodeCycleProgress, useAgentCodeCycle } from "./useAgentCodeCycle";
 
 const tokenPattern = /("[^"]*")|\b(export|type|extends|function|return|const|case|new|describe|it|expect)\b/g;
 
@@ -27,22 +27,38 @@ function highlight(line: string): ReactNode[] {
   return parts.length > 0 ? parts : [line || " "];
 }
 
-/* Renders only the lines typed so far, with a blinking caret at the in-progress line. */
-function TypedCode({ lines, progress, limit }: { lines: string[]; progress: CodeCycleProgress; limit?: number }) {
-  const visibleCount = Math.min(progress.line + 1, limit ?? lines.length);
-  const visible = lines.slice(0, visibleCount);
+/* Write mode renders only the lines typed so far, with a blinking caret at the in-progress
+   line. Review mode shows the whole file and walks a highlighted scan line down it. */
+function TypedCode({ lines, progress, mode }: { lines: string[]; progress: CodeCycleProgress; mode: CodeCycleMode }) {
+  const review = mode === "review";
+  const visible = review ? lines : lines.slice(0, progress.line + 1);
+  const preRef = useRef<HTMLPreElement>(null);
+  const activeLineRef = useRef<HTMLSpanElement>(null);
+
+  // Keep the active line pinned in view as the animation advances down the file.
+  useEffect(() => {
+    const pre = preRef.current;
+    const active = activeLineRef.current;
+    if (!pre || !active) return;
+    pre.scrollTop = active.offsetTop - pre.offsetTop + active.offsetHeight - pre.clientHeight;
+  }, [progress]);
 
   return (
-    <pre className="code">
+    <pre className="code" ref={preRef}>
       {visible.map((line, index) => {
         const isCurrent = index === progress.line;
-        const text = isCurrent ? line.slice(0, progress.chars) : line;
+        const text = isCurrent && !review ? line.slice(0, progress.chars) : line;
         return (
-          <span className="code-line" key={index}>
+          <span
+            className="code-line"
+            key={index}
+            data-reviewing={review && isCurrent ? "true" : undefined}
+            ref={isCurrent ? activeLineRef : undefined}
+          >
             <i>{index + 1}</i>
             <code>
               {highlight(text)}
-              {isCurrent && <span className="type-caret" aria-hidden="true" />}
+              {isCurrent && !review && <span className="type-caret" aria-hidden="true" />}
             </code>
           </span>
         );
@@ -78,7 +94,7 @@ function buildTree(agent: Agent, openPath: string): TreeEntry[] {
 }
 
 export function CodeWorkbench({ agent, onNotice }: { agent: Agent; onNotice: (notice: string) => void }) {
-  const { files, fileIndex, activeFile, progress } = useAgentCodeCycle(agent);
+  const { files, fileIndex, activeFile, progress, mode } = useAgentCodeCycle(agent);
   const tree = buildTree(agent, activeFile.path);
 
   return (
@@ -129,37 +145,53 @@ export function CodeWorkbench({ agent, onNotice }: { agent: Agent; onNotice: (no
           </span>
         </div>
         <div className="editor-breadcrumb">{activeFile.path.split("/").join("  ›  ")}</div>
-        <TypedCode lines={activeFile.lines} progress={progress} />
+        <TypedCode lines={activeFile.lines} progress={progress} mode={mode} />
         <div className="editor-status">
           <span>
             <Icon name="branch" size={11} />
             {agent.branch}
           </span>
-          <span>UTF-8 · TypeScript · Ln {progress.line + 1}, Col {progress.chars}</span>
+          <span>
+            UTF-8 · TypeScript ·{" "}
+            {mode === "review"
+              ? `Reviewing Ln ${progress.line + 1} of ${activeFile.lines.length}`
+              : `Ln ${progress.line + 1}, Col ${progress.chars}`}
+          </span>
         </div>
       </section>
     </div>
   );
 }
 
-const GRID_PREVIEW_LINES = 16;
-
-export function CodeGrid({ agents, onFocusAgent }: { agents: Agent[]; onFocusAgent: (id: string) => void }) {
+export function CodeGrid({
+  agents,
+  onFocusAgent,
+  onHistoryAgent,
+}: {
+  agents: Agent[];
+  onFocusAgent: (id: string) => void;
+  onHistoryAgent: (id: string) => void;
+}) {
   return (
     <div className="code-grid">
       {agents.map((agent) => (
-        <CodePreviewCard key={agent.id} agent={agent} onFocus={() => onFocusAgent(agent.id)} />
+        <CodePreviewCard
+          key={agent.id}
+          agent={agent}
+          onFocus={() => onFocusAgent(agent.id)}
+          onHistory={() => onHistoryAgent(agent.id)}
+        />
       ))}
     </div>
   );
 }
 
-function CodePreviewCard({ agent, onFocus }: { agent: Agent; onFocus: () => void }) {
-  const { files, fileIndex, activeFile, progress } = useAgentCodeCycle(agent);
+function CodePreviewCard({ agent, onFocus, onHistory }: { agent: Agent; onFocus: () => void; onHistory: () => void }) {
+  const { files, fileIndex, activeFile, progress, mode } = useAgentCodeCycle(agent);
   const openName = activeFile.path.split("/").pop() ?? activeFile.path;
-  const hiddenCount = Math.max(activeFile.lines.length - GRID_PREVIEW_LINES, 0);
 
   function onKeyDown(event: ReactKeyboardEvent) {
+    if (event.target !== event.currentTarget) return;
     if (event.key !== "Enter" && event.key !== " ") return;
     event.preventDefault();
     onFocus();
@@ -185,6 +217,20 @@ function CodePreviewCard({ agent, onFocus }: { agent: Agent; onFocus: () => void
         <span className="agent-state">
           <StatusDot status={agent.status} />
         </span>
+        <button
+          type="button"
+          className="button agent-chat-button"
+          data-size="sm"
+          aria-label={`View ${agent.name}'s chat history`}
+          title="Chat history"
+          onClick={(event) => {
+            event.stopPropagation();
+            onHistory();
+          }}
+        >
+          <Icon name="message" size={12} />
+          Chat
+        </button>
       </div>
 
       <div className="code-card-body">
@@ -195,14 +241,14 @@ function CodePreviewCard({ agent, onFocus }: { agent: Agent; onFocus: () => void
           </span>
         </div>
         <div className="editor-breadcrumb">{activeFile.path.split("/").join("  ›  ")}</div>
-        <TypedCode lines={activeFile.lines} progress={progress} limit={GRID_PREVIEW_LINES} />
+        <TypedCode lines={activeFile.lines} progress={progress} mode={mode} />
       </div>
 
       <div className="code-card-foot">
         <span>
-          Editing {openName}
+          {mode === "review" ? "Reviewing" : "Editing"} {openName}
           {files.length > 1 ? ` (${fileIndex + 1}/${files.length})` : ""}
-          {hiddenCount > 0 ? ` · +${hiddenCount} more lines` : ""}
+          {` · ${activeFile.lines.length} lines`}
         </span>
       </div>
     </article>
