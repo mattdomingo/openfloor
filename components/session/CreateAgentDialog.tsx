@@ -13,7 +13,7 @@ import {
   checkOptions,
   participants,
 } from "./data";
-import { Icon } from "./primitives";
+import { Icon, useDialogDismiss } from "./primitives";
 
 export function CreateAgentDialog({
   suggestedName,
@@ -27,7 +27,7 @@ export function CreateAgentDialog({
   const titleId = useId();
   const modelHintId = useId();
   const scopeHintId = useId();
-  const dialogRef = useRef<HTMLDialogElement>(null);
+  const { dismiss, dialogProps } = useDialogDismiss(onClose);
   const nameRef = useRef<HTMLInputElement>(null);
 
   const [name, setName] = useState(suggestedName);
@@ -48,10 +48,8 @@ export function CreateAgentDialog({
   const modelHint = agentModels.find((option) => option.id === model)?.detail ?? "";
   const ready = name.trim().length > 0 && task.trim().length > 0;
 
-  // Modal mode gives us the top layer, focus containment, and Escape for free.
-  // It also claims focus, so the name field is selected afterwards.
+  // The dialog claims focus as it opens, so the name field is selected afterwards.
   useEffect(() => {
-    dialogRef.current?.showModal();
     nameRef.current?.select();
   }, []);
 
@@ -90,14 +88,14 @@ export function CreateAgentDialog({
   // Escape, Cancel, and the close button dismiss; a stray backdrop click must not
   // discard a filled-in form.
   return (
-    <dialog className="dialog" ref={dialogRef} aria-labelledby={titleId} onClose={onClose}>
+    <dialog className="dialog" {...dialogProps} aria-labelledby={titleId}>
       <form onSubmit={submit}>
         <div className="dialog-head">
           <div className="dialog-title">
             <h2 id={titleId}>New coding agent</h2>
             <p>It gets its own worktree, claims a write scope, and reports to the floor.</p>
           </div>
-          <button type="button" className="dialog-close" onClick={onClose} aria-label="Close">
+          <button type="button" className="dialog-close" onClick={dismiss} aria-label="Close">
             <Icon name="close" />
           </button>
         </div>
@@ -249,7 +247,7 @@ export function CreateAgentDialog({
             <Icon name="branch" size={12} />
             {branchValue}
           </span>
-          <button type="button" className="button" data-variant="quiet" onClick={onClose}>
+          <button type="button" className="button" data-variant="quiet" onClick={dismiss}>
             Cancel
           </button>
           <button type="submit" className="button" data-variant="primary" disabled={!ready}>

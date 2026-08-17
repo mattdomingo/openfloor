@@ -1,8 +1,8 @@
 "use client";
 
-import { CSSProperties, useEffect, useMemo, useRef, useState } from "react";
+import { CSSProperties, useMemo, useState } from "react";
 import { Agent, Conflict, ConflictSide } from "./data";
-import { Icon, SegmentedControl } from "./primitives";
+import { Icon, SegmentedControl, useDialogDismiss } from "./primitives";
 
 type ResolverMode = "manual" | "ai";
 type AcceptChoice = "current" | "incoming" | "both";
@@ -30,14 +30,10 @@ export function ConflictResolver({
   onResolve: (conflictId: string) => void;
   onClose: () => void;
 }) {
-  const dialogRef = useRef<HTMLDialogElement>(null);
+  const { dismiss, dialogProps } = useDialogDismiss(onClose);
   const [mode, setMode] = useState<ResolverMode>("manual");
   const [result, setResult] = useState(() => markerText(conflict));
   const [choice, setChoice] = useState<AcceptChoice | null>(null);
-
-  useEffect(() => {
-    dialogRef.current?.showModal();
-  }, []);
 
   const hasMarkers = useMemo(() => CONFLICT_MARKERS.some((marker) => result.includes(marker)), [result]);
 
@@ -102,7 +98,7 @@ export function ConflictResolver({
   }
 
   return (
-    <dialog className="dialog conflict-resolver" ref={dialogRef} onClose={onClose}>
+    <dialog className="dialog conflict-resolver" {...dialogProps}>
       <div className="dialog-head">
         <div className="dialog-title">
           <h2>Merge conflict</h2>
@@ -110,7 +106,7 @@ export function ConflictResolver({
             <Icon name="file" size={12} /> {conflict.path}
           </p>
         </div>
-        <button type="button" className="dialog-close" onClick={onClose} aria-label="Close">
+        <button type="button" className="dialog-close" onClick={dismiss} aria-label="Close">
           <Icon name="close" />
         </button>
       </div>
@@ -195,7 +191,7 @@ export function ConflictResolver({
             <Icon name="alert" size={12} /> Conflict markers remain
           </span>
         )}
-        <button type="button" className="button" data-variant="quiet" onClick={onClose}>
+        <button type="button" className="button" data-variant="quiet" onClick={dismiss}>
           Cancel
         </button>
         {mode === "manual" ? (

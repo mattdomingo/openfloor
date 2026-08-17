@@ -1,7 +1,39 @@
 "use client";
 
-import { ReactNode } from "react";
+import { ReactNode, SyntheticEvent, useEffect, useRef, useState } from "react";
 import { AgentStatus, Step } from "./data";
+
+/* Native <dialog> unmounts the instant its parent drops it, which cuts off any exit
+   transition. This opens the dialog on mount and turns dismissals into a short
+   data-closing beat before onClose fires, so the modal-out fade can actually run. */
+export function useDialogDismiss(onClose: () => void) {
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const [closing, setClosing] = useState(false);
+
+  useEffect(() => {
+    dialogRef.current?.showModal();
+  }, []);
+
+  useEffect(() => {
+    if (!closing) return;
+    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const timer = window.setTimeout(onClose, reduced ? 0 : 180); /* --dur-base */
+    return () => window.clearTimeout(timer);
+  }, [closing, onClose]);
+
+  return {
+    dismiss: () => setClosing(true),
+    dialogProps: {
+      ref: dialogRef,
+      onClose,
+      onCancel: (event: SyntheticEvent) => {
+        event.preventDefault();
+        setClosing(true);
+      },
+      "data-closing": closing ? "true" : undefined,
+    },
+  };
+}
 
 export type IconName =
   | "grip"

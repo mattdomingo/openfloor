@@ -139,7 +139,7 @@
   padding-left: var(--space-2);
   border-left: 1px solid var(--line-strong);
   opacity: 0;
-  transition: opacity 0.15s ease;
+  transition: opacity var(--dur-snap) var(--ease-standard);
 }
 
 .panel-head:hover .panel-chrome,
@@ -631,7 +631,7 @@
 
 .owner-card-chevron {
   color: var(--text-tertiary);
-  transition: transform 120ms ease;
+  transition: transform var(--dur-snap) var(--ease-standard);
 }
 
 .owner-card[data-expanded="true"] .owner-card-chevron {
@@ -2016,6 +2016,22 @@
   display: none;
 }
 
+@media (prefers-reduced-motion: no-preference) {
+  /* Exit fade: allow-discrete holds display until the opacity/transform land;
+     the popover-rise entrance animation masks this transition on open. */
+  .attention-panel {
+    transition-property: opacity, transform, display;
+    transition-duration: var(--dur-base);
+    transition-timing-function: var(--ease-standard);
+    transition-behavior: allow-discrete;
+  }
+
+  .attention-panel[hidden] {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
 .attention-list {
   margin: 0;
   padding: 0;
@@ -2580,8 +2596,31 @@
     animation: backdrop-in var(--dur-float) var(--ease-standard);
   }
 
+  /* Dismissals hold the dialog mounted for one --dur-base beat (useDialogDismiss),
+     which is what gives these exit fades room to run. */
+  .dialog[data-closing="true"] {
+    animation: modal-out var(--dur-base) var(--ease-standard) forwards;
+  }
+
+  .dialog[data-closing="true"]::backdrop {
+    animation: backdrop-out var(--dur-base) var(--ease-standard) forwards;
+  }
+
   @keyframes backdrop-in {
     from {
+      opacity: 0;
+    }
+  }
+
+  @keyframes modal-out {
+    to {
+      opacity: 0;
+      transform: translateY(6px) scale(0.985);
+    }
+  }
+
+  @keyframes backdrop-out {
+    to {
       opacity: 0;
     }
   }
@@ -2852,7 +2891,7 @@
 
 @media (prefers-reduced-motion: no-preference) {
   .lane {
-    animation: lane-in 0.22s ease;
+    animation: lane-in var(--dur-float) var(--ease-out);
   }
 
   .lane p::after {

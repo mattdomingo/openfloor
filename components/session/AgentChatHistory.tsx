@@ -1,8 +1,8 @@
 "use client";
 
-import { CSSProperties, useEffect, useRef } from "react";
+import { CSSProperties } from "react";
 import { Agent, ChatMessage, agentChatMessages } from "./data";
-import { Avatar, Icon } from "./primitives";
+import { Avatar, Icon, useDialogDismiss } from "./primitives";
 
 export function AgentChatHistory({
   agent,
@@ -13,15 +13,11 @@ export function AgentChatHistory({
   extraMessages?: ChatMessage[];
   onClose: () => void;
 }) {
-  const dialogRef = useRef<HTMLDialogElement>(null);
+  const { dismiss, dialogProps } = useDialogDismiss(onClose);
   const messages = [...agentChatMessages(agent), ...extraMessages];
 
-  useEffect(() => {
-    dialogRef.current?.showModal();
-  }, []);
-
   return (
-    <dialog className="dialog chat-history" ref={dialogRef} onClose={onClose}>
+    <dialog className="dialog chat-history" {...dialogProps}>
       <div className="dialog-head">
         <div className="dialog-title">
           <h2>Chat history</h2>
@@ -31,7 +27,7 @@ export function AgentChatHistory({
             <span className="value">{agent.branch}</span>
           </p>
         </div>
-        <button type="button" className="dialog-close" onClick={onClose} aria-label="Close">
+        <button type="button" className="dialog-close" onClick={dismiss} aria-label="Close">
           <Icon name="close" />
         </button>
       </div>

@@ -345,7 +345,7 @@
   transform: translateX(-50%);
   border-radius: var(--radius-pill);
   background: transparent;
-  transition: background 0.15s ease;
+  transition: background var(--dur-snap) var(--ease-standard);
 }
 
 .resize-handle:hover::after,
