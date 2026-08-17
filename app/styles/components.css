@@ -771,6 +771,48 @@
   padding: var(--space-3) var(--space-4);
 }
 
+.team-chat-threads {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex: none;
+  margin-bottom: var(--space-3);
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--line-soft);
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.team-chat-thread {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 3px var(--space-2);
+  border: 1px solid transparent;
+  border-radius: var(--radius-pill);
+  background: none;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+
+.team-chat-thread:hover {
+  background: var(--surface-sunken);
+}
+
+.team-chat-thread[data-selected="true"] {
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
+  color: var(--text-primary);
+  font-weight: 650;
+}
+
+.team-chat-thread .avatar {
+  width: 16px;
+  height: 16px;
+  font-size: 8px;
+}
+
 .team-chat-list {
   flex: 1 1 auto;
   min-height: 120px;

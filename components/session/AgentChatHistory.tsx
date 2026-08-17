@@ -1,12 +1,20 @@
 "use client";
 
 import { CSSProperties, useEffect, useRef } from "react";
-import { Agent, agentChatMessages } from "./data";
+import { Agent, ChatMessage, agentChatMessages } from "./data";
 import { Avatar, Icon } from "./primitives";
 
-export function AgentChatHistory({ agent, onClose }: { agent: Agent; onClose: () => void }) {
+export function AgentChatHistory({
+  agent,
+  extraMessages = [],
+  onClose,
+}: {
+  agent: Agent;
+  extraMessages?: ChatMessage[];
+  onClose: () => void;
+}) {
   const dialogRef = useRef<HTMLDialogElement>(null);
-  const messages = agentChatMessages(agent);
+  const messages = [...agentChatMessages(agent), ...extraMessages];
 
   useEffect(() => {
     dialogRef.current?.showModal();
