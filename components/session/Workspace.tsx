@@ -9,6 +9,7 @@ import {
   DockMode,
   PanelId,
   QueueItem,
+  QueueMergeMode,
   QueueOrderMode,
   QueueScope,
   RailId,
@@ -50,6 +51,8 @@ export function Workspace({ sessionTitle }: { sessionTitle: string }) {
   const [queue, setQueue] = useState<QueueItem[]>(initialQueue);
   const [queueScope, setQueueScope] = useState<QueueScope>("team");
   const [queueOrderMode, setQueueOrderMode] = useState<QueueOrderMode>("auto");
+  const [queueMergeMode, setQueueMergeMode] = useState<QueueMergeMode>("off");
+  const [mergingIds, setMergingIds] = useState<string[]>([]);
   const [manualQueueOrder, setManualQueueOrder] = useState<string[]>([]);
   const [draggedQueueItem, setDraggedQueueItem] = useState<string | null>(null);
   const [selectedAgentId, setSelectedAgentId] = useState("atlas");
@@ -61,6 +64,7 @@ export function Workspace({ sessionTitle }: { sessionTitle: string }) {
   const [collapsedRails, setCollapsedRails] = useState<Record<RailId, boolean>>({ brief: false, queue: false });
   const [expandedPanel, setExpandedPanel] = useState<PanelId | null>(null);
   const [draggedPanel, setDraggedPanel] = useState<PanelId | null>(null);
+  const [dragOverPanel, setDragOverPanel] = useState<PanelId | null>(null);
   const [resizing, setResizing] = useState(false);
   const [sessionGoal, setSessionGoal] = useState(defaultGoal);
   const [message, setMessage] = useState("");
@@ -241,6 +245,24 @@ export function Workspace({ sessionTitle }: { sessionTitle: string }) {
       return;
     }
 
+    /* Auto-merge folds the new prompt into the agent's existing card instead
+       of growing the queue. */
+    if (queueMergeMode === "auto") {
+      const existing = queue.find((entry) => entry.agentId === targetAgent.id);
+      if (existing) {
+        const prompts = [...(existing.mergedFrom ?? [existing.prompt]), prompt];
+        setQueue((current) =>
+          current.map((entry) => (entry.id === existing.id ? { ...entry, mergedFrom: prompts } : entry)),
+        );
+        if (routedByOpenMind) setSelectedAgentId(targetAgent.id);
+        setQueueScope(existing.author === "You" ? "mine" : "team");
+        setCollapsedRails((current) => ({ ...current, queue: false }));
+        setMessage("");
+        notify(`Merged into ${targetAgent.name}'s queue · ${prompts.length} prompts`);
+        return;
+      }
+    }
+
     const position = queue.reduce((max, item) => Math.max(max, item.position), 0) + 1;
     const item: QueueItem = {
       id: `q-${Date.now()}`,
@@ -308,7 +330,41 @@ export function Workspace({ sessionTitle }: { sessionTitle: string }) {
     });
   }
 
+  /* Collapses adjacent same-agent cards in the visible order into one card,
+     letting the doomed cards animate out before the queue state swaps. */
+  function mergeQueueNow() {
+    const byId = new Map(queue.map((item) => [item.id, item]));
+    const merged: QueueItem[] = [];
+    const removed: string[] = [];
+    for (const id of globalQueueOrder) {
+      const item = byId.get(id)!;
+      const last = merged[merged.length - 1];
+      if (last && last.agentId === item.agentId) {
+        merged[merged.length - 1] = {
+          ...last,
+          mergedFrom: [...(last.mergedFrom ?? [last.prompt]), ...(item.mergedFrom ?? [item.prompt])],
+        };
+        removed.push(item.id);
+      } else {
+        merged.push(item);
+      }
+    }
+
+    if (removed.length === 0) {
+      notify("Nothing to merge · no adjacent prompts share an agent");
+      return;
+    }
+
+    setMergingIds(removed);
+    window.setTimeout(() => {
+      setMergingIds([]);
+      setQueue(merged);
+      notify(`Queue merged · ${removed.length} prompt${removed.length === 1 ? "" : "s"} folded in`);
+    }, 260); /* matches --dur-float */
+  }
+
   function dropPanel(target: PanelId) {
+    setDragOverPanel(null);
     if (!draggedPanel || draggedPanel === target) return;
     setPanelOrder((current) => {
       const next = current.filter((id) => id !== draggedPanel);
@@ -383,7 +439,10 @@ export function Workspace({ sessionTitle }: { sessionTitle: string }) {
         if (panel !== "floor") toggleRail(panel);
       },
       onDragStart: () => setDraggedPanel(panel),
-      onDragEnd: () => setDraggedPanel(null),
+      onDragEnd: () => {
+        setDraggedPanel(null);
+        setDragOverPanel(null);
+      },
     };
   }
 
@@ -413,6 +472,10 @@ export function Workspace({ sessionTitle }: { sessionTitle: string }) {
           onScope={setQueueScope}
           orderMode={queueOrderMode}
           onOrderMode={setQueueOrderMode}
+          mergeMode={queueMergeMode}
+          onMergeMode={setQueueMergeMode}
+          onMergeNow={mergeQueueNow}
+          mergingIds={mergingIds}
           draggedItemId={draggedQueueItem}
           onItemDragStart={setDraggedQueueItem}
           onItemDragEnd={() => setDraggedQueueItem(null)}
@@ -472,7 +535,16 @@ export function Workspace({ sessionTitle }: { sessionTitle: string }) {
                   data-expanded={expandedPanel === panel ? "true" : "false"}
                   data-collapsed={isCollapsed(panel) ? "true" : "false"}
                   data-dragging={draggedPanel === panel ? "true" : "false"}
-                  onDragOver={(event) => event.preventDefault()}
+                  data-drop-target={dragOverPanel === panel ? "true" : "false"}
+                  onDragOver={(event) => {
+                    event.preventDefault();
+                    if (draggedPanel && draggedPanel !== panel) setDragOverPanel(panel);
+                  }}
+                  onDragLeave={(event) => {
+                    if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                      setDragOverPanel((current) => (current === panel ? null : current));
+                    }
+                  }}
                   onDrop={() => dropPanel(panel)}
                 >
                   {renderPanel(panel, chromeFor(panel, index))}

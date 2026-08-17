@@ -9,6 +9,7 @@ export type DockMode = "focus" | "persistent" | "live";
 export type WorkspaceScreen = "workspace" | "review";
 export type QueueScope = "mine" | "team";
 export type QueueOrderMode = "auto" | "manual";
+export type QueueMergeMode = "auto" | "off";
 export type QueueStatus = "queued" | "waiting";
 export type FileState = "modified" | "attention" | "pending";
 export type CheckState = "passed" | "waiting" | "failed";
@@ -114,6 +115,8 @@ export type QueueItem = {
   queuedAt: string;
   /* Set when OpenMind chose the agent instead of the author naming one. */
   routedByOpenMind?: boolean;
+  /* Prompts folded into this item by queue merging, survivor's own first. */
+  mergedFrom?: string[];
 };
 
 export type ReviewCheck = {
