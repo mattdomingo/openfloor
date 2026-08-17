@@ -1033,6 +1033,19 @@
   gap: var(--space-2);
 }
 
+/* Per-agent-tinted chat history button, shared by activity cards, the
+   spotlight, and codebase-mode cards. */
+.agent-chat-button {
+  border-color: color-mix(in srgb, var(--agent-color) 40%, var(--line-strong));
+  background: color-mix(in srgb, var(--agent-color) 10%, var(--surface-raised));
+  color: color-mix(in srgb, var(--agent-color) 55%, var(--text-primary));
+}
+
+.agent-chat-button:hover {
+  border-color: var(--agent-color);
+  background: color-mix(in srgb, var(--agent-color) 16%, var(--surface-raised));
+}
+
 .agent-identity {
   min-width: 0;
 }
@@ -1752,6 +1765,12 @@
   color: #a4c68c;
 }
 
+/* The line a reviewer agent is currently scanning. */
+.code-line[data-reviewing="true"] {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
 .type-caret {
   display: inline-block;
   width: 7px;
@@ -1821,27 +1840,23 @@
 
 .code-card-head {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
   gap: var(--space-2);
   align-items: center;
   padding: var(--space-3);
 }
 
-/* Fills the card so a short file leaves dark editor behind it, not a bare
-   patch of card. */
+/* Fixed height keeps every grid card the same size regardless of typing
+   progress; the .code scroller inside follows the active line instead. */
 .code-card-body {
   display: flex;
   flex-direction: column;
   flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
+  height: 280px;
   background: var(--surface-inverse);
   color: var(--text-inverse);
-}
-
-.code-card-preview {
-  max-height: 220px;
-  padding-bottom: var(--space-3);
 }
 
 .code-card-foot {

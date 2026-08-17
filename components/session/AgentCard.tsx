@@ -25,6 +25,7 @@ export function AgentCard({
   }
 
   function onKeyDown(event: ReactKeyboardEvent) {
+    if (event.target !== event.currentTarget) return;
     if (event.key !== "Enter" && event.key !== " ") return;
     event.preventDefault();
     onFocus();
@@ -63,13 +64,14 @@ export function AgentCard({
           </span>
           <button
             type="button"
-            className="icon-button"
+            className="button agent-chat-button"
             data-size="sm"
             aria-label={`View ${agent.name}'s chat history`}
             title="Chat history"
             onClick={openHistory}
           >
-            <Icon name="message" size={13} />
+            <Icon name="message" size={12} />
+            Chat
           </button>
         </span>
       </div>
@@ -224,7 +226,8 @@ export function AgentSpotlight({
           {agent.branch}
         </span>
         <span>{agent.time} ago</span>
-        <button type="button" className="button" data-size="sm" data-variant="quiet" onClick={onHistory}>
+        <button type="button" className="button agent-chat-button" data-size="sm" onClick={onHistory}>
+          <Icon name="message" size={12} />
           Chat history
         </button>
         <button

@@ -112,6 +112,7 @@ export function AgentFloor({
                 onSelect(id);
                 onAgentLayout("focus");
               }}
+              onHistoryAgent={setHistoryAgentId}
             />
           ) : (
             <CodeWorkbench key={codebaseAgent.id} agent={codebaseAgent} onNotice={onNotice} />
