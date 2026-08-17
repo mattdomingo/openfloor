@@ -1,15 +1,32 @@
 "use client";
 
 import { useEffect, useId, useRef, useState } from "react";
-import { QueueOrderMode } from "./data";
+import { QueueMergeMode, QueueOrderMode } from "./data";
 import { Icon } from "./primitives";
 
-const options: { value: QueueOrderMode; label: string; hint: string }[] = [
+const orderOptions: { value: QueueOrderMode; label: string; hint: string }[] = [
   { value: "auto", label: "Auto", hint: "OpenMind orders" },
   { value: "manual", label: "Manual", hint: "Drag to reorder" },
 ];
 
-export function QueueOrderMenu({ mode, onChange }: { mode: QueueOrderMode; onChange: (mode: QueueOrderMode) => void }) {
+const mergeOptions: { value: QueueMergeMode; label: string; hint: string }[] = [
+  { value: "auto", label: "Auto-merge", hint: "New prompts fold into the agent's card" },
+  { value: "off", label: "Off", hint: "Every prompt keeps its own card" },
+];
+
+export function QueueOrderMenu({
+  mode,
+  onChange,
+  mergeMode,
+  onMergeMode,
+  onMergeNow,
+}: {
+  mode: QueueOrderMode;
+  onChange: (mode: QueueOrderMode) => void;
+  mergeMode: QueueMergeMode;
+  onMergeMode: (mode: QueueMergeMode) => void;
+  onMergeNow: () => void;
+}) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const listId = useId();
@@ -33,8 +50,13 @@ export function QueueOrderMenu({ mode, onChange }: { mode: QueueOrderMode; onCha
     };
   }, [open]);
 
-  function choose(next: QueueOrderMode) {
+  function chooseOrder(next: QueueOrderMode) {
     onChange(next);
+    setOpen(false);
+  }
+
+  function chooseMerge(next: QueueMergeMode) {
+    onMergeMode(next);
     setOpen(false);
   }
 
@@ -43,31 +65,68 @@ export function QueueOrderMenu({ mode, onChange }: { mode: QueueOrderMode; onCha
       <button
         type="button"
         className="queue-order-trigger"
-        aria-haspopup="listbox"
+        aria-haspopup="true"
         aria-expanded={open}
         aria-controls={listId}
-        title={`Queue ordering: ${mode === "auto" ? "Auto" : "Manual"}`}
-        data-active={mode === "manual" ? "true" : "false"}
+        title={`Queue settings · ${mode === "auto" ? "Auto order" : "Manual order"} · ${
+          mergeMode === "auto" ? "Auto-merge" : "No merging"
+        }`}
+        data-active={mode === "manual" || mergeMode === "auto" ? "true" : "false"}
         onClick={() => setOpen((current) => !current)}
       >
         <Icon name="sliders" size={13} />
       </button>
 
       {open && (
-        <ul className="queue-order-list" id={listId} role="listbox" aria-label="Queue ordering">
-          {options.map((option) => (
-            <li key={option.value} role="option" aria-selected={mode === option.value}>
-              <button
-                type="button"
-                data-selected={mode === option.value ? "true" : "false"}
-                onClick={() => choose(option.value)}
-              >
-                <span>{option.label}</span>
-                <small>{option.hint}</small>
-              </button>
-            </li>
-          ))}
-        </ul>
+        <div className="queue-order-list" id={listId} role="group" aria-label="Queue settings">
+          <span className="queue-order-label" aria-hidden="true">
+            Ordering
+          </span>
+          <ul role="listbox" aria-label="Queue ordering">
+            {orderOptions.map((option) => (
+              <li key={option.value} role="option" aria-selected={mode === option.value}>
+                <button
+                  type="button"
+                  data-selected={mode === option.value ? "true" : "false"}
+                  onClick={() => chooseOrder(option.value)}
+                >
+                  <span>{option.label}</span>
+                  <small>{option.hint}</small>
+                </button>
+              </li>
+            ))}
+          </ul>
+
+          <span className="queue-order-label" aria-hidden="true">
+            Merge prompts
+          </span>
+          <ul role="listbox" aria-label="Merge prompts">
+            {mergeOptions.map((option) => (
+              <li key={option.value} role="option" aria-selected={mergeMode === option.value}>
+                <button
+                  type="button"
+                  data-selected={mergeMode === option.value ? "true" : "false"}
+                  onClick={() => chooseMerge(option.value)}
+                >
+                  <span>{option.label}</span>
+                  <small>{option.hint}</small>
+                </button>
+              </li>
+            ))}
+          </ul>
+
+          <button
+            type="button"
+            className="queue-order-action"
+            onClick={() => {
+              onMergeNow();
+              setOpen(false);
+            }}
+          >
+            <span>Merge now</span>
+            <small>Fold adjacent prompts for the same agent</small>
+          </button>
+        </div>
       )}
     </div>
   );

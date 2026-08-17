@@ -2250,6 +2250,27 @@
   font-size: var(--text-xs);
 }
 
+.queue-order-list ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.queue-order-label {
+  display: block;
+  padding: var(--space-2) var(--space-2) var(--space-1);
+  color: var(--text-tertiary);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.queue-order-list .queue-order-action {
+  margin-top: var(--space-1);
+  border-top: 1px solid var(--line-soft);
+}
+
 .floor-presence {
   display: flex;
   align-items: center;
@@ -2853,6 +2874,37 @@
   opacity: 0.5;
 }
 
+/* Drops insert before the hovered card, so the target shows an insertion bar
+   in the gap above it plus a soft accent wash. */
+.queue-item[data-drop-target="true"] {
+  position: relative;
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--line-strong));
+  background: color-mix(in srgb, var(--accent-soft) 45%, var(--surface-raised));
+}
+
+.queue-item[data-drop-target="true"]::before {
+  content: "";
+  position: absolute;
+  top: calc(-1 * var(--space-2) / 2 - 1px);
+  left: 0;
+  right: 0;
+  height: 2px;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+}
+
+/* A merge lets the folding cards visibly collapse toward the survivor before
+   the queue state swaps underneath them. */
+@media (prefers-reduced-motion: no-preference) {
+  .queue-item[data-merging="true"] {
+    opacity: 0;
+    transform: scale(0.96) translateY(calc(-1 * var(--space-3)));
+    transition:
+      opacity var(--dur-float) var(--ease-standard),
+      transform var(--dur-float) var(--ease-out);
+  }
+}
+
 .queue-grip {
   display: inline-flex;
   align-items: center;
@@ -2904,6 +2956,34 @@
   display: block;
   -webkit-line-clamp: unset;
   overflow: visible;
+}
+
+/* Merged cards list every folded prompt on its own line so the merge is
+   visible, not implied. */
+.queue-prompt-stack {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.queue-prompt-stack li {
+  position: relative;
+  padding-left: var(--space-3);
+}
+
+.queue-prompt-stack li + li {
+  margin-top: var(--space-1);
+}
+
+.queue-prompt-stack li::before {
+  content: "";
+  position: absolute;
+  top: 0.6em;
+  left: 0;
+  width: 6px;
+  height: 2px;
+  border-radius: var(--radius-pill);
+  background: var(--accent-line);
 }
 
 .queue-expand {
@@ -2966,6 +3046,12 @@
   border-color: var(--line-strong);
   background: transparent;
   color: var(--text-secondary);
+}
+
+.queue-chip[data-kind="merged"] {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line-soft));
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 
 .queue-empty {

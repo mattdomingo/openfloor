@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, type CSSProperties } from "react";
-import { QueueItem, QueueOrderMode, QueueScope } from "./data";
+import { useState, type CSSProperties, type DragEvent } from "react";
+import { QueueItem, QueueMergeMode, QueueOrderMode, QueueScope } from "./data";
 import { Icon, SegmentedControl } from "./primitives";
 import { Panel, PanelChrome } from "./Rail";
 import { QueueOrderMenu } from "./QueueOrderMenu";
@@ -18,6 +18,10 @@ export function PromptQueue({
   onScope,
   orderMode,
   onOrderMode,
+  mergeMode,
+  onMergeMode,
+  onMergeNow,
+  mergingIds,
   draggedItemId,
   onItemDragStart,
   onItemDragEnd,
@@ -30,6 +34,10 @@ export function PromptQueue({
   onScope: (scope: QueueScope) => void;
   orderMode: QueueOrderMode;
   onOrderMode: (mode: QueueOrderMode) => void;
+  mergeMode: QueueMergeMode;
+  onMergeMode: (mode: QueueMergeMode) => void;
+  onMergeNow: () => void;
+  mergingIds: string[];
   draggedItemId: string | null;
   onItemDragStart: (id: string) => void;
   onItemDragEnd: () => void;
@@ -37,6 +45,7 @@ export function PromptQueue({
   selectedAgentName: string;
 }) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [dragOverId, setDragOverId] = useState<string | null>(null);
   const canReorder = scope === "team";
   const manual = orderMode === "manual" && canReorder;
   const sorted = scope === "mine" ? items.filter((item) => item.author === "You") : items;
@@ -47,7 +56,15 @@ export function PromptQueue({
       title="Queue"
       meta={`${sorted.length} waiting`}
       badge={`${sorted.length}`}
-      actions={canReorder ? <QueueOrderMenu mode={orderMode} onChange={onOrderMode} /> : undefined}
+      actions={
+        <QueueOrderMenu
+          mode={orderMode}
+          onChange={onOrderMode}
+          mergeMode={mergeMode}
+          onMergeMode={onMergeMode}
+          onMergeNow={onMergeNow}
+        />
+      }
     >
       <div className="queue-toolbar">
         <SegmentedControl label="Queue scope" value={scope} onChange={onScope} options={scopeOptions} />
@@ -65,7 +82,7 @@ export function PromptQueue({
       ) : (
         <ul className="queue-list">
           {sorted.map((item) => {
-            const long = item.prompt.length > 110;
+            const long = (item.mergedFrom?.join(" ") ?? item.prompt).length > 110;
             const open = expanded[item.id] === true;
             return (
               <li
@@ -73,11 +90,43 @@ export function PromptQueue({
                 className="queue-item"
                 data-manual={manual ? "true" : undefined}
                 data-dragging={draggedItemId === item.id ? "true" : undefined}
+                data-drop-target={dragOverId === item.id ? "true" : undefined}
+                data-merging={mergingIds.includes(item.id) ? "true" : undefined}
                 draggable={manual}
                 onDragStart={manual ? () => onItemDragStart(item.id) : undefined}
-                onDragEnd={manual ? onItemDragEnd : undefined}
-                onDragOver={manual ? (event) => event.preventDefault() : undefined}
-                onDrop={manual ? () => onItemDrop(item.id) : undefined}
+                onDragEnd={
+                  manual
+                    ? () => {
+                        setDragOverId(null);
+                        onItemDragEnd();
+                      }
+                    : undefined
+                }
+                onDragOver={
+                  manual
+                    ? (event) => {
+                        event.preventDefault();
+                        if (draggedItemId && draggedItemId !== item.id) setDragOverId(item.id);
+                      }
+                    : undefined
+                }
+                onDragLeave={
+                  manual
+                    ? (event: DragEvent<HTMLLIElement>) => {
+                        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                          setDragOverId((current) => (current === item.id ? null : current));
+                        }
+                      }
+                    : undefined
+                }
+                onDrop={
+                  manual
+                    ? () => {
+                        setDragOverId(null);
+                        onItemDrop(item.id);
+                      }
+                    : undefined
+                }
               >
                 <div className="queue-item-head">
                   <span className="queue-identity">
@@ -104,12 +153,29 @@ export function PromptQueue({
                         OpenMind
                       </span>
                     )}
+                    {item.mergedFrom && item.mergedFrom.length > 1 && (
+                      <span
+                        className="queue-chip"
+                        data-kind="merged"
+                        title={`${item.mergedFrom.length} prompts merged into this card`}
+                      >
+                        Merged ×{item.mergedFrom.length}
+                      </span>
+                    )}
                   </span>
                   <span className="queue-time">{item.queuedAt}</span>
                 </div>
-                <p className="queue-prompt" data-expanded={open ? "true" : "false"}>
-                  {item.prompt}
-                </p>
+                {item.mergedFrom && item.mergedFrom.length > 1 ? (
+                  <ul className="queue-prompt queue-prompt-stack" data-expanded={open ? "true" : "false"}>
+                    {item.mergedFrom.map((text, index) => (
+                      <li key={index}>{text}</li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="queue-prompt" data-expanded={open ? "true" : "false"}>
+                    {item.prompt}
+                  </p>
+                )}
                 {long && (
                   <button
                     type="button"

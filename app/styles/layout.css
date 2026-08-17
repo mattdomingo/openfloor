@@ -313,6 +313,13 @@
   opacity: 0.5;
 }
 
+/* Marks where a dragged panel will land (drops insert before this slot). */
+.panel-slot[data-drop-target="true"] {
+  outline: 2px dashed color-mix(in srgb, var(--accent) 60%, transparent);
+  outline-offset: -2px;
+  border-radius: var(--radius-md);
+}
+
 .workspace[data-expanded="true"] .panel-slot[data-expanded="false"] {
   display: none;
 }
