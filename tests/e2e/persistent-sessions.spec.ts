@@ -203,15 +203,16 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await owner.getByRole("button", { name: "Workspace" }).click();
   await expect(member.getByRole("button", { name: "Run", exact: true })).toHaveCount(0);
   await owner.getByRole("button", { name: "Run", exact: true }).click();
-  await expect(owner.getByText("published", { exact: true }).first()).toBeVisible();
+  await expect(owner.getByText("integrated", { exact: true }).first()).toBeVisible();
   await expect(agentFloor.getByText("1 changed file", { exact: false })).toBeVisible();
   await owner.reload();
-  await expect(owner.getByText("published", { exact: true }).first()).toBeVisible();
+  await expect(owner.getByText("integrated", { exact: true }).first()).toBeVisible();
   await owner.getByRole("button", { name: "Review" }).click();
   await expect(owner.getByRole("heading", { name: /openfloor\// })).toBeVisible();
   await expect(owner.getByText("agent-change.ts", { exact: true })).toBeVisible();
   await expect(owner.getByText("export const implemented = true;", { exact: true })).toBeVisible();
   await expect(owner.getByText("npm test", { exact: true })).toBeVisible();
+  await expect(owner.getByRole("link", { name: /Draft PR #1/ })).toHaveAttribute("href", /\/pull\/1$/);
 
   await owner.getByRole("button", { name: "Workspace" }).click();
   await owner.getByLabel("Queue target").selectOption({ label: "Lumen" });
@@ -219,29 +220,24 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await owner.getByRole("button", { name: "Add to queue" }).click();
   const secondPublishedItem = owner.locator("li.queue-item", { hasText: "Create a second published change" });
   await secondPublishedItem.getByRole("button", { name: "Run", exact: true }).click();
-  await expect(secondPublishedItem.getByText("published", { exact: true })).toBeVisible();
+  await expect(secondPublishedItem.getByText("integrated", { exact: true })).toBeVisible();
   await expect(owner.locator("code.queue-run-branch")).toHaveCount(2);
   await owner.getByRole("button", { name: "Review" }).click();
   await expect(owner.getByText("second-change.ts", { exact: true })).toBeVisible();
+  await expect(owner.getByRole("link", { name: /Draft PR #1/ })).toHaveCount(1);
   await owner.getByRole("button", { name: "Workspace" }).click();
-  const firstPublishedItem = owner.locator("li.queue-item", { hasText: "Inspect the real session contract" });
-  await firstPublishedItem.getByRole("button", { name: "Discard candidate" }).click();
-  await expect(firstPublishedItem.getByText("discarded", { exact: true })).toBeVisible();
-  await expect(member.getByRole("button", { name: "Discard candidate" })).toHaveCount(0);
-  const externallyChangedBranch = await secondPublishedItem.locator("code.queue-run-branch").textContent();
-  const externalPush = JSON.stringify({
-    installation: { id: "test-installation" }, repository: { id: "9001" },
-    ref: `refs/heads/${externallyChangedBranch}`, after: "b".repeat(40),
-  });
-  const externalSignature = createHmac("sha256", "e2e-test-github-webhook-secret").update(externalPush).digest("hex");
-  await owner.request.post("/app/webhooks/github", {
-    data: externalPush,
-    headers: { "content-type": "application/json", "x-github-event": "push", "x-github-delivery": "external-run-change", "x-hub-signature-256": `sha256=${externalSignature}` },
-  });
-  await owner.reload();
-  const changedSecondItem = owner.locator("li.queue-item", { hasText: "Create a second published change" });
-  await changedSecondItem.getByRole("button", { name: "Discard candidate" }).click();
-  await expect(owner.getByText("The recorded run branch cannot be safely discarded")).toBeVisible();
+
+  await owner.getByLabel("Queue target").selectOption({ label: "Lumen" });
+  await owner.getByLabel("Prompt to add to the queue").fill("Create a deliberate integration conflict");
+  await owner.getByRole("button", { name: "Add to queue" }).click();
+  const conflictItem = owner.locator("li.queue-item", { hasText: "Create a deliberate integration conflict" });
+  await conflictItem.getByRole("button", { name: "Run", exact: true }).click();
+  await expect(conflictItem.getByText("conflicted", { exact: true })).toBeVisible();
+  const conflictedBranch = await conflictItem.locator("code.queue-run-branch").textContent();
+  await expect(member.getByRole("button", { name: "Retry against latest candidate" })).toHaveCount(0);
+  await conflictItem.getByRole("button", { name: "Retry against latest candidate" }).click();
+  await expect(conflictItem.getByText("integrated", { exact: true })).toBeVisible();
+  await expect.poll(async () => conflictItem.locator("code.queue-run-branch").textContent()).not.toBe(conflictedBranch);
 
   await owner.getByLabel("Queue target").selectOption({ label: "Lumen" });
   await owner.getByLabel("Prompt to add to the queue").fill("Create an intentionally failing change");

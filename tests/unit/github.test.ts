@@ -2,10 +2,12 @@ import { describe, expect, it } from "vitest";
 import { generateKeyPairSync } from "node:crypto";
 import {
   createRepositoryBranch,
+  createDraftPullRequest,
   deleteTestRepositoryBranchIfMatches,
   getRepositoryRefSha,
   importGitHubAppPrivateKey,
   listInstallationRepositories,
+  mergeRepositoryBranch,
   type GitHubAppConfig,
 } from "@/lib/github";
 import { githubGitAuthorization } from "@/lib/github-git-auth";
@@ -61,5 +63,23 @@ describe("GitHub App client", () => {
     await expect(getRepositoryRefSha(config, "installation", repository, branch)).resolves.toBe(sha);
     await expect(deleteTestRepositoryBranchIfMatches(config, "installation", repository, branch, sha)).resolves.toBe(true);
     await expect(getRepositoryRefSha(config, "installation", repository, branch)).rejects.toMatchObject({ status: 404 });
+  });
+
+  it("serially advances a candidate and reuses one draft pull request", async () => {
+    const repository = { id: "phase6", nodeId: "R_6", owner: "openfloor", name: "phase6", fullName: "openfloor/phase6", private: true, defaultBranch: "main" };
+    const config: GitHubAppConfig = {
+      appId: "1", slug: "openfloor-test", privateKey: "test", stateSecret: "state", webhookSecret: "webhook",
+      testData: { installationId: "installation-6", repositories: [{ ...repository, branches: ["main"], branchShas: { main: "1".repeat(40) } }] },
+    };
+    const candidate = "openfloor/session/candidate/phase6";
+    await createRepositoryBranch(config, "installation-6", repository, candidate, "1".repeat(40));
+    const merged = await mergeRepositoryBranch(config, "installation-6", repository, candidate, "2".repeat(40), "Integrate run");
+    expect(merged.sha).toMatch(/^[0-9a-f]{40}$/);
+    await expect(getRepositoryRefSha(config, "installation-6", repository, candidate)).resolves.toBe(merged.sha);
+    const input = { title: "Candidate", body: "Body", head: candidate, base: "main" };
+    const first = await createDraftPullRequest(config, "installation-6", repository, input);
+    const second = await createDraftPullRequest(config, "installation-6", repository, input);
+    expect(first).toEqual(second);
+    expect(first).toEqual(expect.objectContaining({ draft: true, state: "open" }));
   });
 });

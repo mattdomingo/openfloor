@@ -3,22 +3,26 @@ import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloud
 import type { D1DatabaseLike } from "../db";
 import {
   bumpAgentRunRevision,
+  beginRunIntegration,
   finishAgentRun,
   finishRunCheck,
   finishRunPublished,
+  finishRunIntegrated,
   getRunExecutionContext,
   isRunCancellationRequested,
   markRunChecking,
   markRunCheckRunning,
   markRunRunning,
   markRunPublishing,
+  markRunIntegrationConflicted,
+  releaseRunIntegration,
   recordRunPublicationFailure,
   recordRunArtifact,
   replaceRunFiles,
   setRunProcessId,
 } from "../db/runs";
 import { getGitHubAppConfig } from "../db";
-import { createInstallationToken, getRepositoryRefSha } from "../lib/github";
+import { createDraftPullRequest, createInstallationToken, getRepositoryRefSha, GitHubApiError, mergeRepositoryBranch } from "../lib/github";
 import type { AgentRunFile } from "../lib/floor-types";
 import type { GitHubRepositoryOption } from "../lib/session-types";
 import { notifyFloorChanged } from "../lib/presence-server";
@@ -39,6 +43,7 @@ const COMMAND_TIMEOUT_MS = 10 * 60 * 1000;
 const MAX_LOG_BYTES = 500_000;
 const MAX_DIFF_BYTES = 2_000_000;
 const MAX_FILES = 100;
+const PUBLISHER_SANDBOX_IMAGE_VERSION = "v2";
 
 export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Params> {
   async run(event: Readonly<WorkflowEvent<Params>>, step: WorkflowStep): Promise<{ status: string }> {
@@ -54,7 +59,7 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
       normalizeId: true,
       labels: { sessionId: context.sessionId, runId },
     });
-    const publisher = getSandbox(this.env.SANDBOX, `publisher-${event.instanceId}`, {
+    const publisher = getSandbox(this.env.SANDBOX, `publisher-${PUBLISHER_SANDBOX_IMAGE_VERSION}-${event.instanceId}`, {
       keepAlive: true,
       enableDefaultSession: false,
       normalizeId: true,
@@ -63,6 +68,8 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
     let finalStatus: "ready" | "failed" | "cancelled" = "failed";
     let summary = "Agent run failed before Codex completed.";
     try {
+      if (context.status === "published") return await this.integrate(runId, step);
+      if (["integrated", "conflicted"].includes(context.status)) return { status: context.status };
       if (context.status === "publishing") {
         if (!context.bundleKey || !context.localCommitSha || context.files.length === 0) {
           throw new Error("Stored publication metadata is incomplete");
@@ -70,7 +77,7 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
         const published = await this.publishBundle(runId, context, context.files, { localCommitSha: context.localCommitSha }, publisher, step);
         const completion = await finishRunPublished(runId, published.commitSha, published.remoteSha, this.env.DB);
         if (completion) await notifyFloorChanged(completion.sessionId, completion.revision, ["queue", "runs", "review"]);
-        return { status: "published" };
+        return await this.integrate(runId, step);
       }
       if (await isRunCancellationRequested(runId, this.env.DB)) {
         finalStatus = "cancelled";
@@ -274,7 +281,7 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
       const published = await this.publishBundle(runId, context, files, bundle, publisher, step);
       const completion = await finishRunPublished(runId, published.commitSha, published.remoteSha, this.env.DB);
       if (completion) await notifyFloorChanged(completion.sessionId, completion.revision, ["queue", "runs", "review"]);
-      return { status: "published" };
+      return await this.integrate(runId, step);
     } catch (error) {
       const current = await getRunExecutionContext(runId, this.env.DB);
       if (current && ["ready", "publishing"].includes(current.status)) {
@@ -302,6 +309,58 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
   private async notify(runId: string) {
     const update = await bumpAgentRunRevision(runId, this.env.DB);
     if (update) await notifyFloorChanged(update.sessionId, update.revision, ["queue", "runs", "review"]);
+  }
+
+  private async integrate(runId: string, step: WorkflowStep): Promise<{ status: string }> {
+    try {
+      const result = await step.do("serialize and integrate run", { retries: { limit: 20, delay: "5 seconds", backoff: "exponential" }, timeout: "20 minutes" }, async () => {
+        const context = await beginRunIntegration(runId, this.env.DB);
+        const config = getGitHubAppConfig();
+        const repository: GitHubRepositoryOption = {
+          id: context.repositoryId, nodeId: "integration-not-required", owner: context.repositoryOwner,
+          name: context.repositoryName, fullName: context.repositoryFullName, private: true, defaultBranch: context.baseBranch,
+        };
+        const [candidateSha, runSha, baseSha] = await Promise.all([
+          getRepositoryRefSha(config, context.installationId, repository, context.candidateBranch),
+          getRepositoryRefSha(config, context.installationId, repository, context.runBranch),
+          getRepositoryRefSha(config, context.installationId, repository, context.baseBranch),
+        ]);
+        if (!/^[0-9a-f]{40}$/.test(candidateSha) || !/^[0-9a-f]{40}$/.test(baseSha) || runSha !== context.runCommitSha) {
+          throw new Error("GitHub refs changed before serialized integration");
+        }
+        try {
+          const merged = await mergeRepositoryBranch(
+            config, context.installationId, repository, context.candidateBranch, context.runCommitSha,
+            `Integrate OpenFloor run ${runId.slice(0, 8)}`,
+          );
+          const reconciled = await getRepositoryRefSha(config, context.installationId, repository, context.candidateBranch);
+          if (reconciled !== merged.sha) throw new Error("Candidate branch did not reconcile after integration");
+          const pullRequest = context.pullRequestNumber ? null : await createDraftPullRequest(config, context.installationId, repository, {
+            title: `OpenFloor: ${context.repositoryName} candidate`,
+            body: "Draft candidate maintained automatically by OpenFloor. Individual run attribution remains available in the session.",
+            head: context.candidateBranch,
+            base: context.baseBranch,
+          });
+          return { conflicted: false as const, candidateSha: reconciled, pullRequest };
+        } catch (error) {
+          if (error instanceof GitHubApiError && error.status === 409) return { conflicted: true as const, reason: error.message };
+          throw error;
+        }
+      });
+      if (result.conflicted) {
+        const update = await markRunIntegrationConflicted(runId, result.reason, this.env.DB);
+        if (update) await notifyFloorChanged(update.sessionId, update.revision, ["queue", "repository", "runs", "review"]);
+        return { status: "conflicted" };
+      }
+      const update = await finishRunIntegrated(runId, result.candidateSha, result.pullRequest, this.env.DB);
+      if (update) await notifyFloorChanged(update.sessionId, update.revision, ["queue", "repository", "runs", "review"]);
+      return { status: "integrated" };
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : "Candidate integration failed";
+      const update = await releaseRunIntegration(runId, reason, this.env.DB);
+      if (update) await notifyFloorChanged(update.sessionId, update.revision, ["queue", "repository", "runs", "review"]);
+      return { status: "published" };
+    }
   }
 
   private async publishBundle(

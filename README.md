@@ -16,7 +16,7 @@ openssl rand -hex 32
 
 Open `.dev.vars` and replace `INVITE_SIGNING_SECRET` with the random value printed by the last command. You can also change the three `OPENFLOOR_DEV_USER_*` values to the local name and email you want displayed. The Cloudflare Access placeholders can remain unchanged for local development.
 
-Repository execution additionally requires a GitHub App, Cloudflare Workflows/Sandbox/private R2, and an OpenAI project API key. Follow [`docs/github-production.md`](docs/github-production.md). Phase 5 runs Codex at the exact candidate SHA, executes configured checks, validates a bounded Git bundle in a clean publisher, and preserves every passing result on its own GitHub run branch. It does not integrate those branches or create a pull request yet.
+Repository execution additionally requires a GitHub App, Cloudflare Workflows/Sandbox/private R2, and an OpenAI project API key. Follow [`docs/github-production.md`](docs/github-production.md). Phase 6 runs Codex at the exact candidate SHA, validates and publishes each passing result independently, then serially integrates it into one candidate branch and one draft pull request. Final review readiness and squash merge remain Phase 7.
 
 Create the local D1 tables, then start the development server:
 

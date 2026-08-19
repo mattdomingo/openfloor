@@ -163,14 +163,15 @@ WebSocket events notify clients about presence or changed domains. D1 remains au
 - Real run status and file/check data in Agent cards and Review. Each passing run is automatically preserved on its own verified `openfloor/<session-short>/run/<run-short>` GitHub branch; consecutive prompts retain separate branches and audit history.
 - Trusted incremental Git-bundle validation and non-force publication from a clean publisher Sandbox, followed by GitHub SHA reconciliation.
 - Owner-only safe discard using an expected-SHA lease; externally modified run branches are never deleted.
+- Serialized candidate integration inside `AgentRunWorkflow`, with a D1 candidate lease, authoritative GitHub ref reconciliation, non-force merge, one draft PR, queue completion, conflict preservation, and owner-only retry as a new run attempt.
+
+Known production follow-up: the owner discard action still reports failure in the disposable acceptance repository after its Git authentication correction. Preserve the expected-SHA lease and error separation; diagnose this independently rather than weakening deletion safety or folding it into Phase 6.
 
 ### Explicitly deferred
 
 - Agent model/provider selection and user-managed provider credentials; Phase 4 deliberately uses one server-configured Codex model and project credential.
-- Candidate-branch integration, pull requests, and merging. Phase 5 publishes isolated run branches only.
 - Agent-authored chat messages, live terminal streaming, and generic artifact download UI.
-- Merge-conflict handling and multi-run candidate integration.
-- Review approval persistence, merge, deploy, or repository modification.
+- Review-ready persistence, final squash merge, post-merge cleanup, and deployment.
 - Agent edit, archive, deletion, or lifecycle states beyond `created`.
 - Queue completion, removal, consumption, or retry workflows.
 - Ownership transfer. Owners cannot leave until transfer exists.
@@ -401,12 +402,13 @@ Do not hand-edit Drizzle metadata. If a generated migration is wrong, correct th
 
 - One active run may exist per queue item. Runs pin the agent, candidate, exact SHA, attempt, model, prompt inputs, timestamps, and terminal summary.
 - The owner may start or cancel; members may read caller-visible run summaries but receive no mutation controls. Unassigned or nonqueued items cannot execute.
-- Run statuses are `provisioning`, `running`, `checking`, `ready`, `publishing`, `published`, `integrating`, `integrated`, `conflicted`, `failed`, `cancel_requested`, and `cancelled`; later-phase statuses are reserved in the durable contract.
+- Run statuses are `provisioning`, `running`, `checking`, `ready`, `publishing`, `published`, `integrating`, `integrated`, `conflicted`, `failed`, `cancel_requested`, and `cancelled`; every listed status is now used by the Phase 6 lifecycle.
 - Each run snapshots ordered required checks. D1 stores bounded output excerpts, file metadata, and diff previews; complete bounded Codex logs, check logs, and diffs stay in private R2.
-- `ready` means checks passed locally; Phase 5 immediately moves through `publishing` to `published` after trusted validation and GitHub reconciliation. The queue item stays `blocked` pending Phase 6 integration; failed or cancelled runs restore it to `queued`.
+- `ready` means checks passed locally. The Workflow immediately moves through `publishing`, `published`, and serialized `integrating`; success records `integrated` and completes the queue item, while a true GitHub merge conflict records `conflicted` and leaves the item blocked for owner retry.
 - Each new run stores a server-generated run branch, bundle key/size, local bundle commit, trusted published commit, observed remote SHA, publication time, and nullable discard audit fields. Older Phase 4 runs may have null publication fields.
 - The agent Sandbox uploads a bounded incremental bundle through an operation-scoped JWT. A separate clean publisher Sandbox reconstructs the deterministic archive baseline from the exact candidate tree, verifies one ref and one result commit, compares the recorded file set, enforces object/file limits, and performs a fixed non-force push with a repository-limited token. Git-over-HTTPS authenticates with `x-access-token` plus the installation token as the HTTP Basic password; REST-style Bearer authentication is not valid for this Git transport. Restarting a Workflow whose run is already `publishing` resumes from the stored bundle and file metadata without rerunning Codex or checks.
 - Discard reads the current remote ref and deletes with `--force-with-lease=<expected-sha>` only when the server-generated branch and recorded/reconciled SHAs still match. D1/R2 audit history remains.
+- The active candidate holds at most one `integration_run_id`. Each integrating Workflow reconciles base, candidate, and run refs from GitHub, merges the immutable run commit into the latest candidate without force, updates the expected/remote candidate SHA, and creates a draft PR only when the candidate has none. Retry against a conflict creates a new attempt and run branch from the latest candidate; it never rewrites the conflicted branch.
 - Workflow-file changes under `.github/workflows/` are rejected because the GitHub App has no Workflows permission.
 
 #### `floor_agents`
@@ -569,6 +571,7 @@ All paths below are shown without the production `/app` prefix.
 | `POST /api/sessions/[id]/queue/[queueItemId]/run` | Owner | Start a durable Codex run for an assigned queued item at the exact active candidate SHA. |
 | `POST /api/sessions/[id]/runs/[runId]/cancel` | Owner | Request cancellation of an active run. |
 | `POST /api/sessions/[id]/runs/[runId]/discard` | Owner | Delete only an unchanged, verified OpenFloor run branch using an expected-SHA lease; retain audit history. |
+| `POST /api/sessions/[id]/runs/[runId]/retry` | Owner | Retry a conflicted queue item as a new run attempt pinned to the latest candidate SHA. |
 | `GET /api/sessions/[id]/runs/[runId]/artifacts` | Session member | Return caller-authorized bounded run artifacts from private R2. |
 | `GET /runtime/run/source` | Short-lived run source JWT | Proxy the exact candidate archive for one run. |
 | `POST/GET /runtime/run/bundle` | Short-lived operation JWT | Store an agent-exported bounded Git bundle and serve it only to the clean trusted publisher. |
@@ -973,14 +976,14 @@ Migrations must land before code that requires them. The build generates `dist/s
 - Draft Hidden mode does not stop outbound sharing.
 - Agent names may contain spaces, while the current `@mention` helper recognizes a single word-like name. Explicit target selection is the reliable path for multiword agent names until mention parsing is redesigned.
 - Owners cannot leave because ownership transfer is deferred.
-- Review is derived from bounded persisted run files and checks; complete artifacts remain outside the snapshot, and no GitHub PR exists until a later phase.
+- Review is derived from bounded persisted run files/checks plus the active candidate's real draft PR identity; complete artifacts remain outside the snapshot.
 - The UI contains restored visual affordances from a prototype; verify backend wiring before claiming any action is real.
 - Wrangler is pinned. A newer compatibility date may be rejected until Wrangler is upgraded deliberately.
 - This `AGENTS.md` is the comprehensive context source; keep shorter README and focused docs consistent with it.
 
 ## Roadmap guidance
 
-After Phase 5 is deployed and accepted in the browser, the next milestone is Phase 6: serialize integration into the active candidate, reconcile base/candidate/run SHAs, merge each published run without force, preserve true conflicts as blocked, and create one draft pull request after the first successful integration. A retry must create a new attempt/run branch rather than rewriting history.
+After Phase 6 is deployed and accepted in the browser, the next milestone is Phase 7: reconcile the active PR's files, checks, protections, readiness, and mergeability; add owner-only ready/review and squash-merge actions; verify the merge; safely clean matching run/candidate branches; and start a fresh candidate cycle from the latest base.
 
 ## Key decision log
 
@@ -1167,6 +1170,22 @@ After Phase 5 is deployed and accepted in the browser, the next milestone is Pha
 **Rationale:** GitHub's REST API accepts Bearer tokens, but its documented Git transport uses the installation token as an HTTP password. Publication is a distinct recoverable stage, and repeating paid agent execution after a transport or deployment failure would be slow and could produce different code.
 
 **Consequences:** Each Workflow instance receives a distinct publisher Sandbox identity so a recovery cannot reuse a stale container image. The clean publisher and discard Sandbox receive the short-lived Git credential only through their process environments; Git clone, push, and conditional deletion all use the same HTTP Basic transport contract, while REST calls continue to use Bearer authentication. Error messages never include the header or token and distinguish an actual expected-SHA lease mismatch from authentication or transport failure. Publication retries remain idempotent because an existing run ref is accepted only at the exact trusted commit, and the Workflow reconciles the remote SHA before recording success.
+
+### 2026-08-19 — Serialize run integration into one candidate and draft PR
+
+**Decision:** After publication, `AgentRunWorkflow` acquires a conditional D1 lease on the active candidate, reconciles the current base/candidate/run refs from GitHub, and requests GitHub's non-force branch merge using the immutable run commit as the head. The first successful integration creates one draft PR from candidate to configured base; later integrations advance that same branch and PR. A GitHub merge conflict records `conflicted`, preserves both branches, and owner-only retry creates a new run attempt from the latest candidate.
+
+**Rationale:** Per-run branches isolate concurrent agent work, while a single serialized candidate gives reviewers one stable integration surface. The D1 lease prevents two Workflows from updating the expected candidate head concurrently, and GitHub remains authoritative for the actual merge result and conflict decision.
+
+**Consequences:** Candidate records persist the integration lease and PR number/node/URL/state/draft metadata. Runs persist integration base, integrated candidate SHA, conflict reason, and timestamps. Successful integration marks the queue item completed; conflict leaves it blocked. Candidate push webhooks received while the matching lease is held do not falsely mark OpenFloor's own merge as an external mutation. Final PR readiness, protection enforcement, squash merge, and cleanup remain Phase 7.
+
+### 2026-08-19 — Allow concurrent runs to publish from an ancestral candidate
+
+**Decision:** Trusted bundle publication no longer requires the remote candidate head to equal the run's pinned candidate SHA. It requires the pinned SHA to exist and remain an ancestor of the observed candidate head, reconstructs and validates the bundle against that exact pinned tree, and publishes the immutable run commit with the pinned SHA as parent. Integration separately requires a ready repository connection and merges the run against the latest serialized candidate.
+
+**Rationale:** Two agents may start from the same candidate. If the first integrates before the second publishes, equality is expected to fail even though the second result is still valid and safely attributable. An ancestry check distinguishes ordinary forward candidate progress from rewritten or unrelated history.
+
+**Consequences:** Concurrent nonconflicting runs can both publish and integrate. A conflicting later run reaches GitHub's authoritative merge conflict path instead of failing prematurely during publication. Force-rewritten ancestry and externally modified repository state still fail closed. The trusted publisher sandbox ID includes an explicit image-generation prefix; increment it whenever publisher image contents change so recovery cannot attach to a container from an older image rollout.
 
 ## How to record the next decision
 

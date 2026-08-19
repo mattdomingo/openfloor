@@ -39,10 +39,12 @@ import {
 } from "@/db/preflights";
 import { createFloorAgent, createFloorQueueItem, getFloorSnapshot } from "@/db/floor";
 import {
+  beginRunIntegration,
   AgentRunNotReadyError,
   createAgentRun,
   finishAgentRun,
   finishRunPublished,
+  finishRunIntegrated,
   finishRunCheck,
   getRunExecutionContext,
   markRunChecking,
@@ -50,6 +52,8 @@ import {
   markRunRunning,
   markRunDiscarded,
   markRunPublishing,
+  markRunIntegrationConflicted,
+  prepareConflictedRunRetry,
   replaceRunFiles,
   requestAgentRunCancellation,
 } from "@/db/runs";
@@ -191,9 +195,9 @@ describe("D1 session persistence", () => {
     await expect(recordGitHubWebhookDelivery("delivery-1", "push", null, "installation-2", "repository-2", env.DB)).resolves.toBe(true);
     await expect(recordGitHubWebhookDelivery("delivery-1", "push", null, "installation-2", "repository-2", env.DB)).resolves.toBe(false);
     const [target] = await findRepositoryWebhookTargets("installation-2", "repository-2", env.DB);
-    await updateRepositoryPushState(target.sessionId, "refs/heads/main", "b".repeat(40), target.baseBranch, target.candidateBranch, target.candidateSha, env.DB);
+    await updateRepositoryPushState(target.sessionId, "refs/heads/main", "b".repeat(40), target.baseBranch, target.candidateBranch, target.candidateSha, target.integrationRunId, env.DB);
     expect(await getActiveRepositoryCandidateForMember(created.session.id, owner.id, env.DB)).toEqual(expect.objectContaining({ behindBase: true, remoteBaseSha: "b".repeat(40) }));
-    await updateRepositoryPushState(target.sessionId, `refs/heads/${branch}`, "c".repeat(40), target.baseBranch, target.candidateBranch, target.candidateSha, env.DB);
+    await updateRepositoryPushState(target.sessionId, `refs/heads/${branch}`, "c".repeat(40), target.baseBranch, target.candidateBranch, target.candidateSha, target.integrationRunId, env.DB);
     expect(await getRepositoryConnectionForMember(created.session.id, owner.id, env.DB)).toEqual(expect.objectContaining({ status: "externally_modified" }));
   });
 
@@ -262,20 +266,38 @@ describe("D1 session persistence", () => {
     const publishedSha = "e".repeat(40);
     await markRunPublishing(run.id, { bundleKey: `runs/${run.id}/result.bundle`, bundleSizeBytes: 100, localCommitSha: "f".repeat(40) }, env.DB);
     await finishRunPublished(run.id, publishedSha, publishedSha, env.DB);
+    const integration = await beginRunIntegration(run.id, env.DB);
+    expect(integration).toEqual(expect.objectContaining({ candidateSha: "d".repeat(40), runCommitSha: publishedSha }));
+    const integratedSha = "9".repeat(40);
+    await finishRunIntegrated(run.id, integratedSha, { number: 7, nodeId: "PR_7", url: "https://github.com/openfloor-test/run/pull/7", state: "open", draft: true }, env.DB);
     floor = await getFloorSnapshot(created.session.id, owner.id, env.DB);
-    expect(floor?.runs[0]).toEqual(expect.objectContaining({ status: "published", runCommitSha: publishedSha, remoteRunSha: publishedSha }));
-    expect(floor?.review).toEqual(expect.objectContaining({ commitSha: publishedSha, branch: run.runBranch }));
+    expect(floor?.runs[0]).toEqual(expect.objectContaining({ status: "integrated", runCommitSha: publishedSha, integratedCandidateSha: integratedSha }));
+    expect(floor?.queue[0].status).toBe("completed");
+    expect(floor?.review).toEqual(expect.objectContaining({ commitSha: integratedSha, branch, pullRequest: expect.objectContaining({ number: 7, draft: true }) }));
     expect(await markRunDiscarded(created.session.id, run.id, member.id, env.DB)).toBeNull();
-    expect(await markRunDiscarded(created.session.id, run.id, owner.id, env.DB)).not.toBeNull();
-    expect((await getFloorSnapshot(created.session.id, owner.id, env.DB))?.runs[0].discardedAt).not.toBeNull();
+    expect(await markRunDiscarded(created.session.id, run.id, owner.id, env.DB)).toBeNull();
     await finishAgentRun(run.id, "failed", "Late duplicate completion", env.DB);
     floor = await getFloorSnapshot(created.session.id, owner.id, env.DB);
-    expect(floor?.queue[0].status).toBe("blocked");
-    expect(floor?.runs[0].status).toBe("published");
+    expect(floor?.queue[0].status).toBe("completed");
+    expect(floor?.runs[0].status).toBe("integrated");
 
     await env.DB.prepare("UPDATE floor_queue_items SET status = 'queued' WHERE id = ?").bind(queueItemId).run();
+    const conflict = await createAgentRun(created.session.id, queueItemId, owner.id, env.DB);
+    const conflictContext = await getRunExecutionContext(conflict.id, env.DB);
+    await markRunRunning(conflict.id, "process-conflict", env.DB);
+    await markRunChecking(conflict.id, "thread-conflict", "Conflicting change", env.DB);
+    await replaceRunFiles(conflict.id, [{ path: "src/conflict.ts", changeKind: "add", additions: 1, deletions: 0, summary: null, diffPreview: "+conflict" }], env.DB);
+    await markRunCheckRunning(conflict.id, conflictContext!.checks[0].id, env.DB);
+    await finishRunCheck(conflict.id, conflictContext!.checks[0].id, { status: "passed", exitCode: 0, durationMs: 5, outputExcerpt: "ok", logKey: "conflict.log" }, env.DB);
+    await finishAgentRun(conflict.id, "ready", "Ready", env.DB);
+    await markRunPublishing(conflict.id, { bundleKey: "conflict.bundle", bundleSizeBytes: 20, localCommitSha: "8".repeat(40) }, env.DB);
+    await finishRunPublished(conflict.id, "7".repeat(40), "7".repeat(40), env.DB);
+    await beginRunIntegration(conflict.id, env.DB);
+    await markRunIntegrationConflicted(conflict.id, "Both runs changed src/conflict.ts", env.DB);
+    expect(await prepareConflictedRunRetry(created.session.id, conflict.id, member.id, env.DB)).toBeNull();
+    expect(await prepareConflictedRunRetry(created.session.id, conflict.id, owner.id, env.DB)).toBe(queueItemId);
     const retry = await createAgentRun(created.session.id, queueItemId, owner.id, env.DB);
-    expect(retry.attempt).toBe(2);
+    expect(retry.attempt).toBe(3);
     await expect(requestAgentRunCancellation(created.session.id, retry.id, member.id, env.DB)).resolves.toBeNull();
     await expect(requestAgentRunCancellation(created.session.id, retry.id, owner.id, env.DB)).resolves.toBe(true);
     await finishAgentRun(retry.id, "cancelled", "Cancelled", env.DB);

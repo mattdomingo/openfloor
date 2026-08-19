@@ -32,7 +32,11 @@ await rm(root, { recursive: true, force: true });
 await mkdir(root, { recursive: true });
 git(["-c", `http.extraHeader=${auth}`, "clone", "--no-checkout", "--single-branch", "--branch", candidateBranch, process.env.OPENFLOOR_REPOSITORY_URL, repository], root);
 const observedCandidate = git(["rev-parse", `refs/remotes/origin/${candidateBranch}`], repository).trim();
-if (observedCandidate !== candidateSha) throw new Error("Candidate branch changed before publication");
+try {
+  git(["merge-base", "--is-ancestor", candidateSha, observedCandidate], repository);
+} catch {
+  throw new Error("Pinned candidate is no longer in the candidate branch ancestry");
+}
 
 const candidateTree = git(["rev-parse", `${candidateSha}^{tree}`], repository).trim();
 const baseline = git(["commit-tree", candidateTree], repository, {

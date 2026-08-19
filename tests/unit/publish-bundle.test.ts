@@ -13,7 +13,7 @@ it("uses GitHub App installation tokens as the Git HTTPS password", () => {
 });
 
 describe("trusted Git bundle publisher", () => {
-  it("validates a single recorded change and publishes it on the exact candidate parent", () => {
+  it("publishes on the pinned parent after the candidate advances", () => {
     const root = mkdtempSync(join(tmpdir(), "openfloor-bundle-test-"));
     try {
       const remote = join(root, "remote.git");
@@ -51,6 +51,14 @@ describe("trusted Git bundle publisher", () => {
       git(["-C", agent, "update-ref", `refs/heads/${branch}`, "HEAD"]);
       const bundle = join(root, "result.bundle");
       git(["-C", agent, "bundle", "create", bundle, `refs/heads/${branch}`, "^refs/heads/openfloor-base"]);
+      writeFileSync(join(source, "src/later.txt"), "integrated while this run was checking\n");
+      git(["-C", source, "add", "-A"]);
+      git(["-C", source, "commit", "-q", "-m", "advance candidate"], {
+        GIT_AUTHOR_DATE: "2026-08-19T00:30:00Z",
+        GIT_COMMITTER_DATE: "2026-08-19T00:30:00Z",
+      });
+      git(["-C", source, "push", "-q", "origin", "candidate"]);
+      expect(git(["-C", source, "rev-parse", "HEAD"]).trim()).not.toBe(candidateSha);
       const result = join(root, "result.json");
       execFileSync("node", [resolve("scripts/publish-bundle.mjs")], { env: {
         ...process.env,

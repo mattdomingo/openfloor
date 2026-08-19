@@ -1,6 +1,6 @@
 # Production GitHub App rollout
 
-Phase 5 connects the production OpenFloor application to a GitHub App, keeps one real candidate branch, and runs Codex plus required checks in Cloudflare Sandbox. Every passing result is validated and retained on a separate server-generated run branch; candidate integration and pull requests remain deferred. During phased acceptance, install the App only on a real disposable repository.
+Phase 6 connects the production OpenFloor application to a GitHub App, keeps one real candidate branch, and runs Codex plus required checks in Cloudflare Sandbox. Every passing result is retained on a separate verified run branch, then serialized into the candidate and its single draft pull request. During phased acceptance, install the App only on a real disposable repository.
 
 ## Production host and Cloudflare Access
 
@@ -94,6 +94,8 @@ npx wrangler deploy --config dist/server/wrangler.json
 
 After the container-enabled deployment succeeds, set `PREFLIGHT_ENABLED` to `true`, rebuild, and deploy again. Keep `AGENT_RUN_ENABLED=false` until the updated Codex image and `AGENT_RUN_WORKFLOW` deploy and `OPENAI_API_KEY` appears in `npx wrangler secret list`. Then set it to `true`, rebuild, and deploy again. Do not enable either flag before its runtime prerequisites are live.
 
-Phase 5 automatically exports each passing result as an incremental Git bundle, validates it in a clean publisher Sandbox, and pushes a single commit without force to `openfloor/<session-short>/run/<run-short>`. The agent workspace never receives a GitHub credential. The queue shows every run branch, so consecutive prompt results remain independently available until Phase 6 integration. Owner-only **Discard candidate** deletes only a matching run head using an expected-SHA Git lease; external mutations are refused and audit data is retained. OpenFloor still exposes no caller-selected ref, force push, base write, candidate integration, pull request, or merge operation.
+Phase 6 automatically exports each passing result as an incremental Git bundle, validates it in a clean publisher Sandbox, and pushes a single commit without force to `openfloor/<session-short>/run/<run-short>`. A D1 candidate lease serializes GitHub merges into the active candidate branch. The first integration opens one draft pull request into the configured base; later integrations update the same PR. Conflicts leave the candidate unchanged and expose owner-only **Retry against latest candidate**, which creates a new attempt and branch. OpenFloor still exposes no caller-selected ref, force push, base write, protection change, final merge, or administration operation.
+
+Known follow-up: production discard remains unresolved after the Phase 5 transport-authentication correction. Do not weaken its expected-SHA lease; verify Phase 6 independently and return to discard in its separate ticket.
 
 Required check commands are optional while connecting a repository. A later runner or integration action must refuse to execute until the owner configures at least one command.

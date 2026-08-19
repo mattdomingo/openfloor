@@ -4,6 +4,7 @@ import {
   recordGitHubWebhookDelivery,
   setRepositoryAvailability,
   touchRepositoryReview,
+  updateRepositoryPullRequestState,
   updateRepositoryIdentity,
   updateRepositoryPushState,
 } from "@/db/repositories";
@@ -64,8 +65,17 @@ export async function POST(request: Request) {
       });
     } else if (event === "push" && body.ref && body.after) {
       revision = await updateRepositoryPushState(
-        target.sessionId, body.ref, body.after, target.baseBranch, target.candidateBranch, target.candidateSha,
+        target.sessionId, body.ref, body.after, target.baseBranch, target.candidateBranch, target.candidateSha, target.integrationRunId,
       );
+    } else if (event === "pull_request" && body.pull_request?.head?.ref && body.pull_request.number && body.pull_request.node_id && body.pull_request.html_url) {
+      revision = await updateRepositoryPullRequestState(target.sessionId, {
+        number: body.pull_request.number,
+        nodeId: body.pull_request.node_id,
+        url: body.pull_request.html_url,
+        state: body.pull_request.state === "closed" ? "closed" : "open",
+        draft: body.pull_request.draft !== false,
+        headRef: body.pull_request.head.ref,
+      });
     } else {
       revision = await touchRepositoryReview(target.sessionId);
     }
@@ -82,4 +92,5 @@ type GitHubWebhookPayload = {
   repositories_added?: Array<{ id?: number | string }>;
   ref?: string;
   after?: string;
+  pull_request?: { number?: number; node_id?: string; html_url?: string; state?: string; draft?: boolean; head?: { ref?: string } };
 };

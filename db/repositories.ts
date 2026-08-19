@@ -201,7 +201,7 @@ export async function getRepositoryConnectionRecord(
     .first<{ installationId: string; repositoryId: string }>();
 }
 
-type CandidateRecord = Omit<RepositoryCandidate, "behindBase">;
+type CandidateRecord = Omit<RepositoryCandidate, "behindBase" | "pullRequestDraft"> & { pullRequestDraft: number | boolean | null };
 
 export async function getActiveRepositoryCandidateForMember(
   sessionId: string,
@@ -220,12 +220,19 @@ export async function getActiveRepositoryCandidate(
     `SELECT id, session_id AS sessionId, connection_id AS connectionId, branch_name AS branchName,
             base_branch AS baseBranch, base_sha AS baseSha, candidate_sha AS candidateSha,
             remote_base_sha AS remoteBaseSha, remote_candidate_sha AS remoteCandidateSha,
+            integration_run_id AS integrationRunId, pull_request_number AS pullRequestNumber,
+            pull_request_node_id AS pullRequestNodeId, pull_request_url AS pullRequestUrl,
+            pull_request_state AS pullRequestState, pull_request_draft AS pullRequestDraft,
             status, created_by AS createdBy, created_at AS createdAt, updated_at AS updatedAt,
             last_synced_at AS lastSyncedAt
      FROM repository_candidates WHERE session_id = ? AND status IN ('creating', 'active')
      ORDER BY created_at DESC LIMIT 1`,
   ).bind(sessionId).first<CandidateRecord>();
-  return record ? { ...record, behindBase: Boolean(record.remoteBaseSha && record.remoteBaseSha !== record.baseSha) } : null;
+  return record ? {
+    ...record,
+    pullRequestDraft: record.pullRequestDraft == null ? null : Boolean(record.pullRequestDraft),
+    behindBase: Boolean(record.remoteBaseSha && record.remoteBaseSha !== record.baseSha),
+  } : null;
 }
 
 export async function reserveRepositoryCandidate(
@@ -332,15 +339,15 @@ export async function findRepositoryWebhookTargets(
   installationId: string | null,
   repositoryId: string | null,
   database = getDb(),
-): Promise<Array<{ sessionId: string; repositoryId: string; baseBranch: string; candidateBranch: string | null; candidateSha: string | null }>> {
+): Promise<Array<{ sessionId: string; repositoryId: string; baseBranch: string; candidateBranch: string | null; candidateSha: string | null; integrationRunId: string | null }>> {
   if (!installationId) return [];
   const result = await database.prepare(
     `SELECT rc.session_id AS sessionId, rc.repository_id AS repositoryId, rc.base_branch AS baseBranch,
-            c.branch_name AS candidateBranch, c.candidate_sha AS candidateSha
+            c.branch_name AS candidateBranch, c.candidate_sha AS candidateSha, c.integration_run_id AS integrationRunId
      FROM repository_connections rc
      LEFT JOIN repository_candidates c ON c.session_id = rc.session_id AND c.status = 'active'
      WHERE rc.installation_id = ? AND rc.status != 'disconnected' AND (? IS NULL OR rc.repository_id = ?)`,
-  ).bind(installationId, repositoryId, repositoryId).all<{ sessionId: string; repositoryId: string; baseBranch: string; candidateBranch: string | null; candidateSha: string | null }>();
+  ).bind(installationId, repositoryId, repositoryId).all<{ sessionId: string; repositoryId: string; baseBranch: string; candidateBranch: string | null; candidateSha: string | null; integrationRunId: string | null }>();
   return result.results;
 }
 
@@ -351,6 +358,7 @@ export async function updateRepositoryPushState(
   baseBranch: string,
   candidateBranch: string | null,
   candidateSha: string | null,
+  integrationRunId: string | null,
   database = getDb(),
 ): Promise<number> {
   const now = Date.now();
@@ -360,7 +368,7 @@ export async function updateRepositoryPushState(
   }
   if (candidateBranch && ref === `refs/heads/${candidateBranch}`) {
     statements.push(database.prepare("UPDATE repository_candidates SET remote_candidate_sha = ?, last_synced_at = ?, updated_at = ? WHERE session_id = ? AND status = 'active'").bind(after, now, now, sessionId));
-    if (after !== candidateSha) statements.push(database.prepare("UPDATE repository_connections SET status = 'externally_modified', updated_at = ? WHERE session_id = ?").bind(now, sessionId));
+    if (after !== candidateSha && !integrationRunId) statements.push(database.prepare("UPDATE repository_connections SET status = 'externally_modified', updated_at = ? WHERE session_id = ?").bind(now, sessionId));
   }
   if (ref.startsWith("refs/heads/openfloor/")) {
     statements.push(database.prepare(
@@ -368,6 +376,23 @@ export async function updateRepositoryPushState(
     ).bind(after, now, sessionId, ref.slice("refs/heads/".length)));
   }
   await database.batch(statements);
+  return getFloorRevision(sessionId, database);
+}
+
+export async function updateRepositoryPullRequestState(
+  sessionId: string,
+  pullRequest: { number: number; nodeId: string; url: string; state: "open" | "closed"; draft: boolean; headRef: string },
+  database = getDb(),
+): Promise<number> {
+  const now = Date.now();
+  await database.batch([
+    database.prepare(
+      `UPDATE repository_candidates SET pull_request_number = ?, pull_request_node_id = ?, pull_request_url = ?,
+              pull_request_state = ?, pull_request_draft = ?, updated_at = ?
+       WHERE session_id = ? AND status = 'active' AND branch_name = ?`,
+    ).bind(pullRequest.number, pullRequest.nodeId, pullRequest.url, pullRequest.state, pullRequest.draft ? 1 : 0, now, sessionId, pullRequest.headRef),
+    database.prepare("UPDATE sessions SET floor_revision = floor_revision + 1, updated_at = ? WHERE id = ?").bind(now, sessionId),
+  ]);
   return getFloorRevision(sessionId, database);
 }
 

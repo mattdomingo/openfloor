@@ -2,20 +2,23 @@ import { getFloorSnapshot } from "@/db/floor";
 import {
   AgentRunConflictError,
   AgentRunNotReadyError,
+  beginRunIntegration,
   createAgentRun,
   finishAgentRun,
   finishRunCheck,
   finishRunPublished,
+  finishRunIntegrated,
   getRunExecutionContext,
   markRunChecking,
   markRunCheckRunning,
   markRunRunning,
   markRunPublishing,
+  markRunIntegrationConflicted,
   recordRunArtifact,
   replaceRunFiles,
 } from "@/db/runs";
 import { getGitHubAppConfig } from "@/db";
-import { createRepositoryBranch, getInstallationRepository } from "@/lib/github";
+import { createDraftPullRequest, createRepositoryBranch, getInstallationRepository, GitHubApiError, mergeRepositoryBranch, setTestRepositoryMergeConflict } from "@/lib/github";
 import { notifyFloorChanged } from "@/lib/presence-server";
 import { isApiError, requireApiUser } from "@/lib/server-auth";
 import { env } from "cloudflare:workers";
@@ -41,7 +44,7 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
     const run = await createAgentRun(sessionId, queueItemId, user.id);
     if (bindings.OPENFLOOR_TEST_ALLOW_IDENTITY_HEADERS === "true" && bindings.OPENFLOOR_TEST_AGENT_RUN_DATA && bindings.PREFLIGHT_LOGS) {
       const result = await runTestAgent(run.id, bindings.OPENFLOOR_TEST_AGENT_RUN_DATA, bindings.PREFLIGHT_LOGS);
-      if (result === "ready") await publishTestRun(run.id);
+      if (result === "ready") await publishTestRun(run.id, bindings.OPENFLOOR_TEST_AGENT_RUN_DATA);
     } else {
       if (!bindings.AGENT_RUN_WORKFLOW) throw new Error("Agent run Workflow binding is unavailable");
       await bindings.AGENT_RUN_WORKFLOW.create({ id: run.id, params: { runId: run.id } });
@@ -87,7 +90,7 @@ async function runTestAgent(runId: string, encoded: string, bucket: R2BucketLike
   return shouldFail ? "failed" : "ready";
 }
 
-async function publishTestRun(runId: string) {
+async function publishTestRun(runId: string, encoded: string) {
   const context = await getRunExecutionContext(runId);
   if (!context?.runBranch) throw new Error("Test run branch is missing");
   const bytes = new TextEncoder().encode(`${runId}:${context.runBranch}`);
@@ -98,4 +101,23 @@ async function publishTestRun(runId: string) {
   const repository = await getInstallationRepository(config, context.installationId, context.repositoryId);
   const remoteSha = await createRepositoryBranch(config, context.installationId, repository, context.runBranch, commitSha);
   await finishRunPublished(runId, commitSha, remoteSha);
+  const data = JSON.parse(encoded) as { conflictFirstAttemptPrompts?: string[] };
+  if (context.attempt === 1 && data.conflictFirstAttemptPrompts?.some((value) => context.prompts.some((prompt) => prompt.text.includes(value)))) {
+    setTestRepositoryMergeConflict(repository.id, commitSha);
+  }
+  const integration = await beginRunIntegration(runId);
+  try {
+    const merged = await mergeRepositoryBranch(config, integration.installationId, repository, integration.candidateBranch, commitSha, `Integrate OpenFloor run ${runId.slice(0, 8)}`);
+    const pullRequest = integration.pullRequestNumber ? null : await createDraftPullRequest(config, integration.installationId, repository, {
+      title: `OpenFloor: ${integration.repositoryName} candidate`, body: "Draft candidate maintained automatically by OpenFloor.",
+      head: integration.candidateBranch, base: integration.baseBranch,
+    });
+    await finishRunIntegrated(runId, merged.sha, pullRequest);
+  } catch (error) {
+    if (error instanceof GitHubApiError && error.status === 409) {
+      await markRunIntegrationConflicted(runId, error.message);
+      return;
+    }
+    throw error;
+  }
 }

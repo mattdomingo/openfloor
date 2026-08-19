@@ -108,19 +108,19 @@ async function readFloorSnapshot(sessionId: string, userId: string, database: D1
     activeCandidate,
     latestPreflight,
     runs,
-    review: buildRunReview(runs, activeCandidate?.branchName ?? null, activeCandidate?.baseBranch ?? null),
+    review: buildRunReview(runs, activeCandidate ?? null),
   };
 }
 
-function buildRunReview(runs: Awaited<ReturnType<typeof getAgentRuns>>, branch: string | null, baseBranch: string | null): FloorReviewSnapshot | null {
+function buildRunReview(runs: Awaited<ReturnType<typeof getAgentRuns>>, candidate: Awaited<ReturnType<typeof getActiveRepositoryCandidate>>): FloorReviewSnapshot | null {
   const run = runs.find((item) => item.files.length > 0);
-  if (!run || !branch || !baseBranch) return null;
+  if (!run || !candidate) return null;
   return {
     id: run.id,
     status: "awaiting",
-    branch: run.runBranch ?? branch,
-    baseBranch,
-    commitSha: run.runCommitSha,
+    branch: candidate.pullRequestNumber ? candidate.branchName : run.runBranch ?? candidate.branchName,
+    baseBranch: candidate.baseBranch,
+    commitSha: run.integratedCandidateSha ?? run.runCommitSha,
     files: run.files.map((file) => ({
       id: file.id,
       path: file.path,
@@ -137,13 +137,19 @@ function buildRunReview(runs: Awaited<ReturnType<typeof getAgentRuns>>, branch: 
       detail: check.outputExcerpt,
       state: check.status === "passed" ? "passed" : check.status === "failed" || check.status === "timed_out" ? "failed" : "waiting",
     })),
-    warnings: run.status === "published" && !run.discardedAt ? [] : [{
+    warnings: ["published", "integrating", "integrated"].includes(run.status) && !run.discardedAt ? [] : [{
       id: `${run.id}-status`,
-      title: run.discardedAt ? "Run branch discarded" : "Run is not published",
-      detail: run.discardedAt ? "The verified run branch was safely deleted from GitHub; its audit history remains in OpenFloor." : run.summary ?? `The run is currently ${run.status.replace("_", " ")}.`,
-      severity: "warning",
+      title: run.discardedAt ? "Run branch discarded" : run.status === "conflicted" ? "Integration conflict" : "Run is not published",
+      detail: run.discardedAt ? "The verified run branch was safely deleted from GitHub; its audit history remains in OpenFloor." : run.conflictReason ?? run.summary ?? `The run is currently ${run.status.replace("_", " ")}.`,
+      severity: run.status === "conflicted" ? "conflict" : "warning",
     }],
     updatedAt: run.updatedAt,
+    pullRequest: candidate.pullRequestNumber && candidate.pullRequestUrl && candidate.pullRequestState ? {
+      number: candidate.pullRequestNumber,
+      url: candidate.pullRequestUrl,
+      state: candidate.pullRequestState,
+      draft: candidate.pullRequestDraft ?? true,
+    } : null,
   };
 }
 
