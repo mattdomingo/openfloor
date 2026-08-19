@@ -235,11 +235,13 @@
 .button[data-variant="primary"] {
   border-color: var(--text-primary);
   background: var(--text-primary);
-  color: var(--text-inverse);
+  /* Page-colored text stays readable on the ink button in both themes;
+     --text-inverse is reserved for the constant-dark workbench surfaces. */
+  color: var(--surface-page);
 }
 
 .button[data-variant="primary"]:hover {
-  background: #000;
+  background: var(--accent-hover);
 }
 
 .button[data-variant="accent"] {
@@ -2422,7 +2424,7 @@
   border: 0;
   border-radius: var(--radius-sm);
   background: var(--text-primary);
-  color: var(--text-inverse);
+  color: var(--surface-page);
   font-size: var(--text-xs);
   font-weight: 650;
   white-space: nowrap;
@@ -2433,7 +2435,7 @@
 }
 
 .composer-foot .send:hover {
-  background: #000;
+  background: color-mix(in srgb, var(--text-primary) 88%, var(--surface-page));
 }
 
 .lane {
@@ -2648,8 +2650,8 @@
   padding: var(--space-4) var(--space-5);
   overflow-y: auto;
   background:
-    linear-gradient(var(--surface-panel) 40%, rgba(248, 243, 230, 0)) top / 100% 22px no-repeat local,
-    linear-gradient(rgba(248, 243, 230, 0), var(--surface-panel) 60%) bottom / 100% 22px no-repeat local,
+    linear-gradient(var(--surface-panel) 40%, transparent) top / 100% 22px no-repeat local,
+    linear-gradient(transparent, var(--surface-panel) 60%) bottom / 100% 22px no-repeat local,
     radial-gradient(farthest-side at 50% 0, rgba(40, 32, 18, 0.13), transparent) top / 100% 9px no-repeat,
     radial-gradient(farthest-side at 50% 100%, rgba(40, 32, 18, 0.13), transparent) bottom / 100% 9px no-repeat;
 }

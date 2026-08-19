@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRef, useState } from "react";
 import { BASE_PATH } from "@/components/basePath";
+import { ThemeToggle } from "@/components/ThemeToggle";
 import type { AppUser, SessionMember, SessionSummary } from "@/lib/session-types";
 import { InviteDialog } from "./InviteDialog";
 import { Avatar, Icon } from "./primitives";
@@ -63,6 +64,7 @@ export function TopBar({
         <Link className="icon-button" aria-label="Session settings" title="Session settings" href={`/session/${session.id}`}>
           <Icon name="more" />
         </Link>
+        <ThemeToggle />
         <a className="button" data-variant="quiet" href="/cdn-cgi/access/logout">Sign out</a>
       </div>
 

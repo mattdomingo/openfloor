@@ -620,10 +620,13 @@ The following currently reset on reload and must not be mistaken for shared data
 
 If product requirements call for any of these to persist or synchronize, add an explicit storage owner and document the decision.
 
+The theme choice is deliberately a per-device preference: localStorage `openfloor:theme`, owned by `components/ThemeToggle.tsx`, never synchronized through D1 or presence.
+
 ### Styling
 
 - Global styles are composed from `app/globals.css` and files under `app/styles/`.
 - `tokens.css` is the design-token source.
+- Theming: the bare `:root` block in `tokens.css` is the light theme; the dark values live twice (under `prefers-color-scheme` guarded by `:root:not([data-theme="light"])`, and under `:root[data-theme="dark"]`) and must stay identical. `components/ThemeToggle.tsx` cycles System → Light → Dark, persisting the manual choice in localStorage (`openfloor:theme`); an inline script in `app/layout.tsx` applies it pre-paint. Never hardcode a color a theme must change — the code workbench's inverse surfaces are the deliberate exception (dark in both themes).
 - `components/session/SelectMenu.tsx` is the house dropdown (trigger + styled listbox, combobox keyboard semantics). Do not introduce native `<select>` elements; the OS widget does not match the floor.
 - The `legacy-floor-*` filenames describe their origin in the preserved demo UI, not permission to restore demo behavior.
 - Reuse genuine visual primitives, but do not reintroduce fixture imports, fake terminals, or simulation logic with old CSS.
@@ -975,6 +978,14 @@ After Phase 3 is deployed and accepted in the browser, the next milestone is Pha
 Do not begin by filling the existing UI with guessed fields. Define the authoritative service and public contract, add nullable persisted types and migrations, then connect components to genuine data.
 
 ## Key decision log
+
+### 2026-08-19 — Two themes from one token sheet
+
+**Decision:** The cream palette is the light theme; a warm-charcoal dark theme overrides the color tokens in `tokens.css` — once under `prefers-color-scheme: dark` (system default) and once under `[data-theme="dark"]` (manual override), kept identical. A ThemeToggle in both headers cycles System → Light → Dark, persisted per device in localStorage and applied pre-paint by an inline script in the root layout. The code workbench's inverse surfaces and the identity tints stay unchanged in both themes.
+
+**Rationale:** Every color already resolves through `tokens.css` (the components had no literal colors worth keeping except the workbench's), so a theme is one override block, not a rewrite. System-following alone was not enough — people demo on projectors and override their OS.
+
+**Consequences:** New colors must be tokens with values in all three blocks. The two dark blocks must stay byte-identical. Theme choice is per-device local state, never synced.
 
 ### 2026-08-19 — Retention purges only ended sessions, on a daily cron
 
