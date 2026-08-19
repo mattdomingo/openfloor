@@ -30,7 +30,7 @@ export function JoinScreen({ token, preview, displayName }: { token: string; pre
       <section className="join-card">
         <p className="eyebrow">Session invitation</p>
         <h1>{preview.title}</h1>
-        <p className="join-objective">{preview.objective || "This session does not have an objective yet."}</p>
+        <p className="join-objective">{preview.objective || "No objective has been written yet."}</p>
         <dl><div><dt>Host</dt><dd>{preview.ownerName}</dd></div><div><dt>Joining as</dt><dd>{displayName}</dd></div></dl>
         {error && <p className="form-error" role="alert">{error}</p>}
         <button className="button" data-variant="primary" data-size="lg" disabled={joining} onClick={join}>{joining ? "Joining…" : "Join session"}</button>

@@ -42,7 +42,7 @@ export function HomeScreen({ user, sessions }: { user: AppUser; sessions: Sessio
       <AppHeader user={user} />
       <section className="page-body">
         <div className="page-heading">
-          <div><p className="eyebrow">Workspace</p><h1>Your sessions</h1><p>Durable rooms for the people doing the work.</p></div>
+          <div><p className="eyebrow">Sessions</p><h1>Your sessions</h1><p>Durable sessions for the people doing the work.</p></div>
           <button className="button" data-variant="primary" onClick={() => setCreating((value) => !value)}>
             {creating ? "Cancel" : "New session"}
           </button>
@@ -58,7 +58,7 @@ export function HomeScreen({ user, sessions }: { user: AppUser; sessions: Sessio
         )}
 
         {sessions.length === 0 ? (
-          <div className="empty-state"><strong>No sessions yet</strong><p>Create a room, then invite the people working beside you.</p></div>
+          <div className="empty-state"><strong>No sessions yet</strong><p>Create a session, then invite the people working beside you.</p></div>
         ) : (
           <>
             {activeSessions.length > 0 && (
