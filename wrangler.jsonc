@@ -54,11 +54,17 @@
 			"name": "openfloor-repository-preflight",
 			"binding": "REPOSITORY_PREFLIGHT",
 			"class_name": "RepositoryPreflightWorkflow"
+		},
+		{
+			"name": "openfloor-agent-run",
+			"binding": "AGENT_RUN_WORKFLOW",
+			"class_name": "AgentRunWorkflow"
 		}
 	],
 	"vars": {
 		"OPENFLOOR_RUNTIME_ORIGIN": "https://opnflr.com/app",
-		"PREFLIGHT_ENABLED": "true"
+		"PREFLIGHT_ENABLED": "true",
+		"AGENT_RUN_ENABLED": "true"
 	},
 	"r2_buckets": [
 		{

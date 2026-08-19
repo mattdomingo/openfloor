@@ -16,7 +16,7 @@ openssl rand -hex 32
 
 Open `.dev.vars` and replace `INVITE_SIGNING_SECRET` with the random value printed by the last command. You can also change the three `OPENFLOOR_DEV_USER_*` values to the local name and email you want displayed. The Cloudflare Access placeholders can remain unchanged for local development.
 
-Repository execution additionally requires a GitHub App and Cloudflare Workflow, Sandbox, and private R2 resources. Follow [`docs/github-production.md`](docs/github-production.md). Phase 3 can create one server-named candidate branch, reconcile its SHA, and run configured checks in an isolated Sandbox without exposing GitHub credentials to repository processes. It does not modify candidate contents or publish agent work.
+Repository execution additionally requires a GitHub App, Cloudflare Workflows/Sandbox/private R2, and an OpenAI project API key. Follow [`docs/github-production.md`](docs/github-production.md). Owners name each candidate and describe its intent, with the session title and objective supplied as defaults; OpenFloor safely slugs the name inside its protected branch prefix and uses the metadata for the draft pull request. OpenFloor runs Codex at an exact candidate SHA, validates and publishes each passing result independently, serially integrates it into one draft pull request, reconciles GitHub files/checks/mergeability, and lets only the session owner mark ready and request a protected squash merge. Confirmed merges clean only exact-SHA OpenFloor branches and the next run starts a fresh candidate cycle.
 
 Create the local D1 tables, then start the development server:
 
@@ -33,7 +33,7 @@ To exercise the new path manually:
 2. On the session lobby, click **Enter agent floor**.
 3. Confirm the floor shows the real session title, objective, and your online presence.
 4. Create a named agent, add assigned or unassigned prompts, edit an assignment, and use team chat. Reload and confirm they persist.
-5. Open Review and confirm it remains empty until a real agent backend supplies review data.
+5. Open Review and confirm it remains empty until a genuine agent run records changed files.
 6. Use **Session settings** to return to the lobby.
 
 The browser test runs the complete two-user flow with a temporary local database, including invite acceptance, live presence, floor navigation, reconnection, and leaving:
@@ -79,7 +79,7 @@ npx wrangler deploy --config dist/server/wrangler.json
 
 Apply D1 migrations before deploying the Worker revision. See [`docs/agent-backend-gaps.md`](docs/agent-backend-gaps.md) for the intentional boundary between the persistent collaboration backend and future agent execution.
 
-The deployment expects `DB`, `SESSION_PRESENCE`, `REPOSITORY_PREFLIGHT`, `SANDBOX`, `PREFLIGHT_LOGS`, `IMAGES`, and `ASSETS` bindings configured in `wrangler.jsonc`. It also requires the existing identity/GitHub secrets plus `RUNTIME_GATEWAY_SECRET`. Docker must be running when Wrangler builds or deploys the pinned Sandbox image, and the Cloudflare account must have Workers Paid/Containers access. Keep `PREFLIGHT_ENABLED=false` until the container deploy succeeds; then set it to `true`, rebuild, and deploy before browser acceptance.
+The deployment expects `DB`, `SESSION_PRESENCE`, `REPOSITORY_PREFLIGHT`, `AGENT_RUN_WORKFLOW`, `SANDBOX`, `PREFLIGHT_LOGS`, `IMAGES`, and `ASSETS` bindings configured in `wrangler.jsonc`. It also requires the existing identity/GitHub secrets plus `RUNTIME_GATEWAY_SECRET` and `OPENAI_API_KEY`. Docker must be running when Wrangler builds or deploys the pinned Sandbox image, and the Cloudflare account must have Workers Paid/Containers access. Keep each rollout gate disabled until its image, Workflow, and credential prerequisites are live.
 
 ## Project direction
 

@@ -21,7 +21,7 @@ describe("GitHub webhook reconciliation", () => {
     }, "main", [], env.DB);
     const candidateId = crypto.randomUUID();
     const branch = `openfloor/${created.session.id.slice(0, 8)}/candidate/${candidateId.slice(0, 8)}`;
-    await reserveRepositoryCandidate(created.session.id, owner.id, connection!.id, candidateId, branch, "main", "a".repeat(40), env.DB);
+    await reserveRepositoryCandidate(created.session.id, owner.id, connection!.id, candidateId, "Webhook room", "", branch, "main", "a".repeat(40), env.DB);
     await activateRepositoryCandidate(created.session.id, candidateId, "a".repeat(40), env.DB);
 
     const body = JSON.stringify({

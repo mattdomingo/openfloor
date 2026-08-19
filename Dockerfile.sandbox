@@ -1,1 +1,7 @@
 FROM docker.io/cloudflare/sandbox:0.12.7
+
+RUN npm install --prefix /opt/openfloor --omit=dev @openai/codex-sdk@0.148.0 && npm cache clean --force
+COPY --chmod=0444 scripts/codex-runner.mjs /opt/openfloor/codex-runner.mjs
+COPY --chmod=0444 scripts/publish-bundle.mjs /opt/openfloor/publish-bundle.mjs
+COPY --chmod=0444 scripts/github-git-auth.mjs /opt/openfloor/github-git-auth.mjs
+COPY --chmod=0444 scripts/cleanup-branches.mjs /opt/openfloor/cleanup-branches.mjs

@@ -41,7 +41,7 @@ export async function createRepositoryPreflight(
     `SELECT rc.id AS connectionId, rc.status AS connectionStatus, c.id AS candidateId,
             c.candidate_sha AS candidateSha, c.remote_candidate_sha AS remoteCandidateSha
      FROM repository_connections rc
-     LEFT JOIN repository_candidates c ON c.session_id = rc.session_id AND c.status = 'active'
+     LEFT JOIN repository_candidates c ON c.session_id = rc.session_id AND c.status = 'active' AND c.merged_at IS NULL
      WHERE rc.session_id = ?`,
   ).bind(sessionId).first<{ connectionId: string; connectionStatus: string; candidateId: string | null; candidateSha: string | null; remoteCandidateSha: string | null }>();
   if (!context || context.connectionStatus !== "ready" || !context.candidateId || !context.candidateSha || context.remoteCandidateSha !== context.candidateSha) {

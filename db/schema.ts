@@ -125,14 +125,14 @@ export const floorQueueItems = sqliteTable(
     sessionId: text("session_id").notNull().references(() => sessions.id, { onDelete: "cascade" }),
     agentId: text("agent_id").references(() => floorAgents.id, { onDelete: "set null" }),
     position: integer("position").notNull(),
-    status: text("status", { enum: ["queued"] }).notNull(),
+    status: text("status", { enum: ["queued", "running", "blocked", "completed"] }).notNull(),
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
   },
   (table) => [
     index("idx_floor_queue_session_position").on(table.sessionId, table.position),
     index("idx_floor_queue_agent").on(table.agentId),
-    check("floor_queue_status_check", sql`${table.status} in ('queued')`),
+    check("floor_queue_status_check", sql`${table.status} in ('queued', 'running', 'blocked', 'completed')`),
   ],
 );
 
@@ -199,12 +199,33 @@ export const repositoryCandidates = sqliteTable(
     id: text("id").primaryKey(),
     sessionId: text("session_id").notNull().references(() => sessions.id, { onDelete: "cascade" }),
     connectionId: text("connection_id").notNull().references(() => repositoryConnections.id),
+    name: text("name").notNull().default(""),
+    description: text("description").notNull().default(""),
     branchName: text("branch_name").notNull(),
     baseBranch: text("base_branch").notNull(),
     baseSha: text("base_sha").notNull(),
     candidateSha: text("candidate_sha"),
     remoteBaseSha: text("remote_base_sha"),
     remoteCandidateSha: text("remote_candidate_sha"),
+    integrationRunId: text("integration_run_id"),
+    pullRequestNumber: integer("pull_request_number"),
+    pullRequestNodeId: text("pull_request_node_id"),
+    pullRequestUrl: text("pull_request_url"),
+    pullRequestState: text("pull_request_state", { enum: ["open", "closed"] }),
+    pullRequestDraft: integer("pull_request_draft", { mode: "boolean" }),
+    pullRequestMerged: integer("pull_request_merged", { mode: "boolean" }),
+    pullRequestMergeable: integer("pull_request_mergeable", { mode: "boolean" }),
+    pullRequestMergeableState: text("pull_request_mergeable_state"),
+    githubChecksPassing: integer("github_checks_passing", { mode: "boolean" }),
+    reviewReadyAt: integer("review_ready_at"),
+    reviewReadyBy: text("review_ready_by").references(() => users.id),
+    reviewSyncedAt: integer("review_synced_at"),
+    mergeCommitSha: text("merge_commit_sha"),
+    mergedAt: integer("merged_at"),
+    mergedBy: text("merged_by").references(() => users.id),
+    cleanupStatus: text("cleanup_status", { enum: ["pending", "complete", "partial"] }),
+    cleanupCompletedAt: integer("cleanup_completed_at"),
+    branchDeletedAt: integer("branch_deleted_at"),
     status: text("status", { enum: ["creating", "active", "creation_failed"] }).notNull(),
     createdBy: text("created_by").notNull().references(() => users.id),
     createdAt: integer("created_at").notNull(),
@@ -215,10 +236,37 @@ export const repositoryCandidates = sqliteTable(
     index("idx_repository_candidates_session_created").on(table.sessionId, table.createdAt),
     uniqueIndex("idx_repository_candidates_one_live")
       .on(table.sessionId)
-      .where(sql`${table.status} in ('creating', 'active')`),
+      .where(sql`${table.status} in ('creating', 'active') and ${table.mergedAt} is null`),
     uniqueIndex("idx_repository_candidates_branch").on(table.connectionId, table.branchName),
     check("repository_candidates_status_check", sql`${table.status} in ('creating', 'active', 'creation_failed')`),
   ],
+);
+
+export const repositoryCandidateFiles = sqliteTable(
+  "repository_candidate_files",
+  {
+    id: text("id").primaryKey(),
+    candidateId: text("candidate_id").notNull().references(() => repositoryCandidates.id, { onDelete: "cascade" }),
+    path: text("path").notNull(),
+    additions: integer("additions").notNull(),
+    deletions: integer("deletions").notNull(),
+    changeKind: text("change_kind", { enum: ["add", "update", "delete"] }).notNull(),
+    patchPreview: text("patch_preview").notNull(),
+  },
+  (table) => [uniqueIndex("idx_repository_candidate_files_path").on(table.candidateId, table.path)],
+);
+
+export const repositoryCandidateChecks = sqliteTable(
+  "repository_candidate_checks",
+  {
+    id: text("id").primaryKey(),
+    candidateId: text("candidate_id").notNull().references(() => repositoryCandidates.id, { onDelete: "cascade" }),
+    sourceId: text("source_id").notNull(),
+    name: text("name").notNull(),
+    detail: text("detail"),
+    state: text("state", { enum: ["passed", "waiting", "failed"] }).notNull(),
+  },
+  (table) => [uniqueIndex("idx_repository_candidate_checks_source").on(table.candidateId, table.sourceId)],
 );
 
 export const githubWebhookDeliveries = sqliteTable(
@@ -279,6 +327,122 @@ export const repositoryPreflightChecks = sqliteTable(
     uniqueIndex("idx_repository_preflight_checks_position").on(table.preflightId, table.position),
     check("repository_preflight_checks_status_check", sql`${table.status} in ('pending', 'running', 'passed', 'failed', 'timed_out')`),
   ],
+);
+
+export const agentRuns = sqliteTable(
+  "agent_runs",
+  {
+    id: text("id").primaryKey(),
+    sessionId: text("session_id").notNull().references(() => sessions.id, { onDelete: "cascade" }),
+    queueItemId: text("queue_item_id").notNull().references(() => floorQueueItems.id),
+    agentId: text("agent_id").notNull().references(() => floorAgents.id),
+    candidateId: text("candidate_id").notNull().references(() => repositoryCandidates.id),
+    candidateSha: text("candidate_sha").notNull(),
+    runBranch: text("run_branch"),
+    bundleKey: text("bundle_key"),
+    bundleSizeBytes: integer("bundle_size_bytes"),
+    localCommitSha: text("local_commit_sha"),
+    runCommitSha: text("run_commit_sha"),
+    remoteRunSha: text("remote_run_sha"),
+    attempt: integer("attempt").notNull(),
+    status: text("status", { enum: ["provisioning", "running", "checking", "ready", "publishing", "published", "integrating", "integrated", "conflicted", "failed", "cancel_requested", "cancelled"] }).notNull(),
+    model: text("model").notNull(),
+    workflowInstanceId: text("workflow_instance_id"),
+    sandboxId: text("sandbox_id").notNull(),
+    sandboxProcessId: text("sandbox_process_id"),
+    codexThreadId: text("codex_thread_id"),
+    summary: text("summary"),
+    finalResponse: text("final_response"),
+    createdBy: text("created_by").notNull().references(() => users.id),
+    createdAt: integer("created_at").notNull(),
+    startedAt: integer("started_at"),
+    completedAt: integer("completed_at"),
+    publishedAt: integer("published_at"),
+    integrationBaseSha: text("integration_base_sha"),
+    integratedCandidateSha: text("integrated_candidate_sha"),
+    conflictReason: text("conflict_reason"),
+    integrationStartedAt: integer("integration_started_at"),
+    integratedAt: integer("integrated_at"),
+    discardedAt: integer("discarded_at"),
+    discardedBy: text("discarded_by").references(() => users.id),
+    branchDeletedAt: integer("branch_deleted_at"),
+    cancelRequestedAt: integer("cancel_requested_at"),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [
+    index("idx_agent_runs_session_created").on(table.sessionId, table.createdAt),
+    index("idx_agent_runs_agent_created").on(table.agentId, table.createdAt),
+    uniqueIndex("idx_agent_runs_queue_attempt").on(table.queueItemId, table.attempt),
+    uniqueIndex("idx_agent_runs_branch").on(table.candidateId, table.runBranch),
+    uniqueIndex("idx_agent_runs_one_active_per_item").on(table.queueItemId)
+      .where(sql`${table.status} in ('provisioning', 'running', 'checking', 'cancel_requested')`),
+    check("agent_runs_status_check", sql`${table.status} in ('provisioning', 'running', 'checking', 'ready', 'publishing', 'published', 'integrating', 'integrated', 'conflicted', 'failed', 'cancel_requested', 'cancelled')`),
+  ],
+);
+
+export const agentRunEvents = sqliteTable(
+  "agent_run_events",
+  {
+    id: text("id").primaryKey(),
+    runId: text("run_id").notNull().references(() => agentRuns.id, { onDelete: "cascade" }),
+    sequence: integer("sequence").notNull(),
+    kind: text("kind").notNull(),
+    detail: text("detail").notNull(),
+    createdAt: integer("created_at").notNull(),
+  },
+  (table) => [uniqueIndex("idx_agent_run_events_sequence").on(table.runId, table.sequence)],
+);
+
+export const agentRunChecks = sqliteTable(
+  "agent_run_checks",
+  {
+    id: text("id").primaryKey(),
+    runId: text("run_id").notNull().references(() => agentRuns.id, { onDelete: "cascade" }),
+    position: integer("position").notNull(),
+    command: text("command").notNull(),
+    status: text("status", { enum: ["pending", "running", "passed", "failed", "timed_out"] }).notNull(),
+    exitCode: integer("exit_code"),
+    durationMs: integer("duration_ms"),
+    outputExcerpt: text("output_excerpt"),
+    logKey: text("log_key"),
+    startedAt: integer("started_at"),
+    completedAt: integer("completed_at"),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("idx_agent_run_checks_position").on(table.runId, table.position),
+    check("agent_run_checks_status_check", sql`${table.status} in ('pending', 'running', 'passed', 'failed', 'timed_out')`),
+  ],
+);
+
+export const agentRunFiles = sqliteTable(
+  "agent_run_files",
+  {
+    id: text("id").primaryKey(),
+    runId: text("run_id").notNull().references(() => agentRuns.id, { onDelete: "cascade" }),
+    path: text("path").notNull(),
+    changeKind: text("change_kind", { enum: ["add", "update", "delete"] }).notNull(),
+    additions: integer("additions").notNull(),
+    deletions: integer("deletions").notNull(),
+    summary: text("summary"),
+    diffPreview: text("diff_preview").notNull(),
+    createdAt: integer("created_at").notNull(),
+  },
+  (table) => [uniqueIndex("idx_agent_run_files_path").on(table.runId, table.path)],
+);
+
+export const agentRunArtifacts = sqliteTable(
+  "agent_run_artifacts",
+  {
+    id: text("id").primaryKey(),
+    runId: text("run_id").notNull().references(() => agentRuns.id, { onDelete: "cascade" }),
+    kind: text("kind", { enum: ["codex_log", "diff"] }).notNull(),
+    r2Key: text("r2_key").notNull(),
+    contentType: text("content_type").notNull(),
+    sizeBytes: integer("size_bytes").notNull(),
+    createdAt: integer("created_at").notNull(),
+  },
+  (table) => [uniqueIndex("idx_agent_run_artifacts_kind").on(table.runId, table.kind)],
 );
 
 export const repositoryCheckCommands = sqliteTable(

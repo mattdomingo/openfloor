@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, type DragEvent } from "react";
-import type { FloorQueueItem } from "@/lib/floor-types";
+import type { AgentRun, FloorQueueItem } from "@/lib/floor-types";
 import { LocalDateTime } from "@/components/LocalDateTime";
 import type { QueueMergeMode, QueueOrderMode, QueueScope } from "./data";
 import { Icon, SegmentedControl } from "./primitives";
@@ -10,9 +10,17 @@ import { QueueOrderMenu } from "./QueueOrderMenu";
 
 const scopeOptions: { value: QueueScope; label: string }[] = [{ value: "mine", label: "You" }, { value: "team", label: "Team" }];
 
-export function PromptQueue({ chrome, items, currentUserId, scope, onScope, orderMode, onOrderMode, mergeMode, onMergeMode, onMergeNow, draggedItemId, onItemDragStart, onItemDragEnd, onItemDrop }: {
+export function PromptQueue({ chrome, items, runs, owner, runEnabled, busy, onRun, onCancel, onDiscard, onRetry, currentUserId, scope, onScope, orderMode, onOrderMode, mergeMode, onMergeMode, onMergeNow, draggedItemId, onItemDragStart, onItemDragEnd, onItemDrop }: {
   chrome: PanelChrome;
   items: FloorQueueItem[];
+  runs: AgentRun[];
+  owner: boolean;
+  runEnabled: boolean;
+  busy: boolean;
+  onRun: (queueItemId: string) => Promise<void>;
+  onCancel: (runId: string) => Promise<void>;
+  onDiscard: (runId: string) => Promise<void>;
+  onRetry: (runId: string) => Promise<void>;
   currentUserId: string;
   scope: QueueScope;
   onScope: (scope: QueueScope) => void;
@@ -38,6 +46,8 @@ export function PromptQueue({ chrome, items, currentUserId, scope, onScope, orde
       const open = expanded[item.id] === true;
       const long = item.prompts.length > 3 || item.prompts.some((prompt) => prompt.text.length > 110);
       const first = item.prompts[0];
+      const run = runs.find((candidate) => candidate.queueItemId === item.id);
+      const cancellable = run && ["provisioning", "running", "checking", "cancel_requested"].includes(run.status);
       return <li key={item.id} className="queue-item" data-manual={manual ? "true" : undefined} data-dragging={draggedItemId === item.id ? "true" : undefined} data-drop-target={dragOverId === item.id ? "true" : undefined} draggable={manual}
         onDragStart={manual ? () => onItemDragStart(item.id) : undefined}
         onDragEnd={manual ? () => { setDragOverId(null); onItemDragEnd(); } : undefined}
@@ -47,6 +57,7 @@ export function PromptQueue({ chrome, items, currentUserId, scope, onScope, orde
         <div className="queue-item-head"><span className="queue-identity">{manual && <span className="queue-grip" title="Drag to reorder" aria-hidden="true"><Icon name="grip" /></span>}<span className="queue-position" aria-label={`Queue position ${item.position}`}>#{item.position}</span><span className="queue-chip" data-kind="author">{item.prompts.length > 1 ? `${item.prompts.length} prompts` : first?.authorName}</span><span className="queue-chip" data-kind="agent">{item.agentName ?? "Unassigned"}</span></span>{first && <span className="queue-time"><LocalDateTime timestamp={first.createdAt} /></span>}</div>
         {item.prompts.length > 1 ? <ul className="queue-prompt queue-prompt-stack" data-expanded={open ? "true" : "false"}>{item.prompts.map((prompt) => <li key={prompt.id}><strong>{prompt.authorName}</strong> · {prompt.text}</li>)}</ul> : <p className="queue-prompt" data-expanded={open ? "true" : "false"}>{first?.text}</p>}
         {long && <button type="button" className="queue-expand" aria-expanded={open} onClick={() => setExpanded((current) => ({ ...current, [item.id]: !open }))}>{open ? "Show less" : "Show more"}</button>}
+        <div className="queue-run-row"><span className="queue-chip" data-kind="status">{run?.discardedAt ? "discarded" : run?.status.replace("_", " ") ?? item.status}</span>{run?.runBranch && <code className="queue-run-branch">{run.runBranch}</code>}{owner && runEnabled && item.status === "queued" && item.agentId && <button type="button" className="button" data-size="sm" disabled={busy} onClick={() => void onRun(item.id)}>Run</button>}{owner && cancellable && run.status !== "cancel_requested" && <button type="button" className="button danger-button" data-size="sm" disabled={busy} onClick={() => void onCancel(run.id)}>Cancel</button>}{owner && run?.status === "published" && !run.discardedAt && <button type="button" className="button danger-button" data-size="sm" disabled={busy} onClick={() => void onDiscard(run.id)}>Discard candidate</button>}{owner && run?.status === "conflicted" && <button type="button" className="button" data-size="sm" disabled={busy} onClick={() => void onRetry(run.id)}>Retry against latest candidate</button>}</div>
       </li>;
     })}</ul>}
   </Panel>;

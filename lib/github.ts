@@ -4,6 +4,25 @@ import type { GitHubRepositoryOption } from "@/lib/session-types";
 
 export type GitHubTestRepository = GitHubRepositoryOption & { branches: string[]; branchShas?: Record<string, string> };
 
+export type GitHubPullRequestReview = {
+  number: number;
+  nodeId: string;
+  url: string;
+  state: "open" | "closed";
+  draft: boolean;
+  merged: boolean;
+  mergeable: boolean | null;
+  mergeableState: string | null;
+  headRef: string;
+  headSha: string;
+  baseRef: string;
+  baseSha: string;
+  mergeCommitSha: string | null;
+  checksPassing: boolean;
+  files: Array<{ path: string; additions: number; deletions: number; changeKind: "add" | "update" | "delete"; patchPreview: string }>;
+  checks: Array<{ sourceId: string; name: string; detail: string | null; state: "passed" | "waiting" | "failed" }>;
+};
+
 export type GitHubAppConfig = {
   appId: string;
   privateKey: string;
@@ -16,6 +35,12 @@ export type GitHubAppConfig = {
 const API_ROOT = "https://api.github.com";
 const API_VERSION = "2026-03-10";
 const testRefs = new Map<string, string>();
+const testMergeConflicts = new Set<string>();
+type TestPullRequest = {
+  number: number; nodeId: string; url: string; state: "open" | "closed"; draft: boolean; merged: boolean;
+  headRef: string; baseRef: string; mergeCommitSha: string | null;
+};
+const testPullRequests = new Map<string, TestPullRequest>();
 
 export function githubInstallationUrl(config: GitHubAppConfig, state: string): string {
   if (config.testData) {
@@ -156,6 +181,262 @@ export async function createRepositoryBranch(
   return body.object?.sha ?? sha;
 }
 
+export function setTestRepositoryMergeConflict(repositoryId: string, headSha: string): void {
+  testMergeConflicts.add(`${repositoryId}:${headSha}`);
+}
+
+export async function mergeRepositoryBranch(
+  config: GitHubAppConfig,
+  installationId: string,
+  repository: GitHubRepositoryOption,
+  baseBranch: string,
+  headSha: string,
+  commitMessage: string,
+): Promise<{ sha: string; alreadyMerged: boolean }> {
+  if (config.testData) {
+    const match = config.testData.repositories.find((item) => item.id === repository.id);
+    if (!match || installationId !== config.testData.installationId) throw new GitHubApiError("Repository is not available", 404);
+    if (testMergeConflicts.delete(`${repository.id}:${headSha}`)) throw new GitHubApiError("The run conflicts with the candidate branch", 409);
+    const key = `${installationId}:${repository.id}:${baseBranch}`;
+    const baseSha = testRefs.get(key) ?? match.branchShas?.[baseBranch] ?? "1".repeat(40);
+    if (baseSha === headSha) return { sha: baseSha, alreadyMerged: true };
+    const input = new TextEncoder().encode(`${baseSha}:${headSha}:${commitMessage}`);
+    const digest = new Uint8Array(await crypto.subtle.digest("SHA-1", input));
+    const sha = Array.from(digest, (value) => value.toString(16).padStart(2, "0")).join("");
+    testRefs.set(key, sha);
+    return { sha, alreadyMerged: false };
+  }
+  const token = await createInstallationToken(config, installationId, repository.id);
+  const response = await fetch(`${API_ROOT}/repos/${encodeURIComponent(repository.owner)}/${encodeURIComponent(repository.name)}/merges`, {
+    method: "POST",
+    headers: { ...githubHeaders(token), "content-type": "application/json" },
+    body: JSON.stringify({ base: baseBranch, head: headSha, commit_message: commitMessage.slice(0, 250) }),
+  });
+  if (response.status === 204) return { sha: await getRepositoryRefSha(config, installationId, repository, baseBranch), alreadyMerged: true };
+  if (!response.ok) throw await githubError(response);
+  const body = await response.json() as { sha?: string };
+  if (!body.sha) throw new GitHubApiError("GitHub did not return the integrated candidate SHA", 502);
+  return { sha: body.sha, alreadyMerged: false };
+}
+
+export async function createDraftPullRequest(
+  config: GitHubAppConfig,
+  installationId: string,
+  repository: GitHubRepositoryOption,
+  input: { title: string; body: string; head: string; base: string },
+): Promise<{ number: number; nodeId: string; url: string; state: "open" | "closed"; draft: boolean }> {
+  const key = `${installationId}:${repository.id}:${input.head}:${input.base}`;
+  if (config.testData) {
+    const match = config.testData.repositories.find((item) => item.id === repository.id);
+    if (!match || installationId !== config.testData.installationId) throw new GitHubApiError("Repository is not available", 404);
+    const existing = testPullRequests.get(key);
+    if (existing) return existing;
+    const value: TestPullRequest = {
+      number: testPullRequests.size + 1,
+      nodeId: `PR_TEST_${testPullRequests.size + 1}`,
+      url: `https://github.com/${repository.fullName}/pull/${testPullRequests.size + 1}`,
+      state: "open",
+      draft: true,
+      merged: false,
+      headRef: input.head,
+      baseRef: input.base,
+      mergeCommitSha: null,
+    };
+    testPullRequests.set(key, value);
+    return value;
+  }
+  const token = await createInstallationToken(config, installationId, repository.id);
+  const query = new URLSearchParams({ state: "open", head: `${repository.owner}:${input.head}`, base: input.base, per_page: "10" });
+  const existingResponse = await githubFetch(
+    `${API_ROOT}/repos/${encodeURIComponent(repository.owner)}/${encodeURIComponent(repository.name)}/pulls?${query}`,
+    token,
+  );
+  const existing = await existingResponse.json() as Array<{ number?: number; node_id?: string; html_url?: string; state?: string; draft?: boolean }>;
+  const found = existing.find((item) => item.number && item.node_id && item.html_url);
+  if (found?.number && found.node_id && found.html_url) {
+    return { number: found.number, nodeId: found.node_id, url: found.html_url, state: found.state === "closed" ? "closed" : "open", draft: found.draft !== false };
+  }
+  const response = await fetch(`${API_ROOT}/repos/${encodeURIComponent(repository.owner)}/${encodeURIComponent(repository.name)}/pulls`, {
+    method: "POST",
+    headers: { ...githubHeaders(token), "content-type": "application/json" },
+    body: JSON.stringify({ ...input, draft: true, maintainer_can_modify: false }),
+  });
+  if (!response.ok) throw await githubError(response);
+  const body = await response.json() as { number?: number; node_id?: string; html_url?: string; state?: string; draft?: boolean };
+  if (!body.number || !body.node_id || !body.html_url) throw new GitHubApiError("GitHub did not return the draft pull request", 502);
+  return { number: body.number, nodeId: body.node_id, url: body.html_url, state: body.state === "closed" ? "closed" : "open", draft: body.draft !== false };
+}
+
+export async function getPullRequestReview(
+  config: GitHubAppConfig,
+  installationId: string,
+  repository: GitHubRepositoryOption,
+  pullRequestNumber: number,
+): Promise<GitHubPullRequestReview> {
+  if (config.testData) {
+    const match = config.testData.repositories.find((item) => item.id === repository.id);
+    if (!match || installationId !== config.testData.installationId) throw new GitHubApiError("Repository is not available", 404);
+    const pullRequest = [...testPullRequests.values()].find((item) => item.number === pullRequestNumber && item.url.includes(`/${repository.fullName}/pull/`));
+    if (!pullRequest) throw new GitHubApiError("Pull request is not available", 404);
+    const headSha = await getRepositoryRefSha(config, installationId, repository, pullRequest.headRef).catch(() => pullRequest.mergeCommitSha ?? "0".repeat(40));
+    const baseSha = await getRepositoryRefSha(config, installationId, repository, pullRequest.baseRef);
+    return {
+      ...pullRequest,
+      mergeable: pullRequest.merged ? false : true,
+      mergeableState: pullRequest.merged ? "unknown" : "clean",
+      headSha,
+      baseSha,
+      checksPassing: true,
+      files: [],
+      checks: [],
+    };
+  }
+  const token = await createInstallationToken(config, installationId, repository.id);
+  const root = `${API_ROOT}/repos/${encodeURIComponent(repository.owner)}/${encodeURIComponent(repository.name)}`;
+  const response = await githubFetch(`${root}/pulls/${pullRequestNumber}`, token);
+  const body = await response.json() as GitHubPullRequestRecord;
+  if (!body.number || !body.node_id || !body.html_url || !body.head?.ref || !body.head.sha || !body.base?.ref || !body.base.sha) {
+    throw new GitHubApiError("GitHub returned an incomplete pull request", 502);
+  }
+  const files: GitHubPullRequestReview["files"] = [];
+  let patchBytes = 0;
+  for (let page = 1; page <= 3; page += 1) {
+    const filesResponse = await githubFetch(`${root}/pulls/${pullRequestNumber}/files?per_page=100&page=${page}`, token);
+    const pageFiles = await filesResponse.json() as Array<{ filename?: string; status?: string; additions?: number; deletions?: number; patch?: string }>;
+    for (const file of pageFiles) {
+      if (!file.filename || files.length >= 250) throw new GitHubApiError("Pull request contains too many files for bounded review", 422);
+      const remaining = Math.max(0, 1_000_000 - patchBytes);
+      const patchPreview = (file.patch ?? "").slice(0, Math.min(20_000, remaining));
+      patchBytes += new TextEncoder().encode(patchPreview).byteLength;
+      files.push({
+        path: file.filename,
+        additions: Number(file.additions ?? 0),
+        deletions: Number(file.deletions ?? 0),
+        changeKind: file.status === "added" ? "add" : file.status === "removed" ? "delete" : "update",
+        patchPreview,
+      });
+    }
+    if (pageFiles.length < 100) break;
+  }
+  const [checksResponse, statusesResponse] = await Promise.all([
+    githubFetch(`${root}/commits/${encodeURIComponent(body.head.sha)}/check-runs?filter=latest&per_page=100`, token),
+    githubFetch(`${root}/commits/${encodeURIComponent(body.head.sha)}/status`, token),
+  ]);
+  const checkRuns = await checksResponse.json() as { check_runs?: Array<{ id?: number; name?: string; status?: string; conclusion?: string | null; details_url?: string | null }> };
+  const statuses = await statusesResponse.json() as { statuses?: Array<{ id?: number; context?: string; state?: string; description?: string | null; target_url?: string | null }> };
+  const checks: GitHubPullRequestReview["checks"] = [];
+  for (const check of checkRuns.check_runs ?? []) {
+    if (!check.id || !check.name) continue;
+    const passed = check.status === "completed" && ["success", "neutral", "skipped"].includes(check.conclusion ?? "");
+    const failed = check.status === "completed" && !passed;
+    checks.push({ sourceId: `check:${check.id}`, name: check.name, detail: check.conclusion ?? check.status ?? null, state: passed ? "passed" : failed ? "failed" : "waiting" });
+  }
+  for (const status of statuses.statuses ?? []) {
+    if (!status.id || !status.context) continue;
+    checks.push({
+      sourceId: `status:${status.id}`,
+      name: status.context,
+      detail: status.description ?? status.state ?? null,
+      state: status.state === "success" ? "passed" : ["failure", "error"].includes(status.state ?? "") ? "failed" : "waiting",
+    });
+  }
+  return {
+    number: body.number,
+    nodeId: body.node_id,
+    url: body.html_url,
+    state: body.state === "closed" ? "closed" : "open",
+    draft: body.draft !== false,
+    merged: body.merged === true,
+    mergeable: typeof body.mergeable === "boolean" ? body.mergeable : null,
+    mergeableState: body.mergeable_state ?? null,
+    headRef: body.head.ref,
+    headSha: body.head.sha,
+    baseRef: body.base.ref,
+    baseSha: body.base.sha,
+    mergeCommitSha: body.merged && body.merge_commit_sha ? body.merge_commit_sha : null,
+    checksPassing: checks.every((check) => check.state === "passed"),
+    files,
+    checks,
+  };
+}
+
+export async function markPullRequestReadyForReview(
+  config: GitHubAppConfig,
+  installationId: string,
+  repository: GitHubRepositoryOption,
+  nodeId: string,
+): Promise<void> {
+  if (config.testData) {
+    const pullRequest = [...testPullRequests.values()].find((item) => item.nodeId === nodeId);
+    if (!pullRequest) throw new GitHubApiError("Pull request is not available", 404);
+    pullRequest.draft = false;
+    return;
+  }
+  const token = await createInstallationToken(config, installationId, repository.id);
+  const response = await fetch("https://api.github.com/graphql", {
+    method: "POST",
+    headers: { ...githubHeaders(token), "content-type": "application/json" },
+    body: JSON.stringify({
+      query: "mutation MarkReady($id: ID!) { markPullRequestReadyForReview(input: { pullRequestId: $id }) { pullRequest { id isDraft } } }",
+      variables: { id: nodeId },
+    }),
+  });
+  const body = await response.json() as { data?: { markPullRequestReadyForReview?: { pullRequest?: { isDraft?: boolean } } }; errors?: Array<{ message?: string }> };
+  if (!response.ok || body.errors?.length || body.data?.markPullRequestReadyForReview?.pullRequest?.isDraft !== false) {
+    throw new GitHubApiError(body.errors?.[0]?.message ?? "GitHub did not mark the pull request ready", response.ok ? 422 : response.status);
+  }
+}
+
+export async function squashMergePullRequest(
+  config: GitHubAppConfig,
+  installationId: string,
+  repository: GitHubRepositoryOption,
+  pullRequestNumber: number,
+  expectedHeadSha: string,
+): Promise<{ sha: string }> {
+  if (config.testData) {
+    const pullRequest = [...testPullRequests.values()].find((item) => item.number === pullRequestNumber && item.url.includes(`/${repository.fullName}/pull/`));
+    if (!pullRequest || pullRequest.state !== "open" || pullRequest.draft) throw new GitHubApiError("Pull request is not mergeable", 405);
+    const headSha = await getRepositoryRefSha(config, installationId, repository, pullRequest.headRef);
+    if (headSha !== expectedHeadSha) throw new GitHubApiError("Pull request head changed", 409);
+    const baseSha = await getRepositoryRefSha(config, installationId, repository, pullRequest.baseRef);
+    const digest = new Uint8Array(await crypto.subtle.digest("SHA-1", new TextEncoder().encode(`${baseSha}:${headSha}:squash`)));
+    const sha = Array.from(digest, (value) => value.toString(16).padStart(2, "0")).join("");
+    testRefs.set(`${installationId}:${repository.id}:${pullRequest.baseRef}`, sha);
+    pullRequest.state = "closed";
+    pullRequest.merged = true;
+    pullRequest.mergeCommitSha = sha;
+    return { sha };
+  }
+  const token = await createInstallationToken(config, installationId, repository.id);
+  const response = await fetch(`${API_ROOT}/repos/${encodeURIComponent(repository.owner)}/${encodeURIComponent(repository.name)}/pulls/${pullRequestNumber}/merge`, {
+    method: "PUT",
+    headers: { ...githubHeaders(token), "content-type": "application/json" },
+    body: JSON.stringify({ sha: expectedHeadSha, merge_method: "squash" }),
+  });
+  const body = await response.json() as { merged?: boolean; sha?: string; message?: string };
+  if (!response.ok || !body.merged || !body.sha) throw new GitHubApiError(body.message ?? "GitHub rejected the squash merge", response.status || 409);
+  return { sha: body.sha };
+}
+
+export async function deleteTestRepositoryBranchIfMatches(
+  config: GitHubAppConfig,
+  installationId: string,
+  repository: GitHubRepositoryOption,
+  branch: string,
+  expectedSha: string,
+): Promise<boolean> {
+  if (!config.testData) throw new GitHubApiError("Test repository adapter is unavailable", 500);
+  if (!branch.startsWith("openfloor/") || !/^[a-z0-9/_-]+$/.test(branch)) throw new GitHubApiError("OpenFloor generated an invalid branch", 500);
+  const match = config.testData.repositories.find((item) => item.id === repository.id);
+  if (!match || installationId !== config.testData.installationId) throw new GitHubApiError("Repository is not available", 404);
+  const key = `${installationId}:${repository.id}:${branch}`;
+  const current = testRefs.get(key);
+  if (current !== expectedSha) return false;
+  testRefs.delete(key);
+  return true;
+}
+
 export async function downloadRepositoryArchive(
   config: GitHubAppConfig,
   installationId: string,
@@ -188,6 +469,20 @@ type GitHubRepositoryRecord = {
   owner: { login: string };
 };
 
+type GitHubPullRequestRecord = {
+  number?: number;
+  node_id?: string;
+  html_url?: string;
+  state?: string;
+  draft?: boolean;
+  merged?: boolean;
+  mergeable?: boolean | null;
+  mergeable_state?: string | null;
+  merge_commit_sha?: string | null;
+  head?: { ref?: string; sha?: string };
+  base?: { ref?: string; sha?: string };
+};
+
 function mapRepository(repository: GitHubRepositoryRecord): GitHubRepositoryOption {
   return {
     id: String(repository.id),
@@ -200,7 +495,7 @@ function mapRepository(repository: GitHubRepositoryRecord): GitHubRepositoryOpti
   };
 }
 
-async function createInstallationToken(
+export async function createInstallationToken(
   config: GitHubAppConfig,
   installationId: string,
   repositoryId?: string,

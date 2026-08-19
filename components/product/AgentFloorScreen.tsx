@@ -16,11 +16,13 @@ export function AgentFloorScreen({
   session: initialSession,
   initialMembers,
   initialFloor,
+  agentRunEnabled,
 }: {
   user: AppUser;
   session: SessionSummary;
   initialMembers: SessionMember[];
   initialFloor: FloorSnapshot;
+  agentRunEnabled: boolean;
 }) {
   const router = useRouter();
   const [session, setSession] = useState(initialSession);
@@ -133,5 +135,5 @@ export function AgentFloorScreen({
     if (socketRef.current?.readyState === WebSocket.OPEN) socketRef.current.send(JSON.stringify(update));
   }, []);
 
-  return <Workspace user={user} session={session} members={visibleMembers} floorData={floorData} typingDrafts={typingDrafts} onTypingUpdate={sendTypingUpdate} onSaveObjective={saveObjective} />;
+  return <Workspace user={user} session={session} members={visibleMembers} floorData={floorData} typingDrafts={typingDrafts} onTypingUpdate={sendTypingUpdate} onSaveObjective={saveObjective} agentRunEnabled={agentRunEnabled} />;
 }

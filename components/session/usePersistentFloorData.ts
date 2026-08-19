@@ -70,6 +70,12 @@ export function usePersistentFloorData(sessionId: string, initialFloor: FloorSna
     addQueueItem: (prompt: string, agentId: string | null) => request("/queue", "POST", { prompt, agentId }),
     reorderQueue: (itemIds: string[]) => request("/queue/order", "PATCH", { itemIds }),
     mergeQueue: (itemIds: string[]) => request("/queue/merge", "POST", { itemIds }),
+    runQueueItem: (queueItemId: string) => request(`/queue/${encodeURIComponent(queueItemId)}/run`, "POST"),
+    cancelRun: (runId: string) => request(`/runs/${encodeURIComponent(runId)}/cancel`, "POST"),
+    discardRun: (runId: string) => request(`/runs/${encodeURIComponent(runId)}/discard`, "POST"),
+    retryRun: (runId: string) => request(`/runs/${encodeURIComponent(runId)}/retry`, "POST"),
+    readyReview: () => request("/review/ready", "POST"),
+    squashMergeReview: () => request("/review/merge", "POST"),
   };
 }
 

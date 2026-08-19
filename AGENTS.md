@@ -149,26 +149,35 @@ WebSocket events notify clients about presence or changed domains. D1 remains au
 - Realtime floor revision notifications and snapshot refetching.
 - Ephemeral realtime teammate prompt drafts with Everyone, Typing, and Hidden viewing modes.
 - Movable, resizable, collapsible, expandable panels and responsive floor layout.
-- Review navigation with an authoritative empty state.
+- Review navigation backed by genuine local agent-run files, diff previews, and checks when a run exists; otherwise it keeps an authoritative empty state.
 - One GitHub repository connection per session, configured by the owner through a signed single-use GitHub App callback.
 - Durable GitHub installation/repository identifiers, selected base branch, and ordered required-check commands.
 - Member-visible repository details with owner-only connect, configure, disconnect, and reconnect controls.
 - A public GitHub webhook boundary that caps payloads and verifies the raw-body HMAC before acknowledging them.
-- One durable active repository candidate per session, created at a verified base SHA on a server-generated `openfloor/<session-short>/candidate/<candidate-short>` branch.
+- One durable active repository candidate per session, created at a verified base SHA with owner-confirmed name/description on a server-generated `openfloor/<session-short>/candidate/<safe-name>-<candidate-short>` branch.
 - Owner-only repository synchronization with connected, ready, revoked, inaccessible, externally modified, and behind-base presentation.
 - Idempotent GitHub installation, repository-access, rename, push, pull-request, check, and status delivery processing keyed by delivery ID.
 - Owner-started repository preflight through a durable Cloudflare Workflow and an isolated Cloudflare Sandbox at the exact candidate SHA.
 - Ordered required-check results in D1 with bounded command logs in private R2 and reload-safe provisioning, running, passed, failed, and timed-out UI states.
+- Owner-started and owner-cancelled queue execution through a durable `AgentRunWorkflow`, with one active run per queue item.
+- Server-side Codex SDK execution using `gpt-5.6-terra` in an isolated Sandbox at the exact candidate SHA, with workspace-write permission and no repository network access.
+- Durable run, event, check, changed-file, and artifact metadata; bounded complete logs and diffs live in private R2.
+- Real run status and file/check data in Agent cards and Review. Each passing run is automatically preserved on its own verified `openfloor/<session-short>/run/<run-short>` GitHub branch; consecutive prompts retain separate branches and audit history.
+- Trusted incremental Git-bundle validation and non-force publication from a clean publisher Sandbox, followed by GitHub SHA reconciliation.
+- Owner-only safe discard using an expected-SHA lease; externally modified run branches are never deleted.
+- Serialized candidate integration inside `AgentRunWorkflow`, with a D1 candidate lease, authoritative GitHub ref reconciliation, non-force merge, one draft PR, queue completion, conflict preservation, and owner-only retry as a new run attempt.
+- GitHub-authoritative final review snapshots with bounded PR files, check runs, commit statuses, head/base SHAs, draft state, mergeability, and merge-requirement state.
+- Owner-only **Ready for review** and expected-head **Squash merge** actions. GitHub protection and review requirements are never bypassed.
+- Verified post-merge cleanup of matching server-generated run/candidate refs using Git leases; mismatched refs are preserved and recorded as partial cleanup.
+- Merged candidate audit history remains durable, while the next owner-started run creates a fresh candidate cycle from the latest base SHA.
+
+Known production follow-up: the owner discard action still reports failure in the disposable acceptance repository after its Git authentication correction. Preserve the expected-SHA lease and error separation; diagnose this independently rather than weakening deletion safety or folding it into Phase 6.
 
 ### Explicitly deferred
 
-- Agent model or provider selection.
-- Agent execution, cancellation, retry, runtime scheduling, or queue consumption.
-- Provider credentials and secret management for agent runtimes.
-- Repository checkout, worktrees, run-branch creation, branch update/deletion, commits, pull requests, or attachments.
-- Agent runtime status, progress, steps, agent-authored messages, or terminal output.
-- File discovery, changed-file lists, agent-run checks, warnings, diffs, conflicts, or generated review candidates.
-- Review approval persistence, merge, deploy, or repository modification.
+- Agent model/provider selection and user-managed provider credentials; Phase 4 deliberately uses one server-configured Codex model and project credential.
+- Agent-authored chat messages, live terminal streaming, and generic artifact download UI.
+- Deployment automation after repository merge.
 - Agent edit, archive, deletion, or lifecycle states beyond `created`.
 - Queue completion, removal, consumption, or retry workflows.
 - Ownership transfer. Owners cannot leave until transfer exists.
@@ -245,8 +254,9 @@ Per-session WebSocket
 - Cloudflare D1 is the relational database bound as `DB`.
 - `SessionPresence` is a SQLite-backed Durable Object bound as `SESSION_PRESENCE`.
 - `RepositoryPreflightWorkflow` is bound as `REPOSITORY_PREFLIGHT`; it durably coordinates exact-source checkout, ordered checks, result persistence, and cleanup.
+- `AgentRunWorkflow` is bound as `AGENT_RUN_WORKFLOW`; it durably coordinates exact-source checkout, Codex, required checks, Git-bundle export, trusted publication, reconciliation, cancellation, and cleanup.
 - `Sandbox` is the `@cloudflare/sandbox` Durable Object bound as `SANDBOX`, backed by the matching `cloudflare/sandbox:0.12.7` container image.
-- Private bounded preflight logs are stored in R2 bucket `openfloor-preflight-logs`, bound as `PREFLIGHT_LOGS`.
+- Private bounded preflight and run artifacts are stored in R2 bucket `openfloor-preflight-logs`, bound as `PREFLIGHT_LOGS`.
 - Cloudflare static assets are bound as `ASSETS`.
 - Cloudflare Images is bound as `IMAGES` for vinext image optimization.
 - Drizzle defines the schema and generates migrations; runtime data access uses prepared D1 SQL.
@@ -374,10 +384,18 @@ Do not hand-edit Drizzle metadata. If a generated migration is wrong, correct th
 
 #### `repository_candidates`
 
-- Durable rows record the exact base SHA, generated candidate ref, expected candidate SHA, last observed remote SHAs, and synchronization time.
+- Durable rows record the owner-confirmed candidate name and description, exact base SHA, generated candidate ref, expected candidate SHA, last observed remote SHAs, and synchronization time.
 - A partial unique index permits only one `creating` or `active` candidate per session.
-- Candidate refs are generated only by the server as `openfloor/<session-short>/candidate/<candidate-short>` and are created without force from the configured base ref. Phase 2 exposes no generic ref name or update/delete API.
+- Candidate refs are generated only by the server as `openfloor/<session-short>/candidate/<safe-name>-<candidate-short>` and are created without force from the configured base ref. The owner supplies bounded display metadata, not an arbitrary ref; OpenFloor normalizes the name into a lowercase ASCII slug and retains the unique ID suffix.
 - A newer base SHA marks the candidate behind; an unexpected candidate head marks the connection externally modified. Neither condition rewrites GitHub.
+- Status is `creating`, `active`, `merged`, or `creation_failed`. Only creating/active rows participate in the one-live-candidate constraint, so merged history does not block the next cycle.
+- The row stores the active PR identity/state plus GitHub mergeability, merge-requirement state, aggregate observed-check result, ready/merge audit timestamps, confirmed squash SHA, and cleanup outcome. The first draft PR uses the persisted candidate name as its title and description as its body.
+
+#### `repository_candidate_files` and `repository_candidate_checks`
+
+- These tables store a bounded, last-reconciled GitHub PR review snapshot. Files contain path, change kind, counts, and bounded patch preview; checks normalize GitHub check runs and commit statuses to passed/waiting/failed.
+- GitHub remains authoritative. Ready and merge mutations refresh these tables before deciding, and webhook events invalidate the review revision so clients refetch.
+- Complete logs, bundles, and unbounded diffs remain outside D1.
 
 #### `github_webhook_deliveries`
 
@@ -396,6 +414,20 @@ Do not hand-edit Drizzle metadata. If a generated migration is wrong, correct th
 - A preflight pins the active candidate ID and SHA and snapshots each required command in order.
 - D1 owns bounded status, timing, exit code, excerpt, and R2 log-key metadata. Full bounded logs stay in private R2 and never enter snapshots.
 - Statuses are `provisioning`, `running`, `passed`, `failed`, `cancelled`, or `timed_out`; check statuses are `pending`, `running`, `passed`, `failed`, or `timed_out`.
+
+#### `agent_runs`, `agent_run_events`, `agent_run_checks`, `agent_run_files`, and `agent_run_artifacts`
+
+- One active run may exist per queue item. Runs pin the agent, candidate, exact SHA, attempt, model, prompt inputs, timestamps, and terminal summary.
+- The owner may start or cancel; members may read caller-visible run summaries but receive no mutation controls. Unassigned or nonqueued items cannot execute.
+- Run statuses are `provisioning`, `running`, `checking`, `ready`, `publishing`, `published`, `integrating`, `integrated`, `conflicted`, `failed`, `cancel_requested`, and `cancelled`; every listed status is now used by the Phase 6 lifecycle.
+- Each run snapshots ordered required checks. D1 stores bounded output excerpts, file metadata, and diff previews; complete bounded Codex logs, check logs, and diffs stay in private R2.
+- `ready` means checks passed locally. The Workflow immediately moves through `publishing`, `published`, and serialized `integrating`; success records `integrated` and completes the queue item, while a true GitHub merge conflict records `conflicted` and leaves the item blocked for owner retry.
+- Each new run stores a server-generated run branch, bundle key/size, local bundle commit, trusted published commit, observed remote SHA, publication time, and nullable discard audit fields. Older Phase 4 runs may have null publication fields.
+- The agent Sandbox uploads a bounded incremental bundle through an operation-scoped JWT. A separate clean publisher Sandbox reconstructs the deterministic archive baseline from the exact candidate tree, verifies one ref and one result commit, compares the recorded file set, enforces object/file limits, and performs a fixed non-force push with a repository-limited token. Git-over-HTTPS authenticates with `x-access-token` plus the installation token as the HTTP Basic password; REST-style Bearer authentication is not valid for this Git transport. Restarting a Workflow whose run is already `publishing` resumes from the stored bundle and file metadata without rerunning Codex or checks.
+- Discard reads the current remote ref and deletes with `--force-with-lease=<expected-sha>` only when the server-generated branch and recorded/reconciled SHAs still match. D1/R2 audit history remains.
+- The active candidate holds at most one `integration_run_id`. Each integrating Workflow reconciles base, candidate, and run refs from GitHub, merges the immutable run commit into the latest candidate without force, updates the expected/remote candidate SHA, and creates a draft PR only when the candidate has none. Retry against a conflict creates a new attempt and run branch from the latest candidate; it never rewrites the conflicted branch.
+- Workflow-file changes under `.github/workflows/` are rejected because the GitHub App has no Workflows permission.
+- `branch_deleted_at` records verified post-merge cleanup separately from owner-requested discard; both retain the run and its audit metadata.
 
 #### `floor_agents`
 
@@ -424,7 +456,7 @@ Do not hand-edit Drizzle metadata. If a generated migration is wrong, correct th
 
 - Ordered by integer `position` within a session.
 - Nullable agent target represents an unassigned prompt.
-- Only current status is `queued`.
+- Status is `queued`, `running`, `blocked`, or `completed`. Only queued items can be merged or started.
 - Agent foreign key uses `ON DELETE SET NULL` for future lifecycle support, although deletion is not exposed today.
 
 #### `floor_queue_prompts`
@@ -445,9 +477,10 @@ Do not hand-edit Drizzle metadata. If a generated migration is wrong, correct th
 - `repository`
 - `activeCandidate`
 - `latestPreflight`
+- `runs`
 - `review`
 
-`FloorSnapshot` includes nullable `repository`, `activeCandidate`, and bounded `latestPreflight` fields. Large preflight logs are fetched separately. `review` is deliberately nullable and currently always `null` in `db/floor.ts`; do not populate it from UI fixtures.
+`FloorSnapshot` includes nullable `repository`, `activeCandidate`, bounded `latestPreflight`, and the latest 20 caller-visible runs. Large logs and artifacts are fetched separately. `review` is null until a real run has changed files, then is derived only from persisted run/check/file data; never populate it from UI fixtures.
 
 ### Mutation pattern
 
@@ -551,12 +584,22 @@ All paths below are shown without the production `/app` prefix.
 | `POST /api/sessions/[id]/repository` | Owner with pending callback | Persist the selected repository, base branch, and required commands. |
 | `PATCH /api/sessions/[id]/repository` | Owner | Change the base branch or required commands for the same connected repository. |
 | `DELETE /api/sessions/[id]/repository` | Owner | Mark the connection disconnected without mutating GitHub. |
-| `POST /api/sessions/[id]/repository/candidate` | Owner | Verify the configured base SHA and create the single server-named candidate branch without force. |
+| `POST /api/sessions/[id]/repository/candidate` | Owner | Accept bounded `{ name, description }` metadata (defaulted by the UI and legacy empty-body callers from the session title/objective), verify the configured base SHA, and create one safely slugged server-owned candidate branch without force. |
 | `POST /api/sessions/[id]/repository/sync` | Owner | Reconcile repository metadata and base/candidate heads without modifying GitHub. |
 | `GET /api/sessions/[id]/repository/preflight` | Session member | Return the latest bounded preflight/check state. |
 | `POST /api/sessions/[id]/repository/preflight` | Owner | Start one durable preflight for the exact active candidate; requires at least one command. |
 | `GET /api/sessions/[id]/repository/preflight/[preflightId]/logs` | Session member | Stream the caller-authorized bounded command logs from private R2. |
 | `GET /runtime/preflight/source` | Short-lived source JWT | Proxy the exact candidate archive without exposing a GitHub installation token to the Sandbox process. |
+| `POST /api/sessions/[id]/queue/[queueItemId]/run` | Owner | Start a durable Codex run for an assigned queued item at the exact active candidate SHA. |
+| `POST /api/sessions/[id]/runs/[runId]/cancel` | Owner | Request cancellation of an active run. |
+| `POST /api/sessions/[id]/runs/[runId]/discard` | Owner | Delete only an unchanged, verified OpenFloor run branch using an expected-SHA lease; retain audit history. |
+| `POST /api/sessions/[id]/runs/[runId]/retry` | Owner | Retry a conflicted queue item as a new run attempt pinned to the latest candidate SHA. |
+| `POST /api/sessions/[id]/review/ready` | Owner | Reconcile the exact active PR and use GitHub's ready-for-review mutation; preserve 404 concealment. |
+| `POST /api/sessions/[id]/review/merge` | Owner | Reconcile head/base/files/checks/mergeability, request an exact-head squash merge, confirm it, and safely clean matching OpenFloor refs. |
+| `GET /api/sessions/[id]/runs/[runId]/artifacts` | Session member | Return caller-authorized bounded run artifacts from private R2. |
+| `GET /runtime/run/source` | Short-lived run source JWT | Proxy the exact candidate archive for one run. |
+| `POST/GET /runtime/run/bundle` | Short-lived operation JWT | Store an agent-exported bounded Git bundle and serve it only to the clean trusted publisher. |
+| `POST /runtime/openai/v1/responses` | Short-lived run OpenAI JWT | Forward one active run's Codex request while injecting the project credential outside the repository process. |
 | `POST /webhooks/github` | Valid GitHub HMAC | Deduplicate and process bounded installation, access, repository, push, PR, check, and status deliveries. |
 
 Response conventions:
@@ -583,6 +626,7 @@ Keep server validation in `lib/validation.ts` and cover it with unit tests.
 - Live draft: maximum 4,000, not trimmed because it represents in-progress text.
 - Repository selection: repository ID maximum 100 characters; base branch required and maximum 255 characters.
 - Required check commands: optional; zero to eight ordered nonempty commands, trimmed, maximum 500 characters each.
+- Candidate name: required, NFKC-normalized, whitespace-collapsed, maximum 100 characters; it is slugged server-side and never accepted as a complete ref. Candidate description: trimmed, maximum 2,000 characters and may be empty.
 
 ## Frontend architecture
 
@@ -655,6 +699,7 @@ db/
   floor.ts                   Prepared D1 floor snapshot and mutation queries
   repositories.ts            Owner-gated GitHub connection and check-command persistence
   preflights.ts              Durable preflight/check state and internal Workflow transitions
+  runs.ts                    Durable agent-run lifecycle, checks, files, artifacts, and execution context
 drizzle/                     Generated D1 migrations and metadata
 lib/
   floor-types.ts             Public persisted floor types
@@ -664,7 +709,7 @@ lib/
   invites.ts                 HMAC signing and constant-time verification
   github.ts                  GitHub App JWT, installation-token, repository, and branch reads
   github-state.ts            Signed callback state and webhook HMAC verification
-  runtime-token.ts           Short-lived preflight gateway JWT signing and verification
+  runtime-token.ts           Short-lived preflight/run operation-scoped gateway JWTs
   presence-server.ts         Internal application-to-Durable-Object notifications
   floor-api.ts               Shared floor route response helpers
   floor-state.ts             Pure queue/mention/revision client helpers
@@ -673,8 +718,11 @@ worker/
   index.ts                   Cloudflare entry, identity boundary, assets, app dispatch
   presence.ts                Authenticated WebSocket route and SessionPresence object
   preflight-workflow.ts      Durable exact-source Sandbox preflight orchestration
+  agent-run-workflow.ts      Durable Codex/check/cancellation Sandbox orchestration
 Dockerfile.sandbox           Version-matched Cloudflare Sandbox runtime image
 .github/workflows/deploy.yml Push-to-main production deploy (test → migrate → build → deploy)
+scripts/codex-runner.mjs     Pinned server-side Codex SDK runner inside the Sandbox image
+scripts/publish-bundle.mjs   Fixed trusted bundle/ref/ancestry/file/object validation and non-force publication
 tests/
   unit/                      Pure functions, validation, identity, signing, reducers
   worker/                    Local D1 and Durable Object integration tests
@@ -826,12 +874,15 @@ Defined in `wrangler.jsonc`:
 - `ASSETS`: built client assets.
 - `IMAGES`: Cloudflare Images transform binding.
 - `REPOSITORY_PREFLIGHT`: Cloudflare Workflow binding.
+- `AGENT_RUN_WORKFLOW`: Cloudflare Workflow binding.
 - `SANDBOX`: Cloudflare Sandbox Durable Object/container binding.
 - `PREFLIGHT_LOGS`: private R2 bucket `openfloor-preflight-logs`.
 
 The phased GitHub rollout currently uses the existing production Worker and D1 database. GitHub App setup and deployment are documented in `docs/github-production.md`. Until the user establishes staging, install the App only on the disposable acceptance repository and complete each phase's browser acceptance before expanding repository access.
 
 Cloudflare Containers requires a Workers Paid account. `PREFLIGHT_ENABLED` is the production rollout gate: production is enabled only after the container image, `SANDBOX`, and `REPOSITORY_PREFLIGHT` bindings deploy successfully. While disabled, the UI omits **Verify runner** and the start endpoint returns `503`; repository connection and candidate reconciliation remain available. Tests explicitly enable the deterministic test adapter.
+
+`AGENT_RUN_ENABLED` independently gates Phase 4. Production is enabled only after the updated image and Workflow deploy and `OPENAI_API_KEY` is configured; while false the UI omits **Run** and direct starts return `503`. Tests enable only the deterministic test adapter.
 
 Durable Object migration `v1` registers `SessionPresence`; `v2` registers `Sandbox`. Keep migration syntax compatible with the pinned Wrangler version.
 
@@ -846,6 +897,7 @@ Durable Object migration `v1` registers `SessionPresence`; `v2` registers `Sandb
 - `GITHUB_STATE_SECRET`
 - `GITHUB_WEBHOOK_SECRET`
 - `RUNTIME_GATEWAY_SECRET`
+- `OPENAI_API_KEY`
 
 Set a secret by its variable name, then enter the value when prompted:
 
@@ -948,7 +1000,7 @@ Pushes to `main` run this exact sequence automatically via `.github/workflows/de
 - The Worker route `opnflr.com/app*` is intentionally broader than `/app/*` due query-string routing behavior.
 - Access protects the app at the edge, but the Worker still verifies JWTs. Do not remove defense in depth.
 - `/app/webhooks/github` is deliberately public and must never process a payload before its raw-body HMAC and size are verified.
-- Phase 2 uses Contents write only to create the server-generated candidate ref. It exposes no generic branch CRUD, force push, base write, run branch, commit, PR, or deletion route.
+- Candidate naming never accepts a complete Git ref. Contents write creates only the server-generated `openfloor/<session-short>/candidate/<safe-name>-<candidate-short>` ref; no generic branch CRUD, force push, base write, protection change, or arbitrary deletion is exposed.
 - Phase 3 source checkout proxies an exact GitHub archive through `/runtime/preflight/source`; the Sandbox receives only a short-lived source-only JWT, never the GitHub installation token.
 - `@cloudflare/sandbox` and `cloudflare/sandbox` are pinned together at `0.12.7`. Docker must be running for local development and deploys that build the container image.
 - The production preflight gate was enabled after the Workers Paid upgrade and successful container-enabled deployment. Do not expose **Verify runner** against missing runtime bindings in another environment.
@@ -959,27 +1011,14 @@ Pushes to `main` run this exact sequence automatically via `.github/workflows/de
 - Draft Hidden mode does not stop outbound sharing.
 - Agent names may contain spaces, while the current `@mention` helper recognizes a single word-like name. Explicit target selection is the reliable path for multiword agent names until mention parsing is redesigned.
 - Owners cannot leave because ownership transfer is deferred.
-- Review types look complete enough to render future data, but no review persistence or runtime writer exists.
+- Review is derived from the latest active or merged candidate, its bounded GitHub PR snapshot, and retained real run attribution; complete artifacts remain outside the snapshot.
 - The UI contains restored visual affordances from a prototype; verify backend wiring before claiming any action is real.
 - Wrangler is pinned. A newer compatibility date may be rejected until Wrangler is upgraded deliberately.
 - This `AGENTS.md` is the comprehensive context source; keep shorter README and focused docs consistent with it.
 
 ## Roadmap guidance
 
-After Phase 3 is deployed and accepted in the browser, the next milestone is Phase 4: Codex produces a real local candidate without publishing it to GitHub. It must preserve these already-decided questions and boundaries:
-
-1. Which service owns agent execution and credentials?
-2. How does it authenticate internal writes to a session?
-3. How are agents scheduled from queue items, cancelled, retried, and made idempotent?
-4. Which runtime states are authoritative, and where are they persisted?
-5. Repository access is scoped by the stored installation and repository IDs; every OpenFloor ref is server-generated and the base branch is never written.
-6. How are files, diffs, checks, warnings, conflicts, and review candidates modeled?
-7. How do runtime writes increment `floor_revision` and notify connected clients?
-8. How are agent messages distinguished from human-authored messages?
-9. What can owners, members, and agent owners do?
-10. What is the recovery model for disconnects, duplicate delivery, and partially completed work?
-
-Do not begin by filling the existing UI with guessed fields. Define the authoritative service and public contract, add nullable persisted types and migrations, then connect components to genuine data.
+Repository execution Phases 1–7 are implemented. Future milestones should focus on deployment integrations, resolving the separately tracked manual-discard issue without weakening its lease, and broader agent lifecycle/product work rather than expanding GitHub permissions casually.
 
 ## Key decision log
 
@@ -1135,13 +1174,13 @@ Do not begin by filling the existing UI with guessed fields. Define the authorit
 
 **Consequences:** The repository API accepts zero to eight commands. Future preflight, agent-run, publication, and integration actions must fail closed until the owner configures at least one command; an empty list must never be treated as a passing check suite.
 
-### 2026-08-19 — Reconcile one immutable candidate ref without automatic repair
+### 2026-08-19 — Reconcile one immutable candidate ref without automatic repair (branch format superseded)
 
 **Decision:** Enabling execution creates one durable active candidate at the current configured base SHA on a server-generated `openfloor/<session-short>/candidate/<candidate-short>` ref. OpenFloor records expected and observed SHAs, treats GitHub as authoritative, and reports a newer base as behind or an unexpected candidate head as externally modified. It never force-pushes or repairs either condition in Phase 2.
 
 **Rationale:** A single candidate gives later runs a stable integration target while immutable expected SHAs make races and external edits visible. Server-only naming and non-force creation prevent callers from turning the session API into generic Git ref authority.
 
-**Consequences:** Candidate creation and synchronization are owner-only; members receive the state read-only. Candidate creation is reserved durably before the GitHub write and records a failed reservation if the write fails. Signed GitHub deliveries are deduplicated by delivery ID, bump `floor_revision`, and broadcast `repository` and `review` invalidations. Disconnect/reconnect preserves candidate history. Run branches, local execution, candidate updates, pull requests, integration, and deletion remain deferred.
+**Consequences:** Candidate creation and synchronization are owner-only; members receive the state read-only. Candidate creation is reserved durably before the GitHub write and records a failed reservation if the write fails. Signed GitHub deliveries are deduplicated by delivery ID, bump `floor_revision`, and broadcast `repository` and `review` invalidations. Disconnect/reconnect preserves candidate history. Run branches, local execution, candidate updates, pull requests, integration, and deletion remain deferred. The opaque `<candidate-short>` terminal segment was superseded later on 2026-08-19 by the safe-name-plus-ID format; the server-owned prefix and non-force/reconciliation rules remain in force.
 
 ### 2026-08-19 — Run exact-source preflight in durable isolated infrastructure
 
@@ -1157,7 +1196,79 @@ Do not begin by filling the existing UI with guessed fields. Define the authorit
 
 **Rationale:** A Worker version can deploy before its container image is publishable, which would otherwise expose an action backed by missing Sandbox and Workflow bindings. The gate preserves honest product behavior and keeps the accepted Phase 2 repository flow operational during infrastructure setup.
 
-**Consequences:** The Workers Paid upgrade and container-enabled deployment succeeded on 2026-08-19, so production now sets the flag to `true` and Phase 3 browser acceptance can begin. Other environments must keep it disabled until their own runtime bindings are live. Automated tests explicitly enable preflight and continue to exercise deterministic Workflow/Sandbox behavior without weakening production checks.
+**Consequences:** The Workers Paid upgrade, container deployment, and Phase 3 browser acceptance succeeded on 2026-08-19, so production sets the flag to `true`. Other environments must keep it disabled until their own runtime bindings are live. Automated tests explicitly enable preflight and continue to exercise deterministic Workflow/Sandbox behavior without weakening production checks.
+
+### 2026-08-19 — Execute Codex locally before granting GitHub write authority
+
+**Decision:** Phase 4 runs the pinned server-side Codex SDK `0.148.0` with model `gpt-5.6-terra` inside a unique Cloudflare Sandbox checked out at the recorded candidate SHA. `AgentRunWorkflow` owns orchestration and cancellation. One active run is allowed per queue item, owner actions start/cancel compute, and passing changes remain local rather than being pushed to GitHub.
+
+**Rationale:** This makes genuine code generation, required checks, recovery, and review observable before introducing remote branch writes. Durable records separate run lifecycle from preflight history, while an isolated writable workspace contains repository-controlled code and commands.
+
+**Consequences:** The Worker supplies exact source through a run-scoped source JWT and proxies Codex Responses requests through a separate short-lived run-scoped JWT, injecting `OPENAI_API_KEY` only at the trusted boundary. The Sandbox and repository process never receive GitHub installation or OpenAI project credentials. D1 stores bounded run/check/file summaries; R2 stores bounded complete logs and diffs. Passing items become `blocked` pending Phase 5 publication, failures and cancellations are retryable, and workflow-file changes are rejected.
+
+### 2026-08-19 — Gate production agent execution independently
+
+**Decision:** `AGENT_RUN_ENABLED` remains false until the Phase 4 image and Workflow are deployed and `OPENAI_API_KEY` is configured in that environment.
+
+**Rationale:** Repository connection and preflight should remain available during a partial rollout, while an owner must never see an execution action backed by missing credentials or runtime bindings.
+
+**Consequences:** The rendered Run control is absent and direct starts return `503` while disabled. Deterministic tests explicitly enable their test adapter. The production image, Workflow, and secret were verified on 2026-08-19, so production now enables the flag for Phase 4 browser acceptance.
+
+### 2026-08-19 — Preserve every passing run on an independently verified branch
+
+**Decision:** Phase 5 automatically publishes every passing owner-authorized run to a unique server-generated `openfloor/<session-short>/run/<run-short>` branch. The agent Sandbox exports a bounded incremental Git bundle and receives no GitHub credential. A separate clean publisher Sandbox validates the bundle against the exact candidate tree and recorded file set, constructs one commit whose parent is the candidate SHA, pushes without force using a repository-limited installation token, and reconciles the returned GitHub SHA before marking the run published.
+
+**Rationale:** Phase 4 intentionally destroyed local workspaces, which made consecutive successful prompts appear to replace one another. Independent verified branches preserve every result and its attribution without prematurely combining unreviewed changes. A clean publisher prevents repository processes from gaining GitHub write credentials or controlling the validation commands.
+
+**Consequences:** D1 records local/published/remote SHAs, run branch, bundle metadata, publication time, and discard audit data; bounded bundles remain private in R2. Validation permits exactly one generated ref and result commit, requires the reconstructed archive tree to equal the candidate tree, compares the complete changed-path set, rejects workflow files, and caps files, objects, individual object size, and total object size. Queue items remain blocked until Phase 6 integration. Review shows the latest real run while every run branch remains visible beside its queue item.
+
+### 2026-08-19 — Delete run branches only with an expected-SHA lease
+
+**Decision:** Owner-only discard first reconciles the remote run head and then deletes through a fixed Git push using `--force-with-lease` for the recorded SHA. OpenFloor never exposes arbitrary ref deletion and never deletes a candidate or base branch through this action.
+
+**Rationale:** GitHub's REST ref deletion endpoint has no conditional expected-SHA parameter, leaving a race between read and delete. A Git lease makes the remote head comparison atomic with deletion.
+
+**Consequences:** External push webhooks update each run's observed remote SHA. Any mismatch, missing branch, wrong status, non-OpenFloor ref, or lease failure returns a conflict and preserves the branch. Successful discard deletes only the GitHub ref; all run, check, file, diff, bundle, event, and attribution records remain durable.
+
+### 2026-08-19 — Resume publication from durable bundle state
+
+**Decision:** GitHub installation tokens authenticate Git-over-HTTPS as the password for the fixed `x-access-token` username, encoded as an HTTP Basic authorization header that is never written into the repository URL. A restarted run Workflow detects `publishing` and resumes validation/publication from its stored bundle, recorded files, and local commit instead of rerunning Codex or checks.
+
+**Rationale:** GitHub's REST API accepts Bearer tokens, but its documented Git transport uses the installation token as an HTTP password. Publication is a distinct recoverable stage, and repeating paid agent execution after a transport or deployment failure would be slow and could produce different code.
+
+**Consequences:** Each Workflow instance receives a distinct publisher Sandbox identity so a recovery cannot reuse a stale container image. The clean publisher and discard Sandbox receive the short-lived Git credential only through their process environments; Git clone, push, and conditional deletion all use the same HTTP Basic transport contract, while REST calls continue to use Bearer authentication. Error messages never include the header or token and distinguish an actual expected-SHA lease mismatch from authentication or transport failure. Publication retries remain idempotent because an existing run ref is accepted only at the exact trusted commit, and the Workflow reconciles the remote SHA before recording success.
+
+### 2026-08-19 — Serialize run integration into one candidate and draft PR
+
+**Decision:** After publication, `AgentRunWorkflow` acquires a conditional D1 lease on the active candidate, reconciles the current base/candidate/run refs from GitHub, and requests GitHub's non-force branch merge using the immutable run commit as the head. The first successful integration creates one draft PR from candidate to configured base; later integrations advance that same branch and PR. A GitHub merge conflict records `conflicted`, preserves both branches, and owner-only retry creates a new run attempt from the latest candidate.
+
+**Rationale:** Per-run branches isolate concurrent agent work, while a single serialized candidate gives reviewers one stable integration surface. The D1 lease prevents two Workflows from updating the expected candidate head concurrently, and GitHub remains authoritative for the actual merge result and conflict decision.
+
+**Consequences:** Candidate records persist the integration lease and PR number/node/URL/state/draft metadata. Runs persist integration base, integrated candidate SHA, conflict reason, and timestamps. Successful integration marks the queue item completed; conflict leaves it blocked. Candidate push webhooks received while the matching lease is held do not falsely mark OpenFloor's own merge as an external mutation. Final PR readiness, protection enforcement, squash merge, and cleanup remain Phase 7.
+
+### 2026-08-19 — Allow concurrent runs to publish from an ancestral candidate
+
+**Decision:** Trusted bundle publication no longer requires the remote candidate head to equal the run's pinned candidate SHA. It requires the pinned SHA to exist and remain an ancestor of the observed candidate head, reconstructs and validates the bundle against that exact pinned tree, and publishes the immutable run commit with the pinned SHA as parent. Integration separately requires a ready repository connection and merges the run against the latest serialized candidate.
+
+**Rationale:** Two agents may start from the same candidate. If the first integrates before the second publishes, equality is expected to fail even though the second result is still valid and safely attributable. An ancestry check distinguishes ordinary forward candidate progress from rewritten or unrelated history.
+
+**Consequences:** Concurrent nonconflicting runs can both publish and integrate. A conflicting later run reaches GitHub's authoritative merge conflict path instead of failing prematurely during publication. Force-rewritten ancestry and externally modified repository state still fail closed. The trusted publisher sandbox ID includes an explicit image-generation prefix; increment it whenever publisher image contents change so recovery cannot attach to a container from an older image rollout.
+
+### 2026-08-19 — Make GitHub authoritative for final review and squash merge
+
+**Decision:** The latest active or merged candidate owns a bounded persisted snapshot of its GitHub PR files, check runs, commit statuses, head/base SHAs, draft state, mergeability, and merge-requirement state. Only the session owner may mark the PR ready or request merge. Merge is always squash, supplies the exact recorded candidate SHA, and proceeds only for an open non-draft PR whose head/base still match and whose GitHub state is clean, mergeable, and passing all observed checks.
+
+**Rationale:** D1 must support reloads and member-visible review without pretending to be the repository, while GitHub protection, review, status, and merge decisions must remain authoritative. An expected-head squash request closes the race between review and merge without granting branch-administration or workflow permissions.
+
+**Consequences:** Confirmed merges transition the candidate to durable `merged` history and record the squash SHA. Cleanup verifies every server-generated run/candidate ref and deletes only exact matches with Git `--force-with-lease`; changed refs are retained and cleanup is marked partial. Run cleanup uses `branch_deleted_at`, distinct from manual discard. A merged candidate no longer participates in the live-candidate unique index, and the next owner-started run creates a new candidate from the current base. No generic ref CRUD, force update, protection mutation, alternate merge method, or administration permission is exposed.
+
+### 2026-08-19 — Give candidates durable owner-facing names and descriptions
+
+**Decision:** Each candidate stores a bounded name and description. The enable-execution form defaults them from the session title and objective, the name becomes a sanitized segment inside the server-owned candidate ref, and the first draft PR uses the stored name and description as its title and body. Automatically created later candidate cycles use the current session title and objective.
+
+**Rationale:** Reviewers need candidate branches and pull requests to reflect the session's work instead of opaque IDs or generic repository text, while accepting a complete user-provided ref would weaken the existing branch-ownership boundary.
+
+**Consequences:** Candidate refs now have the form `openfloor/<session-short>/candidate/<safe-name>-<candidate-short>`. Names are NFKC-normalized and limited to 100 characters; descriptions are trimmed and limited to 2,000. Existing candidates are backfilled from their session title/objective. Members can read the metadata, only owners create candidates, and OpenFloor still controls the prefix, suffix, non-force creation, reconciliation, merge, and cleanup rules.
 
 ## How to record the next decision
 
