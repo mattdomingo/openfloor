@@ -155,6 +155,8 @@ WebSocket events notify clients about presence or changed domains. D1 remains au
 - One durable active repository candidate per session, created at a verified base SHA on a server-generated `openfloor/<session-short>/candidate/<candidate-short>` branch.
 - Owner-only repository synchronization with connected, ready, revoked, inaccessible, externally modified, and behind-base presentation.
 - Idempotent GitHub installation, repository-access, rename, push, pull-request, check, and status delivery processing keyed by delivery ID.
+- Owner-started repository preflight through a durable Cloudflare Workflow and an isolated Cloudflare Sandbox at the exact candidate SHA.
+- Ordered required-check results in D1 with bounded command logs in private R2 and reload-safe provisioning, running, passed, failed, and timed-out UI states.
 
 ### Explicitly deferred
 
@@ -162,8 +164,8 @@ WebSocket events notify clients about presence or changed domains. D1 remains au
 - Agent execution, cancellation, retry, runtime scheduling, or queue consumption.
 - Provider credentials and secret management for agent runtimes.
 - Repository checkout, worktrees, run-branch creation, branch update/deletion, commits, pull requests, or attachments.
-- Runtime status, progress, steps, logs, agent-authored messages, or terminal output.
-- File discovery, changed-file lists, checks, warnings, diffs, conflicts, or generated review candidates.
+- Agent runtime status, progress, steps, agent-authored messages, or terminal output.
+- File discovery, changed-file lists, agent-run checks, warnings, diffs, conflicts, or generated review candidates.
 - Review approval persistence, merge, deploy, or repository modification.
 - Agent edit, archive, deletion, or lifecycle states beyond `created`.
 - Queue completion, removal, consumption, or retry workflows.
@@ -239,6 +241,9 @@ Per-session WebSocket
 - `worker/index.ts` is the production Worker entry point.
 - Cloudflare D1 is the relational database bound as `DB`.
 - `SessionPresence` is a SQLite-backed Durable Object bound as `SESSION_PRESENCE`.
+- `RepositoryPreflightWorkflow` is bound as `REPOSITORY_PREFLIGHT`; it durably coordinates exact-source checkout, ordered checks, result persistence, and cleanup.
+- `Sandbox` is the `@cloudflare/sandbox` Durable Object bound as `SANDBOX`, backed by the matching `cloudflare/sandbox:0.12.7` container image.
+- Private bounded preflight logs are stored in R2 bucket `openfloor-preflight-logs`, bound as `PREFLIGHT_LOGS`.
 - Cloudflare static assets are bound as `ASSETS`.
 - Cloudflare Images is bound as `IMAGES` for vinext image optimization.
 - Drizzle defines the schema and generates migrations; runtime data access uses prepared D1 SQL.
@@ -377,8 +382,15 @@ Do not hand-edit Drizzle metadata. If a generated migration is wrong, correct th
 #### `repository_check_commands`
 
 - Stores zero to eight owner-configured shell commands in explicit zero-based order.
-- Commands are inert configuration in Phase 1. The real preflight runner begins in Phase 3.
-- An empty list is valid for repository connection, but future runner and integration actions must require at least one configured command before executing code.
+- Commands are inert until the owner explicitly starts a preflight or later agent run. Preflight snapshots the ordered list before execution.
+- An empty list is valid for repository connection, but Verify runner and every later execution/integration action fail closed until at least one command is configured.
+
+#### `repository_preflights` and `repository_preflight_checks`
+
+- One `provisioning` or `running` preflight may exist per session; terminal history is retained.
+- A preflight pins the active candidate ID and SHA and snapshots each required command in order.
+- D1 owns bounded status, timing, exit code, excerpt, and R2 log-key metadata. Full bounded logs stay in private R2 and never enter snapshots.
+- Statuses are `provisioning`, `running`, `passed`, `failed`, `cancelled`, or `timed_out`; check statuses are `pending`, `running`, `passed`, `failed`, or `timed_out`.
 
 #### `floor_agents`
 
@@ -427,9 +439,10 @@ Do not hand-edit Drizzle metadata. If a generated migration is wrong, correct th
 - `queue`
 - `repository`
 - `activeCandidate`
+- `latestPreflight`
 - `review`
 
-`FloorSnapshot` now includes nullable `repository` and `activeCandidate` fields. `review` is deliberately nullable and currently always `null` in `db/floor.ts`; do not populate it from UI fixtures.
+`FloorSnapshot` includes nullable `repository`, `activeCandidate`, and bounded `latestPreflight` fields. Large preflight logs are fetched separately. `review` is deliberately nullable and currently always `null` in `db/floor.ts`; do not populate it from UI fixtures.
 
 ### Mutation pattern
 
@@ -531,6 +544,10 @@ All paths below are shown without the production `/app` prefix.
 | `DELETE /api/sessions/[id]/repository` | Owner | Mark the connection disconnected without mutating GitHub. |
 | `POST /api/sessions/[id]/repository/candidate` | Owner | Verify the configured base SHA and create the single server-named candidate branch without force. |
 | `POST /api/sessions/[id]/repository/sync` | Owner | Reconcile repository metadata and base/candidate heads without modifying GitHub. |
+| `GET /api/sessions/[id]/repository/preflight` | Session member | Return the latest bounded preflight/check state. |
+| `POST /api/sessions/[id]/repository/preflight` | Owner | Start one durable preflight for the exact active candidate; requires at least one command. |
+| `GET /api/sessions/[id]/repository/preflight/[preflightId]/logs` | Session member | Stream the caller-authorized bounded command logs from private R2. |
+| `GET /runtime/preflight/source` | Short-lived source JWT | Proxy the exact candidate archive without exposing a GitHub installation token to the Sandbox process. |
 | `POST /webhooks/github` | Valid GitHub HMAC | Deduplicate and process bounded installation, access, repository, push, PR, check, and status deliveries. |
 
 Response conventions:
@@ -624,6 +641,7 @@ db/
   sessions.ts                Prepared D1 user/session/member/invite queries
   floor.ts                   Prepared D1 floor snapshot and mutation queries
   repositories.ts            Owner-gated GitHub connection and check-command persistence
+  preflights.ts              Durable preflight/check state and internal Workflow transitions
 drizzle/                     Generated D1 migrations and metadata
 lib/
   floor-types.ts             Public persisted floor types
@@ -633,6 +651,7 @@ lib/
   invites.ts                 HMAC signing and constant-time verification
   github.ts                  GitHub App JWT, installation-token, repository, and branch reads
   github-state.ts            Signed callback state and webhook HMAC verification
+  runtime-token.ts           Short-lived preflight gateway JWT signing and verification
   presence-server.ts         Internal application-to-Durable-Object notifications
   floor-api.ts               Shared floor route response helpers
   floor-state.ts             Pure queue/mention/revision client helpers
@@ -640,6 +659,8 @@ lib/
 worker/
   index.ts                   Cloudflare entry, identity boundary, assets, app dispatch
   presence.ts                Authenticated WebSocket route and SessionPresence object
+  preflight-workflow.ts      Durable exact-source Sandbox preflight orchestration
+Dockerfile.sandbox           Version-matched Cloudflare Sandbox runtime image
 tests/
   unit/                      Pure functions, validation, identity, signing, reducers
   worker/                    Local D1 and Durable Object integration tests
@@ -727,6 +748,7 @@ Use the Cloudflare Vitest worker pool and local migrations to test:
 - Revision increments and persistence after reread.
 - Owner-only repository setup/disconnect, member reads, outsider concealment, and ordered required-check persistence.
 - Candidate uniqueness, webhook delivery deduplication, behind-base reconciliation, and external candidate mutation detection.
+- Preflight uniqueness, ordered state recovery, terminal failure/timeout state, gateway-token binding, and R2 log authorization.
 
 ### Durable Object tests
 
@@ -767,7 +789,7 @@ The Playwright test uses two authenticated browser contexts and verifies the rea
 - Live teammate draft text appears in realtime.
 - Typing, Everyone, and Hidden draft modes behave correctly.
 - Review stays empty without fabricated repository data.
-- Signed GitHub webhook rejection/acceptance and the owner/member repository connection, reload, configure, disconnect, reconnect, candidate creation, and synchronization flow through a deterministic test-only adapter.
+- Signed GitHub webhook rejection/acceptance and the owner/member repository connection, candidate synchronization, passing/failing preflights, real-output viewing, retry, and reload recovery through deterministic test-only GitHub/Workflow/Sandbox adapters.
 - Reload persistence, disconnect/reconnect, leave, and roster updates work.
 
 When adding a collaborative feature, prefer extending this two-context flow over testing only one browser.
@@ -786,10 +808,15 @@ Defined in `wrangler.jsonc`:
 - `SESSION_PRESENCE`: `SessionPresence` Durable Object.
 - `ASSETS`: built client assets.
 - `IMAGES`: Cloudflare Images transform binding.
+- `REPOSITORY_PREFLIGHT`: Cloudflare Workflow binding.
+- `SANDBOX`: Cloudflare Sandbox Durable Object/container binding.
+- `PREFLIGHT_LOGS`: private R2 bucket `openfloor-preflight-logs`.
 
 The phased GitHub rollout currently uses the existing production Worker and D1 database. GitHub App setup and deployment are documented in `docs/github-production.md`. Until the user establishes staging, install the App only on the disposable acceptance repository and complete each phase's browser acceptance before expanding repository access.
 
-The Durable Object migration uses `new_sqlite_classes` with tag `v1`. Keep migration syntax compatible with the pinned Wrangler version.
+Cloudflare Containers requires a Workers Paid account. `PREFLIGHT_ENABLED` is the production rollout gate: keep it `false` until the container image, `SANDBOX`, and `REPOSITORY_PREFLIGHT` bindings deploy successfully. While disabled, the UI omits **Verify runner** and the start endpoint returns `503`; repository connection and candidate reconciliation remain available. Tests explicitly enable the deterministic test adapter.
+
+Durable Object migration `v1` registers `SessionPresence`; `v2` registers `Sandbox`. Keep migration syntax compatible with the pinned Wrangler version.
 
 ### Required secrets
 
@@ -801,6 +828,7 @@ The Durable Object migration uses `new_sqlite_classes` with tag `v1`. Keep migra
 - `GITHUB_APP_PRIVATE_KEY`
 - `GITHUB_STATE_SECRET`
 - `GITHUB_WEBHOOK_SECRET`
+- `RUNTIME_GATEWAY_SECRET`
 
 Set a secret by its variable name, then enter the value when prompted:
 
@@ -902,6 +930,10 @@ Migrations must land before code that requires them. The build generates `dist/s
 - Access protects the app at the edge, but the Worker still verifies JWTs. Do not remove defense in depth.
 - `/app/webhooks/github` is deliberately public and must never process a payload before its raw-body HMAC and size are verified.
 - Phase 2 uses Contents write only to create the server-generated candidate ref. It exposes no generic branch CRUD, force push, base write, run branch, commit, PR, or deletion route.
+- Phase 3 source checkout proxies an exact GitHub archive through `/runtime/preflight/source`; the Sandbox receives only a short-lived source-only JWT, never the GitHub installation token.
+- `@cloudflare/sandbox` and `cloudflare/sandbox` are pinned together at `0.12.7`. Docker must be running for local development and deploys that build the container image.
+- The production preflight gate remains disabled until the Cloudflare account has Workers Paid/Containers access and a container-enabled deploy succeeds. Do not expose **Verify runner** against missing runtime bindings.
+- Preflight output is bounded before R2 persistence and combined log responses are capped; large logs and secrets must never be written to D1.
 - Set `GITHUB_APP_PRIVATE_KEY` by piping the complete downloaded PEM file into `wrangler secret put`; an App installation redirect can succeed even when this key is malformed, but repository discovery cannot. The GitHub client accepts both GitHub's PKCS#1 `RSA PRIVATE KEY` download and PKCS#8 `PRIVATE KEY` PEM formats.
 - Floor snapshots are caller-specific because of DM filtering.
 - Realtime `floor.changed` is a refetch signal, not the changed records themselves.
@@ -915,7 +947,7 @@ Migrations must land before code that requires them. The build generates `dist/s
 
 ## Roadmap guidance
 
-The next accepted milestone after Phase 2 is Phase 3: real isolated repository preflight without agent-authored changes. It must preserve these already-decided questions and boundaries:
+After Phase 3 is deployed and accepted in the browser, the next milestone is Phase 4: Codex produces a real local candidate without publishing it to GitHub. It must preserve these already-decided questions and boundaries:
 
 1. Which service owns agent execution and credentials?
 2. How does it authenticate internal writes to a session?
@@ -1059,6 +1091,22 @@ Do not begin by filling the existing UI with guessed fields. Define the authorit
 **Rationale:** A single candidate gives later runs a stable integration target while immutable expected SHAs make races and external edits visible. Server-only naming and non-force creation prevent callers from turning the session API into generic Git ref authority.
 
 **Consequences:** Candidate creation and synchronization are owner-only; members receive the state read-only. Candidate creation is reserved durably before the GitHub write and records a failed reservation if the write fails. Signed GitHub deliveries are deduplicated by delivery ID, bump `floor_revision`, and broadcast `repository` and `review` invalidations. Disconnect/reconnect preserves candidate history. Run branches, local execution, candidate updates, pull requests, integration, and deletion remain deferred.
+
+### 2026-08-19 — Run exact-source preflight in durable isolated infrastructure
+
+**Decision:** Owner-started repository preflight runs through `RepositoryPreflightWorkflow` and a unique Cloudflare Sandbox at the recorded candidate SHA. `@cloudflare/sandbox` and its container image are pinned together at `0.12.7`; the future Codex SDK is pinned at `0.148.0`. D1 stores bounded authoritative preflight/check state, while private R2 stores bounded logs.
+
+**Rationale:** Workflows provide restart-safe step identity and retries, Sandboxes isolate repository-controlled commands, and separating summaries from logs keeps floor snapshots bounded. Snapshotting the SHA and ordered commands makes a recovered job execute the same input rather than silently following GitHub or configuration changes.
+
+**Consequences:** Verify runner is owner-only and fails closed without a ready unmodified candidate and at least one configured command. The Sandbox receives a ten-minute JWT limited to one preflight, session, repository, SHA, and `source` operation; the trusted Worker gateway mints the GitHub installation token and streams the exact archive, so GitHub credentials never enter repository processes. Each command has a ten-minute limit, persisted output is capped, combined log responses are capped, and the Workflow always attempts Sandbox destruction. Preflight never commits or modifies GitHub. Phase 4 may reuse these bindings but must add separate authoritative run records rather than overloading preflight history.
+
+### 2026-08-19 — Gate preflight until Cloudflare Containers is available
+
+**Decision:** Production keeps `PREFLIGHT_ENABLED=false` until the account has Workers Paid/Containers access and the Phase 3 container-enabled deployment succeeds. The false gate removes the owner action from the rendered repository card and rejects direct preflight starts with `503`.
+
+**Rationale:** A Worker version can deploy before its container image is publishable, which would otherwise expose an action backed by missing Sandbox and Workflow bindings. The gate preserves honest product behavior and keeps the accepted Phase 2 repository flow operational during infrastructure setup.
+
+**Consequences:** Browser acceptance for Phase 3 cannot begin until the plan is enabled, the normal generated Wrangler configuration deploys successfully, the flag is changed to `true`, and the application is rebuilt and redeployed. Automated tests explicitly enable preflight and continue to exercise deterministic Workflow/Sandbox behavior without weakening production checks.
 
 ## How to record the next decision
 

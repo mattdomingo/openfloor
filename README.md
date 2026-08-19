@@ -16,7 +16,7 @@ openssl rand -hex 32
 
 Open `.dev.vars` and replace `INVITE_SIGNING_SECRET` with the random value printed by the last command. You can also change the three `OPENFLOOR_DEV_USER_*` values to the local name and email you want displayed. The Cloudflare Access placeholders can remain unchanged for local development.
 
-Repository connection additionally requires a GitHub App. Follow [`docs/github-production.md`](docs/github-production.md) to configure its setup URL, webhook, least-privilege repository permissions, disposable acceptance repository, and five `GITHUB_*` values. Phase 2 can create one server-named candidate branch from the selected base SHA and reconcile later GitHub changes. It never accepts a branch name, force-pushes, writes the base branch, or runs repository code.
+Repository execution additionally requires a GitHub App and Cloudflare Workflow, Sandbox, and private R2 resources. Follow [`docs/github-production.md`](docs/github-production.md). Phase 3 can create one server-named candidate branch, reconcile its SHA, and run configured checks in an isolated Sandbox without exposing GitHub credentials to repository processes. It does not modify candidate contents or publish agent work.
 
 Create the local D1 tables, then start the development server:
 
@@ -79,7 +79,7 @@ npx wrangler deploy --config dist/server/wrangler.json
 
 Apply D1 migrations before deploying the Worker revision. See [`docs/agent-backend-gaps.md`](docs/agent-backend-gaps.md) for the intentional boundary between the persistent collaboration backend and future agent execution.
 
-The deployment expects the `DB`, `SESSION_PRESENCE`, `IMAGES`, and `ASSETS` bindings configured in `wrangler.jsonc`, plus `INVITE_SIGNING_SECRET`, `CF_ACCESS_TEAM_DOMAIN`, `CF_ACCESS_AUD`, `GITHUB_APP_ID`, `GITHUB_APP_SLUG`, `GITHUB_APP_PRIVATE_KEY`, `GITHUB_STATE_SECRET`, and `GITHUB_WEBHOOK_SECRET` as Worker secrets.
+The deployment expects `DB`, `SESSION_PRESENCE`, `REPOSITORY_PREFLIGHT`, `SANDBOX`, `PREFLIGHT_LOGS`, `IMAGES`, and `ASSETS` bindings configured in `wrangler.jsonc`. It also requires the existing identity/GitHub secrets plus `RUNTIME_GATEWAY_SECRET`. Docker must be running when Wrangler builds or deploys the pinned Sandbox image, and the Cloudflare account must have Workers Paid/Containers access. Keep `PREFLIGHT_ENABLED=false` until the container deploy succeeds; then set it to `true`, rebuild, and deploy before browser acceptance.
 
 ## Project direction
 

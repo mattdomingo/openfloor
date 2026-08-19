@@ -13,6 +13,10 @@
 			{
 				"name": "SESSION_PRESENCE",
 				"class_name": "SessionPresence"
+			},
+			{
+				"name": "SANDBOX",
+				"class_name": "Sandbox"
 			}
 		]
 	},
@@ -22,6 +26,37 @@
 			"new_sqlite_classes": [
 				"SessionPresence"
 			]
+		},
+		{
+			"tag": "v2",
+			"new_sqlite_classes": [
+				"Sandbox"
+			]
+		}
+	],
+	"containers": [
+		{
+			"class_name": "Sandbox",
+			"image": "./Dockerfile.sandbox",
+			"instance_type": "lite",
+			"max_instances": 5
+		}
+	],
+	"workflows": [
+		{
+			"name": "openfloor-repository-preflight",
+			"binding": "REPOSITORY_PREFLIGHT",
+			"class_name": "RepositoryPreflightWorkflow"
+		}
+	],
+	"vars": {
+		"OPENFLOOR_RUNTIME_ORIGIN": "https://opnflr.com/app",
+		"PREFLIGHT_ENABLED": "false"
+	},
+	"r2_buckets": [
+		{
+			"binding": "PREFLIGHT_LOGS",
+			"bucket_name": "openfloor-preflight-logs"
 		}
 	],
 	// opnflr.com is a Cloudflare Pages project (the marketing site). A Workers

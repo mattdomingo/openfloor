@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { BASE_PATH } from "@/components/basePath";
 import { formatShortDate } from "@/lib/date-format";
 import { reducePresence } from "@/lib/presence";
-import type { AppUser, PresenceEvent, RepositoryCandidate, RepositoryConnection, SessionMember, SessionSummary } from "@/lib/session-types";
+import type { AppUser, PresenceEvent, RepositoryCandidate, RepositoryConnection, RepositoryPreflight, SessionMember, SessionSummary } from "@/lib/session-types";
 import { AppHeader, initials } from "./AppHeader";
 import { RepositoryCard } from "./RepositoryCard";
 
@@ -18,6 +18,8 @@ export function SessionScreen({
   initialMembers,
   initialRepository,
   initialCandidate,
+  initialPreflight,
+  preflightEnabled,
   githubSetup,
 }: {
   user: AppUser;
@@ -25,6 +27,8 @@ export function SessionScreen({
   initialMembers: SessionMember[];
   initialRepository: RepositoryConnection | null;
   initialCandidate: RepositoryCandidate | null;
+  initialPreflight: RepositoryPreflight | null;
+  preflightEnabled: boolean;
   githubSetup: boolean;
 }) {
   const router = useRouter();
@@ -175,7 +179,7 @@ export function SessionScreen({
           ) : (
             <section className="action-card"><p className="eyebrow">Membership</p><h2>You are a member</h2><p>Leaving removes this session from your home and ends your live connection.</p><button className="button danger-button" onClick={leave}>Leave session</button></section>
           )}
-          <RepositoryCard key={`${initialRepository?.updatedAt ?? 0}:${initialCandidate?.updatedAt ?? 0}`} sessionId={session.id} role={session.role} initialRepository={initialRepository} initialCandidate={initialCandidate} beginSetup={githubSetup} />
+          <RepositoryCard sessionId={session.id} role={session.role} initialRepository={initialRepository} initialCandidate={initialCandidate} initialPreflight={initialPreflight} preflightEnabled={preflightEnabled} beginSetup={githubSetup} />
           <section className="action-card quiet-card"><p className="eyebrow">What persists</p><p>The room, objective, membership, and invite state are stored. Presence reflects live authenticated connections.</p></section>
           {notice && <p className="notice" role="status">{notice}</p>}
         </aside>

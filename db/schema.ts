@@ -233,6 +233,53 @@ export const githubWebhookDeliveries = sqliteTable(
   (table) => [index("idx_github_webhook_deliveries_received").on(table.receivedAt)],
 );
 
+export const repositoryPreflights = sqliteTable(
+  "repository_preflights",
+  {
+    id: text("id").primaryKey(),
+    sessionId: text("session_id").notNull().references(() => sessions.id, { onDelete: "cascade" }),
+    connectionId: text("connection_id").notNull().references(() => repositoryConnections.id),
+    candidateId: text("candidate_id").notNull().references(() => repositoryCandidates.id),
+    candidateSha: text("candidate_sha").notNull(),
+    workflowInstanceId: text("workflow_instance_id"),
+    status: text("status", { enum: ["provisioning", "running", "passed", "failed", "cancelled", "timed_out"] }).notNull(),
+    summary: text("summary"),
+    createdBy: text("created_by").notNull().references(() => users.id),
+    createdAt: integer("created_at").notNull(),
+    startedAt: integer("started_at"),
+    completedAt: integer("completed_at"),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [
+    index("idx_repository_preflights_session_created").on(table.sessionId, table.createdAt),
+    uniqueIndex("idx_repository_preflights_one_active").on(table.sessionId)
+      .where(sql`${table.status} in ('provisioning', 'running')`),
+    check("repository_preflights_status_check", sql`${table.status} in ('provisioning', 'running', 'passed', 'failed', 'cancelled', 'timed_out')`),
+  ],
+);
+
+export const repositoryPreflightChecks = sqliteTable(
+  "repository_preflight_checks",
+  {
+    id: text("id").primaryKey(),
+    preflightId: text("preflight_id").notNull().references(() => repositoryPreflights.id, { onDelete: "cascade" }),
+    position: integer("position").notNull(),
+    command: text("command").notNull(),
+    status: text("status", { enum: ["pending", "running", "passed", "failed", "timed_out"] }).notNull(),
+    exitCode: integer("exit_code"),
+    durationMs: integer("duration_ms"),
+    outputExcerpt: text("output_excerpt"),
+    logKey: text("log_key"),
+    startedAt: integer("started_at"),
+    completedAt: integer("completed_at"),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("idx_repository_preflight_checks_position").on(table.preflightId, table.position),
+    check("repository_preflight_checks_status_check", sql`${table.status} in ('pending', 'running', 'passed', 'failed', 'timed_out')`),
+  ],
+);
+
 export const repositoryCheckCommands = sqliteTable(
   "repository_check_commands",
   {

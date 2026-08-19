@@ -156,6 +156,21 @@ export async function createRepositoryBranch(
   return body.object?.sha ?? sha;
 }
 
+export async function downloadRepositoryArchive(
+  config: GitHubAppConfig,
+  installationId: string,
+  repository: GitHubRepositoryOption,
+  sha: string,
+): Promise<Response> {
+  const token = await createInstallationToken(config, installationId, repository.id);
+  const response = await fetch(
+    `${API_ROOT}/repos/${encodeURIComponent(repository.owner)}/${encodeURIComponent(repository.name)}/tarball/${encodeURIComponent(sha)}`,
+    { headers: githubHeaders(token), redirect: "follow" },
+  );
+  if (!response.ok) throw await githubError(response);
+  return response;
+}
+
 export class GitHubApiError extends Error {
   constructor(message: string, readonly status: number) {
     super(message);

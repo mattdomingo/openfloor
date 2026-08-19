@@ -39,7 +39,7 @@ describe("D1 persistent floor", () => {
   it("starts empty, derives blank assignments from members, and conceals outsiders", async () => {
     const room = await floorRoom("empty");
     const floor = await getFloorSnapshot(room.sessionId, room.owner.id, env.DB);
-    expect(floor).toEqual(expect.objectContaining({ revision: 0, agents: [], queue: [], messages: [], repository: null, activeCandidate: null, review: null }));
+    expect(floor).toEqual(expect.objectContaining({ revision: 0, agents: [], queue: [], messages: [], repository: null, activeCandidate: null, latestPreflight: null, review: null }));
     expect(floor?.assignments).toEqual([
       expect.objectContaining({ userId: room.owner.id, task: null }),
       expect.objectContaining({ userId: room.member.id, task: null }),

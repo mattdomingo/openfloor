@@ -2,7 +2,9 @@ import { notFound } from "next/navigation";
 import { requireAccessUser } from "@/app/access-auth";
 import { getSessionForMember, getSessionMembers, upsertUser } from "@/db/sessions";
 import { getActiveRepositoryCandidateForMember, getRepositoryConnectionForMember } from "@/db/repositories";
+import { getLatestRepositoryPreflightForMember } from "@/db/preflights";
 import { SessionScreen } from "@/components/product/SessionScreen";
+import { env } from "cloudflare:workers";
 
 export const dynamic = "force-dynamic";
 
@@ -20,12 +22,14 @@ export default async function SessionPage({
 async function AuthenticatedSession({ id, githubSetup }: { id: string; githubSetup: boolean }) {
   const identity = await requireAccessUser(`/session/${encodeURIComponent(id)}`);
   const user = await upsertUser(identity);
-  const [session, members, repository, candidate] = await Promise.all([
+  const [session, members, repository, candidate, preflight] = await Promise.all([
     getSessionForMember(id, user.id),
     getSessionMembers(id, user.id),
     getRepositoryConnectionForMember(id, user.id),
     getActiveRepositoryCandidateForMember(id, user.id),
+    getLatestRepositoryPreflightForMember(id, user.id),
   ]);
   if (!session || !members) notFound();
-  return <SessionScreen user={user} session={session} initialMembers={members} initialRepository={repository} initialCandidate={candidate} githubSetup={githubSetup} />;
+  const preflightEnabled = (env as unknown as { PREFLIGHT_ENABLED?: string }).PREFLIGHT_ENABLED === "true";
+  return <SessionScreen user={user} session={session} initialMembers={members} initialRepository={repository} initialCandidate={candidate} initialPreflight={preflight} preflightEnabled={preflightEnabled} githubSetup={githubSetup} />;
 }

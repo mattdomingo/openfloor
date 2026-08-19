@@ -27,6 +27,16 @@ import {
   reserveRepositoryCandidate,
   updateRepositoryPushState,
 } from "@/db/repositories";
+import {
+  createRepositoryPreflight,
+  finishPreflightCheck,
+  finishRepositoryPreflight,
+  getLatestRepositoryPreflightForMember,
+  getPreflightExecutionContext,
+  markPreflightCheckRunning,
+  markPreflightRunning,
+  PreflightConflictError,
+} from "@/db/preflights";
 
 function identity(id: string, name: string) {
   return { providerUserId: `chatgpt-${id}`, email: `${id}@example.com`, displayName: name, fullName: name };
@@ -168,5 +178,34 @@ describe("D1 session persistence", () => {
     expect(await getActiveRepositoryCandidateForMember(created.session.id, owner.id, env.DB)).toEqual(expect.objectContaining({ behindBase: true, remoteBaseSha: "b".repeat(40) }));
     await updateRepositoryPushState(target.sessionId, `refs/heads/${branch}`, "c".repeat(40), target.baseBranch, target.candidateBranch, target.candidateSha, env.DB);
     expect(await getRepositoryConnectionForMember(created.session.id, owner.id, env.DB)).toEqual(expect.objectContaining({ status: "externally_modified" }));
+  });
+
+  it("persists recoverable preflight and ordered check state", async () => {
+    const owner = await upsertUser(identity("preflight-owner", "Owner"), env.DB);
+    const created = await createSession(owner.id, { title: "Preflight room", objective: null }, env.DB);
+    const saved = await saveRepositoryConnection(created.session.id, owner.id, null, "installation-preflight", {
+      id: "repository-preflight", nodeId: "R_preflight", owner: "openfloor-test", name: "preflight",
+      fullName: "openfloor-test/preflight", private: true, defaultBranch: "main",
+    }, "main", ["npm test", "npm run build"], env.DB);
+    const candidateId = crypto.randomUUID();
+    const branch = `openfloor/${created.session.id.slice(0, 8)}/candidate/${candidateId.slice(0, 8)}`;
+    await reserveRepositoryCandidate(created.session.id, owner.id, saved!.id, candidateId, branch, "main", "a".repeat(40), env.DB);
+    await activateRepositoryCandidate(created.session.id, candidateId, "a".repeat(40), env.DB);
+    const preflight = await createRepositoryPreflight(created.session.id, owner.id, env.DB);
+    expect(preflight.checks.map((check) => check.command)).toEqual(["npm test", "npm run build"]);
+    await expect(createRepositoryPreflight(created.session.id, owner.id, env.DB)).rejects.toBeInstanceOf(PreflightConflictError);
+    const context = await getPreflightExecutionContext(preflight.id, env.DB);
+    await markPreflightRunning(preflight.id, env.DB);
+    await markPreflightCheckRunning(preflight.id, context!.checks[0].id, env.DB);
+    await finishPreflightCheck(preflight.id, context!.checks[0].id, {
+      status: "passed", exitCode: 0, durationMs: 12, outputExcerpt: "ok", logKey: `preflights/${preflight.id}/checks/0.log`,
+    }, env.DB);
+    await finishRepositoryPreflight(preflight.id, "passed", "All checks passed", env.DB);
+    expect(await getLatestRepositoryPreflightForMember(created.session.id, owner.id, env.DB)).toEqual(expect.objectContaining({
+      status: "passed", checks: [expect.objectContaining({ status: "passed", hasLog: true }), expect.objectContaining({ status: "pending" })],
+    }));
+    const timedOut = await createRepositoryPreflight(created.session.id, owner.id, env.DB);
+    await finishRepositoryPreflight(timedOut.id, "timed_out", "Required check timed out", env.DB);
+    expect(await getLatestRepositoryPreflightForMember(created.session.id, owner.id, env.DB)).toEqual(expect.objectContaining({ status: "timed_out" }));
   });
 });

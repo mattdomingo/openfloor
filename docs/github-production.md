@@ -1,6 +1,6 @@
 # Production GitHub App rollout
 
-Phase 2 connects the existing production OpenFloor application to a GitHub App and creates one real candidate branch. During phased acceptance, install the App only on a real disposable repository. The repository is not mock data: it is intentionally throwaway GitHub state where later phases can safely create and merge real code changes.
+Phase 3 connects the existing production OpenFloor application to a GitHub App, creates one real candidate branch, and executes required checks in Cloudflare Sandbox. During phased acceptance, install the App only on a real disposable repository.
 
 ## Production host and Cloudflare Access
 
@@ -53,6 +53,26 @@ npx wrangler secret put GITHUB_APP_PRIVATE_KEY < /absolute/path/to/downloaded-pr
 
 Pipe the downloaded PEM file into Wrangler as shown. Do not type its path as the secret value and do not paste only the first PEM line. OpenFloor accepts both GitHub's downloaded `RSA PRIVATE KEY` (PKCS#1) format and PKCS#8 `PRIVATE KEY` format. Generate an independent random state secret; do not reuse the webhook secret.
 
+Create and store an independent runtime-gateway secret:
+
+```bash
+openssl rand -hex 32 | npx wrangler secret put RUNTIME_GATEWAY_SECRET
+```
+
+The gateway token can fetch only the exact candidate archive for one preflight. It is not a GitHub credential.
+
+## Configure Workflow, Sandbox, and R2
+
+`wrangler.jsonc` defines the `REPOSITORY_PREFLIGHT` Workflow, `SANDBOX` container/Durable Object, and private `PREFLIGHT_LOGS` R2 binding. Create the bucket once:
+
+```bash
+npx wrangler r2 bucket create openfloor-preflight-logs
+```
+
+The package and image are both pinned to Sandbox `0.12.7`. Keep Docker running for local `wrangler dev` and deployments that build the container image.
+
+Cloudflare Containers requires the Workers Paid plan. Keep `PREFLIGHT_ENABLED` set to `false` until the account has Containers access and the image, Sandbox binding, and Workflow deploy successfully. The false setting hides **Verify runner** and makes direct start requests return `503`, while leaving repository connection and candidate reconciliation available.
+
 For loopback development, put the same GitHub values in `.dev.vars`. Represent private-key line breaks as `\\n` inside the value.
 
 ## Migrate and deploy
@@ -64,6 +84,8 @@ npm run build
 npx wrangler deploy --config dist/server/wrangler.json
 ```
 
-Phase 2 exposes one write: **Enable execution** creates a server-generated candidate ref at the verified base SHA. **Sync repository** only reads and compares remote state. OpenFloor exposes no caller-selected ref, force push, base write, candidate update/deletion, commit, pull request, or merge operation.
+After the container-enabled deployment succeeds, set `PREFLIGHT_ENABLED` to `true`, rebuild, and deploy again. Do not enable the flag before all runtime bindings are live.
+
+Phase 3 adds **Verify runner**, which reads the exact candidate archive through the trusted gateway and executes configured commands in an isolated Sandbox. It stores bounded output in private R2 and cleans up the Sandbox. OpenFloor still exposes no caller-selected ref, force push, base write, candidate update/deletion, commit, pull request, or merge operation.
 
 Required check commands are optional while connecting a repository. A later runner or integration action must refuse to execute until the owner configures at least one command.

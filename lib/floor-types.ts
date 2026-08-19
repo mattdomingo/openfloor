@@ -1,4 +1,4 @@
-import type { RepositoryCandidate, RepositoryConnection } from "./session-types";
+import type { RepositoryCandidate, RepositoryConnection, RepositoryPreflight } from "./session-types";
 
 export type FloorDomain = "agents" | "assignments" | "messages" | "queue" | "repository" | "runs" | "review";
 
@@ -92,6 +92,7 @@ export type FloorSnapshot = {
   queue: FloorQueueItem[];
   repository: RepositoryConnection | null;
   activeCandidate: RepositoryCandidate | null;
+  latestPreflight: RepositoryPreflight | null;
   review: FloorReviewSnapshot | null;
 };
 

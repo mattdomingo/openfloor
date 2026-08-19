@@ -46,6 +46,8 @@ const server = spawn("npx", [
   "GITHUB_STATE_SECRET:e2e-test-github-state-secret",
   "GITHUB_WEBHOOK_SECRET:e2e-test-github-webhook-secret",
   `OPENFLOOR_TEST_GITHUB_DATA:${githubTestData}`,
+  "PREFLIGHT_ENABLED:true",
+  "OPENFLOOR_TEST_PREFLIGHT_DATA:{\"checks\":[{\"exitCode\":0,\"stdout\":\"preflight check passed\\n\"},{\"exitCode\":0,\"stdout\":\"build check passed\\n\"}],\"failCommands\":[\"false\"]}",
   "--var",
   "OPENFLOOR_TEST_ALLOW_IDENTITY_HEADERS:true",
   "--show-interactive-dev-session=false",

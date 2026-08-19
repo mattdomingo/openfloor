@@ -9,6 +9,7 @@ import type {
 import type { AgentInput, AssignmentInput, MessageInput, QueuePromptInput } from "@/lib/validation";
 import { getDb, type D1DatabaseLike } from "./index";
 import { getActiveRepositoryCandidate, getRepositoryConnectionForMember } from "./repositories";
+import { getLatestRepositoryPreflight } from "./preflights";
 import { getMembershipRole } from "./sessions";
 
 type AgentRecord = FloorAgent;
@@ -30,7 +31,7 @@ export async function getFloorSnapshot(
 }
 
 async function readFloorSnapshot(sessionId: string, userId: string, database: D1DatabaseLike): Promise<FloorSnapshot> {
-  const [session, agents, assignments, messages, queue, prompts, repository, activeCandidate] = await Promise.all([
+  const [session, agents, assignments, messages, queue, prompts, repository, activeCandidate, latestPreflight] = await Promise.all([
     database.prepare("SELECT floor_revision AS revision FROM sessions WHERE id = ?").bind(sessionId).first<{ revision: number }>(),
     database.prepare(
       `SELECT a.id, a.name, a.role, a.task, a.owner_user_id AS ownerUserId,
@@ -78,6 +79,7 @@ async function readFloorSnapshot(sessionId: string, userId: string, database: D1
     ).bind(sessionId).all<PromptRecord>(),
     getRepositoryConnectionForMember(sessionId, userId, database),
     getActiveRepositoryCandidate(sessionId, database),
+    getLatestRepositoryPreflight(sessionId, database),
   ]);
 
   const promptsByItem = new Map<string, FloorQueuePrompt[]>();
@@ -101,6 +103,7 @@ async function readFloorSnapshot(sessionId: string, userId: string, database: D1
     queue: queue.results.map((item) => ({ ...item, position: Number(item.position), prompts: promptsByItem.get(item.id) ?? [] })),
     repository,
     activeCandidate,
+    latestPreflight,
     review: null,
   };
 }

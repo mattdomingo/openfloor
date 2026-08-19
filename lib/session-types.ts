@@ -70,6 +70,36 @@ export type RepositoryCandidate = {
   behindBase: boolean;
 };
 
+export type RepositoryPreflightStatus = "provisioning" | "running" | "passed" | "failed" | "cancelled" | "timed_out";
+
+export type RepositoryPreflightCheck = {
+  id: string;
+  position: number;
+  command: string;
+  status: "pending" | "running" | "passed" | "failed" | "timed_out";
+  exitCode: number | null;
+  durationMs: number | null;
+  outputExcerpt: string | null;
+  hasLog: boolean;
+  startedAt: number | null;
+  completedAt: number | null;
+};
+
+export type RepositoryPreflight = {
+  id: string;
+  sessionId: string;
+  candidateId: string;
+  candidateSha: string;
+  status: RepositoryPreflightStatus;
+  summary: string | null;
+  createdBy: string;
+  createdAt: number;
+  startedAt: number | null;
+  completedAt: number | null;
+  updatedAt: number;
+  checks: RepositoryPreflightCheck[];
+};
+
 export type RepositoryCheckCommand = {
   id: string;
   position: number;

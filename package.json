@@ -20,6 +20,8 @@
     "db:generate": "drizzle-kit generate"
   },
   "dependencies": {
+    "@cloudflare/sandbox": "0.12.7",
+    "@openai/codex-sdk": "0.148.0",
     "drizzle-orm": "0.45.2",
     "jose": "^6.2.9",
     "next": "16.3.1",

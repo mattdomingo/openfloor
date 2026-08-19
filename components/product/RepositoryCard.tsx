@@ -7,6 +7,7 @@ import type {
   GitHubRepositoryOption,
   RepositoryCandidate,
   RepositoryConnection,
+  RepositoryPreflight,
   SessionRole,
 } from "@/lib/session-types";
 
@@ -27,17 +28,23 @@ export function RepositoryCard({
   role,
   initialRepository,
   initialCandidate,
+  initialPreflight,
+  preflightEnabled,
   beginSetup,
 }: {
   sessionId: string;
   role: SessionRole;
   initialRepository: RepositoryConnection | null;
   initialCandidate: RepositoryCandidate | null;
+  initialPreflight: RepositoryPreflight | null;
+  preflightEnabled: boolean;
   beginSetup: boolean;
 }) {
   const router = useRouter();
   const [repository, setRepository] = useState(initialRepository);
   const [candidate, setCandidate] = useState(initialCandidate);
+  const [preflight, setPreflight] = useState(initialPreflight);
+  const [logs, setLogs] = useState<string | null>(null);
   const [editing, setEditing] = useState(beginSetup);
   const [repositories, setRepositories] = useState<GitHubRepositoryOption[]>([]);
   const [branches, setBranches] = useState<string[]>([]);
@@ -52,6 +59,25 @@ export function RepositoryCard({
     () => repositories.find((item) => item.id === repositoryId) ?? null,
     [repositories, repositoryId],
   );
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setRepository(initialRepository);
+      setCandidate(initialCandidate);
+      setPreflight(initialPreflight);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [initialCandidate, initialPreflight, initialRepository]);
+
+  useEffect(() => {
+    if (!preflight || !["provisioning", "running"].includes(preflight.status)) return;
+    const timer = window.setInterval(() => {
+      void fetch(`${BASE_PATH}/api/sessions/${sessionId}/repository/preflight`, { cache: "no-store" })
+        .then((response) => response.json() as Promise<{ preflight?: RepositoryPreflight }>)
+        .then((body) => { if (body.preflight) setPreflight(body.preflight); });
+    }, 1500);
+    return () => window.clearInterval(timer);
+  }, [preflight, sessionId]);
 
   const loadOptions = useCallback(async (selectedId?: string) => {
     const query = selectedId ? `?repositoryId=${encodeURIComponent(selectedId)}` : "";
@@ -173,6 +199,28 @@ export function RepositoryCard({
     setBusy(false);
   }
 
+  async function verifyRunner() {
+    setBusy(true);
+    setError(null);
+    setLogs(null);
+    const response = await fetch(`${BASE_PATH}/api/sessions/${sessionId}/repository/preflight`, { method: "POST" });
+    const body = await readResponse<{ preflight?: RepositoryPreflight; error?: string }>(response);
+    if (!response.ok || !body.preflight) setError(body.error ?? "Unable to start repository preflight");
+    else setPreflight(body.preflight);
+    setBusy(false);
+  }
+
+  async function openLogs() {
+    if (!preflight) return;
+    setBusy(true);
+    setError(null);
+    const response = await fetch(`${BASE_PATH}/api/sessions/${sessionId}/repository/preflight/${preflight.id}/logs`, { cache: "no-store" });
+    const text = await response.text();
+    if (!response.ok) setError("Unable to load command output");
+    else setLogs(text);
+    setBusy(false);
+  }
+
   function edit() {
     setRepositoryId(repository?.repositoryId ?? "");
     setBaseBranch(repository?.baseBranch ?? "");
@@ -215,6 +263,17 @@ export function RepositoryCard({
               ? <ol>{repository.checkCommands.map((item) => <li key={item.id}><code>{item.command}</code></li>)}</ol>
               : <p>Not configured</p>}
           </div>
+          {preflight && (
+            <div className="repository-checks" aria-label="Runner verification">
+              <span>Runner verification</span>
+              <p><strong>{preflight.status.replace("_", " ")}</strong>{preflight.summary ? ` · ${preflight.summary}` : ""}</p>
+              <ol>{preflight.checks.map((check) => (
+                <li key={check.id}><code>{check.command}</code> — {check.status}{check.exitCode == null ? "" : ` (exit ${check.exitCode})`}</li>
+              ))}</ol>
+              {preflight.checks.some((check) => check.hasLog) && <button className="button" onClick={() => void openLogs()} disabled={busy}>Open command output</button>}
+              {logs != null && <pre className="repository-log-output">{logs}</pre>}
+            </div>
+          )}
           {role === "owner" && (
             <div className="button-row">
               {repository.status !== "disconnected" && repository.status !== "revoked" && repository.status !== "inaccessible" ? (
@@ -222,6 +281,9 @@ export function RepositoryCard({
                   <button className="button" onClick={edit} disabled={busy}>Configure</button>
                   {!candidate && repository.status === "connected" && <button className="button" data-variant="primary" onClick={() => void candidateAction("candidate")} disabled={busy}>Enable execution</button>}
                   {candidate && <button className="button" data-variant="primary" onClick={() => void candidateAction("sync")} disabled={busy}>Sync repository</button>}
+                  {preflightEnabled && candidate && repository.status === "ready" && (
+                    <button className="button" onClick={() => void verifyRunner()} disabled={busy || repository.checkCommands.length === 0 || Boolean(preflight && ["provisioning", "running"].includes(preflight.status))}>Verify runner</button>
+                  )}
                   <button className="button danger-button" onClick={disconnect} disabled={busy}>Disconnect</button>
                 </>
               ) : <button className="button" data-variant="primary" onClick={connect} disabled={busy}>Reconnect GitHub</button>}
