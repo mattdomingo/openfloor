@@ -40,6 +40,15 @@ export async function generateMetadata(): Promise<Metadata> {
   };
 }
 
+// Applies a saved manual theme before first paint so it never flashes the
+// other theme. System-followers get no attribute and ride prefers-color-scheme.
+const themeScript = `try{var t=localStorage.getItem("openfloor:theme");if(t==="light"||t==="dark")document.documentElement.dataset.theme=t}catch(e){}`;
+
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
-  return <html lang="en"><body className={`${geistSans.variable} ${geistMono.variable}`}>{children}</body></html>;
+  return (
+    <html lang="en">
+      <head><script dangerouslySetInnerHTML={{ __html: themeScript }} /></head>
+      <body className={`${geistSans.variable} ${geistMono.variable}`}>{children}</body>
+    </html>
+  );
 }

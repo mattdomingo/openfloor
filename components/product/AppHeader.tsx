@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { ThemeToggle } from "@/components/ThemeToggle";
 import type { AppUser } from "@/lib/session-types";
 import { Brand } from "./Brand";
 
@@ -14,6 +15,7 @@ export function AppHeader({ user, sessionTitle }: { user: AppUser; sessionTitle?
       <div className="account">
         <span className="avatar" aria-hidden="true">{initials(user.displayName)}</span>
         <span className="account-name">{user.displayName}</span>
+        <ThemeToggle />
         <a className="button" data-variant="quiet" href="/cdn-cgi/access/logout">Sign out</a>
       </div>
     </header>
