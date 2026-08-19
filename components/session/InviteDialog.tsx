@@ -2,6 +2,7 @@
 
 import { useEffect, useId, useState } from "react";
 import { BASE_PATH } from "@/components/basePath";
+import { initials } from "@/components/product/AppHeader";
 import type { SessionMember, SessionSummary } from "@/lib/session-types";
 import { Avatar, Icon, useDialogDismiss } from "./primitives";
 
@@ -86,8 +87,4 @@ export function InviteDialog({
       <div className="dialog-foot"><button type="button" className="button" data-variant="quiet" onClick={dismiss}>Done</button></div>
     </dialog>
   );
-}
-
-function initials(name: string) {
-  return name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join("").toUpperCase() || "?";
 }

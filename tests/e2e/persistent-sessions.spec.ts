@@ -112,6 +112,7 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await member.getByRole("link", { name: "Enter agent floor" }).click();
   await expect(owner).toHaveURL(/\/app\/session\/[0-9a-f-]+\/floor$/);
   await expect(owner.getByRole("heading", { name: "Agent floor" })).toBeVisible();
+  await expect(owner.getByRole("navigation", { name: "Session location" }).getByRole("link", { name: "Release coordination" })).toBeVisible();
   await expect(owner.getByText("Member Example").first()).toBeVisible();
   await expect(owner.getByText("No agents yet")).toBeVisible();
   await expect(owner.getByText("No prompts waiting")).toBeVisible();
