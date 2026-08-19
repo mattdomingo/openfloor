@@ -115,6 +115,7 @@ export type AgentRun = {
   integrationStartedAt: number | null;
   integratedAt: number | null;
   discardedAt: number | null;
+  branchDeletedAt: number | null;
   cancelRequestedAt: number | null;
   updatedAt: number;
   checks: AgentRunCheck[];
@@ -123,7 +124,7 @@ export type AgentRun = {
 
 export type FloorReviewSnapshot = {
   id: string;
-  status: "awaiting" | "changes-requested" | "approved";
+  status: "draft" | "ready" | "merged";
   branch: string;
   baseBranch: string;
   commitSha: string | null;
@@ -140,7 +141,17 @@ export type FloorReviewSnapshot = {
   checks: Array<{ id: string; name: string; detail: string | null; state: "passed" | "waiting" | "failed" }>;
   warnings: Array<{ id: string; title: string; detail: string; severity: "conflict" | "warning" }>;
   updatedAt: number;
-  pullRequest: { number: number; url: string; state: "open" | "closed"; draft: boolean } | null;
+  githubChecksPassing: boolean | null;
+  cleanupStatus: "pending" | "complete" | "partial" | null;
+  pullRequest: {
+    number: number;
+    url: string;
+    state: "open" | "closed";
+    draft: boolean;
+    merged: boolean;
+    mergeable: boolean | null;
+    mergeableState: string | null;
+  } | null;
 };
 
 export type FloorSnapshot = {

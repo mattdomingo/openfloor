@@ -4,10 +4,13 @@ import {
   createRepositoryBranch,
   createDraftPullRequest,
   deleteTestRepositoryBranchIfMatches,
+  getPullRequestReview,
   getRepositoryRefSha,
   importGitHubAppPrivateKey,
   listInstallationRepositories,
   mergeRepositoryBranch,
+  markPullRequestReadyForReview,
+  squashMergePullRequest,
   type GitHubAppConfig,
 } from "@/lib/github";
 import { githubGitAuthorization } from "@/lib/github-git-auth";
@@ -81,5 +84,13 @@ describe("GitHub App client", () => {
     const second = await createDraftPullRequest(config, "installation-6", repository, input);
     expect(first).toEqual(second);
     expect(first).toEqual(expect.objectContaining({ draft: true, state: "open" }));
+    const draft = await getPullRequestReview(config, "installation-6", repository, first.number);
+    expect(draft).toEqual(expect.objectContaining({ headSha: merged.sha, draft: true, mergeable: true, checksPassing: true }));
+    await markPullRequestReadyForReview(config, "installation-6", repository, first.nodeId);
+    expect(await getPullRequestReview(config, "installation-6", repository, first.number)).toEqual(expect.objectContaining({ draft: false }));
+    const squash = await squashMergePullRequest(config, "installation-6", repository, first.number, merged.sha);
+    expect(await getRepositoryRefSha(config, "installation-6", repository, "main")).toBe(squash.sha);
+    expect(await getPullRequestReview(config, "installation-6", repository, first.number)).toEqual(expect.objectContaining({ merged: true, state: "closed", mergeCommitSha: squash.sha }));
+    expect(await deleteTestRepositoryBranchIfMatches(config, "installation-6", repository, candidate, merged.sha)).toBe(true);
   });
 });

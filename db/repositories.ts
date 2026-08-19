@@ -1,4 +1,5 @@
 import type { GitHubRepositoryOption, RepositoryCandidate, RepositoryConnection, RepositoryConnectionStatus, RepositoryCheckCommand } from "@/lib/session-types";
+import type { GitHubPullRequestReview } from "@/lib/github";
 import { getDb, type D1DatabaseLike } from "./index";
 import { getMembershipRole } from "./sessions";
 
@@ -201,7 +202,24 @@ export async function getRepositoryConnectionRecord(
     .first<{ installationId: string; repositoryId: string }>();
 }
 
-type CandidateRecord = Omit<RepositoryCandidate, "behindBase" | "pullRequestDraft"> & { pullRequestDraft: number | boolean | null };
+type CandidateRecord = Omit<RepositoryCandidate, "behindBase" | "pullRequestDraft" | "pullRequestMerged" | "pullRequestMergeable" | "githubChecksPassing"> & {
+  pullRequestDraft: number | boolean | null;
+  pullRequestMerged: number | boolean | null;
+  pullRequestMergeable: number | boolean | null;
+  githubChecksPassing: number | boolean | null;
+};
+
+function mapCandidate(record: CandidateRecord): RepositoryCandidate {
+  return {
+    ...record,
+    status: record.mergedAt ? "merged" : record.status,
+    pullRequestDraft: record.pullRequestDraft == null ? null : Boolean(record.pullRequestDraft),
+    pullRequestMerged: record.pullRequestMerged == null ? null : Boolean(record.pullRequestMerged),
+    pullRequestMergeable: record.pullRequestMergeable == null ? null : Boolean(record.pullRequestMergeable),
+    githubChecksPassing: record.githubChecksPassing == null ? null : Boolean(record.githubChecksPassing),
+    behindBase: Boolean(record.remoteBaseSha && record.remoteBaseSha !== record.baseSha),
+  };
+}
 
 export async function getActiveRepositoryCandidateForMember(
   sessionId: string,
@@ -223,16 +241,52 @@ export async function getActiveRepositoryCandidate(
             integration_run_id AS integrationRunId, pull_request_number AS pullRequestNumber,
             pull_request_node_id AS pullRequestNodeId, pull_request_url AS pullRequestUrl,
             pull_request_state AS pullRequestState, pull_request_draft AS pullRequestDraft,
+            pull_request_merged AS pullRequestMerged, pull_request_mergeable AS pullRequestMergeable,
+            pull_request_mergeable_state AS pullRequestMergeableState, github_checks_passing AS githubChecksPassing,
+            review_ready_at AS reviewReadyAt, review_synced_at AS reviewSyncedAt,
+            merge_commit_sha AS mergeCommitSha, merged_at AS mergedAt, cleanup_status AS cleanupStatus,
+            cleanup_completed_at AS cleanupCompletedAt, branch_deleted_at AS branchDeletedAt,
             status, created_by AS createdBy, created_at AS createdAt, updated_at AS updatedAt,
             last_synced_at AS lastSyncedAt
-     FROM repository_candidates WHERE session_id = ? AND status IN ('creating', 'active')
+     FROM repository_candidates WHERE session_id = ? AND status IN ('creating', 'active') AND merged_at IS NULL
      ORDER BY created_at DESC LIMIT 1`,
   ).bind(sessionId).first<CandidateRecord>();
-  return record ? {
-    ...record,
-    pullRequestDraft: record.pullRequestDraft == null ? null : Boolean(record.pullRequestDraft),
-    behindBase: Boolean(record.remoteBaseSha && record.remoteBaseSha !== record.baseSha),
-  } : null;
+  return record ? mapCandidate(record) : null;
+}
+
+export async function getLatestRepositoryReviewCandidate(sessionId: string, database: D1DatabaseLike): Promise<RepositoryCandidate | null> {
+  const record = await database.prepare(
+    `SELECT id, session_id AS sessionId, connection_id AS connectionId, branch_name AS branchName,
+            base_branch AS baseBranch, base_sha AS baseSha, candidate_sha AS candidateSha,
+            remote_base_sha AS remoteBaseSha, remote_candidate_sha AS remoteCandidateSha,
+            integration_run_id AS integrationRunId, pull_request_number AS pullRequestNumber,
+            pull_request_node_id AS pullRequestNodeId, pull_request_url AS pullRequestUrl,
+            pull_request_state AS pullRequestState, pull_request_draft AS pullRequestDraft,
+            pull_request_merged AS pullRequestMerged, pull_request_mergeable AS pullRequestMergeable,
+            pull_request_mergeable_state AS pullRequestMergeableState, github_checks_passing AS githubChecksPassing,
+            review_ready_at AS reviewReadyAt, review_synced_at AS reviewSyncedAt,
+            merge_commit_sha AS mergeCommitSha, merged_at AS mergedAt, cleanup_status AS cleanupStatus,
+            cleanup_completed_at AS cleanupCompletedAt, branch_deleted_at AS branchDeletedAt,
+            status, created_by AS createdBy, created_at AS createdAt, updated_at AS updatedAt,
+            last_synced_at AS lastSyncedAt
+     FROM repository_candidates WHERE session_id = ? AND status = 'active'
+     ORDER BY created_at DESC LIMIT 1`,
+  ).bind(sessionId).first<CandidateRecord>();
+  return record ? mapCandidate(record) : null;
+}
+
+export async function getRepositoryCandidateReviewData(candidateId: string, database: D1DatabaseLike) {
+  const [files, checks] = await Promise.all([
+    database.prepare(
+      `SELECT id, path, additions, deletions, change_kind AS changeKind, patch_preview AS patchPreview
+       FROM repository_candidate_files WHERE candidate_id = ? ORDER BY path`,
+    ).bind(candidateId).all<{ id: string; path: string; additions: number; deletions: number; changeKind: "add" | "update" | "delete"; patchPreview: string }>(),
+    database.prepare(
+      `SELECT id, source_id AS sourceId, name, detail, state
+       FROM repository_candidate_checks WHERE candidate_id = ? ORDER BY name, source_id`,
+    ).bind(candidateId).all<{ id: string; sourceId: string; name: string; detail: string | null; state: "passed" | "waiting" | "failed" }>(),
+  ]);
+  return { files: files.results, checks: checks.results };
 }
 
 export async function reserveRepositoryCandidate(
@@ -300,7 +354,7 @@ export async function reconcileRepositoryCandidate(
     ).bind(metadata.owner, metadata.name, metadata.fullName, metadata.private ? 1 : 0, metadata.defaultBranch, status, now, sessionId),
     database.prepare(
       `UPDATE repository_candidates SET remote_base_sha = ?, remote_candidate_sha = ?, last_synced_at = ?, updated_at = ?
-       WHERE session_id = ? AND status = 'active'`,
+       WHERE session_id = ? AND status = 'active' AND merged_at IS NULL`,
     ).bind(remoteBaseSha, remoteCandidateSha, now, now, sessionId),
     database.prepare("UPDATE sessions SET floor_revision = floor_revision + 1, updated_at = ? WHERE id = ?").bind(now, sessionId),
   ]);
@@ -345,7 +399,7 @@ export async function findRepositoryWebhookTargets(
     `SELECT rc.session_id AS sessionId, rc.repository_id AS repositoryId, rc.base_branch AS baseBranch,
             c.branch_name AS candidateBranch, c.candidate_sha AS candidateSha, c.integration_run_id AS integrationRunId
      FROM repository_connections rc
-     LEFT JOIN repository_candidates c ON c.session_id = rc.session_id AND c.status = 'active'
+     LEFT JOIN repository_candidates c ON c.session_id = rc.session_id AND c.status = 'active' AND c.merged_at IS NULL
      WHERE rc.installation_id = ? AND rc.status != 'disconnected' AND (? IS NULL OR rc.repository_id = ?)`,
   ).bind(installationId, repositoryId, repositoryId).all<{ sessionId: string; repositoryId: string; baseBranch: string; candidateBranch: string | null; candidateSha: string | null; integrationRunId: string | null }>();
   return result.results;
@@ -364,10 +418,10 @@ export async function updateRepositoryPushState(
   const now = Date.now();
   const statements = [database.prepare("UPDATE sessions SET floor_revision = floor_revision + 1, updated_at = ? WHERE id = ?").bind(now, sessionId)];
   if (ref === `refs/heads/${baseBranch}`) {
-    statements.push(database.prepare("UPDATE repository_candidates SET remote_base_sha = ?, last_synced_at = ?, updated_at = ? WHERE session_id = ? AND status = 'active'").bind(after, now, now, sessionId));
+    statements.push(database.prepare("UPDATE repository_candidates SET remote_base_sha = ?, last_synced_at = ?, updated_at = ? WHERE session_id = ? AND status = 'active' AND merged_at IS NULL").bind(after, now, now, sessionId));
   }
   if (candidateBranch && ref === `refs/heads/${candidateBranch}`) {
-    statements.push(database.prepare("UPDATE repository_candidates SET remote_candidate_sha = ?, last_synced_at = ?, updated_at = ? WHERE session_id = ? AND status = 'active'").bind(after, now, now, sessionId));
+    statements.push(database.prepare("UPDATE repository_candidates SET remote_candidate_sha = ?, last_synced_at = ?, updated_at = ? WHERE session_id = ? AND status = 'active' AND merged_at IS NULL").bind(after, now, now, sessionId));
     if (after !== candidateSha && !integrationRunId) statements.push(database.prepare("UPDATE repository_connections SET status = 'externally_modified', updated_at = ? WHERE session_id = ?").bind(now, sessionId));
   }
   if (ref.startsWith("refs/heads/openfloor/")) {
@@ -381,16 +435,22 @@ export async function updateRepositoryPushState(
 
 export async function updateRepositoryPullRequestState(
   sessionId: string,
-  pullRequest: { number: number; nodeId: string; url: string; state: "open" | "closed"; draft: boolean; headRef: string },
+  pullRequest: { number: number; nodeId: string; url: string; state: "open" | "closed"; draft: boolean; merged: boolean; mergeCommitSha: string | null; headRef: string },
   database = getDb(),
 ): Promise<number> {
   const now = Date.now();
   await database.batch([
     database.prepare(
       `UPDATE repository_candidates SET pull_request_number = ?, pull_request_node_id = ?, pull_request_url = ?,
-              pull_request_state = ?, pull_request_draft = ?, updated_at = ?
+              pull_request_state = ?, pull_request_draft = ?, pull_request_merged = ?,
+              merge_commit_sha = COALESCE(?, merge_commit_sha),
+              merged_at = CASE WHEN ? THEN COALESCE(merged_at, ?) ELSE merged_at END,
+              cleanup_status = CASE WHEN ? THEN COALESCE(cleanup_status, 'pending') ELSE cleanup_status END,
+              updated_at = ?
        WHERE session_id = ? AND status = 'active' AND branch_name = ?`,
-    ).bind(pullRequest.number, pullRequest.nodeId, pullRequest.url, pullRequest.state, pullRequest.draft ? 1 : 0, now, sessionId, pullRequest.headRef),
+    ).bind(pullRequest.number, pullRequest.nodeId, pullRequest.url, pullRequest.state, pullRequest.draft ? 1 : 0,
+      pullRequest.merged ? 1 : 0, pullRequest.mergeCommitSha, pullRequest.merged ? 1 : 0, now,
+      pullRequest.merged ? 1 : 0, now, sessionId, pullRequest.headRef),
     database.prepare("UPDATE sessions SET floor_revision = floor_revision + 1, updated_at = ? WHERE id = ?").bind(now, sessionId),
   ]);
   return getFloorRevision(sessionId, database);
@@ -414,6 +474,131 @@ export async function updateRepositoryIdentity(
 export async function touchRepositoryReview(sessionId: string, database = getDb()): Promise<number> {
   const now = Date.now();
   await database.prepare("UPDATE sessions SET floor_revision = floor_revision + 1, updated_at = ? WHERE id = ?").bind(now, sessionId).run();
+  return getFloorRevision(sessionId, database);
+}
+
+export async function getCandidateReviewMutationContext(
+  sessionId: string,
+  userId: string,
+  database = getDb(),
+) {
+  if ((await getMembershipRole(sessionId, userId, database)) !== "owner") return null;
+  const candidate = await database.prepare(
+    `SELECT c.id AS candidateId, c.branch_name AS candidateBranch, c.base_branch AS baseBranch,
+            c.candidate_sha AS candidateSha, c.remote_candidate_sha AS remoteCandidateSha,
+            c.pull_request_number AS pullRequestNumber, c.pull_request_node_id AS pullRequestNodeId,
+            c.pull_request_draft AS pullRequestDraft, CASE WHEN c.merged_at IS NOT NULL THEN 'merged' ELSE c.status END AS candidateStatus,
+            rc.status AS connectionStatus, rc.installation_id AS installationId,
+            rc.repository_id AS repositoryId, rc.repository_owner AS repositoryOwner,
+            rc.repository_name AS repositoryName, rc.repository_full_name AS repositoryFullName,
+            rc.repository_private AS repositoryPrivate, rc.default_branch AS defaultBranch
+     FROM repository_candidates c JOIN repository_connections rc ON rc.id = c.connection_id
+     WHERE c.session_id = ? AND c.status = 'active' ORDER BY c.created_at DESC LIMIT 1`,
+  ).bind(sessionId).first<{
+    candidateId: string; candidateBranch: string; baseBranch: string; candidateSha: string | null; remoteCandidateSha: string | null;
+    pullRequestNumber: number | null; pullRequestNodeId: string | null; pullRequestDraft: number | boolean | null;
+    candidateStatus: "active" | "merged"; connectionStatus: RepositoryConnectionStatus; installationId: string;
+    repositoryId: string; repositoryOwner: string; repositoryName: string; repositoryFullName: string;
+    repositoryPrivate: number | boolean; defaultBranch: string;
+  }>();
+  if (!candidate) return null;
+  const runs = await database.prepare(
+    `SELECT id, run_branch AS branchName, run_commit_sha AS expectedSha, remote_run_sha AS remoteSha,
+            branch_deleted_at AS branchDeletedAt
+     FROM agent_runs WHERE candidate_id = ? AND status IN ('published', 'integrated', 'conflicted')
+       AND discarded_at IS NULL AND run_branch IS NOT NULL AND run_commit_sha IS NOT NULL
+     ORDER BY created_at`,
+  ).bind(candidate.candidateId).all<{ id: string; branchName: string; expectedSha: string; remoteSha: string | null; branchDeletedAt: number | null }>();
+  return { ...candidate, repositoryPrivate: Boolean(candidate.repositoryPrivate), runs: runs.results };
+}
+
+export async function reconcileCandidateReview(
+  sessionId: string,
+  candidateId: string,
+  review: GitHubPullRequestReview,
+  database = getDb(),
+): Promise<number> {
+  const now = Date.now();
+  const statements = [
+    database.prepare(
+      `UPDATE repository_candidates SET pull_request_number = ?, pull_request_node_id = ?, pull_request_url = ?,
+              pull_request_state = ?, pull_request_draft = ?, pull_request_merged = ?, pull_request_mergeable = ?,
+              pull_request_mergeable_state = ?, github_checks_passing = ?, review_synced_at = ?, updated_at = ?
+       WHERE id = ? AND session_id = ?`,
+    ).bind(review.number, review.nodeId, review.url, review.state, review.draft ? 1 : 0, review.merged ? 1 : 0,
+      review.mergeable == null ? null : review.mergeable ? 1 : 0, review.mergeableState, review.checksPassing ? 1 : 0,
+      now, now, candidateId, sessionId),
+    database.prepare("DELETE FROM repository_candidate_files WHERE candidate_id = ?").bind(candidateId),
+    database.prepare("DELETE FROM repository_candidate_checks WHERE candidate_id = ?").bind(candidateId),
+    ...review.files.map((file) => database.prepare(
+      `INSERT INTO repository_candidate_files (id, candidate_id, path, additions, deletions, change_kind, patch_preview)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    ).bind(crypto.randomUUID(), candidateId, file.path, file.additions, file.deletions, file.changeKind, file.patchPreview)),
+    ...review.checks.map((check) => database.prepare(
+      `INSERT INTO repository_candidate_checks (id, candidate_id, source_id, name, detail, state)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    ).bind(crypto.randomUUID(), candidateId, check.sourceId, check.name, check.detail, check.state)),
+    database.prepare("UPDATE sessions SET floor_revision = floor_revision + 1, updated_at = ? WHERE id = ?").bind(now, sessionId),
+  ];
+  await database.batch(statements);
+  return getFloorRevision(sessionId, database);
+}
+
+export async function markCandidateReviewReady(
+  sessionId: string,
+  candidateId: string,
+  userId: string,
+  database = getDb(),
+): Promise<number> {
+  const now = Date.now();
+  await database.batch([
+    database.prepare(
+      `UPDATE repository_candidates SET review_ready_at = COALESCE(review_ready_at, ?), review_ready_by = ?,
+              pull_request_draft = 0, updated_at = ? WHERE id = ? AND session_id = ? AND status = 'active' AND merged_at IS NULL`,
+    ).bind(now, userId, now, candidateId, sessionId),
+    database.prepare("UPDATE sessions SET floor_revision = floor_revision + 1, updated_at = ? WHERE id = ?").bind(now, sessionId),
+  ]);
+  return getFloorRevision(sessionId, database);
+}
+
+export async function markCandidateMerged(
+  sessionId: string,
+  candidateId: string,
+  userId: string,
+  mergeCommitSha: string,
+  database = getDb(),
+): Promise<number> {
+  const now = Date.now();
+  await database.batch([
+    database.prepare(
+      `UPDATE repository_candidates SET pull_request_state = 'closed', pull_request_draft = 0,
+              pull_request_merged = 1, merge_commit_sha = ?, merged_at = ?, merged_by = ?, cleanup_status = 'pending', updated_at = ?
+       WHERE id = ? AND session_id = ? AND status = 'active' AND merged_at IS NULL`,
+    ).bind(mergeCommitSha, now, userId, now, candidateId, sessionId),
+    database.prepare("UPDATE repository_connections SET status = 'ready', updated_at = ? WHERE session_id = ? AND status != 'disconnected'").bind(now, sessionId),
+    database.prepare("UPDATE sessions SET floor_revision = floor_revision + 1, updated_at = ? WHERE id = ?").bind(now, sessionId),
+  ]);
+  return getFloorRevision(sessionId, database);
+}
+
+export async function finishCandidateCleanup(
+  sessionId: string,
+  candidateId: string,
+  deletedRunIds: string[],
+  candidateDeleted: boolean,
+  complete: boolean,
+  database = getDb(),
+): Promise<number> {
+  const now = Date.now();
+  await database.batch([
+    ...deletedRunIds.map((runId) => database.prepare("UPDATE agent_runs SET branch_deleted_at = ?, updated_at = ? WHERE id = ? AND candidate_id = ?").bind(now, now, runId, candidateId)),
+    database.prepare(
+      `UPDATE repository_candidates SET cleanup_status = ?, cleanup_completed_at = ?,
+              branch_deleted_at = CASE WHEN ? THEN ? ELSE branch_deleted_at END, updated_at = ?
+       WHERE id = ? AND session_id = ? AND merged_at IS NOT NULL`,
+    ).bind(complete ? "complete" : "partial", now, candidateDeleted ? 1 : 0, now, now, candidateId, sessionId),
+    database.prepare("UPDATE sessions SET floor_revision = floor_revision + 1, updated_at = ? WHERE id = ?").bind(now, sessionId),
+  ]);
   return getFloorRevision(sessionId, database);
 }
 

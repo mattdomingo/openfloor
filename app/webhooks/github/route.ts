@@ -74,6 +74,8 @@ export async function POST(request: Request) {
         url: body.pull_request.html_url,
         state: body.pull_request.state === "closed" ? "closed" : "open",
         draft: body.pull_request.draft !== false,
+        merged: body.pull_request.merged === true,
+        mergeCommitSha: body.pull_request.merge_commit_sha ?? null,
         headRef: body.pull_request.head.ref,
       });
     } else {
@@ -92,5 +94,5 @@ type GitHubWebhookPayload = {
   repositories_added?: Array<{ id?: number | string }>;
   ref?: string;
   after?: string;
-  pull_request?: { number?: number; node_id?: string; html_url?: string; state?: string; draft?: boolean; head?: { ref?: string } };
+  pull_request?: { number?: number; node_id?: string; html_url?: string; state?: string; draft?: boolean; merged?: boolean; merge_commit_sha?: string; head?: { ref?: string } };
 };

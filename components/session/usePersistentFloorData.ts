@@ -74,6 +74,8 @@ export function usePersistentFloorData(sessionId: string, initialFloor: FloorSna
     cancelRun: (runId: string) => request(`/runs/${encodeURIComponent(runId)}/cancel`, "POST"),
     discardRun: (runId: string) => request(`/runs/${encodeURIComponent(runId)}/discard`, "POST"),
     retryRun: (runId: string) => request(`/runs/${encodeURIComponent(runId)}/retry`, "POST"),
+    readyReview: () => request("/review/ready", "POST"),
+    squashMergeReview: () => request("/review/merge", "POST"),
   };
 }
 

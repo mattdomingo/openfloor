@@ -210,6 +210,19 @@ export const repositoryCandidates = sqliteTable(
     pullRequestUrl: text("pull_request_url"),
     pullRequestState: text("pull_request_state", { enum: ["open", "closed"] }),
     pullRequestDraft: integer("pull_request_draft", { mode: "boolean" }),
+    pullRequestMerged: integer("pull_request_merged", { mode: "boolean" }),
+    pullRequestMergeable: integer("pull_request_mergeable", { mode: "boolean" }),
+    pullRequestMergeableState: text("pull_request_mergeable_state"),
+    githubChecksPassing: integer("github_checks_passing", { mode: "boolean" }),
+    reviewReadyAt: integer("review_ready_at"),
+    reviewReadyBy: text("review_ready_by").references(() => users.id),
+    reviewSyncedAt: integer("review_synced_at"),
+    mergeCommitSha: text("merge_commit_sha"),
+    mergedAt: integer("merged_at"),
+    mergedBy: text("merged_by").references(() => users.id),
+    cleanupStatus: text("cleanup_status", { enum: ["pending", "complete", "partial"] }),
+    cleanupCompletedAt: integer("cleanup_completed_at"),
+    branchDeletedAt: integer("branch_deleted_at"),
     status: text("status", { enum: ["creating", "active", "creation_failed"] }).notNull(),
     createdBy: text("created_by").notNull().references(() => users.id),
     createdAt: integer("created_at").notNull(),
@@ -220,10 +233,37 @@ export const repositoryCandidates = sqliteTable(
     index("idx_repository_candidates_session_created").on(table.sessionId, table.createdAt),
     uniqueIndex("idx_repository_candidates_one_live")
       .on(table.sessionId)
-      .where(sql`${table.status} in ('creating', 'active')`),
+      .where(sql`${table.status} in ('creating', 'active') and ${table.mergedAt} is null`),
     uniqueIndex("idx_repository_candidates_branch").on(table.connectionId, table.branchName),
     check("repository_candidates_status_check", sql`${table.status} in ('creating', 'active', 'creation_failed')`),
   ],
+);
+
+export const repositoryCandidateFiles = sqliteTable(
+  "repository_candidate_files",
+  {
+    id: text("id").primaryKey(),
+    candidateId: text("candidate_id").notNull().references(() => repositoryCandidates.id, { onDelete: "cascade" }),
+    path: text("path").notNull(),
+    additions: integer("additions").notNull(),
+    deletions: integer("deletions").notNull(),
+    changeKind: text("change_kind", { enum: ["add", "update", "delete"] }).notNull(),
+    patchPreview: text("patch_preview").notNull(),
+  },
+  (table) => [uniqueIndex("idx_repository_candidate_files_path").on(table.candidateId, table.path)],
+);
+
+export const repositoryCandidateChecks = sqliteTable(
+  "repository_candidate_checks",
+  {
+    id: text("id").primaryKey(),
+    candidateId: text("candidate_id").notNull().references(() => repositoryCandidates.id, { onDelete: "cascade" }),
+    sourceId: text("source_id").notNull(),
+    name: text("name").notNull(),
+    detail: text("detail"),
+    state: text("state", { enum: ["passed", "waiting", "failed"] }).notNull(),
+  },
+  (table) => [uniqueIndex("idx_repository_candidate_checks_source").on(table.candidateId, table.sourceId)],
 );
 
 export const githubWebhookDeliveries = sqliteTable(
@@ -322,6 +362,7 @@ export const agentRuns = sqliteTable(
     integratedAt: integer("integrated_at"),
     discardedAt: integer("discarded_at"),
     discardedBy: text("discarded_by").references(() => users.id),
+    branchDeletedAt: integer("branch_deleted_at"),
     cancelRequestedAt: integer("cancel_requested_at"),
     updatedAt: integer("updated_at").notNull(),
   },

@@ -18,8 +18,17 @@ import {
   replaceRunFiles,
 } from "@/db/runs";
 import { getGitHubAppConfig } from "@/db";
-import { createDraftPullRequest, createRepositoryBranch, getInstallationRepository, GitHubApiError, mergeRepositoryBranch, setTestRepositoryMergeConflict } from "@/lib/github";
+import {
+  activateRepositoryCandidate,
+  failRepositoryCandidate,
+  getActiveRepositoryCandidateForMember,
+  getRepositoryConnectionForMember,
+  reserveRepositoryCandidate,
+} from "@/db/repositories";
+import { getMembershipRole } from "@/db/sessions";
+import { createDraftPullRequest, createRepositoryBranch, getInstallationRepository, getRepositoryRefSha, GitHubApiError, mergeRepositoryBranch, setTestRepositoryMergeConflict } from "@/lib/github";
 import { notifyFloorChanged } from "@/lib/presence-server";
+import { openFloorBranchName } from "@/lib/repository-refs";
 import { isApiError, requireApiUser } from "@/lib/server-auth";
 import { env } from "cloudflare:workers";
 
@@ -41,6 +50,7 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
     return Response.json({ error: "Agent execution is not enabled" }, { status: 503 });
   }
   try {
+    await ensureNextCandidateCycle(sessionId, user.id);
     const run = await createAgentRun(sessionId, queueItemId, user.id);
     if (bindings.OPENFLOOR_TEST_ALLOW_IDENTITY_HEADERS === "true" && bindings.OPENFLOOR_TEST_AGENT_RUN_DATA && bindings.PREFLIGHT_LOGS) {
       const result = await runTestAgent(run.id, bindings.OPENFLOOR_TEST_AGENT_RUN_DATA, bindings.PREFLIGHT_LOGS);
@@ -57,6 +67,28 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
     if (error instanceof AgentRunNotReadyError) return Response.json({ error: error.message }, { status: error.message === "Session not found" ? 404 : 409 });
     if (error instanceof AgentRunConflictError) return Response.json({ error: error.message }, { status: 409 });
     return Response.json({ error: "Agent run could not be started" }, { status: 502 });
+  }
+}
+
+async function ensureNextCandidateCycle(sessionId: string, userId: string): Promise<void> {
+  if ((await getMembershipRole(sessionId, userId)) !== "owner") return;
+  if (await getActiveRepositoryCandidateForMember(sessionId, userId)) return;
+  const connection = await getRepositoryConnectionForMember(sessionId, userId);
+  if (!connection || connection.status !== "ready") return;
+  const candidateId = crypto.randomUUID();
+  const branchName = openFloorBranchName(sessionId, "candidate", candidateId);
+  const config = getGitHubAppConfig();
+  const repository = await getInstallationRepository(config, connection.installationId, connection.repositoryId);
+  const baseSha = await getRepositoryRefSha(config, connection.installationId, repository, connection.baseBranch);
+  const reserved = await reserveRepositoryCandidate(sessionId, userId, connection.id, candidateId, branchName, connection.baseBranch, baseSha);
+  if (!reserved) return;
+  try {
+    const candidateSha = await createRepositoryBranch(config, connection.installationId, repository, branchName, baseSha);
+    if (candidateSha !== baseSha) throw new GitHubApiError("GitHub created the next candidate at an unexpected SHA", 502);
+    await activateRepositoryCandidate(sessionId, candidateId, candidateSha);
+  } catch (error) {
+    await failRepositoryCandidate(candidateId);
+    throw error;
   }
 }
 

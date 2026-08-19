@@ -9,7 +9,12 @@ import type {
 } from "@/lib/floor-types";
 import type { AgentInput, AssignmentInput, MessageInput, QueuePromptInput } from "@/lib/validation";
 import { getDb, type D1DatabaseLike } from "./index";
-import { getActiveRepositoryCandidate, getRepositoryConnectionForMember } from "./repositories";
+import {
+  getActiveRepositoryCandidate,
+  getLatestRepositoryReviewCandidate,
+  getRepositoryCandidateReviewData,
+  getRepositoryConnectionForMember,
+} from "./repositories";
 import { getLatestRepositoryPreflight } from "./preflights";
 import { getAgentRuns } from "./runs";
 import { getMembershipRole } from "./sessions";
@@ -33,7 +38,7 @@ export async function getFloorSnapshot(
 }
 
 async function readFloorSnapshot(sessionId: string, userId: string, database: D1DatabaseLike): Promise<FloorSnapshot> {
-  const [session, agents, assignments, messages, queue, prompts, repository, activeCandidate, latestPreflight, runs] = await Promise.all([
+  const [session, agents, assignments, messages, queue, prompts, repository, activeCandidate, reviewCandidate, latestPreflight, runs] = await Promise.all([
     database.prepare("SELECT floor_revision AS revision FROM sessions WHERE id = ?").bind(sessionId).first<{ revision: number }>(),
     database.prepare(
       `SELECT a.id, a.name, a.role, a.task, a.owner_user_id AS ownerUserId,
@@ -81,6 +86,7 @@ async function readFloorSnapshot(sessionId: string, userId: string, database: D1
     ).bind(sessionId).all<PromptRecord>(),
     getRepositoryConnectionForMember(sessionId, userId, database),
     getActiveRepositoryCandidate(sessionId, database),
+    getLatestRepositoryReviewCandidate(sessionId, database),
     getLatestRepositoryPreflight(sessionId, database),
     getAgentRuns(sessionId, database),
   ]);
@@ -93,6 +99,7 @@ async function readFloorSnapshot(sessionId: string, userId: string, database: D1
     promptsByItem.set(queueItemId, list);
   }
 
+  const candidateReview = reviewCandidate ? await getRepositoryCandidateReviewData(reviewCandidate.id, database) : null;
   return {
     revision: Number(session?.revision ?? 0),
     agents: agents.results,
@@ -108,47 +115,71 @@ async function readFloorSnapshot(sessionId: string, userId: string, database: D1
     activeCandidate,
     latestPreflight,
     runs,
-    review: buildRunReview(runs, activeCandidate ?? null),
+    review: buildRunReview(runs, reviewCandidate, candidateReview),
   };
 }
 
-function buildRunReview(runs: Awaited<ReturnType<typeof getAgentRuns>>, candidate: Awaited<ReturnType<typeof getActiveRepositoryCandidate>>): FloorReviewSnapshot | null {
-  const run = runs.find((item) => item.files.length > 0);
-  if (!run || !candidate) return null;
+function buildRunReview(
+  runs: Awaited<ReturnType<typeof getAgentRuns>>,
+  candidate: Awaited<ReturnType<typeof getLatestRepositoryReviewCandidate>>,
+  githubReview: Awaited<ReturnType<typeof getRepositoryCandidateReviewData>> | null,
+): FloorReviewSnapshot | null {
+  if (!candidate) return null;
+  const candidateRuns = runs.filter((item) => item.candidateId === candidate.id && item.files.length > 0);
+  if (candidateRuns.length === 0 && !candidate.pullRequestNumber) return null;
+  const reviewRuns = candidate.pullRequestNumber ? candidateRuns.filter((run) => run.status === "integrated") : candidateRuns;
+  const files = githubReview?.files.length ? githubReview.files.map((file) => ({
+    id: file.id,
+    path: file.path,
+    agentId: null,
+    agentName: null,
+    additions: Number(file.additions),
+    deletions: Number(file.deletions),
+    summary: "GitHub pull request diff",
+    diff: diffLines(file.patchPreview),
+  })) : [...new Map([...reviewRuns].reverse().flatMap((run) => run.files.map((file) => [file.path, { run, file }] as const))).values()].map(({ run, file }) => ({
+    id: file.id,
+    path: file.path,
+    agentId: run.agentId,
+    agentName: run.agentName,
+    additions: file.additions,
+    deletions: file.deletions,
+    summary: file.summary,
+    diff: diffLines(file.diffPreview),
+  }));
+  const localChecks = reviewRuns.flatMap((run) => run.checks.map((check) => ({
+    id: `${run.id}:${check.id}`,
+    name: check.command,
+    detail: `${run.agentName} · ${check.outputExcerpt ?? run.status}`,
+    state: check.status === "passed" ? "passed" as const : check.status === "failed" || check.status === "timed_out" ? "failed" as const : "waiting" as const,
+  })));
+  const checks = [...(githubReview?.checks.map((check) => ({ id: check.id, name: check.name, detail: check.detail, state: check.state })) ?? []), ...localChecks];
+  const conflicted = candidateRuns.find((run) => run.status === "conflicted");
+  const warnings: FloorReviewSnapshot["warnings"] = [];
+  if (conflicted) warnings.push({ id: `${conflicted.id}-conflict`, title: "Integration conflict", detail: conflicted.conflictReason ?? "A run conflicts with the candidate.", severity: "conflict" });
+  if (candidate.behindBase && candidate.status === "active") warnings.push({ id: `${candidate.id}-behind`, title: "Base branch advanced", detail: "Synchronize and resolve the candidate before merging.", severity: "warning" });
+  if (candidate.githubChecksPassing === false) warnings.push({ id: `${candidate.id}-checks`, title: "GitHub checks are not passing", detail: "All reported GitHub checks must pass before squash merge.", severity: "warning" });
+  if (candidate.cleanupStatus === "partial") warnings.push({ id: `${candidate.id}-cleanup`, title: "Branch cleanup incomplete", detail: "At least one OpenFloor branch changed externally and was preserved.", severity: "warning" });
   return {
-    id: run.id,
-    status: "awaiting",
-    branch: candidate.pullRequestNumber ? candidate.branchName : run.runBranch ?? candidate.branchName,
+    id: candidate.id,
+    status: candidate.status === "merged" ? "merged" : candidate.pullRequestDraft === false ? "ready" : "draft",
+    branch: candidate.branchName,
     baseBranch: candidate.baseBranch,
-    commitSha: run.integratedCandidateSha ?? run.runCommitSha,
-    files: run.files.map((file) => ({
-      id: file.id,
-      path: file.path,
-      agentId: run.agentId,
-      agentName: run.agentName,
-      additions: file.additions,
-      deletions: file.deletions,
-      summary: file.summary,
-      diff: diffLines(file.diffPreview),
-    })),
-    checks: run.checks.map((check) => ({
-      id: check.id,
-      name: check.command,
-      detail: check.outputExcerpt,
-      state: check.status === "passed" ? "passed" : check.status === "failed" || check.status === "timed_out" ? "failed" : "waiting",
-    })),
-    warnings: ["published", "integrating", "integrated"].includes(run.status) && !run.discardedAt ? [] : [{
-      id: `${run.id}-status`,
-      title: run.discardedAt ? "Run branch discarded" : run.status === "conflicted" ? "Integration conflict" : "Run is not published",
-      detail: run.discardedAt ? "The verified run branch was safely deleted from GitHub; its audit history remains in OpenFloor." : run.conflictReason ?? run.summary ?? `The run is currently ${run.status.replace("_", " ")}.`,
-      severity: run.status === "conflicted" ? "conflict" : "warning",
-    }],
-    updatedAt: run.updatedAt,
+    commitSha: candidate.status === "merged" ? candidate.mergeCommitSha : candidate.candidateSha,
+    files,
+    checks,
+    warnings,
+    updatedAt: Math.max(candidate.updatedAt, ...candidateRuns.map((run) => run.updatedAt), 0),
+    githubChecksPassing: candidate.githubChecksPassing,
+    cleanupStatus: candidate.cleanupStatus,
     pullRequest: candidate.pullRequestNumber && candidate.pullRequestUrl && candidate.pullRequestState ? {
       number: candidate.pullRequestNumber,
       url: candidate.pullRequestUrl,
       state: candidate.pullRequestState,
       draft: candidate.pullRequestDraft ?? true,
+      merged: candidate.pullRequestMerged ?? false,
+      mergeable: candidate.pullRequestMergeable,
+      mergeableState: candidate.pullRequestMergeableState,
     } : null,
   };
 }

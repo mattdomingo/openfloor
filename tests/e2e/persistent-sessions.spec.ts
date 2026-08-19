@@ -239,6 +239,30 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await expect(conflictItem.getByText("integrated", { exact: true })).toBeVisible();
   await expect.poll(async () => conflictItem.locator("code.queue-run-branch").textContent()).not.toBe(conflictedBranch);
 
+  await owner.getByRole("button", { name: "Review" }).click();
+  await member.getByRole("button", { name: "Review" }).click();
+  await expect(member.getByRole("button", { name: "Ready for review" })).toHaveCount(0);
+  await expect(member.getByRole("button", { name: "Squash merge" })).toHaveCount(0);
+  await owner.getByRole("button", { name: "Ready for review" }).click();
+  await expect(owner.getByRole("link", { name: /PR #1 · open/ })).toBeVisible();
+  await expect(owner.getByText("clean", { exact: true })).toBeVisible();
+  await expect(owner.getByText("passing", { exact: true })).toBeVisible();
+  await owner.getByRole("button", { name: "Squash merge" }).click();
+  await expect(owner.getByText("merged", { exact: true }).first()).toBeVisible();
+  await expect(owner.getByLabel("Branch cleanup").getByText("complete", { exact: true })).toBeVisible();
+  await expect(owner.getByRole("button", { name: "Squash merge" })).toHaveCount(0);
+
+  await owner.getByRole("button", { name: "Workspace" }).click();
+  await owner.getByLabel("Queue target").selectOption({ label: "Lumen" });
+  await owner.getByLabel("Prompt to add to the queue").fill("Start a fresh candidate cycle");
+  await owner.getByRole("button", { name: "Add to queue" }).click();
+  const freshCandidateItem = owner.locator("li.queue-item", { hasText: "Start a fresh candidate cycle" });
+  await freshCandidateItem.getByRole("button", { name: "Run", exact: true }).click();
+  await expect(freshCandidateItem.getByText("integrated", { exact: true })).toBeVisible();
+  await owner.getByRole("button", { name: "Review" }).click();
+  await expect(owner.getByRole("link", { name: /Draft PR #2/ })).toBeVisible();
+  await owner.getByRole("button", { name: "Workspace" }).click();
+
   await owner.getByLabel("Queue target").selectOption({ label: "Lumen" });
   await owner.getByLabel("Prompt to add to the queue").fill("Create an intentionally failing change");
   await owner.getByRole("button", { name: "Add to queue" }).click();

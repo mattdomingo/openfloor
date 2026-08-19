@@ -23,7 +23,7 @@ export async function getAgentRuns(sessionId: string, database = getDb()): Promi
             r.run_commit_sha AS runCommitSha, r.remote_run_sha AS remoteRunSha,
             r.model, r.summary, r.final_response AS finalResponse, r.created_by AS createdBy,
             r.created_at AS createdAt, r.started_at AS startedAt, r.completed_at AS completedAt,
-            r.published_at AS publishedAt, r.discarded_at AS discardedAt,
+            r.published_at AS publishedAt, r.discarded_at AS discardedAt, r.branch_deleted_at AS branchDeletedAt,
             r.integration_base_sha AS integrationBaseSha, r.integrated_candidate_sha AS integratedCandidateSha,
             r.conflict_reason AS conflictReason, r.integration_started_at AS integrationStartedAt,
             r.integrated_at AS integratedAt,
@@ -47,7 +47,7 @@ export async function createAgentRun(sessionId: string, queueItemId: string, use
             c.id AS candidateId, c.candidate_sha AS candidateSha, c.remote_candidate_sha AS remoteCandidateSha
      FROM floor_queue_items q
      LEFT JOIN repository_connections rc ON rc.session_id = q.session_id
-     LEFT JOIN repository_candidates c ON c.session_id = q.session_id AND c.status = 'active'
+     LEFT JOIN repository_candidates c ON c.session_id = q.session_id AND c.status = 'active' AND c.merged_at IS NULL
      WHERE q.session_id = ? AND q.id = ?`,
   ).bind(sessionId, queueItemId).first<{
     queueItemId: string; queueStatus: string; agentId: string | null; connectionId: string | null;
@@ -102,7 +102,7 @@ export async function getAgentRun(runId: string, database = getDb()): Promise<Ag
             r.run_commit_sha AS runCommitSha, r.remote_run_sha AS remoteRunSha,
             r.model, r.summary, r.final_response AS finalResponse, r.created_by AS createdBy,
             r.created_at AS createdAt, r.started_at AS startedAt, r.completed_at AS completedAt,
-            r.published_at AS publishedAt, r.discarded_at AS discardedAt,
+            r.published_at AS publishedAt, r.discarded_at AS discardedAt, r.branch_deleted_at AS branchDeletedAt,
             r.integration_base_sha AS integrationBaseSha, r.integrated_candidate_sha AS integratedCandidateSha,
             r.conflict_reason AS conflictReason, r.integration_started_at AS integrationStartedAt,
             r.integrated_at AS integratedAt,
@@ -261,7 +261,7 @@ export async function beginRunIntegration(runId: string, database = getDb()) {
             rc.installation_id AS installationId, rc.repository_id AS repositoryId,
             rc.repository_owner AS repositoryOwner, rc.repository_name AS repositoryName,
             rc.repository_full_name AS repositoryFullName
-     FROM agent_runs r JOIN repository_candidates c ON c.id = r.candidate_id AND c.status = 'active'
+     FROM agent_runs r JOIN repository_candidates c ON c.id = r.candidate_id AND c.status = 'active' AND c.merged_at IS NULL
      JOIN repository_connections rc ON rc.id = c.connection_id
      WHERE r.id = ? AND r.discarded_at IS NULL`,
   ).bind(runId).first<{

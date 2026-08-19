@@ -164,6 +164,10 @@ WebSocket events notify clients about presence or changed domains. D1 remains au
 - Trusted incremental Git-bundle validation and non-force publication from a clean publisher Sandbox, followed by GitHub SHA reconciliation.
 - Owner-only safe discard using an expected-SHA lease; externally modified run branches are never deleted.
 - Serialized candidate integration inside `AgentRunWorkflow`, with a D1 candidate lease, authoritative GitHub ref reconciliation, non-force merge, one draft PR, queue completion, conflict preservation, and owner-only retry as a new run attempt.
+- GitHub-authoritative final review snapshots with bounded PR files, check runs, commit statuses, head/base SHAs, draft state, mergeability, and merge-requirement state.
+- Owner-only **Ready for review** and expected-head **Squash merge** actions. GitHub protection and review requirements are never bypassed.
+- Verified post-merge cleanup of matching server-generated run/candidate refs using Git leases; mismatched refs are preserved and recorded as partial cleanup.
+- Merged candidate audit history remains durable, while the next owner-started run creates a fresh candidate cycle from the latest base SHA.
 
 Known production follow-up: the owner discard action still reports failure in the disposable acceptance repository after its Git authentication correction. Preserve the expected-SHA lease and error separation; diagnose this independently rather than weakening deletion safety or folding it into Phase 6.
 
@@ -171,7 +175,7 @@ Known production follow-up: the owner discard action still reports failure in th
 
 - Agent model/provider selection and user-managed provider credentials; Phase 4 deliberately uses one server-configured Codex model and project credential.
 - Agent-authored chat messages, live terminal streaming, and generic artifact download UI.
-- Review-ready persistence, final squash merge, post-merge cleanup, and deployment.
+- Deployment automation after repository merge.
 - Agent edit, archive, deletion, or lifecycle states beyond `created`.
 - Queue completion, removal, consumption, or retry workflows.
 - Ownership transfer. Owners cannot leave until transfer exists.
@@ -379,6 +383,14 @@ Do not hand-edit Drizzle metadata. If a generated migration is wrong, correct th
 - A partial unique index permits only one `creating` or `active` candidate per session.
 - Candidate refs are generated only by the server as `openfloor/<session-short>/candidate/<candidate-short>` and are created without force from the configured base ref. Phase 2 exposes no generic ref name or update/delete API.
 - A newer base SHA marks the candidate behind; an unexpected candidate head marks the connection externally modified. Neither condition rewrites GitHub.
+- Status is `creating`, `active`, `merged`, or `creation_failed`. Only creating/active rows participate in the one-live-candidate constraint, so merged history does not block the next cycle.
+- The row stores the active PR identity/state plus GitHub mergeability, merge-requirement state, aggregate observed-check result, ready/merge audit timestamps, confirmed squash SHA, and cleanup outcome.
+
+#### `repository_candidate_files` and `repository_candidate_checks`
+
+- These tables store a bounded, last-reconciled GitHub PR review snapshot. Files contain path, change kind, counts, and bounded patch preview; checks normalize GitHub check runs and commit statuses to passed/waiting/failed.
+- GitHub remains authoritative. Ready and merge mutations refresh these tables before deciding, and webhook events invalidate the review revision so clients refetch.
+- Complete logs, bundles, and unbounded diffs remain outside D1.
 
 #### `github_webhook_deliveries`
 
@@ -410,6 +422,7 @@ Do not hand-edit Drizzle metadata. If a generated migration is wrong, correct th
 - Discard reads the current remote ref and deletes with `--force-with-lease=<expected-sha>` only when the server-generated branch and recorded/reconciled SHAs still match. D1/R2 audit history remains.
 - The active candidate holds at most one `integration_run_id`. Each integrating Workflow reconciles base, candidate, and run refs from GitHub, merges the immutable run commit into the latest candidate without force, updates the expected/remote candidate SHA, and creates a draft PR only when the candidate has none. Retry against a conflict creates a new attempt and run branch from the latest candidate; it never rewrites the conflicted branch.
 - Workflow-file changes under `.github/workflows/` are rejected because the GitHub App has no Workflows permission.
+- `branch_deleted_at` records verified post-merge cleanup separately from owner-requested discard; both retain the run and its audit metadata.
 
 #### `floor_agents`
 
@@ -572,6 +585,8 @@ All paths below are shown without the production `/app` prefix.
 | `POST /api/sessions/[id]/runs/[runId]/cancel` | Owner | Request cancellation of an active run. |
 | `POST /api/sessions/[id]/runs/[runId]/discard` | Owner | Delete only an unchanged, verified OpenFloor run branch using an expected-SHA lease; retain audit history. |
 | `POST /api/sessions/[id]/runs/[runId]/retry` | Owner | Retry a conflicted queue item as a new run attempt pinned to the latest candidate SHA. |
+| `POST /api/sessions/[id]/review/ready` | Owner | Reconcile the exact active PR and use GitHub's ready-for-review mutation; preserve 404 concealment. |
+| `POST /api/sessions/[id]/review/merge` | Owner | Reconcile head/base/files/checks/mergeability, request an exact-head squash merge, confirm it, and safely clean matching OpenFloor refs. |
 | `GET /api/sessions/[id]/runs/[runId]/artifacts` | Session member | Return caller-authorized bounded run artifacts from private R2. |
 | `GET /runtime/run/source` | Short-lived run source JWT | Proxy the exact candidate archive for one run. |
 | `POST/GET /runtime/run/bundle` | Short-lived operation JWT | Store an agent-exported bounded Git bundle and serve it only to the clean trusted publisher. |
@@ -976,14 +991,14 @@ Migrations must land before code that requires them. The build generates `dist/s
 - Draft Hidden mode does not stop outbound sharing.
 - Agent names may contain spaces, while the current `@mention` helper recognizes a single word-like name. Explicit target selection is the reliable path for multiword agent names until mention parsing is redesigned.
 - Owners cannot leave because ownership transfer is deferred.
-- Review is derived from bounded persisted run files/checks plus the active candidate's real draft PR identity; complete artifacts remain outside the snapshot.
+- Review is derived from the latest active or merged candidate, its bounded GitHub PR snapshot, and retained real run attribution; complete artifacts remain outside the snapshot.
 - The UI contains restored visual affordances from a prototype; verify backend wiring before claiming any action is real.
 - Wrangler is pinned. A newer compatibility date may be rejected until Wrangler is upgraded deliberately.
 - This `AGENTS.md` is the comprehensive context source; keep shorter README and focused docs consistent with it.
 
 ## Roadmap guidance
 
-After Phase 6 is deployed and accepted in the browser, the next milestone is Phase 7: reconcile the active PR's files, checks, protections, readiness, and mergeability; add owner-only ready/review and squash-merge actions; verify the merge; safely clean matching run/candidate branches; and start a fresh candidate cycle from the latest base.
+Repository execution Phases 1–7 are implemented. Future milestones should focus on deployment integrations, resolving the separately tracked manual-discard issue without weakening its lease, and broader agent lifecycle/product work rather than expanding GitHub permissions casually.
 
 ## Key decision log
 
@@ -1186,6 +1201,14 @@ After Phase 6 is deployed and accepted in the browser, the next milestone is Pha
 **Rationale:** Two agents may start from the same candidate. If the first integrates before the second publishes, equality is expected to fail even though the second result is still valid and safely attributable. An ancestry check distinguishes ordinary forward candidate progress from rewritten or unrelated history.
 
 **Consequences:** Concurrent nonconflicting runs can both publish and integrate. A conflicting later run reaches GitHub's authoritative merge conflict path instead of failing prematurely during publication. Force-rewritten ancestry and externally modified repository state still fail closed. The trusted publisher sandbox ID includes an explicit image-generation prefix; increment it whenever publisher image contents change so recovery cannot attach to a container from an older image rollout.
+
+### 2026-08-19 — Make GitHub authoritative for final review and squash merge
+
+**Decision:** The latest active or merged candidate owns a bounded persisted snapshot of its GitHub PR files, check runs, commit statuses, head/base SHAs, draft state, mergeability, and merge-requirement state. Only the session owner may mark the PR ready or request merge. Merge is always squash, supplies the exact recorded candidate SHA, and proceeds only for an open non-draft PR whose head/base still match and whose GitHub state is clean, mergeable, and passing all observed checks.
+
+**Rationale:** D1 must support reloads and member-visible review without pretending to be the repository, while GitHub protection, review, status, and merge decisions must remain authoritative. An expected-head squash request closes the race between review and merge without granting branch-administration or workflow permissions.
+
+**Consequences:** Confirmed merges transition the candidate to durable `merged` history and record the squash SHA. Cleanup verifies every server-generated run/candidate ref and deletes only exact matches with Git `--force-with-lease`; changed refs are retained and cleanup is marked partial. Run cleanup uses `branch_deleted_at`, distinct from manual discard. A merged candidate no longer participates in the live-candidate unique index, and the next owner-started run creates a new candidate from the current base. No generic ref CRUD, force update, protection mutation, alternate merge method, or administration permission is exposed.
 
 ## How to record the next decision
 
