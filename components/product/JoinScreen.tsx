@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { BASE_PATH } from "@/components/basePath";
@@ -34,7 +35,7 @@ export function JoinScreen({ token, preview, displayName }: { token: string; pre
         <dl><div><dt>Host</dt><dd>{preview.ownerName}</dd></div><div><dt>Joining as</dt><dd>{displayName}</dd></div></dl>
         {error && <p className="form-error" role="alert">{error}</p>}
         <button className="button" data-variant="primary" data-size="lg" disabled={joining} onClick={join}>{joining ? "Joining…" : "Join session"}</button>
-        <a href={`${BASE_PATH}/home`}>Back to your sessions</a>
+        <Link href="/home">Back to your sessions</Link>
       </section>
     </main>
   );

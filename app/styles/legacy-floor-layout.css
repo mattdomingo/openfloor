@@ -58,8 +58,14 @@
 }
 
 .session-path a {
+  min-width: 0;
   color: var(--text-tertiary);
   text-decoration: none;
+}
+
+.session-path a strong {
+  display: block;
+  color: var(--text-primary);
 }
 
 .session-path a:hover {

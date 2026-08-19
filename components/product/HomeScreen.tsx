@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
 import { BASE_PATH } from "@/components/basePath";
@@ -88,7 +89,7 @@ function SessionGrid({ sessions, onDelete }: { sessions: SessionSummary[]; onDel
         <div className="session-card" key={session.id}>
           <div className="session-card-head">
             {/* The link stays on the title text so tests and readers keep one obvious target. */}
-            <a className="session-card-link" href={`${BASE_PATH}/session/${session.id}`}><strong>{session.title}</strong></a>
+            <Link className="session-card-link" href={`/session/${session.id}`}><strong>{session.title}</strong></Link>
             <span className="session-card-pills">{session.endedAt != null && <span className="role-pill">Ended</span>}<span className="role-pill">{session.role}</span></span>
           </div>
           <p>{session.objective || "No objective has been written yet."}</p>
