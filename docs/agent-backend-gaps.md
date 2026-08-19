@@ -1,6 +1,6 @@
 # Agent backend gaps
 
-The current backend persists collaboration state plus Phase 1 repository configuration. A session owner can connect one GitHub App installation/repository through a signed, expiring, single-use callback, select a base branch, configure ordered required-check commands, disconnect, and reconnect. Session members can read the connection. A public bounded webhook route verifies GitHub HMAC signatures before acknowledging deliveries. These records survive reloads, but Phase 1 deliberately performs no GitHub ref or content mutation.
+The current backend persists collaboration state plus Phase 1 repository configuration. A session owner can connect one GitHub App installation/repository through a signed, expiring, single-use callback, select a base branch, optionally configure ordered required-check commands, disconnect, and reconnect. Session members can read the connection. A public bounded webhook route verifies GitHub HMAC signatures before acknowledging deliveries. These records survive reloads, but Phase 1 deliberately performs no GitHub ref or content mutation.
 
 The following capabilities require a separate trusted agent-runtime and repository integration and are intentionally not simulated:
 

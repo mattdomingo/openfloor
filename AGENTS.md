@@ -361,8 +361,9 @@ Do not hand-edit Drizzle metadata. If a generated migration is wrong, correct th
 
 #### `repository_check_commands`
 
-- Stores one to eight owner-configured shell commands in explicit zero-based order.
+- Stores zero to eight owner-configured shell commands in explicit zero-based order.
 - Commands are inert configuration in Phase 1. The real preflight runner begins in Phase 3.
+- An empty list is valid for repository connection, but future runner and integration actions must require at least one configured command before executing code.
 
 #### `floor_agents`
 
@@ -536,7 +537,7 @@ Keep server validation in `lib/validation.ts` and cover it with unit tests.
 - Queue order/merge ID list: unique strings, maximum 500 items; merge requires at least two.
 - Live draft: maximum 4,000, not trimmed because it represents in-progress text.
 - Repository selection: repository ID maximum 100 characters; base branch required and maximum 255 characters.
-- Required check commands: one to eight ordered nonempty commands, trimmed, maximum 500 characters each.
+- Required check commands: optional; zero to eight ordered nonempty commands, trimmed, maximum 500 characters each.
 
 ## Frontend architecture
 
@@ -1022,6 +1023,14 @@ Do not begin by filling the existing UI with guessed fields. Define the authorit
 **Rationale:** Reusing the working production application, Access policy, domain, and bindings removes a second environment's DNS, Access, secret, and deployment setup from the critical path. A disposable repository limits the GitHub-side impact while the integration matures.
 
 **Consequences:** The unused `openfloor-development` D1 database may remain for later cleanup but is not referenced by application configuration. Production migrations must precede code deployment. The five GitHub App secrets must be configured before deploying the repository UI, and each phase must still pass the complete pipeline and stop for explicit browser acceptance. Expanding the App beyond the disposable repository requires a separate deliberate decision.
+
+### 2026-08-19 — Allow repository connection before checks are configured
+
+**Decision:** Required-check commands are optional when an owner connects or configures a repository. The connection displays an explicit unconfigured state when the command list is empty.
+
+**Rationale:** Repository authorization and selection are useful independently of knowing the repository's test commands. Requiring commands during connection prevents owners from completing GitHub setup and discovering the repository before deciding how it should be verified.
+
+**Consequences:** The repository API accepts zero to eight commands. Future preflight, agent-run, publication, and integration actions must fail closed until the owner configures at least one command; an empty list must never be treated as a passing check suite.
 
 ## How to record the next decision
 

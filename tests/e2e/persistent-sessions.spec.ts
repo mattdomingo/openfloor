@@ -59,14 +59,19 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await owner.getByRole("button", { name: "Connect GitHub" }).click();
   await expect(owner.getByRole("combobox", { name: "Connected repository" })).toHaveValue("9001");
   await expect(owner.getByRole("combobox", { name: "Repository base branch" })).toHaveValue("main");
-  await owner.getByLabel("Required check commands").fill("npm test\nnpm run build");
   await owner.getByRole("button", { name: "Save repository" }).click();
   await expect(owner.getByText("openfloor-test/repository-integration")).toBeVisible();
-  await expect(owner.getByText("npm test", { exact: true })).toBeVisible();
+  await expect(owner.getByText("Not configured", { exact: true })).toBeVisible();
   await member.reload();
   await expect(member.getByText("openfloor-test/repository-integration")).toBeVisible();
+  await expect(member.getByText("Not configured", { exact: true })).toBeVisible();
   await expect(member.getByRole("button", { name: "Configure" })).toHaveCount(0);
   await expect(member.getByRole("button", { name: "Disconnect" })).toHaveCount(0);
+
+  await owner.getByRole("button", { name: "Configure" }).click();
+  await owner.getByLabel("Required check commands").fill("npm test\nnpm run build");
+  await owner.getByRole("button", { name: "Save repository" }).click();
+  await expect(owner.getByText("npm test", { exact: true })).toBeVisible();
 
   await owner.getByRole("button", { name: "Disconnect" }).click();
   await expect(owner.getByText("disconnected", { exact: true })).toBeVisible();

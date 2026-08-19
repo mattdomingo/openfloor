@@ -28,7 +28,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   const pending = await getPendingGitHubInstallation(sessionId, user.id);
   if (!pending) return Response.json({ error: "Session not found" }, { status: 404 });
   const input = await readInput(request);
-  if (!input) return Response.json({ error: "Select a repository, base branch, and one to eight valid check commands" }, { status: 400 });
+  if (!input) return Response.json({ error: "Select a valid repository and base branch, with no more than eight valid check commands" }, { status: 400 });
   return configureFromGitHub(sessionId, user.id, pending.stateId, pending.installationId, input);
 }
 
@@ -44,7 +44,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     return Response.json({ error: "Reconnect the repository before changing its configuration" }, { status: 409 });
   }
   const input = await readInput(request);
-  if (!input) return Response.json({ error: "Select a repository, base branch, and one to eight valid check commands" }, { status: 400 });
+  if (!input) return Response.json({ error: "Select a valid repository and base branch, with no more than eight valid check commands" }, { status: 400 });
   if (input.repositoryId !== existing.repositoryId) {
     return Response.json({ error: "Disconnect before selecting another repository" }, { status: 409 });
   }

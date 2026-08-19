@@ -65,3 +65,5 @@ npx wrangler deploy --config dist/server/wrangler.json
 ```
 
 The repository connection is read-only at the product-workflow level in Phase 1. Although the GitHub App has future branch permissions, OpenFloor exposes no ref creation, update, deletion, commit, pull-request, or merge operation until its accepted later phase.
+
+Required check commands are optional while connecting a repository. A later runner or integration action must refuse to execute until the owner configures at least one command.

@@ -182,7 +182,9 @@ export function RepositoryCard({
           </div>
           <div className="repository-checks">
             <span>Required checks</span>
-            <ol>{repository.checkCommands.map((item) => <li key={item.id}><code>{item.command}</code></li>)}</ol>
+            {repository.checkCommands.length > 0
+              ? <ol>{repository.checkCommands.map((item) => <li key={item.id}><code>{item.command}</code></li>)}</ol>
+              : <p>Not configured</p>}
           </div>
           {role === "owner" && (
             <div className="button-row">
@@ -213,10 +215,10 @@ export function RepositoryCard({
           <label>
             <span>Required check commands</span>
             <textarea aria-label="Required check commands" value={commands} onChange={(event) => setCommands(event.target.value)} rows={4} />
-            <small>Enter one shell command per line. Every command must pass before later execution phases may integrate code.</small>
+            <small>Optional while connecting. Enter one shell command per line; execution will require checks to be configured first.</small>
           </label>
           <div className="button-row">
-            <button className="button" data-variant="primary" onClick={save} disabled={busy || !selectedRepository || !baseBranch || !commands.trim()}>Save repository</button>
+            <button className="button" data-variant="primary" onClick={save} disabled={busy || !selectedRepository || !baseBranch}>Save repository</button>
             {!beginSetup && repository?.status === "connected" && <button className="button" onClick={() => setEditing(false)} disabled={busy}>Cancel</button>}
           </div>
         </div>

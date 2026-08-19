@@ -87,13 +87,15 @@ export function parseQueueMergeInput(value: unknown): QueueMergeInput | null {
 export function parseRepositoryConnectionInput(value: unknown): RepositoryConnectionInput | null {
   if (!value || typeof value !== "object") return null;
   const input = value as Record<string, unknown>;
-  if (typeof input.repositoryId !== "string" || typeof input.baseBranch !== "string" || !Array.isArray(input.checkCommands)) return null;
+  if (typeof input.repositoryId !== "string" || typeof input.baseBranch !== "string") return null;
+  if (input.checkCommands !== undefined && !Array.isArray(input.checkCommands)) return null;
   const repositoryId = input.repositoryId.trim();
   const baseBranch = input.baseBranch.trim();
   if (!repositoryId || repositoryId.length > 100 || !baseBranch || baseBranch.length > 255) return null;
-  if (input.checkCommands.length === 0 || input.checkCommands.length > 8) return null;
-  if (input.checkCommands.some((command) => typeof command !== "string")) return null;
-  const checkCommands = input.checkCommands.map((command) => (command as string).trim());
+  const rawCommands = input.checkCommands ?? [];
+  if (!Array.isArray(rawCommands) || rawCommands.length > 8) return null;
+  if (rawCommands.some((command) => typeof command !== "string")) return null;
+  const checkCommands = rawCommands.map((command) => (command as string).trim());
   if (checkCommands.some((command) => !command || command.length > 500)) return null;
   return { repositoryId, baseBranch, checkCommands };
 }

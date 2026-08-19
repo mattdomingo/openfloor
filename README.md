@@ -16,7 +16,7 @@ openssl rand -hex 32
 
 Open `.dev.vars` and replace `INVITE_SIGNING_SECRET` with the random value printed by the last command. You can also change the three `OPENFLOOR_DEV_USER_*` values to the local name and email you want displayed. The Cloudflare Access placeholders can remain unchanged for local development.
 
-Repository connection additionally requires a GitHub App. Follow [`docs/github-production.md`](docs/github-production.md) to configure its setup URL, webhook, least-privilege repository permissions, disposable acceptance repository, and five `GITHUB_*` values. Phase 1 persists the selected repository, base branch, and required check commands but performs no branch or content mutation.
+Repository connection additionally requires a GitHub App. Follow [`docs/github-production.md`](docs/github-production.md) to configure its setup URL, webhook, least-privilege repository permissions, disposable acceptance repository, and five `GITHUB_*` values. Phase 1 persists the selected repository, base branch, and any configured required check commands but performs no branch or content mutation.
 
 Create the local D1 tables, then start the development server:
 
