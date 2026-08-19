@@ -623,10 +623,15 @@
 .owner-head strong {
   font-size: var(--text-sm);
   font-weight: 650;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .owner-head .state-tag {
   margin-left: auto;
+  flex-shrink: 0;
 }
 
 .owner-card-chevron {
