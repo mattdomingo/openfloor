@@ -1,0 +1,292 @@
+import type { AuthenticatedIdentity } from "@/lib/identity";
+import type { AppUser, SessionMember, SessionRole, SessionSummary } from "@/lib/session-types";
+import { getDb, type D1DatabaseLike } from "./index";
+
+type SessionRecord = {
+  id: string;
+  title: string;
+  objective: string | null;
+  role: SessionRole;
+  memberCount: number;
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type InvitePreview = {
+  inviteId: string;
+  sessionId: string;
+  title: string;
+  objective: string | null;
+  ownerName: string;
+};
+
+export async function upsertUser(identity: AuthenticatedIdentity, database = getDb()): Promise<AppUser> {
+  const now = Date.now();
+  const createdId = crypto.randomUUID();
+  const user = await database
+    .prepare(
+      `INSERT INTO users (id, chatgpt_user_id, email, display_name, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(chatgpt_user_id) DO UPDATE SET
+         email = excluded.email,
+         display_name = excluded.display_name,
+         updated_at = excluded.updated_at
+       RETURNING
+         id,
+         chatgpt_user_id AS chatgptUserId,
+         email,
+         display_name AS displayName,
+         created_at AS createdAt,
+         updated_at AS updatedAt`,
+    )
+    .bind(createdId, identity.providerUserId, identity.email, identity.displayName, now, now)
+    .first<AppUser>();
+
+  if (!user) throw new Error("Unable to create or update the current user.");
+  return user;
+}
+
+export async function findUserByProviderId(
+  providerUserId: string,
+  database = getDb(),
+): Promise<AppUser | null> {
+  return database
+    .prepare(
+      `SELECT id, chatgpt_user_id AS chatgptUserId, email, display_name AS displayName,
+              created_at AS createdAt, updated_at AS updatedAt
+       FROM users WHERE chatgpt_user_id = ?`,
+    )
+    .bind(providerUserId)
+    .first<AppUser>();
+}
+
+export async function listSessionsForUser(userId: string, database = getDb()): Promise<SessionSummary[]> {
+  const result = await database
+    .prepare(
+      `SELECT s.id, s.title, s.objective, mine.role,
+              COUNT(all_members.user_id) AS memberCount,
+              s.created_at AS createdAt, s.updated_at AS updatedAt
+       FROM sessions s
+       JOIN session_members mine ON mine.session_id = s.id AND mine.user_id = ?
+       JOIN session_members all_members ON all_members.session_id = s.id
+       GROUP BY s.id, mine.role
+       ORDER BY s.updated_at DESC`,
+    )
+    .bind(userId)
+    .all<SessionRecord>();
+  return result.results.map(normalizeSession);
+}
+
+export async function createSession(
+  userId: string,
+  input: { title: string; objective: string | null },
+  database = getDb(),
+): Promise<{ session: SessionSummary; inviteId: string }> {
+  const sessionId = crypto.randomUUID();
+  const inviteId = crypto.randomUUID();
+  const now = Date.now();
+
+  await database.batch([
+    database
+      .prepare("INSERT INTO sessions (id, title, objective, created_at, updated_at) VALUES (?, ?, ?, ?, ?)")
+      .bind(sessionId, input.title, input.objective, now, now),
+    database
+      .prepare("INSERT INTO session_members (session_id, user_id, role, joined_at) VALUES (?, ?, 'owner', ?)")
+      .bind(sessionId, userId, now),
+    database
+      .prepare("INSERT INTO session_invites (id, session_id, created_by, created_at) VALUES (?, ?, ?, ?)")
+      .bind(inviteId, sessionId, userId, now),
+  ]);
+
+  return {
+    session: {
+      id: sessionId,
+      title: input.title,
+      objective: input.objective,
+      role: "owner",
+      memberCount: 1,
+      createdAt: now,
+      updatedAt: now,
+    },
+    inviteId,
+  };
+}
+
+export async function getSessionForMember(
+  sessionId: string,
+  userId: string,
+  database = getDb(),
+): Promise<SessionSummary | null> {
+  const record = await database
+    .prepare(
+      `SELECT s.id, s.title, s.objective, mine.role,
+              COUNT(all_members.user_id) AS memberCount,
+              s.created_at AS createdAt, s.updated_at AS updatedAt
+       FROM sessions s
+       JOIN session_members mine ON mine.session_id = s.id AND mine.user_id = ?
+       JOIN session_members all_members ON all_members.session_id = s.id
+       WHERE s.id = ?
+       GROUP BY s.id, mine.role`,
+    )
+    .bind(userId, sessionId)
+    .first<SessionRecord>();
+  return record ? normalizeSession(record) : null;
+}
+
+export async function getSessionMembers(
+  sessionId: string,
+  userId: string,
+  database = getDb(),
+): Promise<SessionMember[] | null> {
+  if (!(await getMembershipRole(sessionId, userId, database))) return null;
+  const result = await database
+    .prepare(
+      `SELECT u.id, u.display_name AS displayName, sm.role, sm.joined_at AS joinedAt
+       FROM session_members sm
+       JOIN users u ON u.id = sm.user_id
+       WHERE sm.session_id = ?
+       ORDER BY CASE sm.role WHEN 'owner' THEN 0 ELSE 1 END, lower(u.display_name), sm.joined_at`,
+    )
+    .bind(sessionId)
+    .all<Omit<SessionMember, "online">>();
+  return result.results.map((member) => ({ ...member, online: false }));
+}
+
+export async function getMembershipRole(
+  sessionId: string,
+  userId: string,
+  database = getDb(),
+): Promise<SessionRole | null> {
+  const row = await database
+    .prepare("SELECT role FROM session_members WHERE session_id = ? AND user_id = ?")
+    .bind(sessionId, userId)
+    .first<{ role: SessionRole }>();
+  return row?.role ?? null;
+}
+
+export async function getInvitePreview(inviteId: string, database = getDb()): Promise<InvitePreview | null> {
+  return database
+    .prepare(
+      `SELECT i.id AS inviteId, s.id AS sessionId, s.title, s.objective,
+              owner.display_name AS ownerName
+       FROM session_invites i
+       JOIN sessions s ON s.id = i.session_id
+       JOIN session_members owner_member ON owner_member.session_id = s.id AND owner_member.role = 'owner'
+       JOIN users owner ON owner.id = owner_member.user_id
+       WHERE i.id = ? AND i.revoked_at IS NULL`,
+    )
+    .bind(inviteId)
+    .first<InvitePreview>();
+}
+
+export async function acceptInvite(
+  inviteId: string,
+  userId: string,
+  database = getDb(),
+): Promise<string | null> {
+  const now = Date.now();
+  await database.batch([
+    database.prepare(
+      `INSERT INTO session_members (session_id, user_id, role, joined_at)
+       SELECT session_id, ?, 'member', ? FROM session_invites
+       WHERE id = ? AND revoked_at IS NULL
+       ON CONFLICT(session_id, user_id) DO NOTHING`,
+    ).bind(userId, now, inviteId),
+    database.prepare(
+      `UPDATE sessions SET updated_at = ?
+       WHERE id = (SELECT session_id FROM session_invites WHERE id = ? AND revoked_at IS NULL)`,
+    ).bind(now, inviteId),
+  ]);
+
+  const membership = await database
+    .prepare(
+      `SELECT sm.session_id AS sessionId
+       FROM session_members sm
+       JOIN session_invites i ON i.session_id = sm.session_id
+       WHERE i.id = ? AND i.revoked_at IS NULL AND sm.user_id = ?`,
+    )
+    .bind(inviteId, userId)
+    .first<{ sessionId: string }>();
+
+  return membership?.sessionId ?? null;
+}
+
+export async function getActiveInviteId(
+  sessionId: string,
+  ownerId: string,
+  database = getDb(),
+): Promise<string | null> {
+  if ((await getMembershipRole(sessionId, ownerId, database)) !== "owner") return null;
+  const invite = await database
+    .prepare("SELECT id FROM session_invites WHERE session_id = ? AND revoked_at IS NULL")
+    .bind(sessionId)
+    .first<{ id: string }>();
+  return invite?.id ?? null;
+}
+
+export async function rotateInvite(
+  sessionId: string,
+  ownerId: string,
+  database = getDb(),
+): Promise<string | null> {
+  if ((await getMembershipRole(sessionId, ownerId, database)) !== "owner") return null;
+  const inviteId = crypto.randomUUID();
+  const now = Date.now();
+  await database.batch([
+    database
+      .prepare("UPDATE session_invites SET revoked_at = ? WHERE session_id = ? AND revoked_at IS NULL")
+      .bind(now, sessionId),
+    database
+      .prepare("INSERT INTO session_invites (id, session_id, created_by, created_at) VALUES (?, ?, ?, ?)")
+      .bind(inviteId, sessionId, ownerId, now),
+  ]);
+  return inviteId;
+}
+
+export async function revokeInvite(
+  sessionId: string,
+  ownerId: string,
+  database = getDb(),
+): Promise<boolean> {
+  if ((await getMembershipRole(sessionId, ownerId, database)) !== "owner") return false;
+  await database
+    .prepare("UPDATE session_invites SET revoked_at = ? WHERE session_id = ? AND revoked_at IS NULL")
+    .bind(Date.now(), sessionId)
+    .run();
+  return true;
+}
+
+export async function leaveSession(
+  sessionId: string,
+  userId: string,
+  database = getDb(),
+): Promise<"left" | "owner" | "missing"> {
+  const role = await getMembershipRole(sessionId, userId, database);
+  if (!role) return "missing";
+  if (role === "owner") return "owner";
+  await database.batch([
+    database.prepare("DELETE FROM session_members WHERE session_id = ? AND user_id = ?").bind(sessionId, userId),
+    database.prepare("UPDATE sessions SET updated_at = ? WHERE id = ?").bind(Date.now(), sessionId),
+  ]);
+  return "left";
+}
+
+export async function authorizePresence(
+  sessionId: string,
+  providerUserId: string,
+  database: D1DatabaseLike,
+): Promise<{ userId: string; displayName: string } | null> {
+  return database
+    .prepare(
+      `SELECT u.id AS userId, u.display_name AS displayName
+       FROM users u
+       JOIN session_members sm ON sm.user_id = u.id
+       WHERE u.chatgpt_user_id = ? AND sm.session_id = ?`,
+    )
+    .bind(providerUserId, sessionId)
+    .first<{ userId: string; displayName: string }>();
+}
+
+function normalizeSession(record: SessionRecord): SessionSummary {
+  return { ...record, memberCount: Number(record.memberCount) };
+}

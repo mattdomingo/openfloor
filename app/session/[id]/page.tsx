@@ -1,7 +1,19 @@
-import { sessionTitleForId } from "@/components/home/data";
-import { SessionGate } from "@/components/session/SessionGate";
+import { notFound } from "next/navigation";
+import { requireChatGPTUser } from "@/app/chatgpt-auth";
+import { getSessionForMember, getSessionMembers, upsertUser } from "@/db/sessions";
+import { SessionScreen } from "@/components/product/SessionScreen";
+
+export const dynamic = "force-dynamic";
 
 export default async function SessionPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  return <SessionGate sessionTitle={sessionTitleForId(id)} />;
+  return <AuthenticatedSession id={id} />;
+}
+
+async function AuthenticatedSession({ id }: { id: string }) {
+  const identity = await requireChatGPTUser(`/session/${encodeURIComponent(id)}`);
+  const user = await upsertUser(identity);
+  const [session, members] = await Promise.all([getSessionForMember(id, user.id), getSessionMembers(id, user.id)]);
+  if (!session || !members) notFound();
+  return <SessionScreen user={user} session={session} initialMembers={members} />;
 }

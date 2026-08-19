@@ -1,0 +1,34 @@
+export type SessionRole = "owner" | "member";
+
+export type SessionSummary = {
+  id: string;
+  title: string;
+  objective: string | null;
+  role: SessionRole;
+  memberCount: number;
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type SessionMember = {
+  id: string;
+  displayName: string;
+  role: SessionRole;
+  joinedAt: number;
+  online: boolean;
+};
+
+export type PresenceEvent =
+  | { type: "presence.snapshot"; onlineUserIds: string[] }
+  | { type: "presence.changed"; userId: string; online: boolean }
+  | { type: "members.changed" }
+  | { type: "error"; code: string };
+
+export type AppUser = {
+  id: string;
+  chatgptUserId: string;
+  email: string;
+  displayName: string;
+  createdAt: number;
+  updatedAt: number;
+};
