@@ -282,9 +282,9 @@ export function RepositoryCard({
           {preflight && (
             <div className="repository-checks" aria-label="Runner verification">
               <span>Runner verification</span>
-              <p><strong>{humanize(preflight.status)}</strong>{preflight.summary ? ` · ${preflight.summary}` : ""}</p>
+              <p><strong data-status={preflight.status}>{humanize(preflight.status)}</strong>{preflight.summary ? ` · ${preflight.summary}` : ""}</p>
               <ol>{preflight.checks.map((check) => (
-                <li key={check.id}><code>{check.command}</code> — {humanize(check.status)}{check.exitCode == null ? "" : ` (exit ${check.exitCode})`}</li>
+                <li key={check.id}><code>{check.command}</code> — <span data-status={check.status}>{humanize(check.status)}</span>{check.exitCode == null ? "" : ` (exit ${check.exitCode})`}</li>
               ))}</ol>
               {preflight.checks.some((check) => check.hasLog) && <button className="button" onClick={() => void openLogs()} disabled={busy}>Open command output</button>}
               {logs != null && <pre className="repository-log-output">{logs}</pre>}
