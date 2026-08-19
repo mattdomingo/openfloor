@@ -22,6 +22,7 @@ input, textarea { width: 100%; padding: 11px 12px; border: 1px solid var(--line-
 .session-card > p { margin-top: var(--space-4); color: var(--text-secondary); line-height: 1.55; }
 .session-card-foot { align-self: end; margin-top: var(--space-6); color: var(--text-tertiary); font-size: var(--text-xs); }
 .role-pill, .member-role { padding: 3px 8px; border: 1px solid var(--line-soft); border-radius: var(--radius-pill); color: var(--text-secondary); font-size: 10px; font-weight: 750; text-transform: uppercase; }
+.session-card-pills { display: inline-flex; gap: var(--space-2); }
 .empty-state { margin-top: var(--space-6); padding: 64px var(--space-6); text-align: center; }
 .empty-state strong { font: 400 26px var(--font-serif); }
 .empty-state p { margin-top: var(--space-2); color: var(--text-secondary); }

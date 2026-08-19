@@ -8,6 +8,7 @@ export type SessionSummary = {
   memberCount: number;
   createdAt: number;
   updatedAt: number;
+  endedAt: number | null;
 };
 
 export type SessionMember = {
@@ -38,6 +39,7 @@ export type PresenceEvent =
   | { type: "typing.changed"; draft: TypingDraft }
   | { type: "members.changed" }
   | { type: "session.changed"; objective: string | null; updatedAt: number }
+  | { type: "session.ended"; endedAt: number }
   | { type: "floor.changed"; revision: number; domains: import("./floor-types").FloorDomain[] }
   | { type: "error"; code: string };
 

@@ -51,6 +51,14 @@ export class SessionPresence extends DurableObject {
       this.broadcast({ type: "session.changed", objective: body.objective ?? null, updatedAt: body.updatedAt });
       return new Response(null, { status: 204 });
     }
+    if (url.pathname === "/session-ended" && request.method === "POST") {
+      const body = (await request.json()) as { endedAt?: unknown };
+      if (typeof body.endedAt !== "number") return new Response("Invalid session end", { status: 400 });
+      // Sockets stay open on purpose: ended sessions remain readable, and the
+      // server-side write guard is the enforcement.
+      this.broadcast({ type: "session.ended", endedAt: body.endedAt });
+      return new Response(null, { status: 204 });
+    }
     if (url.pathname === "/floor-changed" && request.method === "POST") {
       const body = (await request.json()) as { revision?: unknown; domains?: unknown };
       const allowed = new Set<FloorDomain>(["agents", "assignments", "messages", "queue", "repository", "runs", "review"]);

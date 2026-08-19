@@ -20,6 +20,7 @@ export const sessions = sqliteTable("sessions", {
   objective: text("objective"),
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull(),
+  endedAt: integer("ended_at"),
   floorRevision: integer("floor_revision").notNull().default(0),
 });
 

@@ -10,7 +10,7 @@ import type { AgentInput, AssignmentInput, MessageInput, QueuePromptInput } from
 import { getDb, type D1DatabaseLike } from "./index";
 import { getActiveRepositoryCandidate, getRepositoryConnectionForMember } from "./repositories";
 import { getLatestRepositoryPreflight } from "./preflights";
-import { getMembershipRole } from "./sessions";
+import { getActiveMembershipRole, getMembershipRole } from "./sessions";
 
 type AgentRecord = FloorAgent;
 type AssignmentRecord = FloorAssignment;
@@ -114,7 +114,7 @@ export async function createFloorAgent(
   input: AgentInput,
   database = getDb(),
 ): Promise<FloorSnapshot | null> {
-  if (!(await getMembershipRole(sessionId, userId, database))) return null;
+  if (!(await getActiveMembershipRole(sessionId, userId, database))) return null;
   if (!(await isSessionMember(sessionId, input.ownerUserId, database))) throw new FloorTargetError("Agent owner must be a session member.");
   const id = crypto.randomUUID();
   const now = Date.now();
@@ -141,7 +141,7 @@ export async function updateFloorAssignment(
   input: AssignmentInput,
   database = getDb(),
 ): Promise<FloorSnapshot | null> {
-  if (!(await getMembershipRole(sessionId, userId, database))) return null;
+  if (!(await getActiveMembershipRole(sessionId, userId, database))) return null;
   if (!(await isSessionMember(sessionId, memberId, database))) throw new FloorTargetError("Assignment owner must be a session member.");
   const now = Date.now();
   await database.batch([
@@ -162,7 +162,7 @@ export async function createFloorMessage(
   input: MessageInput,
   database = getDb(),
 ): Promise<FloorSnapshot | null> {
-  if (!(await getMembershipRole(sessionId, userId, database))) return null;
+  if (!(await getActiveMembershipRole(sessionId, userId, database))) return null;
   if (input.recipientUserId && !(await isSessionMember(sessionId, input.recipientUserId, database))) {
     throw new FloorTargetError("Message recipient must be a session member.");
   }
@@ -182,7 +182,7 @@ export async function createFloorQueueItem(
   input: QueuePromptInput,
   database = getDb(),
 ): Promise<FloorSnapshot | null> {
-  if (!(await getMembershipRole(sessionId, userId, database))) return null;
+  if (!(await getActiveMembershipRole(sessionId, userId, database))) return null;
   if (input.agentId && !(await isSessionAgent(sessionId, input.agentId, database))) {
     throw new FloorTargetError("Queue target must belong to this session.");
   }
@@ -210,7 +210,7 @@ export async function reorderFloorQueue(
   itemIds: string[],
   database = getDb(),
 ): Promise<FloorSnapshot | null> {
-  if (!(await getMembershipRole(sessionId, userId, database))) return null;
+  if (!(await getActiveMembershipRole(sessionId, userId, database))) return null;
   const current = await queueIds(sessionId, database);
   if (!sameIds(current, itemIds)) throw new FloorConflictError("Queue order is stale. Refresh and try again.");
   const now = Date.now();
@@ -229,7 +229,7 @@ export async function mergeFloorQueue(
   itemIds: string[],
   database = getDb(),
 ): Promise<FloorSnapshot | null> {
-  if (!(await getMembershipRole(sessionId, userId, database))) return null;
+  if (!(await getActiveMembershipRole(sessionId, userId, database))) return null;
   const selected = await database.prepare(
     `SELECT id, agent_id AS agentId, position FROM floor_queue_items
      WHERE session_id = ? AND id IN (${itemIds.map(() => "?").join(", ")})

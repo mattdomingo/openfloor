@@ -36,6 +36,14 @@ export async function notifyFloorChanged(sessionId: string, revision: number, do
   });
 }
 
+export async function notifySessionEnded(sessionId: string, endedAt: number): Promise<void> {
+  await presenceStub(sessionId)?.fetch("https://presence.internal/session-ended", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ endedAt }),
+  });
+}
+
 export async function disconnectPresenceUser(sessionId: string, userId: string): Promise<void> {
   await presenceStub(sessionId)?.fetch("https://presence.internal/disconnect-user", {
     method: "POST",

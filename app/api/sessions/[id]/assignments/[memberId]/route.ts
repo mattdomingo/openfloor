@@ -1,5 +1,5 @@
-import { FloorTargetError, updateFloorAssignment } from "@/db/floor";
-import { floorMutationResponse, readJson } from "@/lib/floor-api";
+import { updateFloorAssignment } from "@/db/floor";
+import { floorMutationResponse, mutationErrorResponse, readJson } from "@/lib/floor-api";
 import { isApiError, requireApiUser } from "@/lib/server-auth";
 import { parseAssignmentInput } from "@/lib/validation";
 
@@ -15,7 +15,6 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       ? floorMutationResponse(id, floor, ["assignments"])
       : Response.json({ error: "Session not found" }, { status: 404 });
   } catch (error) {
-    if (error instanceof FloorTargetError) return Response.json({ error: error.message }, { status: 400 });
-    throw error;
+    return mutationErrorResponse(error);
   }
 }

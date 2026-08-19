@@ -136,6 +136,7 @@ WebSocket events notify clients about presence or changed domains. D1 remains au
 - Server-only loopback development identity from `.dev.vars`.
 - Internal user records keyed by the stable external provider subject.
 - Session creation, listing, objective editing, membership, roles, and leaving.
+- Owner-only session ending: `ended_at` marks the session read-only for everyone, revokes the active invite, and broadcasts `session.ended`; ended sessions stay readable and members can still leave.
 - HMAC-signed, reusable owner invitations with rotation and revocation.
 - Session lobby with real roster and live online status.
 - Protected Agent Floor with real session title, objective, members, and presence.
@@ -200,6 +201,7 @@ Important behavior:
 - Non-members opening a session or floor get a 404-style not-found response rather than session details.
 - A member who leaves is disconnected from the room's presence object.
 - An owner receives a conflict response if they try to leave.
+- An owner can end the session instead. Ending is final in v1 (no un-end), idempotent, revokes the active invite in the same batch, and leaves all data readable. Mutations on an ended session return `409` with "This session has ended." — never `404`, which clients treat as "kicked from the session". Presence sockets stay open on ended sessions by design.
 - Repository details are visible to session members, but only the owner can connect, configure, disconnect, or reconnect.
 - The GitHub installation callback is protected by Access, signed, expires after 30 minutes, is bound to the initiating owner and session, and can be consumed once.
 - The webhook path must remain outside Cloudflare Access so GitHub can deliver events; signature verification is its authentication boundary.
@@ -336,6 +338,7 @@ Do not hand-edit Drizzle metadata. If a generated migration is wrong, correct th
 - UUID, title, nullable objective, timestamps.
 - `floor_revision` is a monotonically increasing integer for persisted floor reconciliation.
 - Session creation also creates owner membership and an active invite in one D1 batch.
+- Nullable `ended_at` is the lifecycle marker. Null means live; a timestamp means ended and read-only. Writes authorize through `getActiveMembershipRole` (throws `SessionEndedError` for members of ended sessions); reads keep using `getMembershipRole` so ended sessions stay viewable. `leaveSession`, `endSession`, and non-member concealment intentionally bypass the ended guard.
 
 #### `session_members`
 
@@ -483,6 +486,7 @@ There is one `SessionPresence` Durable Object instance per session ID, obtained 
 - `typing.changed`
 - `members.changed`
 - `session.changed`
+- `session.ended`
 - `floor.changed`
 - `error`
 
@@ -490,6 +494,7 @@ Event behavior:
 
 - `members.changed` causes roster and floor refresh.
 - `session.changed` carries the objective and timestamp; clients use last-write-wins by timestamp.
+- `session.ended` carries `endedAt`; clients switch to the read-only presentation without closing their sockets.
 - `floor.changed` carries revision and changed domains; clients refetch if the event revision is newer.
 - Membership removal explicitly closes that user's sockets with a membership-ended code.
 
@@ -527,6 +532,7 @@ All paths below are shown without the production `/app` prefix.
 | `DELETE /api/sessions/[id]/invite` | Owner | Revoke active link. |
 | `POST /api/invites/[token]/accept` | Authenticated user | Idempotently add member and broadcast `members.changed`. |
 | `DELETE /api/sessions/[id]/membership` | Non-owner member | Leave, disconnect presence, and notify roster. |
+| `POST /api/sessions/[id]/end` | Owner | Idempotently set `ended_at`, revoke the active invite, and broadcast `session.ended`. |
 | `GET /api/sessions/[id]/floor` | Session member | Return the caller-specific authoritative `FloorSnapshot`. |
 | `POST /api/sessions/[id]/agents` | Session member | Create `{ name, role, task, ownerUserId }`. |
 | `PATCH /api/sessions/[id]/assignments/[memberId]` | Session member | Persist `{ task: string \| null }`. |
@@ -555,7 +561,7 @@ Response conventions:
 - `401` means no authenticated identity.
 - `400` means invalid input or a cross-session/invalid target.
 - `404` conceals nonexistent sessions, non-membership, unauthorized owner-only resources, invalid invites, and revoked invites.
-- `409` represents conflicts such as duplicate normalized agent name, stale queue order, or owner leave.
+- `409` represents conflicts such as duplicate normalized agent name, stale queue order, owner leave, or any mutation on an ended session ("This session has ended.").
 - Floor mutations return `{ floor }`; clients treat it as authoritative.
 
 ### Validation limits
@@ -965,6 +971,14 @@ After Phase 3 is deployed and accepted in the browser, the next milestone is Pha
 Do not begin by filling the existing UI with guessed fields. Define the authoritative service and public contract, add nullable persisted types and migrations, then connect components to genuine data.
 
 ## Key decision log
+
+### 2026-08-19 — Sessions end with a timestamp, not a status enum
+
+**Decision:** Session lifecycle is a nullable `sessions.ended_at` set by an owner-only idempotent `POST /api/sessions/[id]/end`. Ending revokes the active invite in the same batch, broadcasts `session.ended`, and makes every session-scoped mutation return `409` through one write guard (`getActiveMembershipRole` throwing `SessionEndedError`); reads, leaving, and presence connections keep working. There is no un-end in v1.
+
+**Rationale:** The purge/retention work needs the timestamp anyway (precedent: `revoked_at`, `disconnectedAt`); a single write-only guard at the membership choke point beats per-route checks; `409` instead of `404` because clients treat `404` as membership loss and kick to `/home`; keeping sockets open preserves read access and avoids a pointless reconnect loop since `authorizePresence` is membership-based.
+
+**Consequences:** New mutating db helpers must authorize with `getActiveMembershipRole`, not `getMembershipRole` (reads keep the latter). `db/repositories.ts` mutations are not yet guarded — the UI hides the repository card on ended sessions; swap its guards when the GitHub integration surface settles. Ended sessions remain fully readable until a future retention purge deletes them.
 
 ### 2026-08-18 — Preserve the original prototype
 
