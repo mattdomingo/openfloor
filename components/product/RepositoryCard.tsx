@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { BASE_PATH } from "@/components/basePath";
+import { SelectMenu } from "@/components/session/SelectMenu";
 import type {
   GitHubRepositoryOption,
   RepositoryCandidate,
@@ -308,18 +309,26 @@ export function RepositoryCard({
       )}
       {editing && role === "owner" && (
         <div className="repository-form">
-          <label>
+          <div className="repository-field">
             <span>Repository</span>
-            <select aria-label="Connected repository" value={repositoryId} onChange={(event) => void chooseRepository(event.target.value)} disabled={busy}>
-              {repositories.map((item) => <option key={item.id} value={item.id}>{item.fullName}</option>)}
-            </select>
-          </label>
-          <label>
+            <SelectMenu
+              label="Connected repository"
+              value={repositoryId}
+              onChange={(next) => void chooseRepository(next)}
+              disabled={busy}
+              options={repositories.map((item) => ({ value: item.id, label: item.fullName }))}
+            />
+          </div>
+          <div className="repository-field">
             <span>Base branch</span>
-            <select aria-label="Repository base branch" value={baseBranch} onChange={(event) => setBaseBranch(event.target.value)} disabled={busy || branches.length === 0}>
-              {branches.map((branch) => <option key={branch} value={branch}>{branch}</option>)}
-            </select>
-          </label>
+            <SelectMenu
+              label="Repository base branch"
+              value={baseBranch}
+              onChange={setBaseBranch}
+              disabled={busy || branches.length === 0}
+              options={branches.map((branch) => ({ value: branch, label: branch }))}
+            />
+          </div>
           <label>
             <span>Required check commands</span>
             <textarea aria-label="Required check commands" value={commands} onChange={(event) => setCommands(event.target.value)} rows={4} />

@@ -3,6 +3,7 @@
 import { FormEvent, useEffect, useId, useRef, useState } from "react";
 import type { CreateFloorAgentInput, FloorParticipant } from "@/lib/floor-types";
 import { Icon, useDialogDismiss } from "./primitives";
+import { SelectMenu } from "./SelectMenu";
 
 export function CreateAgentDialog({
   onCreate,
@@ -50,12 +51,15 @@ export function CreateAgentDialog({
           <label className="field"><span className="label">Name</span><input ref={nameRef} value={name} onChange={(event) => setName(event.target.value)} required maxLength={24} /></label>
           <label className="field"><span className="label">Role</span><input value={role} onChange={(event) => setRole(event.target.value)} required maxLength={80} /></label>
           <label className="field"><span className="label">Task</span><textarea value={task} onChange={(event) => setTask(event.target.value)} required maxLength={1000} rows={4} /></label>
-          <label className="field">
+          <div className="field">
             <span className="label">Owner</span>
-            <select value={ownerUserId} onChange={(event) => setOwnerUserId(event.target.value)}>
-              {participants.map((person) => <option key={person.id} value={person.id}>{person.name}{person.isCurrentUser ? " (You)" : ""}</option>)}
-            </select>
-          </label>
+            <SelectMenu
+              label="Agent owner"
+              value={ownerUserId}
+              onChange={setOwnerUserId}
+              options={participants.map((person) => ({ value: person.id, label: `${person.name}${person.isCurrentUser ? " (You)" : ""}` }))}
+            />
+          </div>
         </div>
         <div className="dialog-foot">
           <button type="button" className="button" data-variant="quiet" onClick={dismiss}>Cancel</button>

@@ -624,6 +624,7 @@ If product requirements call for any of these to persist or synchronize, add an 
 
 - Global styles are composed from `app/globals.css` and files under `app/styles/`.
 - `tokens.css` is the design-token source.
+- `components/session/SelectMenu.tsx` is the house dropdown (trigger + styled listbox, combobox keyboard semantics). Do not introduce native `<select>` elements; the OS widget does not match the floor.
 - The `legacy-floor-*` filenames describe their origin in the preserved demo UI, not permission to restore demo behavior.
 - Reuse genuine visual primitives, but do not reintroduce fixture imports, fake terminals, or simulation logic with old CSS.
 - The responsive floor stacks panels and draft lanes on smaller screens.
