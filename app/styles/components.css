@@ -41,7 +41,7 @@ input, textarea { width: 100%; padding: 11px 12px; border: 1px solid var(--line-
 .select-menu[data-align="up"] .select-menu-list { top: auto; bottom: calc(100% + var(--space-1)); transform-origin: bottom left; }
 .select-menu-list li { display: grid; gap: 2px; padding: 7px var(--space-3); border-radius: var(--radius-sm); font-size: var(--text-sm); cursor: pointer; white-space: nowrap; }
 .select-menu-list li small { color: var(--text-tertiary); }
-.select-menu-list li[data-active="true"] { background: var(--surface-inset); }
+.select-menu-list li[data-active="true"] { background: var(--surface-sunken); }
 .select-menu-list li[data-selected="true"] { background: var(--accent-soft); color: var(--accent); }
 .empty-state { margin-top: var(--space-6); padding: 64px var(--space-6); text-align: center; }
 .empty-state strong { font: 400 26px var(--font-serif); }
@@ -77,12 +77,17 @@ input, textarea { width: 100%; padding: 11px 12px; border: 1px solid var(--line-
 .repository-summary strong { font-size: var(--text-md); }
 .repository-summary span { color: var(--text-secondary); font-size: var(--text-sm); }
 .repository-summary span[data-status="connected"], .repository-summary span[data-status="ready"] { color: var(--status-running); }
-.repository-summary span[data-status="revoked"], .repository-summary span[data-status="inaccessible"], .repository-summary span[data-status="externally_modified"] { color: var(--status-danger); }
+.repository-summary span[data-status="revoked"], .repository-summary span[data-status="inaccessible"], .repository-summary span[data-status="externally_modified"] { color: var(--status-blocked); }
 .repository-summary span[data-status="disconnected"] { color: var(--text-tertiary); }
+.repository-checks [data-status="provisioning"], .repository-checks [data-status="pending"], .repository-checks [data-status="cancelled"] { color: var(--status-waiting); }
+.repository-checks [data-status="running"] { color: var(--status-review); }
+.repository-checks [data-status="passed"] { color: var(--status-running); }
+.repository-checks [data-status="failed"] { color: var(--status-blocked); }
+.repository-checks [data-status="timed_out"] { color: var(--status-attention); }
 .repository-summary code, .repository-checks code { font-family: var(--font-mono); font-size: var(--text-xs); }
 .repository-checks { margin-bottom: var(--space-4); color: var(--text-secondary); font-size: var(--text-sm); }
 .repository-checks ol { display: grid; gap: 5px; margin: var(--space-2) 0 0; padding-left: var(--space-5); }
-.repository-log-output { max-height: 320px; overflow: auto; margin-top: var(--space-3); padding: var(--space-3); border-radius: var(--radius-sm); background: var(--surface-inset); color: var(--text-primary); white-space: pre-wrap; word-break: break-word; font-family: var(--font-mono); font-size: var(--text-xs); }
+.repository-log-output { max-height: 320px; overflow: auto; margin-top: var(--space-3); padding: var(--space-3); border-radius: var(--radius-sm); background: var(--surface-sunken); color: var(--text-primary); white-space: pre-wrap; word-break: break-word; font-family: var(--font-mono); font-size: var(--text-xs); }
 .repository-form { display: grid; gap: var(--space-4); margin-top: var(--space-4); }
 .repository-form label, .repository-form .repository-field { display: grid; gap: var(--space-2); color: var(--text-secondary); font-size: var(--text-sm); }
 .repository-form textarea { width: 100%; border: 1px solid var(--line-soft); border-radius: var(--radius-sm); background: var(--surface-raised); color: var(--text-primary); padding: 10px 12px; }
@@ -128,7 +133,7 @@ input, textarea { width: 100%; padding: 11px 12px; border: 1px solid var(--line-
 .invite-loading { padding: var(--space-3); border: 1px dashed var(--line-strong); color: var(--text-tertiary); font-size: var(--text-sm); }
 .invite-dialog .button-row { margin-top: var(--space-3); }
 .invite-members .value { margin-left: auto; text-transform: capitalize; }
-.review-empty-state { display: grid; place-items: center; align-content: center; min-height: 320px; padding: var(--space-8); text-align: center; border: 1px solid var(--line-soft); border-radius: var(--radius-lg); background: var(--surface-panel); }
+.review-empty-state { display: grid; place-items: center; align-content: center; min-height: 320px; padding: var(--space-8); text-align: center; border: 1px solid var(--line-soft); border-radius: var(--radius-md); background: var(--surface-panel); }
 .review-empty-state .icon { color: var(--text-tertiary); }
 .review-empty-state h2 { margin-top: var(--space-4); font: 400 28px var(--font-serif); }
 .review-empty-state p { max-width: 520px; margin-top: var(--space-3); color: var(--text-secondary); line-height: 1.55; }
