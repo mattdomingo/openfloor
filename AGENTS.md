@@ -814,7 +814,7 @@ Defined in `wrangler.jsonc`:
 
 The phased GitHub rollout currently uses the existing production Worker and D1 database. GitHub App setup and deployment are documented in `docs/github-production.md`. Until the user establishes staging, install the App only on the disposable acceptance repository and complete each phase's browser acceptance before expanding repository access.
 
-Cloudflare Containers requires a Workers Paid account. `PREFLIGHT_ENABLED` is the production rollout gate: keep it `false` until the container image, `SANDBOX`, and `REPOSITORY_PREFLIGHT` bindings deploy successfully. While disabled, the UI omits **Verify runner** and the start endpoint returns `503`; repository connection and candidate reconciliation remain available. Tests explicitly enable the deterministic test adapter.
+Cloudflare Containers requires a Workers Paid account. `PREFLIGHT_ENABLED` is the production rollout gate: production is enabled only after the container image, `SANDBOX`, and `REPOSITORY_PREFLIGHT` bindings deploy successfully. While disabled, the UI omits **Verify runner** and the start endpoint returns `503`; repository connection and candidate reconciliation remain available. Tests explicitly enable the deterministic test adapter.
 
 Durable Object migration `v1` registers `SessionPresence`; `v2` registers `Sandbox`. Keep migration syntax compatible with the pinned Wrangler version.
 
@@ -932,7 +932,7 @@ Migrations must land before code that requires them. The build generates `dist/s
 - Phase 2 uses Contents write only to create the server-generated candidate ref. It exposes no generic branch CRUD, force push, base write, run branch, commit, PR, or deletion route.
 - Phase 3 source checkout proxies an exact GitHub archive through `/runtime/preflight/source`; the Sandbox receives only a short-lived source-only JWT, never the GitHub installation token.
 - `@cloudflare/sandbox` and `cloudflare/sandbox` are pinned together at `0.12.7`. Docker must be running for local development and deploys that build the container image.
-- The production preflight gate remains disabled until the Cloudflare account has Workers Paid/Containers access and a container-enabled deploy succeeds. Do not expose **Verify runner** against missing runtime bindings.
+- The production preflight gate was enabled after the Workers Paid upgrade and successful container-enabled deployment. Do not expose **Verify runner** against missing runtime bindings in another environment.
 - Preflight output is bounded before R2 persistence and combined log responses are capped; large logs and secrets must never be written to D1.
 - Set `GITHUB_APP_PRIVATE_KEY` by piping the complete downloaded PEM file into `wrangler secret put`; an App installation redirect can succeed even when this key is malformed, but repository discovery cannot. The GitHub client accepts both GitHub's PKCS#1 `RSA PRIVATE KEY` download and PKCS#8 `PRIVATE KEY` PEM formats.
 - Floor snapshots are caller-specific because of DM filtering.
@@ -1106,7 +1106,7 @@ Do not begin by filling the existing UI with guessed fields. Define the authorit
 
 **Rationale:** A Worker version can deploy before its container image is publishable, which would otherwise expose an action backed by missing Sandbox and Workflow bindings. The gate preserves honest product behavior and keeps the accepted Phase 2 repository flow operational during infrastructure setup.
 
-**Consequences:** Browser acceptance for Phase 3 cannot begin until the plan is enabled, the normal generated Wrangler configuration deploys successfully, the flag is changed to `true`, and the application is rebuilt and redeployed. Automated tests explicitly enable preflight and continue to exercise deterministic Workflow/Sandbox behavior without weakening production checks.
+**Consequences:** The Workers Paid upgrade and container-enabled deployment succeeded on 2026-08-19, so production now sets the flag to `true` and Phase 3 browser acceptance can begin. Other environments must keep it disabled until their own runtime bindings are live. Automated tests explicitly enable preflight and continue to exercise deterministic Workflow/Sandbox behavior without weakening production checks.
 
 ## How to record the next decision
 

@@ -51,7 +51,7 @@
 	],
 	"vars": {
 		"OPENFLOOR_RUNTIME_ORIGIN": "https://opnflr.com/app",
-		"PREFLIGHT_ENABLED": "false"
+		"PREFLIGHT_ENABLED": "true"
 	},
 	"r2_buckets": [
 		{
