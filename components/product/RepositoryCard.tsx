@@ -7,19 +7,34 @@ import type {
   GitHubRepositoryOption,
   RepositoryCandidate,
   RepositoryConnection,
+  RepositoryConnectionStatus,
   RepositoryPreflight,
   SessionRole,
 } from "@/lib/session-types";
 
 type OptionsResponse = { repositories: GitHubRepositoryOption[]; branches: string[]; error?: string };
 
+const connectionStatusLabel: Record<RepositoryConnectionStatus, string> = {
+  connected: "Connected",
+  ready: "Ready",
+  revoked: "Access revoked",
+  inaccessible: "Inaccessible",
+  externally_modified: "Modified outside OpenFloor",
+  disconnected: "Disconnected",
+};
+
+// For enum-ish statuses that are readable once the underscores go.
+function humanize(status: string) {
+  return status.replaceAll("_", " ");
+}
+
 async function readResponse<T extends { error?: string }>(response: Response): Promise<Partial<T>> {
   const text = await response.text();
-  if (!text) return { error: `OpenFloor returned an empty response (${response.status})` } as Partial<T>;
+  if (!text) return { error: `Something went wrong (${response.status}). Try again.` } as Partial<T>;
   try {
     return JSON.parse(text) as T;
   } catch {
-    return { error: `OpenFloor returned an invalid response (${response.status})` } as Partial<T>;
+    return { error: `Something went wrong (${response.status}). Try again.` } as Partial<T>;
   }
 }
 
@@ -237,7 +252,7 @@ export function RepositoryCard({
       <h2>GitHub connection</h2>
       {!repository && !editing && (
         <>
-          <p>No repository is connected. Agent execution remains unavailable.</p>
+          <p>No repository is connected yet. Connect GitHub so this session has a repository to work in.</p>
           {role === "owner" && <button className="button" data-variant="primary" onClick={connect} disabled={busy}>Connect GitHub</button>}
         </>
       )}
@@ -246,7 +261,7 @@ export function RepositoryCard({
           <div className="repository-summary">
             <strong>{repository.repositoryFullName}</strong>
             <span>{repository.repositoryPrivate ? "Private" : "Public"} · base <code>{repository.baseBranch}</code></span>
-            <span data-status={repository.status}>{repository.status}</span>
+            <span data-status={repository.status}>{connectionStatusLabel[repository.status]}</span>
           </div>
           {candidate && (
             <div className="repository-checks">
@@ -266,9 +281,9 @@ export function RepositoryCard({
           {preflight && (
             <div className="repository-checks" aria-label="Runner verification">
               <span>Runner verification</span>
-              <p><strong>{preflight.status.replace("_", " ")}</strong>{preflight.summary ? ` · ${preflight.summary}` : ""}</p>
+              <p><strong>{humanize(preflight.status)}</strong>{preflight.summary ? ` · ${preflight.summary}` : ""}</p>
               <ol>{preflight.checks.map((check) => (
-                <li key={check.id}><code>{check.command}</code> — {check.status}{check.exitCode == null ? "" : ` (exit ${check.exitCode})`}</li>
+                <li key={check.id}><code>{check.command}</code> — {humanize(check.status)}{check.exitCode == null ? "" : ` (exit ${check.exitCode})`}</li>
               ))}</ol>
               {preflight.checks.some((check) => check.hasLog) && <button className="button" onClick={() => void openLogs()} disabled={busy}>Open command output</button>}
               {logs != null && <pre className="repository-log-output">{logs}</pre>}
@@ -308,7 +323,7 @@ export function RepositoryCard({
           <label>
             <span>Required check commands</span>
             <textarea aria-label="Required check commands" value={commands} onChange={(event) => setCommands(event.target.value)} rows={4} />
-            <small>Optional while connecting. Enter one shell command per line; execution will require checks to be configured first.</small>
+            <small>Optional while connecting. One command per line; agent execution will require at least one check.</small>
           </label>
           <div className="button-row">
             <button className="button" data-variant="primary" onClick={save} disabled={busy || !selectedRepository || !baseBranch}>Save repository</button>

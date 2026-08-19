@@ -28,9 +28,20 @@ describe("server rendering", () => {
     const html = await response.text();
     expect(html).toMatch(/<title>OpenFloor — Multiplayer agent development<\/title>/i);
     expect(html).toContain("Build together without losing the thread.");
-    expect(html).toContain("Continue with email or Google");
+    expect(html).toContain("Sign in with your email or a Google account.");
     expect(html).not.toMatch(/Register|Guest|Session code|type="password"|mock/i);
     expect(html).not.toContain("signin-with-chatgpt");
+  });
+
+  it("explains the sign-in bounce and points the CTA back at the requested page", async () => {
+    const response = await fetchPath(`${BASE_PATH}?auth=required&return_to=${encodeURIComponent("/app/session/private-room")}`);
+    expect(response.status).toBe(200);
+    const html = await response.text();
+    expect(html).toContain("Sign in to open that page. You will be sent back to it.");
+    expect(html).toContain('href="/app/session/private-room"');
+    // Without the params the landing stays quiet.
+    const plain = await (await render()).text();
+    expect(plain).not.toContain("Sign in to open that page");
   });
 
   it("redirects every protected page to the public landing page", async () => {

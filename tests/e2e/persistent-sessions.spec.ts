@@ -74,20 +74,20 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await expect(owner.getByText("npm test", { exact: true })).toBeVisible();
 
   await owner.getByRole("button", { name: "Disconnect" }).click();
-  await expect(owner.getByText("disconnected", { exact: true })).toBeVisible();
+  await expect(owner.getByText("Disconnected", { exact: true })).toBeVisible();
   await owner.getByRole("button", { name: "Reconnect GitHub" }).click();
   await expect(owner.getByRole("combobox", { name: "Connected repository" })).toHaveValue("9001");
   await owner.getByLabel("Required check commands").fill("npm test");
   await owner.getByRole("button", { name: "Save repository" }).click();
-  await expect(owner.getByText("connected", { exact: true })).toBeVisible();
+  await expect(owner.getByText("Connected", { exact: true })).toBeVisible();
   await owner.getByRole("button", { name: "Enable execution" }).click();
   await expect(owner.getByText("Execution enabled. Candidate branch created.")).toBeVisible();
   await expect(owner.getByText(/openfloor\/[0-9a-f]{8}\/candidate\/[0-9a-f]{8}/)).toBeVisible();
-  await expect(owner.getByText("ready", { exact: true })).toBeVisible();
+  await expect(owner.getByText("Ready", { exact: true })).toBeVisible();
   await owner.reload();
   await expect(owner.getByRole("button", { name: "Sync repository" })).toBeVisible();
   await owner.getByRole("button", { name: "Sync repository" }).click();
-  await expect(owner.getByText("ready", { exact: true })).toBeVisible();
+  await expect(owner.getByText("Ready", { exact: true })).toBeVisible();
   await owner.getByRole("button", { name: "Verify runner" }).click();
   await expect(owner.getByLabel("Runner verification").getByText("passed", { exact: true }).first()).toBeVisible();
   await owner.getByRole("button", { name: "Open command output" }).click();

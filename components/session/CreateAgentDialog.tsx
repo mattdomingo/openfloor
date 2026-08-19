@@ -42,7 +42,7 @@ export function CreateAgentDialog({
         <div className="dialog-head">
           <div className="dialog-title">
             <h2 id={titleId}>New agent</h2>
-            <p>Create the agent record. Execution will begin when an agent runtime is connected.</p>
+            <p>Name the agent, its role, and its task. It starts working once an agent runtime is connected.</p>
           </div>
           <button type="button" className="dialog-close" onClick={dismiss} aria-label="Close"><Icon name="close" /></button>
         </div>
