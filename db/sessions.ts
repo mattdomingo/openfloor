@@ -133,6 +133,21 @@ export async function getSessionForMember(
   return record ? normalizeSession(record) : null;
 }
 
+export async function updateSessionObjective(
+  sessionId: string,
+  userId: string,
+  objective: string | null,
+  database = getDb(),
+): Promise<SessionSummary | null> {
+  if (!(await getMembershipRole(sessionId, userId, database))) return null;
+  const now = Date.now();
+  await database
+    .prepare("UPDATE sessions SET objective = ?, updated_at = ? WHERE id = ?")
+    .bind(objective, now, sessionId)
+    .run();
+  return getSessionForMember(sessionId, userId, database);
+}
+
 export async function getSessionMembers(
   sessionId: string,
   userId: string,

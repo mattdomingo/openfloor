@@ -33,6 +33,14 @@ export class SessionPresence extends DurableObject {
       this.broadcast({ type: "members.changed" });
       return new Response(null, { status: 204 });
     }
+    if (url.pathname === "/session-changed" && request.method === "POST") {
+      const body = (await request.json()) as { objective?: unknown; updatedAt?: unknown };
+      if ((body.objective !== null && typeof body.objective !== "string") || typeof body.updatedAt !== "number") {
+        return new Response("Invalid session change", { status: 400 });
+      }
+      this.broadcast({ type: "session.changed", objective: body.objective ?? null, updatedAt: body.updatedAt });
+      return new Response(null, { status: 204 });
+    }
     if (url.pathname === "/disconnect-user" && request.method === "POST") {
       const body = (await request.json()) as { userId?: string };
       if (body.userId) {

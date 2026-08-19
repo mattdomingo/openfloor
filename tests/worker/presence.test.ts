@@ -66,6 +66,20 @@ describe("SessionPresence Durable Object", () => {
     first.socket.close(1000, "done");
     second.socket.close(1000, "done");
   });
+
+  it("broadcasts session objective changes", async () => {
+    const stub = env.SESSION_PRESENCE.get(env.SESSION_PRESENCE.idFromName("room-session-change"));
+    const first = await connect(stub, "user-one", "One");
+    const notification = nextMessage(first.socket);
+    const response = await stub.fetch("https://presence.internal/session-changed", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ objective: "Shared next step", updatedAt: 42 }),
+    });
+    expect(response.status).toBe(204);
+    await expect(notification).resolves.toEqual({ type: "session.changed", objective: "Shared next step", updatedAt: 42 });
+    first.socket.close(1000, "done");
+  });
 });
 
 describe("authenticated presence upgrade", () => {

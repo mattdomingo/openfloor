@@ -16,6 +16,17 @@ export async function notifyMembersChanged(sessionId: string): Promise<void> {
   await presenceStub(sessionId)?.fetch("https://presence.internal/members-changed", { method: "POST" });
 }
 
+export async function notifySessionChanged(
+  sessionId: string,
+  change: { objective: string | null; updatedAt: number },
+): Promise<void> {
+  await presenceStub(sessionId)?.fetch("https://presence.internal/session-changed", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(change),
+  });
+}
+
 export async function disconnectPresenceUser(sessionId: string, userId: string): Promise<void> {
   await presenceStub(sessionId)?.fetch("https://presence.internal/disconnect-user", {
     method: "POST",

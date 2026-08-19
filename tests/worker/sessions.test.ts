@@ -10,6 +10,7 @@ import {
   listSessionsForUser,
   revokeInvite,
   rotateInvite,
+  updateSessionObjective,
   upsertUser,
 } from "@/db/sessions";
 
@@ -72,5 +73,18 @@ describe("D1 session persistence", () => {
     await expect(leaveSession(created.session.id, owner.id, env.DB)).resolves.toBe("owner");
     await expect(leaveSession(created.session.id, member.id, env.DB)).resolves.toBe("left");
     await expect(leaveSession(created.session.id, member.id, env.DB)).resolves.toBe("missing");
+  });
+
+  it("allows members to update the objective and conceals the session from outsiders", async () => {
+    const owner = await upsertUser(identity("objective-owner", "Owner"), env.DB);
+    const member = await upsertUser(identity("objective-member", "Member"), env.DB);
+    const outsider = await upsertUser(identity("objective-outsider", "Outsider"), env.DB);
+    const created = await createSession(owner.id, { title: "Room", objective: "First" }, env.DB);
+    await acceptInvite(created.inviteId, member.id, env.DB);
+
+    const updated = await updateSessionObjective(created.session.id, member.id, "Second", env.DB);
+    expect(updated).toEqual(expect.objectContaining({ objective: "Second", role: "member" }));
+    expect(updated!.updatedAt).toBeGreaterThanOrEqual(created.session.updatedAt);
+    await expect(updateSessionObjective(created.session.id, outsider.id, "Hidden", env.DB)).resolves.toBeNull();
   });
 });

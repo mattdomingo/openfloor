@@ -1,4 +1,5 @@
 export type SessionInput = { title: string; objective: string | null };
+export type ObjectiveInput = { objective: string | null };
 
 export function parseSessionInput(value: unknown): SessionInput | null {
   if (!value || typeof value !== "object") return null;
@@ -10,4 +11,13 @@ export function parseSessionInput(value: unknown): SessionInput | null {
   const objective = typeof input.objective === "string" ? input.objective.trim() : "";
   if (objective.length > 2000) return null;
   return { title, objective: objective || null };
+}
+
+export function parseObjectiveInput(value: unknown): ObjectiveInput | null {
+  if (!value || typeof value !== "object") return null;
+  const input = value as { objective?: unknown };
+  if (input.objective !== null && typeof input.objective !== "string") return null;
+  const objective = typeof input.objective === "string" ? input.objective.trim() : "";
+  if (objective.length > 2000) return null;
+  return { objective: objective || null };
 }

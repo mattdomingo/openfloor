@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { BASE_PATH } from "@/components/basePath";
+import { formatShortDate } from "@/lib/date-format";
 import { reducePresence } from "@/lib/presence";
 import type { AppUser, PresenceEvent, SessionMember, SessionSummary } from "@/lib/session-types";
 import { AppHeader, initials } from "./AppHeader";
@@ -144,7 +145,7 @@ export function SessionScreen({
             {visibleMembers.map((member) => (
               <li key={member.id}>
                 <span className="avatar" aria-hidden="true">{initials(member.displayName)}</span>
-                <div><strong>{member.displayName}{member.id === user.id && <em> You</em>}</strong><span>Joined {formatDate(member.joinedAt)}</span></div>
+                <div><strong>{member.displayName}{member.id === user.id && <em> You</em>}</strong><span>Joined {formatShortDate(member.joinedAt)}</span></div>
                 <span className="member-role">{member.role}</span>
                 <span className="presence-label" data-online={member.online}>{member.online ? "Online" : "Offline"}</span>
               </li>
@@ -172,8 +173,4 @@ export function SessionScreen({
       </section>
     </main>
   );
-}
-
-function formatDate(timestamp: number) {
-  return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(new Date(timestamp));
 }

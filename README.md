@@ -2,7 +2,7 @@
 
 OpenFloor is a persistent multiplayer session shell for teams coordinating agent work. Cloudflare D1 stores users, sessions, memberships, and reusable signed invites. A per-session Durable Object provides live WebSocket presence in both the session lobby and its agent floor.
 
-Members enter a session at `/app/session/[id]`, then continue to the authenticated workspace at `/app/session/[id]/floor`. The floor currently reflects real session metadata and member presence; agent creation and execution are the next runtime capability.
+Members enter a session at `/app/session/[id]`, then continue to the authenticated workspace at `/app/session/[id]/floor`. Identity, membership, invites, presence, and the shared objective are persistent. Agent cards, assignments, queues, chat, and review interactions currently use clearly labeled in-memory prototype data that resets on refresh; the typed floor data-source contract is ready for a persistent agent runtime to replace it.
 
 ## Local development
 
@@ -30,7 +30,8 @@ To exercise the new path manually:
 1. Open `/home` and create a session.
 2. On the session lobby, click **Enter agent floor**.
 3. Confirm the floor shows the real session title, objective, and your online presence.
-4. Use **Session settings** to return to the lobby.
+4. Try creating an agent, queueing a prompt, using team chat, rearranging panels, and opening Review. These prototype interactions intentionally reset on refresh.
+5. Use **Session settings** to return to the lobby.
 
 The browser test runs the complete two-user flow with a temporary local database, including invite acceptance, live presence, floor navigation, reconnection, and leaving:
 

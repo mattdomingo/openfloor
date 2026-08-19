@@ -75,6 +75,29 @@ input, textarea { width: 100%; padding: 11px 12px; border: 1px solid var(--line-
 .floor-activity-empty { display: flex; align-items: flex-start; gap: var(--space-3); padding: var(--space-5); color: var(--text-secondary); font-size: var(--text-sm); line-height: 1.5; }
 .floor-activity-empty > span { width: 8px; height: 8px; margin-top: 6px; flex: none; border-radius: 50%; background: var(--status-waiting); }
 
+/* Restored workspace overrides. The legacy floor stylesheet loads before the
+   product shell, so these selectors intentionally win only inside .app-shell. */
+.app-shell .button { min-height: 0; padding: 6px var(--space-3); font-weight: 600; }
+.app-shell .button[data-size="sm"] { padding: 4px var(--space-2); }
+.app-shell .avatar { position: relative; width: 26px; height: 26px; font-size: 10px; }
+.app-shell .avatar[data-tone^="member-"] { background: var(--who-2); color: var(--who-ink); }
+.app-shell .avatar[data-tone="member-2"], .app-shell .avatar[data-tone="member-5"] { background: var(--who-3); }
+.app-shell .avatar[data-online="true"]::after { content: ""; position: absolute; right: -1px; bottom: -1px; width: 7px; height: 7px; border: 2px solid var(--surface-raised); border-radius: 50%; background: var(--status-running); }
+.prototype-pill, .prototype-badge { display: inline-flex; align-items: center; padding: 3px 7px; border: 1px solid var(--accent-line); border-radius: var(--radius-pill); background: var(--accent-soft); color: var(--accent); font-size: 10px; font-weight: 700; letter-spacing: .04em; white-space: nowrap; }
+.objective-warning, .objective-error { font-size: var(--text-xs); font-weight: 650; }
+.objective-warning { color: var(--status-attention); }
+.objective-error { color: var(--status-blocked); }
+.prototype-composer-note { margin-left: auto; color: var(--text-tertiary); font-size: var(--text-xs); }
+.app-shell .mention-field { min-height: 44px; }
+.app-shell .mention-input { position: static; min-height: 44px; color: var(--text-primary); }
+.invite-loading { padding: var(--space-3); border: 1px dashed var(--line-strong); color: var(--text-tertiary); font-size: var(--text-sm); }
+.invite-dialog .button-row { margin-top: var(--space-3); }
+.invite-members .value { margin-left: auto; text-transform: capitalize; }
+
+@media (max-width: 900px) {
+  .prototype-pill, .topbar-actions > .button[data-variant="quiet"] { display: none; }
+}
+
 .join-card { width: min(540px, 100%); padding: clamp(28px, 6vw, 54px); text-align: center; }
 .join-objective { margin: var(--space-5) auto; color: var(--text-secondary); font-size: var(--text-lg); line-height: 1.55; }
 .join-card dl { display: grid; grid-template-columns: 1fr 1fr; margin: var(--space-6) 0; border-block: 1px solid var(--line-soft); }
