@@ -1,18 +1,18 @@
-import { chatGPTSignInPath, getChatGPTUser } from "./chatgpt-auth";
+import { accessSignInPath, getAccessUser } from "./access-auth";
 import { BASE_PATH } from "@/components/basePath";
 import { Brand } from "@/components/product/Brand";
 
 export const dynamic = "force-dynamic";
 
 export default async function LandingPage() {
-  const user = await getChatGPTUser();
-  const primaryHref = user ? `${BASE_PATH}/home` : chatGPTSignInPath("/home");
+  const user = await getAccessUser();
+  const primaryHref = user ? `${BASE_PATH}/home` : accessSignInPath("/home");
   return (
     <main className="landing-shell">
       <header className="public-nav">
         <Brand />
         <a className="button" data-variant="primary" href={primaryHref}>
-          {user ? "Open your sessions" : "Sign in with ChatGPT"}
+          {user ? "Open your sessions" : "Sign in"}
         </a>
       </header>
       <section className="landing-main">
@@ -24,9 +24,9 @@ export default async function LandingPage() {
         </p>
         <div className="landing-actions">
           <a className="button" data-variant="primary" data-size="lg" href={primaryHref}>
-            {user ? "Go to your sessions" : "Continue with ChatGPT"}
+            {user ? "Go to your sessions" : "Continue with email or Google"}
           </a>
-          <span>No new password. Your ChatGPT identity stays the source of truth.</span>
+          <span>No new password. Continue securely with Cloudflare Access.</span>
         </div>
       </section>
       <section className="landing-proof" aria-label="Product principles">

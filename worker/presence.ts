@@ -1,7 +1,11 @@
 import { DurableObject } from "cloudflare:workers";
 import { authorizePresence } from "../db/sessions";
 import type { D1DatabaseLike } from "../db";
-import { identityFromHeaders, localDevelopmentIdentity } from "../lib/identity";
+import {
+  cloudflareAccessIdentity,
+  localDevelopmentIdentity,
+  type IdentityEnvironment,
+} from "../lib/identity";
 import type { PresenceEvent } from "../lib/session-types";
 
 type DurableObjectStubLike = { fetch(request: Request): Promise<Response> };
@@ -10,7 +14,7 @@ type DurableObjectNamespaceLike = {
   get(id: unknown): DurableObjectStubLike;
 };
 
-export interface PresenceEnv {
+export interface PresenceEnv extends IdentityEnvironment {
   DB: D1DatabaseLike;
   SESSION_PRESENCE: DurableObjectNamespaceLike;
 }
@@ -100,7 +104,8 @@ export async function handlePresenceRequest(request: Request, env: PresenceEnv):
   if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") {
     return new Response("WebSocket upgrade required", { status: 426 });
   }
-  const identity = identityFromHeaders(request.headers) ?? localDevelopmentIdentity(request.headers);
+  const identity = localDevelopmentIdentity(request.headers, env)
+    ?? await cloudflareAccessIdentity(request.headers, env);
   if (!identity) return new Response("Authentication required", { status: 401 });
   const member = await authorizePresence(decodeURIComponent(presenceMatch[1]), identity.providerUserId, env.DB);
   if (!member) return new Response("Session not found", { status: 404 });

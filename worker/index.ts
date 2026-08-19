@@ -1,6 +1,12 @@
 import { handleImageOptimization, DEFAULT_DEVICE_SIZES, DEFAULT_IMAGE_SIZES } from "vinext/server/image-optimization";
 import handler from "vinext/server/app-router-entry";
 import type { D1DatabaseLike } from "../db";
+import {
+  cloudflareAccessIdentity,
+  localDevelopmentIdentity,
+  requestWithTrustedIdentity,
+  type IdentityEnvironment,
+} from "../lib/identity";
 import { handlePresenceRequest, SessionPresence } from "./presence";
 
 export { SessionPresence };
@@ -11,7 +17,7 @@ type DurableObjectNamespaceLike = {
   get(id: unknown): DurableObjectStubLike;
 };
 
-interface Env {
+interface Env extends IdentityEnvironment {
   ASSETS: { fetch(request: Request): Promise<Response> };
   DB: D1DatabaseLike;
   SESSION_PRESENCE: DurableObjectNamespaceLike;
@@ -59,7 +65,12 @@ const worker = {
 
     const asset = await serveAsset(request, env, url);
     if (asset) return asset;
-    return handler.fetch(request, env, ctx);
+
+    const identityHeaders = new Headers(request.headers);
+    if (!identityHeaders.has("host")) identityHeaders.set("host", url.host);
+    const identity = localDevelopmentIdentity(identityHeaders, env)
+      ?? await cloudflareAccessIdentity(identityHeaders, env);
+    return handler.fetch(requestWithTrustedIdentity(request, identity), env, ctx);
   },
 };
 

@@ -5,13 +5,13 @@ export const users = sqliteTable(
   "users",
   {
     id: text("id").primaryKey(),
-    chatgptUserId: text("chatgpt_user_id").notNull(),
+    providerUserId: text("chatgpt_user_id").notNull(),
     email: text("email").notNull(),
     displayName: text("display_name").notNull(),
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
   },
-  (table) => [uniqueIndex("idx_users_chatgpt_user_id").on(table.chatgptUserId)],
+  (table) => [uniqueIndex("idx_users_chatgpt_user_id").on(table.providerUserId)],
 );
 
 export const sessions = sqliteTable("sessions", {

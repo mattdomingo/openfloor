@@ -33,7 +33,7 @@ export async function upsertUser(identity: AuthenticatedIdentity, database = get
          updated_at = excluded.updated_at
        RETURNING
          id,
-         chatgpt_user_id AS chatgptUserId,
+         chatgpt_user_id AS providerUserId,
          email,
          display_name AS displayName,
          created_at AS createdAt,
@@ -52,7 +52,7 @@ export async function findUserByProviderId(
 ): Promise<AppUser | null> {
   return database
     .prepare(
-      `SELECT id, chatgpt_user_id AS chatgptUserId, email, display_name AS displayName,
+      `SELECT id, chatgpt_user_id AS providerUserId, email, display_name AS displayName,
               created_at AS createdAt, updated_at AS updatedAt
        FROM users WHERE chatgpt_user_id = ?`,
     )

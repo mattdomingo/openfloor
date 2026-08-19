@@ -2,10 +2,9 @@ import { expect, test, type Browser, type BrowserContext } from "@playwright/tes
 
 function identityHeaders(id: string, email: string, name: string) {
   return {
-    "oai-authenticated-user-id": id,
-    "oai-authenticated-user-email": email,
-    "oai-authenticated-user-full-name": encodeURIComponent(name),
-    "oai-authenticated-user-full-name-encoding": "percent-encoded-utf-8",
+    "x-openfloor-dev-user-id": id,
+    "x-openfloor-dev-user-email": email,
+    "x-openfloor-dev-user-name": name,
   };
 }
 

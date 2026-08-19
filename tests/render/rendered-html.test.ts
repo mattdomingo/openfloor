@@ -20,17 +20,17 @@ describe("server rendering", () => {
     const html = await response.text();
     expect(html).toMatch(/<title>OpenFloor — Multiplayer agent development<\/title>/i);
     expect(html).toContain("Build together without losing the thread.");
-    expect(html).toContain("Sign in with ChatGPT");
+    expect(html).toContain("Continue with email or Google");
     expect(html).not.toMatch(/Register|Guest|Session code|type="password"|mock/i);
-    expect(html).not.toContain("/app/app/signin-with-chatgpt");
+    expect(html).not.toContain("signin-with-chatgpt");
   });
 
-  it("redirects every protected page through the base-path-aware sign in", async () => {
+  it("redirects every protected page to the public landing page", async () => {
     for (const path of ["/home", "/session/private-room", "/join/not-a-token"]) {
       const response = await render(path);
       expect(response.status).toBeGreaterThanOrEqual(300);
       expect(response.status).toBeLessThan(400);
-      expect(response.headers.get("location")).toContain("/app/signin-with-chatgpt?return_to=%2Fapp%2F");
+      expect(response.headers.get("location")).toContain("/app?auth=required&return_to=%2Fapp%2F");
     }
   });
 

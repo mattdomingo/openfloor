@@ -27,6 +27,8 @@ const server = spawn("npx", [
   statePath,
   "--var",
   "INVITE_SIGNING_SECRET:e2e-test-secret",
+  "--var",
+  "OPENFLOOR_TEST_ALLOW_IDENTITY_HEADERS:true",
   "--show-interactive-dev-session=false",
 ], { stdio: "inherit" });
 

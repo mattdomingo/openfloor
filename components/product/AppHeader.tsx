@@ -1,5 +1,4 @@
 import Link from "next/link";
-import { BASE_PATH } from "@/components/basePath";
 import type { AppUser } from "@/lib/session-types";
 import { Brand } from "./Brand";
 
@@ -15,7 +14,7 @@ export function AppHeader({ user, sessionTitle }: { user: AppUser; sessionTitle?
       <div className="account">
         <span className="avatar" aria-hidden="true">{initials(user.displayName)}</span>
         <span className="account-name">{user.displayName}</span>
-        <a className="button" data-variant="quiet" href={`${BASE_PATH}/signout-with-chatgpt?return_to=${encodeURIComponent(BASE_PATH || "/")}`}>Sign out</a>
+        <a className="button" data-variant="quiet" href="/cdn-cgi/access/logout">Sign out</a>
       </div>
     </header>
   );

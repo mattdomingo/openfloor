@@ -1,51 +1,117 @@
-import { afterEach, describe, expect, it } from "vitest";
-import { identityFromHeaders, localDevelopmentIdentity } from "@/lib/identity";
-
-const originalEnvironment = { ...process.env };
+import { exportJWK, generateKeyPair, SignJWT } from "jose";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  cloudflareAccessIdentity,
+  identityFromVerifiedAccessClaims,
+  identityFromTrustedHeaders,
+  localDevelopmentIdentity,
+  requestWithTrustedIdentity,
+} from "@/lib/identity";
 
 afterEach(() => {
-  process.env = { ...originalEnvironment };
+  vi.unstubAllGlobals();
 });
 
-describe("platform identity", () => {
-  it("requires the stable ChatGPT user id and email", () => {
-    expect(identityFromHeaders(new Headers({ "oai-authenticated-user-email": "person@example.com" }))).toBeNull();
-    expect(identityFromHeaders(new Headers({ "oai-authenticated-user-id": "chatgpt-user" }))).toBeNull();
+describe("Cloudflare Access identity", () => {
+  it("requires a verified subject and email", () => {
+    expect(identityFromVerifiedAccessClaims({ email: "person@example.com" })).toBeNull();
+    expect(identityFromVerifiedAccessClaims({ sub: "access-user" })).toBeNull();
+    expect(identityFromVerifiedAccessClaims({ sub: "access-user", email: "person@example.com", name: "Renée Smith" }))
+      .toEqual({
+        providerUserId: "cloudflare-access:access-user",
+        email: "person@example.com",
+        fullName: "Renée Smith",
+        displayName: "Renée Smith",
+      });
   });
 
-  it("decodes the optional display name without using it as identity", () => {
-    const identity = identityFromHeaders(new Headers({
-      "oai-authenticated-user-id": "chatgpt-user-123",
-      "oai-authenticated-user-email": "person@example.com",
-      "oai-authenticated-user-full-name": "Ren%C3%A9e%20Smith",
-      "oai-authenticated-user-full-name-encoding": "percent-encoded-utf-8",
-    }));
+  it("validates the Access JWT signature, issuer, and audience", async () => {
+    const teamDomain = "https://openfloor-unit-test.cloudflareaccess.com";
+    const audience = "openfloor-test-audience";
+    const { privateKey, publicKey } = await generateKeyPair("RS256");
+    const publicJwk = await exportJWK(publicKey);
+    Object.assign(publicJwk, { kid: "test-key", alg: "RS256", use: "sig" });
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ keys: [publicJwk] })));
 
-    expect(identity).toEqual({
-      providerUserId: "chatgpt-user-123",
-      email: "person@example.com",
-      fullName: "Renée Smith",
-      displayName: "Renée Smith",
+    const validToken = await new SignJWT({ email: "owner@example.com", name: "Owner Example" })
+      .setProtectedHeader({ alg: "RS256", kid: "test-key" })
+      .setIssuer(teamDomain)
+      .setAudience(audience)
+      .setSubject("access-owner")
+      .setIssuedAt()
+      .setExpirationTime("5m")
+      .sign(privateKey);
+
+    await expect(cloudflareAccessIdentity(
+      new Headers({ "cf-access-jwt-assertion": validToken }),
+      { CF_ACCESS_TEAM_DOMAIN: teamDomain, CF_ACCESS_AUD: audience },
+    )).resolves.toMatchObject({
+      providerUserId: "cloudflare-access:access-owner",
+      displayName: "Owner Example",
+    });
+
+    await expect(cloudflareAccessIdentity(
+      new Headers({ "cf-access-jwt-assertion": validToken }),
+      { CF_ACCESS_TEAM_DOMAIN: teamDomain, CF_ACCESS_AUD: "wrong-audience" },
+    )).resolves.toBeNull();
+  });
+
+  it("does not trust identity metadata without a JWT", async () => {
+    await expect(cloudflareAccessIdentity(
+      new Headers({ "cf-access-authenticated-user-email": "person@example.com" }),
+      {
+        CF_ACCESS_TEAM_DOMAIN: "https://openfloor-unit-test.cloudflareaccess.com",
+        CF_ACCESS_AUD: "audience",
+      },
+    )).resolves.toBeNull();
+  });
+
+  it("replaces spoofed internal headers at the Worker handoff", () => {
+    const spoofed = new Request("https://opnflr.com/app/home", { headers: {
+      "x-openfloor-authenticated-user-id": "attacker",
+      "x-openfloor-authenticated-user-email": "attacker@example.com",
+    } });
+    expect(identityFromTrustedHeaders(requestWithTrustedIdentity(spoofed, null).headers)).toBeNull();
+    expect(identityFromTrustedHeaders(requestWithTrustedIdentity(spoofed, {
+      providerUserId: "cloudflare-access:verified",
+      email: "verified@example.com",
+      fullName: "Verified User",
+      displayName: "Verified User",
+    }).headers)).toMatchObject({
+      providerUserId: "cloudflare-access:verified",
+      email: "verified@example.com",
     });
   });
 });
 
 describe("development identity isolation", () => {
-  it("only activates on loopback with explicit variables", () => {
-    process.env.OPENFLOOR_DEV_USER_ID = "local-user";
-    process.env.OPENFLOOR_DEV_USER_EMAIL = "local@example.com";
-    process.env.OPENFLOOR_DEV_USER_NAME = "Local Person";
-
-    expect(localDevelopmentIdentity(new Headers({ host: "opnflr.com" }))).toBeNull();
-    expect(localDevelopmentIdentity(new Headers({ host: "localhost:3000" }))).toMatchObject({
+  it("uses explicit local variables only on loopback", () => {
+    const environment = {
+      OPENFLOOR_DEV_USER_ID: "local-user",
+      OPENFLOOR_DEV_USER_EMAIL: "local@example.com",
+      OPENFLOOR_DEV_USER_NAME: "Local Person",
+    };
+    expect(localDevelopmentIdentity(new Headers({ host: "opnflr.com" }), environment)).toBeNull();
+    expect(localDevelopmentIdentity(new Headers({ host: "localhost:3000" }), environment)).toMatchObject({
       providerUserId: "local-user",
       displayName: "Local Person",
     });
+    expect(localDevelopmentIdentity(new Headers({ "x-forwarded-host": "127.0.0.1:8787" }), environment))
+      .toMatchObject({ providerUserId: "local-user" });
   });
 
-  it("stays disabled when the explicit variables are absent", () => {
-    delete process.env.OPENFLOOR_DEV_USER_ID;
-    delete process.env.OPENFLOOR_DEV_USER_EMAIL;
-    expect(localDevelopmentIdentity(new Headers({ host: "127.0.0.1:3000" }))).toBeNull();
+  it("allows per-context test identities only with the explicit test gate", () => {
+    const headers = new Headers({
+      host: "127.0.0.1:8787",
+      "x-openfloor-dev-user-id": "test-user",
+      "x-openfloor-dev-user-email": "test@example.com",
+    });
+    expect(localDevelopmentIdentity(headers, {})).toBeNull();
+    expect(localDevelopmentIdentity(headers, { OPENFLOOR_TEST_ALLOW_IDENTITY_HEADERS: "true" }))
+      .toMatchObject({ providerUserId: "test-user", email: "test@example.com" });
+    headers.set("host", "opnflr.com");
+    expect(localDevelopmentIdentity(headers, {})).toBeNull();
+    expect(localDevelopmentIdentity(headers, { OPENFLOOR_TEST_ALLOW_IDENTITY_HEADERS: "true" }))
+      .toMatchObject({ providerUserId: "test-user" });
   });
 });

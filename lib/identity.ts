@@ -1,3 +1,5 @@
+import { createRemoteJWKSet, jwtVerify, type JWTPayload } from "jose";
+
 export type AuthenticatedIdentity = {
   providerUserId: string;
   email: string;
@@ -5,46 +7,115 @@ export type AuthenticatedIdentity = {
   fullName: string | null;
 };
 
-const USER_ID_HEADER = "oai-authenticated-user-id";
-const USER_EMAIL_HEADER = "oai-authenticated-user-email";
-const USER_FULL_NAME_HEADER = "oai-authenticated-user-full-name";
-const USER_FULL_NAME_ENCODING_HEADER = "oai-authenticated-user-full-name-encoding";
-const PERCENT_ENCODED_UTF8 = "percent-encoded-utf-8";
+export type IdentityEnvironment = {
+  CF_ACCESS_TEAM_DOMAIN?: string;
+  CF_ACCESS_AUD?: string;
+  OPENFLOOR_DEV_USER_ID?: string;
+  OPENFLOOR_DEV_USER_EMAIL?: string;
+  OPENFLOOR_DEV_USER_NAME?: string;
+  OPENFLOOR_TEST_ALLOW_IDENTITY_HEADERS?: string;
+};
 
-export function identityFromHeaders(headers: Headers): AuthenticatedIdentity | null {
-  const providerUserId = headers.get(USER_ID_HEADER)?.trim();
-  const email = headers.get(USER_EMAIL_HEADER)?.trim();
-  if (!providerUserId || !email) return null;
+const ACCESS_JWT_HEADER = "cf-access-jwt-assertion";
+const TRUSTED_USER_ID_HEADER = "x-openfloor-authenticated-user-id";
+const TRUSTED_USER_EMAIL_HEADER = "x-openfloor-authenticated-user-email";
+const TRUSTED_USER_NAME_HEADER = "x-openfloor-authenticated-user-name";
+const DEV_USER_ID_HEADER = "x-openfloor-dev-user-id";
+const DEV_USER_EMAIL_HEADER = "x-openfloor-dev-user-email";
+const DEV_USER_NAME_HEADER = "x-openfloor-dev-user-name";
+const remoteKeySets = new Map<string, ReturnType<typeof createRemoteJWKSet>>();
 
-  const encodedName = headers.get(USER_FULL_NAME_HEADER);
-  const fullName =
-    encodedName && headers.get(USER_FULL_NAME_ENCODING_HEADER) === PERCENT_ENCODED_UTF8
-      ? safeDecodeURIComponent(encodedName)
-      : null;
+export async function cloudflareAccessIdentity(
+  headers: Headers,
+  environment: IdentityEnvironment,
+): Promise<AuthenticatedIdentity | null> {
+  const token = headers.get(ACCESS_JWT_HEADER)?.trim();
+  const teamDomain = normalizedTeamDomain(environment.CF_ACCESS_TEAM_DOMAIN);
+  const audience = environment.CF_ACCESS_AUD?.trim();
+  if (!token || !teamDomain || !audience) return null;
 
+  try {
+    const jwksUrl = `${teamDomain}/cdn-cgi/access/certs`;
+    let keySet = remoteKeySets.get(jwksUrl);
+    if (!keySet) {
+      keySet = createRemoteJWKSet(new URL(jwksUrl));
+      remoteKeySets.set(jwksUrl, keySet);
+    }
+    const { payload } = await jwtVerify(token, keySet, {
+      issuer: teamDomain,
+      audience,
+    });
+    return identityFromVerifiedAccessClaims(payload);
+  } catch {
+    return null;
+  }
+}
+
+export function identityFromVerifiedAccessClaims(payload: JWTPayload): AuthenticatedIdentity | null {
+  const subject = payload.sub?.trim();
+  const email = typeof payload.email === "string" ? payload.email.trim() : "";
+  if (!subject || !email) return null;
+  const fullName = typeof payload.name === "string" ? payload.name.trim() || null : null;
   return {
-    providerUserId,
+    providerUserId: `cloudflare-access:${subject}`,
     email,
     fullName,
     displayName: fullName?.trim() || email,
   };
 }
 
-export function localDevelopmentIdentity(headers: Headers): AuthenticatedIdentity | null {
-  const host = headers.get("host")?.split(":")[0];
-  if (host !== "localhost" && host !== "127.0.0.1") return null;
-
-  const providerUserId = process.env.OPENFLOOR_DEV_USER_ID?.trim();
-  const email = process.env.OPENFLOOR_DEV_USER_EMAIL?.trim();
+// These headers are internal to the Worker-to-application handoff. The Worker
+// always deletes client-provided values before setting verified identity.
+export function identityFromTrustedHeaders(headers: Headers): AuthenticatedIdentity | null {
+  const providerUserId = headers.get(TRUSTED_USER_ID_HEADER)?.trim();
+  const email = headers.get(TRUSTED_USER_EMAIL_HEADER)?.trim();
   if (!providerUserId || !email) return null;
-
-  const fullName = process.env.OPENFLOOR_DEV_USER_NAME?.trim() || null;
+  const fullName = headers.get(TRUSTED_USER_NAME_HEADER)?.trim() || null;
   return { providerUserId, email, fullName, displayName: fullName || email };
 }
 
-function safeDecodeURIComponent(value: string): string | null {
+export function requestWithTrustedIdentity(
+  request: Request,
+  identity: AuthenticatedIdentity | null,
+): Request {
+  const headers = new Headers(request.headers);
+  headers.delete(TRUSTED_USER_ID_HEADER);
+  headers.delete(TRUSTED_USER_EMAIL_HEADER);
+  headers.delete(TRUSTED_USER_NAME_HEADER);
+  if (identity) {
+    headers.set(TRUSTED_USER_ID_HEADER, identity.providerUserId);
+    headers.set(TRUSTED_USER_EMAIL_HEADER, identity.email);
+    if (identity.fullName) headers.set(TRUSTED_USER_NAME_HEADER, identity.fullName);
+  }
+  return new Request(request, { headers });
+}
+
+export function localDevelopmentIdentity(
+  headers: Headers,
+  environment: IdentityEnvironment = process.env as IdentityEnvironment,
+): AuthenticatedIdentity | null {
+  const host = (headers.get("host") || headers.get("x-forwarded-host"))?.split(":")[0];
+  const isLoopback = host === "localhost" || host === "127.0.0.1";
+  const allowTestHeaders = environment.OPENFLOOR_TEST_ALLOW_IDENTITY_HEADERS === "true";
+  if (!isLoopback && !allowTestHeaders) return null;
+
+  const providerUserId = (allowTestHeaders ? headers.get(DEV_USER_ID_HEADER) : null)?.trim()
+    || (isLoopback ? environment.OPENFLOOR_DEV_USER_ID?.trim() : null);
+  const email = (allowTestHeaders ? headers.get(DEV_USER_EMAIL_HEADER) : null)?.trim()
+    || (isLoopback ? environment.OPENFLOOR_DEV_USER_EMAIL?.trim() : null);
+  if (!providerUserId || !email) return null;
+
+  const fullName = ((allowTestHeaders ? headers.get(DEV_USER_NAME_HEADER) : null)
+    || (isLoopback ? environment.OPENFLOOR_DEV_USER_NAME : null))?.trim() || null;
+  return { providerUserId, email, fullName, displayName: fullName || email };
+}
+
+function normalizedTeamDomain(value: string | undefined): string | null {
+  if (!value) return null;
   try {
-    return decodeURIComponent(value);
+    const url = new URL(value);
+    if (url.protocol !== "https:" || !url.hostname.endsWith(".cloudflareaccess.com")) return null;
+    return url.origin;
   } catch {
     return null;
   }

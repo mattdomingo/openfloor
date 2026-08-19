@@ -1,9 +1,9 @@
-import { getChatGPTUser } from "@/app/chatgpt-auth";
+import { getAccessUser } from "@/app/access-auth";
 import { upsertUser } from "@/db/sessions";
 import type { AppUser } from "@/lib/session-types";
 
 export async function getCurrentAppUser(): Promise<AppUser | null> {
-  const identity = await getChatGPTUser();
+  const identity = await getAccessUser();
   return identity ? upsertUser(identity) : null;
 }
 

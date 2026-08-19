@@ -16,6 +16,7 @@ export default defineConfig({
         durableObjects: { SESSION_PRESENCE: "SessionPresence" },
         bindings: {
           INVITE_SIGNING_SECRET: "worker-test-invite-secret",
+          OPENFLOOR_TEST_ALLOW_IDENTITY_HEADERS: "true",
           TEST_MIGRATIONS: JSON.stringify(migrations),
         },
       },

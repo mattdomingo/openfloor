@@ -77,21 +77,23 @@ describe("authenticated presence upgrade", () => {
       fullName: "Owner",
     }, env.DB);
     const created = await createSession(owner.id, { title: "Protected", objective: null }, env.DB);
-    const url = `https://opnflr.com/app/api/sessions/${created.session.id}/presence`;
+    const url = `http://localhost/app/api/sessions/${created.session.id}/presence`;
     const anonymous = await worker.fetch(new Request(url, { headers: { upgrade: "websocket" } }), env);
     expect(anonymous.status).toBe(401);
 
     const outsider = await worker.fetch(new Request(url, { headers: {
+      host: "localhost",
       upgrade: "websocket",
-      "oai-authenticated-user-id": "chatgpt-outsider",
-      "oai-authenticated-user-email": "outsider@example.com",
+      "x-openfloor-dev-user-id": "chatgpt-outsider",
+      "x-openfloor-dev-user-email": "outsider@example.com",
     } }), env);
     expect(outsider.status).toBe(404);
 
     const accepted = await worker.fetch(new Request(url, { headers: {
+      host: "localhost",
       upgrade: "websocket",
-      "oai-authenticated-user-id": "chatgpt-owner",
-      "oai-authenticated-user-email": "owner@example.com",
+      "x-openfloor-dev-user-id": "chatgpt-owner",
+      "x-openfloor-dev-user-email": "owner@example.com",
     } }), env);
     expect(accepted.status).toBe(101);
     accepted.webSocket?.accept();

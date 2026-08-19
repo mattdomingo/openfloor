@@ -1,5 +1,5 @@
 import { notFound } from "next/navigation";
-import { requireChatGPTUser } from "@/app/chatgpt-auth";
+import { requireAccessUser } from "@/app/access-auth";
 import { getSessionForMember, getSessionMembers, upsertUser } from "@/db/sessions";
 import { SessionScreen } from "@/components/product/SessionScreen";
 
@@ -11,7 +11,7 @@ export default async function SessionPage({ params }: { params: Promise<{ id: st
 }
 
 async function AuthenticatedSession({ id }: { id: string }) {
-  const identity = await requireChatGPTUser(`/session/${encodeURIComponent(id)}`);
+  const identity = await requireAccessUser(`/session/${encodeURIComponent(id)}`);
   const user = await upsertUser(identity);
   const [session, members] = await Promise.all([getSessionForMember(id, user.id), getSessionMembers(id, user.id)]);
   if (!session || !members) notFound();

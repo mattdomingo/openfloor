@@ -26,7 +26,7 @@ export type PresenceEvent =
 
 export type AppUser = {
   id: string;
-  chatgptUserId: string;
+  providerUserId: string;
   email: string;
   displayName: string;
   createdAt: number;

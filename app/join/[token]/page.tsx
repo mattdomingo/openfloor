@@ -1,5 +1,5 @@
 import { notFound } from "next/navigation";
-import { requireChatGPTUser } from "@/app/chatgpt-auth";
+import { requireAccessUser } from "@/app/access-auth";
 import { getInviteSigningSecret } from "@/db";
 import { getInvitePreview, upsertUser } from "@/db/sessions";
 import { verifyInviteToken } from "@/lib/invites";
@@ -13,7 +13,7 @@ export default async function JoinPage({ params }: { params: Promise<{ token: st
 }
 
 async function AuthenticatedInvite({ token }: { token: string }) {
-  const identity = await requireChatGPTUser(`/join/${encodeURIComponent(token)}`);
+  const identity = await requireAccessUser(`/join/${encodeURIComponent(token)}`);
   await upsertUser(identity);
   const inviteId = await verifyInviteToken(token, getInviteSigningSecret());
   if (!inviteId) notFound();
