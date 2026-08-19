@@ -81,4 +81,4 @@ The deployment expects the `DB`, `SESSION_PRESENCE`, `IMAGES`, and `ASSETS` bind
 
 ## Project direction
 
-See [`docs/project-context.md`](docs/project-context.md) for the broader product model and roadmap.
+See [`AGENTS.md`](AGENTS.md) for the product vision, system architecture, engineering invariants, key decisions, and roadmap guidance.

@@ -1,0 +1,962 @@
+# OpenFloor Engineering Guide
+
+This file is the authoritative repository-level guide for engineers and coding agents working on OpenFloor. It applies to the entire repository unless a more specific `AGENTS.md` is added in a subdirectory.
+
+Last verified against `main`: 2026-08-19.
+
+## Mandatory maintenance rule
+
+**Every engineer and coding agent must update this file in the same change whenever the work introduces or changes a durable product, architecture, security, data-model, API, deployment, testing, or workflow decision.** Do not let important decisions live only in a chat, issue, pull request description, or code comment.
+
+Examples that require an `AGENTS.md` update:
+
+- Adding or removing a persisted entity, API route, event, binding, secret, or protected path.
+- Changing what is authoritative versus ephemeral.
+- Changing authentication, authorization, invite, membership, or concealment behavior.
+- Changing the production mount path, deployment target, migration order, or local setup.
+- Moving a deferred capability into the implemented product.
+- Choosing a runtime, provider, repository model, queue lifecycle, ownership model, or review workflow.
+- Establishing a new invariant that future contributors must preserve.
+
+Small implementation details do not need a decision-log entry, but this document must stay factually correct. When uncertain, update it. Add new decisions to the decision log near the end of this file, including the date, decision, rationale, and consequences. If a decision supersedes an older one, preserve the history and mark the old entry as superseded rather than silently deleting it.
+
+## Read this first
+
+Before changing code:
+
+1. Read this file completely.
+2. Read `README.md` for the concise setup and deployment path.
+3. Read `docs/agent-backend-gaps.md` before touching agent runtime or review concepts.
+4. Inspect the relevant route, database function, public type, client data source, and tests as one unit.
+5. Check the worktree with `git status --short`. Preserve unrelated changes.
+6. Decide whether the change affects an invariant or decision recorded here. If it does, plan the documentation update with the code change.
+
+The repository intentionally contains a polished UI whose future-facing affordances are broader than the backend implemented today. Never infer that a visible control is backed by an execution system. Trace it to an API and D1 mutation before describing it as persistent or real.
+
+## Product vision
+
+### Ultimate goal
+
+OpenFloor is a multiplayer coordination environment for teams of humans and software agents working on the same objective.
+
+The long-term product should let a team enter one durable room, understand who and what is working, direct work to specialized agents, coordinate prompts and assignments, observe execution, communicate in context, inspect proposed changes, resolve conflicts, and approve work without losing the shared thread across people, tabs, devices, reconnects, or long-running tasks.
+
+The metaphor is an **agent floor** rather than a collection of isolated chat windows:
+
+- A session is the room.
+- Human members are the team in that room.
+- The objective is the room's shared mission.
+- Agents are named collaborators owned by real session members.
+- The queue is the team's shared backlog of prompts.
+- Assignments clarify human ownership.
+- Team chat and direct messages keep coordination in the room.
+- Presence and live drafts make collaboration feel simultaneous.
+- Review will eventually be the place where real repository changes, checks, conflicts, and candidate work are evaluated.
+
+The product should eventually coordinate real coding-agent execution and repository work. It must not pretend that those integrations exist before they do.
+
+### Why the project exists
+
+Most agent tools are optimized for one person issuing one prompt to one agent. Real engineering work is collaborative: multiple people divide responsibilities, redirect work, ask each other questions, combine related prompts, watch progress, and review shared outcomes. OpenFloor is intended to make that multiplayer layer explicit and durable.
+
+The immediate engineering strategy is to build the trustworthy collaboration substrate first:
+
+1. Real identity.
+2. Durable sessions and membership.
+3. Secure reusable invitations.
+4. Live presence.
+5. Persistent collaborative floor state.
+6. Clear empty states for capabilities that are not connected yet.
+7. A future backend boundary for execution and repository data.
+
+This order matters. A convincing simulation is not a substitute for an authoritative shared system.
+
+## Product principles and non-negotiable invariants
+
+### Real data or an honest empty state
+
+Production code must not seed, fabricate, or animate agents, prompts, messages, assignments, file paths, branches, progress, checks, warnings, conflicts, diffs, reviews, terminal output, agent replies, or teammate behavior.
+
+- New sessions start with real members and otherwise empty floor state.
+- User-created collaboration data may be shown because it is persisted.
+- Presence and teammate drafts may be shown because they come from authenticated live connections.
+- Review remains `null` and renders “No review available” until an authoritative backend supplies review data.
+- Test-only factories and fixtures may use sample values, but sample data must not be imported by production modules.
+- Never add delayed canned responses, fake typing, artificial progress timers, deterministic routing disguised as intelligence, or mock terminal/worktree output.
+
+### Authoritative state has one clear owner
+
+OpenFloor has three intentionally separate state classes:
+
+1. **D1-authoritative collaboration state**: users, sessions, memberships, invites, objective, agents, assignments, messages, queue items, queue prompts, ordering, and floor revision.
+2. **Durable Object-coordinated ephemeral state**: online connections and teammate prompt drafts. This state is realtime but is not D1 history.
+3. **Local UI state**: selected tabs, panel order and size, collapsed or expanded panels, queue filters, menus, dialogs, and the local visibility choice for teammate drafts.
+
+Do not persist an ephemeral interaction merely because D1 is available. Do not leave collaborative state local merely because React state is convenient.
+
+### Authorization is enforced on the server
+
+- Every protected server page and every API mutation resolves an authenticated identity on the server.
+- Every session-scoped read and write verifies membership in D1.
+- Owner-only invite operations verify the `owner` role.
+- The WebSocket upgrade is authenticated and membership-checked before the request reaches the Durable Object.
+- Client-provided user IDs are never trusted as the acting identity.
+- Targets such as agent owners, assignment owners, message recipients, agents, and queue items must belong to the same session.
+- Non-members receive the same not-found response as nonexistent sessions. This concealment prevents metadata enumeration.
+
+### Missing capabilities stay absent
+
+Nullable and empty fields are a deliberate contract, not a temporary rendering bug. UI code must handle absence without inventing defaults. When a future backend is connected, it should provide authoritative data through typed interfaces and explicit mutations.
+
+### Collaboration should survive reloads
+
+Anything presented as durable collaboration must be stored in D1 and returned by the authoritative snapshot. A successful mutation returns the updated snapshot, increments `floor_revision` when it changes floor state, and notifies other clients to refetch.
+
+### Realtime is a coordination signal, not a second database
+
+WebSocket events notify clients about presence or changed domains. D1 remains authoritative for persisted floor data. Except for ephemeral typing drafts, do not turn the Durable Object into a shadow copy of floor records.
+
+## Current product boundary
+
+### Implemented and real
+
+- Cloudflare Access authentication using Google or One-time PIN as configured by the production Access application.
+- Server-only loopback development identity from `.dev.vars`.
+- Internal user records keyed by the stable external provider subject.
+- Session creation, listing, objective editing, membership, roles, and leaving.
+- HMAC-signed, reusable owner invitations with rotation and revocation.
+- Session lobby with real roster and live online status.
+- Protected Agent Floor with real session title, objective, members, and presence.
+- Persistent agent records created from required user input.
+- Persistent member assignments.
+- Persistent team messages and private direct messages.
+- Persistent assigned or unassigned queue prompts.
+- Manual queue ordering and same-target queue merging with prompt authorship preserved.
+- Realtime floor revision notifications and snapshot refetching.
+- Ephemeral realtime teammate prompt drafts with Everyone, Typing, and Hidden viewing modes.
+- Movable, resizable, collapsible, expandable panels and responsive floor layout.
+- Review navigation with an authoritative empty state.
+
+### Explicitly deferred
+
+- Agent model or provider selection.
+- Agent execution, cancellation, retry, runtime scheduling, or queue consumption.
+- Provider credentials and secret management for agent runtimes.
+- Repository authorization, checkout, worktrees, branches, write scopes, or attachments.
+- Runtime status, progress, steps, logs, agent-authored messages, or terminal output.
+- File discovery, changed-file lists, checks, warnings, diffs, conflicts, or generated review candidates.
+- Review approval persistence, merge, deploy, or repository modification.
+- Agent edit, archive, deletion, or lifecycle states beyond `created`.
+- Queue completion, removal, consumption, or retry workflows.
+- Ownership transfer. Owners cannot leave until transfer exists.
+- Persistent draft history. Live prompt drafts are intentionally ephemeral.
+
+See `docs/agent-backend-gaps.md` for the focused backend-gap summary. When any deferred capability becomes real, update both that document and this file.
+
+## User experience and route map
+
+Production is mounted under `/app` on `opnflr.com`. Local `npm run dev` is mounted at the root.
+
+| Production route | Local dev route | Access | Purpose |
+| --- | --- | --- | --- |
+| `/app` | `/` | Public | Product landing and entry into Cloudflare Access. |
+| `/app/home` | `/home` | Protected | Sessions where the current user is a member; session creation. |
+| `/app/join/[token]` | `/join/[token]` | Protected | Valid invite preview followed by explicit acceptance. |
+| `/app/session/[id]` | `/session/[id]` | Protected/member-only | Session lobby, roster, invite controls, leave, and floor entry. |
+| `/app/session/[id]/floor` | `/session/[id]/floor` | Protected/member-only | Main collaborative Agent Floor. |
+| `/app/api/...` | `/api/...` | Protected | Authenticated application interfaces. |
+| `/app/api/sessions/[id]/presence` | `/api/sessions/[id]/presence` | Protected/member-only | WebSocket upgrade. |
+
+Important behavior:
+
+- The landing page owns no password, OAuth callback, or application login session.
+- Clicking Sign in navigates to a protected path; Cloudflare Access performs the login and returns the browser.
+- `/cdn-cgi/access/logout` is the production sign-out endpoint.
+- A join page reveals session title and owner only after authentication and only for a valid, active signed token.
+- Opening a join URL does not change membership. The user must click Join.
+- Invite acceptance is idempotent because the session membership key is unique.
+- Non-members opening a session or floor get a 404-style not-found response rather than session details.
+- A member who leaves is disconnected from the room's presence object.
+- An owner receives a conflict response if they try to leave.
+
+## System architecture
+
+The request and synchronization flow is:
+
+```text
+Browser
+  -> Cloudflare Access policy for protected production paths
+  -> OpenFloor Worker
+       -> verifies Access JWT or explicit loopback development identity
+       -> strips any client-supplied trusted identity headers
+       -> forwards verified identity to the vinext/Next application
+  -> Server Component or API route
+       -> upserts internal user
+       -> validates input
+       -> checks membership/role in D1
+       -> reads or mutates D1 with prepared statements
+       -> notifies the per-session Durable Object when needed
+  -> Browser receives authoritative response
+
+Per-session WebSocket
+  -> Worker authenticates and verifies D1 membership
+  -> Worker forwards trusted internal user ID and display name
+  -> SessionPresence Durable Object
+       -> hibernating sockets and serialized attachments
+       -> online-user deduplication across tabs
+       -> ephemeral typing-draft aggregation across tabs
+       -> presence/session/member/floor notifications
+  -> Clients update presence directly or refetch D1 FloorSnapshot
+```
+
+### Runtime and framework
+
+- Next.js App Router and React Server Components.
+- vinext and Vite compile the application for Cloudflare Workers.
+- `worker/index.ts` is the production Worker entry point.
+- Cloudflare D1 is the relational database bound as `DB`.
+- `SessionPresence` is a SQLite-backed Durable Object bound as `SESSION_PRESENCE`.
+- Cloudflare static assets are bound as `ASSETS`.
+- Cloudflare Images is bound as `IMAGES` for vinext image optimization.
+- Drizzle defines the schema and generates migrations; runtime data access uses prepared D1 SQL.
+- TypeScript is strict enough that public contract changes should fail typecheck and tests.
+
+### Important hosting topology
+
+- The marketing site owns the apex `opnflr.com` deployment.
+- The OpenFloor application is peeled off under `/app` by a more-specific Worker route.
+- `next.config.ts` sets `basePath` to `/app` only for production. Enabling it in development breaks stylesheet resolution because the source `app/` directory and URL prefix collide.
+- `components/basePath.ts` exists for literal public/API/WebSocket paths that the framework does not rewrite automatically.
+- Use Next `Link` with unprefixed application paths such as `/home` and `/session/...`; Next applies the production base path.
+- Use `BASE_PATH` for manual `fetch`, `WebSocket`, and `public/` URLs.
+- `wrangler.jsonc` claims `opnflr.com/app*` because Cloudflare route matching cannot express the desired query-string behavior with a bare exact route. This prefix is broader than ideal; the marketing-site test guards collisions such as `/approach`.
+- The font route `opnflr.com/assets/_vinext_fonts/*` is also claimed because generated font URLs are not under the application base path.
+- Asset `not_found_handling` must remain `none` so `/app`-prefixed asset requests can fall through to the Worker, be stripped, and be resolved through `ASSETS`.
+- `.openai/hosting.json` and `build/sites-vite-plugin.ts` package Sites metadata and migrations during builds, but the current production runbook deploys the built Worker directly with Wrangler because Durable Object presence is a required capability. Do not switch the deployment path without proving D1, Durable Object, Access, asset, and route behavior end to end.
+
+## Authentication and identity
+
+### Current decision: Cloudflare Access
+
+Production identity is Cloudflare Access, not application-owned “Sign in with ChatGPT.” Google and One-time PIN are the intended Access identity providers. The Access application protects:
+
+- `opnflr.com/app/home`
+- `opnflr.com/app/session/*`
+- `opnflr.com/app/join/*`
+- `opnflr.com/app/api/*`
+
+The public `/app` landing and required assets remain outside Access.
+
+The Worker validates the `cf-access-jwt-assertion` using:
+
+- `CF_ACCESS_TEAM_DOMAIN`
+- `CF_ACCESS_AUD`
+- the team's JWKS at `/cdn-cgi/access/certs`
+- issuer, audience, signature, and token expiry through `jose`
+
+The provider user ID is stored as `cloudflare-access:<sub>`. Email and name are mutable display metadata, not identity keys.
+
+### Legacy schema naming
+
+The `users.chatgpt_user_id` column and `idx_users_chatgpt_user_id` index retain names from the earlier ChatGPT-identity design. In current code this column stores the generic stable `providerUserId`, currently the prefixed Cloudflare Access subject.
+
+Do not build logic that assumes the column contains a ChatGPT ID. Do not rename it casually: a rename requires a generated D1 migration, updated queries, integration tests, and a deployment plan.
+
+### Trusted-header boundary
+
+`worker/index.ts` verifies external identity and calls `requestWithTrustedIdentity`. That helper always deletes any client-provided internal trusted headers before adding verified values. Application code reads only those internal headers through `app/access-auth.ts`.
+
+The WebSocket path does not rely on the application handoff. `handlePresenceRequest` authenticates at the Worker, resolves the internal user through D1 membership, and sends only trusted internal identity headers to the Durable Object.
+
+### Local development and tests
+
+- Local identity works only for loopback hosts (`localhost` or `127.0.0.1`) using `OPENFLOOR_DEV_USER_ID`, `OPENFLOOR_DEV_USER_EMAIL`, and `OPENFLOOR_DEV_USER_NAME`.
+- Protected production requests must reject requests without a valid Access identity; the `/app` landing page remains public by design.
+- Test-controlled identity headers work only when `OPENFLOOR_TEST_ALLOW_IDENTITY_HEADERS=true`, which test configuration provides explicitly.
+- Never broaden the development fallback to arbitrary hosts.
+- Never enable test identity headers in production.
+
+## Persistence model
+
+### Schema workflow
+
+`db/schema.ts` is the schema source. Drizzle writes migrations to `drizzle/`. Runtime queries live in `db/sessions.ts` and `db/floor.ts` and use prepared D1 statements.
+
+When changing persisted schema:
+
+1. Edit `db/schema.ts`.
+2. Run `npm run db:generate`.
+3. Inspect the generated SQL and metadata. Never accept a destructive migration blindly.
+4. Add or update D1 integration tests.
+5. Apply locally with `npx wrangler d1 migrations apply openfloor-production --local`.
+6. Run the complete test pipeline.
+7. Apply remotely before deploying code that depends on the migration.
+
+Do not hand-edit Drizzle metadata. If a generated migration is wrong, correct the schema or migration deliberately and verify both a new database and the intended production transition.
+
+### Tables and invariants
+
+#### `users`
+
+- Internal UUID primary key.
+- Unique stable provider identity in legacy-named `chatgpt_user_id`.
+- Email and display name update on authentication.
+- Creation and update timestamps are epoch milliseconds.
+
+#### `sessions`
+
+- UUID, title, nullable objective, timestamps.
+- `floor_revision` is a monotonically increasing integer for persisted floor reconciliation.
+- Session creation also creates owner membership and an active invite in one D1 batch.
+
+#### `session_members`
+
+- Composite primary key `(session_id, user_id)`.
+- Role is `owner` or `member`.
+- Owner is created with the session.
+- There is currently no ownership-transfer route.
+
+#### `session_invites`
+
+- UUID identifies the invite record.
+- Only one active non-revoked invite may exist per session, enforced by a partial unique index.
+- The bearer token is `invite-id.signature`, where the signature is HMAC-SHA256 using `INVITE_SIGNING_SECRET`.
+- D1 stores no bearer secret.
+- GET reconstructs the active signed URL; POST revokes the old invite and creates a new one; DELETE revokes the active invite.
+- Invalid, forged, missing, or revoked tokens reveal no session information.
+
+#### `floor_agents`
+
+- Session-scoped UUID.
+- Creator and owner are real users; owner must be a member of the same session.
+- Name, free-text role, and task are required user input.
+- `name_key` is NFKC-normalized, whitespace-collapsed, and lowercased for case-insensitive uniqueness per session.
+- The only valid lifecycle state is currently `created`.
+- No runtime fields, model, branch, progress, files, or checks exist.
+
+#### `floor_assignments`
+
+- Composite key `(session_id, user_id)`.
+- Nullable task means no assignment.
+- Records the last editor and timestamp.
+- The target user must still be a member of the same session.
+
+#### `floor_messages`
+
+- Team message when `recipient_user_id` is null.
+- Direct message when a recipient exists.
+- Snapshot reads return all team messages plus only DMs authored by or addressed to the current user.
+- Because of DM filtering, two members can receive different `FloorSnapshot.messages` arrays at the same floor revision. Never cache one user's floor snapshot as a room-global payload.
+
+#### `floor_queue_items`
+
+- Ordered by integer `position` within a session.
+- Nullable agent target represents an unassigned prompt.
+- Only current status is `queued`.
+- Agent foreign key uses `ON DELETE SET NULL` for future lifecycle support, although deletion is not exposed today.
+
+#### `floor_queue_prompts`
+
+- A queue item contains one or more authored prompts.
+- Merging moves prompts into the surviving same-target item, preserving every prompt, author, and creation time.
+- Ordering mutations submit the exact set of current item IDs. A stale or incomplete order returns a conflict instead of silently dropping records.
+
+### Snapshot contract
+
+`FloorSnapshot` in `lib/floor-types.ts` is the public authoritative floor response:
+
+- `revision`
+- `agents`
+- `assignments`
+- `messages`
+- `queue`
+- `review`
+
+`review` is deliberately nullable and currently always `null` in `db/floor.ts`. Extend the contract with nullable runtime/review fields when the real backend exists; do not populate it from UI fixtures.
+
+### Mutation pattern
+
+Persisted floor mutations follow this sequence:
+
+1. Authenticate the acting user.
+2. Parse and normalize bounded input.
+3. Verify session membership.
+4. Verify every referenced target belongs to the same session.
+5. Write data and increment `sessions.floor_revision` in a D1 batch.
+6. Read and return the acting user's authoritative `FloorSnapshot`.
+7. Broadcast `floor.changed { revision, domains }` through `SessionPresence`.
+8. Other clients with an older revision refetch `/floor`.
+
+Preserve this pattern unless a documented architecture decision replaces it.
+
+## Realtime model
+
+### Durable Object ownership
+
+There is one `SessionPresence` Durable Object instance per session ID, obtained with `idFromName(sessionId)`. It uses Cloudflare's hibernating WebSocket API and serialized socket attachments. Do not add process-local registries or polling as a substitute.
+
+### Presence
+
+- A user becomes online on their first open socket.
+- Multiple tabs are deduplicated by internal user ID.
+- A user becomes offline after their last socket closes.
+- Initial connection receives `presence.snapshot` with online IDs and current nonempty typing drafts.
+- Other clients receive `presence.changed` only when the user's aggregate online state changes.
+- Clients reconnect with bounded exponential backoff and do not deliberately mark everyone offline during a transient reconnect.
+
+### Persisted-change events
+
+`PresenceEvent` currently includes:
+
+- `presence.snapshot`
+- `presence.changed`
+- `typing.changed`
+- `members.changed`
+- `session.changed`
+- `floor.changed`
+- `error`
+
+Event behavior:
+
+- `members.changed` causes roster and floor refresh.
+- `session.changed` carries the objective and timestamp; clients use last-write-wins by timestamp.
+- `floor.changed` carries revision and changed domains; clients refetch if the event revision is newer.
+- Membership removal explicitly closes that user's sockets with a membership-ended code.
+
+### Live teammate drafts
+
+Live prompt drafts are intentionally ephemeral and are never written to D1.
+
+- The client sends `typing.update { text, typing }` on the authenticated room socket.
+- Draft text is bounded to 4,000 characters.
+- Socket attachments store that tab's draft, typing flag, and monotonic update timestamp.
+- The Durable Object aggregates tabs by user. Closing one tab does not clear a draft still active in another.
+- The latest active tab wins; otherwise the latest nonempty idle draft is retained while the connection exists.
+- Submitting, leaving the floor, or disconnecting clears that connection's draft.
+- The composer marks the user idle after 1.8 seconds without input. This is a real typing-presence timeout, not a mock animation.
+
+The local viewing modes are:
+
+- **Typing**: default; show only teammates actively typing.
+- **Everyone**: show every teammate's lane, including the last nonempty idle draft for a connected teammate.
+- **Hidden**: show no teammate draft lanes.
+
+Hidden is a local visibility preference. It does **not** disable sharing the current user's own draft. A privacy control that stops broadcasting would be a separate product and protocol decision and must be named clearly if introduced.
+
+## API contracts
+
+All paths below are shown without the production `/app` prefix.
+
+| Method and path | Authorization | Behavior |
+| --- | --- | --- |
+| `POST /api/sessions` | Authenticated user | Create `{ title, objective? }`; creator becomes owner; returns session and active invite URL. |
+| `PATCH /api/sessions/[id]` | Session member | Update `{ objective: string \| null }`; broadcasts `session.changed`. |
+| `GET /api/sessions/[id]/members` | Session member | Return authorized roster. |
+| `GET /api/sessions/[id]/invite` | Owner | Return active reusable signed link or null. |
+| `POST /api/sessions/[id]/invite` | Owner | Rotate/create link; old link becomes invalid. |
+| `DELETE /api/sessions/[id]/invite` | Owner | Revoke active link. |
+| `POST /api/invites/[token]/accept` | Authenticated user | Idempotently add member and broadcast `members.changed`. |
+| `DELETE /api/sessions/[id]/membership` | Non-owner member | Leave, disconnect presence, and notify roster. |
+| `GET /api/sessions/[id]/floor` | Session member | Return the caller-specific authoritative `FloorSnapshot`. |
+| `POST /api/sessions/[id]/agents` | Session member | Create `{ name, role, task, ownerUserId }`. |
+| `PATCH /api/sessions/[id]/assignments/[memberId]` | Session member | Persist `{ task: string \| null }`. |
+| `POST /api/sessions/[id]/messages` | Session member | Persist `{ text, recipientUserId? }`. |
+| `POST /api/sessions/[id]/queue` | Session member | Persist `{ prompt, agentId? }`; null target is valid. |
+| `PATCH /api/sessions/[id]/queue/order` | Session member | Persist an exact unique `{ itemIds }` order. |
+| `POST /api/sessions/[id]/queue/merge` | Session member | Merge at least two existing same-target items, preserving prompts. |
+| `GET /api/sessions/[id]/presence` with Upgrade | Session member | Authenticated WebSocket handoff to the per-session Durable Object. |
+
+Response conventions:
+
+- `401` means no authenticated identity.
+- `400` means invalid input or a cross-session/invalid target.
+- `404` conceals nonexistent sessions, non-membership, unauthorized owner-only resources, invalid invites, and revoked invites.
+- `409` represents conflicts such as duplicate normalized agent name, stale queue order, or owner leave.
+- Floor mutations return `{ floor }`; clients treat it as authoritative.
+
+### Validation limits
+
+Keep server validation in `lib/validation.ts` and cover it with unit tests.
+
+- Session title: required, trimmed, maximum 100 characters.
+- Objective: nullable, trimmed, empty becomes null, maximum 2,000.
+- Agent name: required, NFKC-normalized, whitespace-collapsed, maximum 24.
+- Agent role: required, trimmed, maximum 80.
+- Agent task: required, trimmed, maximum 1,000.
+- Assignment: nullable, trimmed, empty becomes null, maximum 2,000.
+- Message: required, trimmed, maximum 4,000.
+- Queue prompt: required, trimmed, maximum 4,000.
+- Queue order/merge ID list: unique strings, maximum 500 items; merge requires at least two.
+- Live draft: maximum 4,000, not trimmed because it represents in-progress text.
+
+## Frontend architecture
+
+### Server/client boundary
+
+- Protected pages authenticate, upsert the user, authorize membership, and server-load initial data.
+- Product screens under `components/product/` own page-level client behavior such as WebSocket connection, invite state, and routing.
+- The Agent Floor receives the first `FloorSnapshot` from the server to avoid a loading-only shell.
+- `usePersistentFloorData` is the asynchronous data-source boundary for floor reads and writes.
+- A mutation response updates local state immediately; a newer remote floor revision triggers a refetch.
+
+### Agent Floor structure
+
+- `Workspace.tsx`: orchestration and local layout state.
+- `TopBar.tsx`: workspace/review navigation, real member presence, owner invite dialog, settings, sign-out.
+- `ObjectiveBar.tsx`: persistent member-editable objective.
+- `BriefRail.tsx`: real members, assignments, team chat, and DMs.
+- `AgentFloor.tsx` and `AgentCard.tsx`: empty state, creation dialog, and persisted agent metadata only.
+- `PromptQueue.tsx`: real queue filtering, ordering, merging, targeting, and prompts.
+- `FloorDock.tsx`: queue composer, target selection, live teammate drafts, and draft visibility controls.
+- `ReviewScreen.tsx`: consumes nullable review types and renders an honest empty state today.
+- `Rail.tsx`: panel chrome, movement, collapse, expansion, and resize behaviors.
+
+### UI state that is intentionally local
+
+The following currently reset on reload and must not be mistaken for shared data:
+
+- Workspace versus Review selection.
+- Selected agent and focus/all layout.
+- Panel order, widths, collapse, and expansion.
+- Queue scope, ordering mode, merge mode, and drag state.
+- Selected chat thread and Team panel view.
+- Teammate draft visibility mode.
+- Menus, dialogs, transient notices, and form input before submission.
+
+If product requirements call for any of these to persist or synchronize, add an explicit storage owner and document the decision.
+
+### Styling
+
+- Global styles are composed from `app/globals.css` and files under `app/styles/`.
+- `tokens.css` is the design-token source.
+- The `legacy-floor-*` filenames describe their origin in the preserved demo UI, not permission to restore demo behavior.
+- Reuse genuine visual primitives, but do not reintroduce fixture imports, fake terminals, or simulation logic with old CSS.
+- The responsive floor stacks panels and draft lanes on smaller screens.
+
+### Preserved prototype
+
+The complete pre-persistence demo is recoverable from branch `codex/demo-ui-snapshot` at commit `5958f34`. Use it only as a visual interaction reference. Never copy its mock data, canned timing behavior, fake agent output, or local-only collaboration model back into production.
+
+## Repository map
+
+```text
+app/                         Next App Router pages and API route handlers
+  access-auth.ts             Reads trusted Worker-provided identity
+  api/                       Authenticated application interfaces
+  home/                      Member session list and creation
+  join/                      Authenticated invite preview and acceptance
+  session/                   Lobby and Agent Floor routes
+  styles/                    Tokens, layout, product, and restored floor styles
+components/product/          Page-level product screens
+components/session/          Agent Floor workspace components and client data source
+db/
+  schema.ts                  Drizzle schema source
+  sessions.ts                Prepared D1 user/session/member/invite queries
+  floor.ts                   Prepared D1 floor snapshot and mutation queries
+drizzle/                     Generated D1 migrations and metadata
+lib/
+  floor-types.ts             Public persisted floor types
+  session-types.ts           Session, identity, presence, and typing event types
+  validation.ts              Bounded input parsing and normalization
+  identity.ts                Access verification and local identity isolation
+  invites.ts                 HMAC signing and constant-time verification
+  presence-server.ts         Internal application-to-Durable-Object notifications
+  floor-api.ts               Shared floor route response helpers
+  floor-state.ts             Pure queue/mention/revision client helpers
+  typing-drafts.ts           Pure live-draft reducers and visibility selection
+worker/
+  index.ts                   Cloudflare entry, identity boundary, assets, app dispatch
+  presence.ts                Authenticated WebSocket route and SessionPresence object
+tests/
+  unit/                      Pure functions, validation, identity, signing, reducers
+  worker/                    Local D1 and Durable Object integration tests
+  render/                    Built Worker/server-rendering and route behavior
+  e2e/                       Two authenticated browser-context product flow
+docs/agent-backend-gaps.md   Deferred execution/repository capabilities
+wrangler.jsonc               Production bindings, routes, migrations, compatibility
+```
+
+## Local development
+
+### Requirements
+
+- Node.js 22.13.0 or newer.
+- npm.
+- A Cloudflare-compatible Wrangler runtime installed through project dependencies.
+
+### First setup
+
+```bash
+npm install
+cp .env.example .dev.vars
+openssl rand -hex 32
+```
+
+Put the generated value in `.dev.vars` as `INVITE_SIGNING_SECRET`. Choose local `OPENFLOOR_DEV_USER_*` values. Access placeholders may remain for loopback development.
+
+Apply migrations and start:
+
+```bash
+npx wrangler d1 migrations apply openfloor-production --local
+npm run dev
+```
+
+Open the printed URL, normally `http://localhost:3000`, then use `/home`. Do not add `/app` in development.
+
+### Testing multiple local users manually
+
+The normal development fallback supplies one server-side identity. The automated Playwright suite is the supported repeatable two-user test because it enables test-only identity headers in an isolated environment. Do not expose that test mechanism in production to make manual testing easier.
+
+### Useful commands
+
+```bash
+npm run typecheck
+npm run lint
+npm run test:unit
+npm run test:migrations
+npm run test:worker
+npm run test:render
+npm run test:e2e
+npm test
+npm run build
+```
+
+`npm test` is the required comprehensive pipeline.
+
+## Testing strategy
+
+### Unit tests
+
+Use for pure behavior:
+
+- Identity claim parsing and development fallback isolation.
+- Invite signing and verification.
+- Validation and normalization.
+- Date formatting that is deterministic across server and browser.
+- Queue merge selection, mentions, and revision decisions.
+- Presence and typing-draft reducers.
+- Everyone/Typing/Hidden draft selection.
+
+### D1 integration tests
+
+Use the Cloudflare Vitest worker pool and local migrations to test:
+
+- User upserts.
+- Session creation and member-only listing.
+- Membership uniqueness and concealment.
+- Invite acceptance, rotation, and revocation.
+- Owner/non-owner leave behavior.
+- Empty new floor snapshots.
+- Agent uniqueness and same-session ownership.
+- Assignment, message, DM privacy, queue, ordering, and merging behavior.
+- Revision increments and persistence after reread.
+
+### Durable Object tests
+
+Cover:
+
+- Authenticated upgrade and unauthorized rejection.
+- Two-user presence.
+- Multiple-tab online deduplication.
+- Disconnect behavior.
+- Hibernation restoration.
+- Member, session, and floor notifications.
+- Ephemeral draft broadcast.
+- Draft restoration after hibernation.
+- Multiple-tab draft aggregation and fallback when one tab closes.
+
+### Rendering tests
+
+Build the Worker and verify:
+
+- Public landing content.
+- Protected redirects.
+- Product metadata.
+- Authenticated empty floor rendering.
+- Absence of seeded agents, prompts, files, checks, or branches.
+- Presence of current floor controls without relying on client-only mounting.
+- Nothing is served outside the configured base path in the production build.
+
+### End-to-end tests
+
+The Playwright test uses two authenticated browser contexts and verifies the real flow:
+
+- Owner creates a session and shares an invite.
+- Member explicitly joins.
+- Both see presence and enter the floor.
+- Objective edits synchronize.
+- Agent, prompts, assignments, team chat, and DMs persist and synchronize.
+- Queue targeting and merging work.
+- Live teammate draft text appears in realtime.
+- Typing, Everyone, and Hidden draft modes behave correctly.
+- Review stays empty without fabricated repository data.
+- Reload persistence, disconnect/reconnect, leave, and roster updates work.
+
+When adding a collaborative feature, prefer extending this two-context flow over testing only one browser.
+
+### Hydration and time formatting
+
+Server-rendered text must be deterministic. Do not render `Date.now()`, `Math.random()`, browser-locale-only formatting, or server/client branches into shared initial markup. Use the helpers in `lib/date-format.ts` or pass an explicit server snapshot. The project previously encountered hydration mismatch from locale/date differences; tests should guard any new timestamp presentation.
+
+## Production configuration and deployment
+
+### Required bindings
+
+Defined in `wrangler.jsonc`:
+
+- `DB`: D1 database `openfloor-production`.
+- `SESSION_PRESENCE`: `SessionPresence` Durable Object.
+- `ASSETS`: built client assets.
+- `IMAGES`: Cloudflare Images transform binding.
+
+The Durable Object migration uses `new_sqlite_classes` with tag `v1`. Keep migration syntax compatible with the pinned Wrangler version.
+
+### Required secrets
+
+- `INVITE_SIGNING_SECRET`
+- `CF_ACCESS_TEAM_DOMAIN`
+- `CF_ACCESS_AUD`
+
+Set a secret by its variable name, then enter the value when prompted:
+
+```bash
+npx wrangler secret put INVITE_SIGNING_SECRET
+npx wrangler secret put CF_ACCESS_TEAM_DOMAIN
+npx wrangler secret put CF_ACCESS_AUD
+```
+
+Do not pass the secret value as the `wrangler secret put` name. Never commit `.dev.vars`, Access credentials, signing secrets, tokens, or generated invite URLs.
+
+### Deployment order
+
+```bash
+npm test
+npx wrangler d1 migrations apply openfloor-production --remote
+npm run build
+npx wrangler deploy --config dist/server/wrangler.json
+```
+
+Migrations must land before code that requires them. The build generates `dist/server/wrangler.json`; deployment uses that built config.
+
+### Smoke test after deployment
+
+1. Open public `https://opnflr.com/app` without an Access session.
+2. Sign in through a protected path and verify return to `/app/home`.
+3. Create a session and confirm it starts empty.
+4. Open a second authenticated browser identity and accept an invite explicitly.
+5. Verify lobby and floor presence.
+6. Verify a live draft appears and its three viewing modes work.
+7. Create an agent and confirm it persists after reload.
+8. Add unassigned and targeted queue prompts; reorder or merge them.
+9. Send team and direct messages and verify DM privacy.
+10. Edit the objective and verify cross-browser update and reload persistence.
+11. Rotate and revoke the invite; verify old links reveal nothing.
+12. Verify Review is empty and contains no fabricated files/checks.
+13. Verify sign-out through Cloudflare Access.
+
+## Engineering conventions
+
+### Database and API work
+
+- Keep authorization close to the database operation; UI hiding is not authorization.
+- Use prepared D1 statements and bound values for runtime SQL.
+- Group logically atomic mutations and revision bumps in `database.batch`.
+- Validate and normalize at the API boundary before querying.
+- Preserve 404 concealment for non-members and unauthorized owner-only resources.
+- Return the authoritative resource or snapshot from successful mutations.
+- Add indexes for actual lookup/order patterns.
+- Preserve prompt authorship during queue operations.
+- Treat a cross-session ID as invalid, even if that ID exists elsewhere.
+
+### Realtime work
+
+- Authenticate and authorize before forwarding to the Durable Object.
+- Trust the socket attachment identity, never a user ID in a client message.
+- Use the hibernating WebSocket API and serialized attachments.
+- Avoid intervals in the Durable Object.
+- Design for multiple tabs per user.
+- Keep event payloads bounded and typed.
+- Use D1 revisions for persisted reconciliation.
+- Add hibernation and reconnect tests for protocol changes.
+
+### Frontend work
+
+- Derive people, names, roles, ownership options, and avatars from real session members.
+- Render absent runtime/review fields as absent.
+- Keep client data sources asynchronous and treat mutation responses as authoritative.
+- Surface inline failures; do not silently pretend a mutation succeeded.
+- Preserve the empty first-run experience.
+- Keep panel behavior and responsive layout working when collections are empty or large.
+- Do not add input placeholder examples that appear to be product data.
+- Do not introduce fake status transitions to make the UI look active.
+
+### Security and privacy
+
+- Never trust forwarded identity headers directly from the public request.
+- Never expose invite signing secrets or Access tokens to the client.
+- Never log live prompt drafts or store them in analytics by default.
+- Remember that team messages are visible to the room, while DMs are filtered per caller.
+- Treat live drafts as sensitive room content visible to authenticated members.
+- Preserve invalid-invite and non-member metadata concealment.
+
+### Git and change hygiene
+
+- Preserve unrelated worktree changes.
+- Do not commit `.dev.vars`, build output, Wrangler state, Playwright artifacts, or `tsconfig.tsbuildinfo`.
+- Do not modify the preserved demo snapshot branch as part of normal feature work.
+- Keep migrations, schema, tests, docs, and code in the same logical change.
+- Do not push, deploy, rotate secrets, or mutate production unless the task explicitly authorizes it.
+
+## Known limitations and footguns
+
+- The database provider-identity column is still named `chatgpt_user_id`; it is not ChatGPT-specific anymore.
+- Production uses `/app`; local development does not. Manual paths are a common source of broken links and sockets.
+- Next `Link` and manual `fetch` have different base-path responsibilities.
+- Cloudflare Access configuration is external state; code passing locally does not prove the production policy paths are correct.
+- The Worker route `opnflr.com/app*` is intentionally broader than `/app/*` due query-string routing behavior.
+- Access protects the app at the edge, but the Worker still verifies JWTs. Do not remove defense in depth.
+- Floor snapshots are caller-specific because of DM filtering.
+- Realtime `floor.changed` is a refetch signal, not the changed records themselves.
+- Draft Hidden mode does not stop outbound sharing.
+- Agent names may contain spaces, while the current `@mention` helper recognizes a single word-like name. Explicit target selection is the reliable path for multiword agent names until mention parsing is redesigned.
+- Owners cannot leave because ownership transfer is deferred.
+- Review types look complete enough to render future data, but no review persistence or runtime writer exists.
+- The UI contains restored visual affordances from a prototype; verify backend wiring before claiming any action is real.
+- Wrangler is pinned. A newer compatibility date may be rejected until Wrangler is upgraded deliberately.
+- This `AGENTS.md` is the comprehensive context source; keep shorter README and focused docs consistent with it.
+
+## Roadmap guidance
+
+The next major backend milestone should introduce a trusted execution/repository boundary without weakening current invariants. A sound design should answer, in writing:
+
+1. Which service owns agent execution and credentials?
+2. How does it authenticate internal writes to a session?
+3. How are agents scheduled from queue items, cancelled, retried, and made idempotent?
+4. Which runtime states are authoritative, and where are they persisted?
+5. How are repository access, installation identity, branches, and worktrees scoped?
+6. How are files, diffs, checks, warnings, conflicts, and review candidates modeled?
+7. How do runtime writes increment `floor_revision` and notify connected clients?
+8. How are agent messages distinguished from human-authored messages?
+9. What can owners, members, and agent owners do?
+10. What is the recovery model for disconnects, duplicate delivery, and partially completed work?
+
+Do not begin by filling the existing UI with guessed fields. Define the authoritative service and public contract, add nullable persisted types and migrations, then connect components to genuine data.
+
+## Key decision log
+
+### 2026-08-18 — Preserve the original prototype
+
+**Decision:** Preserve the complete demo on `codex/demo-ui-snapshot` at commit `5958f34` before replacing it.
+
+**Rationale:** The visual and interaction language remained useful, but the mock architecture was not safe to evolve into a real product.
+
+**Consequences:** Engineers may consult the snapshot for UI reference. Production code must not import or recreate its mock fixtures, delayed replies, fake typing, terminals, or canned reviews.
+
+### 2026-08-18 — Use Cloudflare as the primary platform
+
+**Decision:** Deploy the product as a Cloudflare Worker with D1 and a per-session Durable Object rather than moving the application to Vercel or reducing presence to polling.
+
+**Rationale:** The application needs edge authentication, relational persistence, hibernating room WebSockets, and a natural one-object-per-session coordination model.
+
+**Consequences:** Cloudflare bindings, migrations, Access policy, Worker routes, and Wrangler build/deploy behavior are part of the application architecture and test strategy.
+
+### 2026-08-18 — Replace the earlier ChatGPT sign-in design with Cloudflare Access
+
+**Decision:** Use Cloudflare Access with Google and One-time PIN. Do not own an application callback or password flow.
+
+**Rationale:** The actual deployment is a Cloudflare-hosted product with Access available, and the platform-provided ChatGPT sign-in endpoint was not available on the custom domain.
+
+**Consequences:** Access subject is the stable provider identity. The legacy `chatgpt_user_id` column remains but is semantically generic. Protected production paths must stay synchronized with Access configuration.
+
+### 2026-08-18 — Mount the product under `/app`
+
+**Decision:** Keep the marketing site at the apex and serve OpenFloor under `opnflr.com/app` in production; serve at root in local development.
+
+**Rationale:** Marketing and product are separate deployments on one domain, and vinext development stylesheet behavior does not tolerate the production prefix cleanly.
+
+**Consequences:** Next base-path configuration, manual `BASE_PATH` use, Worker asset stripping, Access paths, invite URLs, WebSocket URLs, tests, and smoke tests must all preserve the distinction.
+
+### 2026-08-18 — D1 is authoritative for collaboration
+
+**Decision:** Persist sessions, membership, invitations, objective, agents, assignments, messages, and queue state in D1. New floors are empty.
+
+**Rationale:** Collaboration must survive reloads and be shared across users. Mock React state could not satisfy that requirement.
+
+**Consequences:** Floor mutations return snapshots, use revision increments, and are tested with local D1 migrations. No production fixture arrays are allowed.
+
+### 2026-08-18 — Use signed reusable invitations
+
+**Decision:** Represent invite tokens as `invite-id.HMAC-SHA256-signature`, keep one active invite per session, and store no bearer secret in D1.
+
+**Rationale:** Owners need to retrieve and reuse the current link while retaining rotation and revocation without storing a plaintext bearer token.
+
+**Consequences:** `INVITE_SIGNING_SECRET` is required. Rotation revokes the old record. Invalid or revoked tokens reveal no preview.
+
+### 2026-08-18 — Durable Object presence is ephemeral and membership-gated
+
+**Decision:** Use one hibernating `SessionPresence` object per session. The Worker authenticates and verifies D1 membership before WebSocket handoff.
+
+**Rationale:** Room presence needs low-latency fanout, tab deduplication, and hibernation without weakening authorization.
+
+**Consequences:** D1 remains the membership authority. Socket attachments contain trusted internal identity. Polling is not the fallback architecture.
+
+### 2026-08-18 — Restore the full floor shell without restoring simulation
+
+**Decision:** Reuse the prototype's workspace, panels, queue, team, composer, and review layout while removing terminals, fake agent output, mock files, timers, canned replies, and fixtures.
+
+**Rationale:** The interaction design was valuable, but fabricated activity made it impossible to distinguish product capability from presentation.
+
+**Consequences:** The UI remains ready for future runtime/review data but must show empty states until that data is real.
+
+### 2026-08-18 — Synchronize persisted floor data by revision and refetch
+
+**Decision:** Increment a session-level `floor_revision` on every successful floor mutation, broadcast changed domains through the Durable Object, and let older clients refetch the authoritative snapshot.
+
+**Rationale:** D1 should remain the single source of truth while the WebSocket provides efficient invalidation.
+
+**Consequences:** Events do not need to duplicate full persisted records. Mutations and revision increments stay in one batch. Clients ignore stale revision events.
+
+### 2026-08-19 — Live prompt drafts are realtime but not persisted
+
+**Decision:** Broadcast authenticated teammate prompt drafts through per-socket Durable Object attachments and aggregate by user across tabs. Provide Typing, Everyone, and Hidden local display modes.
+
+**Rationale:** Teams benefit from seeing concurrent intent before submission, but unfinished text should not become durable floor history.
+
+**Consequences:** Drafts clear on submission/navigation/disconnect, are bounded to 4,000 characters, survive Durable Object hibernation only while sockets exist, and never enter D1. Hidden affects local viewing, not outbound sharing.
+
+## How to record the next decision
+
+Append an entry using this structure:
+
+```markdown
+### YYYY-MM-DD — Short decision title
+
+**Decision:** What is now true.
+
+**Rationale:** Why this option was chosen over the relevant alternatives.
+
+**Consequences:** What code, data, operations, security, testing, or future work must now account for.
+```
+
+Also update any earlier sections made inaccurate by the decision. A log entry alone is not enough if setup instructions, route tables, invariants, or the current product boundary changed.
+
+## Definition of done
+
+Before handing off a change, verify the applicable items:
+
+- Product behavior uses real authoritative data or an honest empty state.
+- Server authentication and session authorization are enforced.
+- Non-member and invalid-resource concealment is preserved.
+- Input is bounded, normalized, and tested.
+- Cross-session references are rejected.
+- Schema and migration are synchronized if persistence changed.
+- Persisted floor mutations bump revision and notify the correct domains.
+- Realtime behavior handles reconnect, multiple tabs, and hibernation where applicable.
+- SSR markup is deterministic and hydration-safe.
+- Empty, error, and responsive UI states still work.
+- Unit, worker, rendering, and two-user browser tests cover the risk.
+- `npm test` passes.
+- `README.md`, `docs/agent-backend-gaps.md`, and this file are updated where relevant.
+- New durable decisions are appended to the decision log.
+- No secrets, local environment files, build output, or test artifacts are included.
+- Deployment and production mutation occur only with explicit authorization.
