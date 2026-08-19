@@ -161,7 +161,7 @@ export function SessionScreen({
             {visibleMembers.map((member) => (
               <li key={member.id}>
                 <span className="avatar" aria-hidden="true">{initials(member.displayName)}</span>
-                <div><strong>{member.displayName}{member.id === user.id && <em> You</em>}</strong><span>Joined <LocalDateTime timestamp={member.joinedAt} mode="date" /></span></div>
+                <div><strong title={member.displayName}>{member.displayName}{member.id === user.id && <em> You</em>}</strong><span>Joined <LocalDateTime timestamp={member.joinedAt} mode="date" /></span></div>
                 <span className="member-role">{member.role}</span>
                 <span className="presence-label" data-online={member.online}>{member.online ? "Online" : "Offline"}</span>
               </li>

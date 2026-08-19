@@ -15,7 +15,7 @@ export function AgentCard({ agent, selected, onFocus, onHistory }: { agent: Floo
         <span className="agent-identity"><strong>{agent.name}</strong><span>{agent.role}</span></span>
         <span className="agent-head-trailing"><span className="agent-state">Created</span><button type="button" className="button agent-chat-button" data-size="sm" onClick={(event) => { event.stopPropagation(); onHistory(); }}><Icon name="message" size={12} />Prompts</button></span>
       </div>
-      <div className="agent-task"><strong>{agent.task}</strong></div>
+      <div className="agent-task"><strong title={agent.task}>{agent.task}</strong></div>
       <div className="agent-foot"><span>Owned by {agent.ownerName}</span><span><LocalDateTime timestamp={agent.createdAt} /></span></div>
     </article>
   );
