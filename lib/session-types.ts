@@ -50,7 +50,25 @@ export type AppUser = {
   updatedAt: number;
 };
 
-export type RepositoryConnectionStatus = "connected" | "disconnected";
+export type RepositoryConnectionStatus = "connected" | "ready" | "revoked" | "inaccessible" | "externally_modified" | "disconnected";
+
+export type RepositoryCandidate = {
+  id: string;
+  sessionId: string;
+  connectionId: string;
+  branchName: string;
+  baseBranch: string;
+  baseSha: string;
+  candidateSha: string | null;
+  remoteBaseSha: string | null;
+  remoteCandidateSha: string | null;
+  status: "creating" | "active" | "creation_failed";
+  createdBy: string;
+  createdAt: number;
+  updatedAt: number;
+  lastSyncedAt: number | null;
+  behindBase: boolean;
+};
 
 export type RepositoryCheckCommand = {
   id: string;

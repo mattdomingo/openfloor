@@ -1,6 +1,6 @@
 # Production GitHub App rollout
 
-Phase 1 connects the existing production OpenFloor application to a GitHub App. During phased acceptance, install the App only on a real disposable repository. The repository is not mock data: it is an intentionally throwaway GitHub repository where later phases can safely create and merge real code changes.
+Phase 2 connects the existing production OpenFloor application to a GitHub App and creates one real candidate branch. During phased acceptance, install the App only on a real disposable repository. The repository is not mock data: it is intentionally throwaway GitHub state where later phases can safely create and merge real code changes.
 
 ## Production host and Cloudflare Access
 
@@ -35,7 +35,7 @@ Repository permissions:
 - Administration: no access.
 - Workflows: no access.
 
-Subscribe to `installation`, `installation_repositories`, `repository`, `push`, `pull_request`, `check_run`, `check_suite`, and `status` events. Phase 1 authenticates delivery and acknowledges events; durable reconciliation begins in Phase 2.
+Subscribe to `installation`, `installation_repositories`, `repository`, `push`, `pull_request`, `check_run`, `check_suite`, and `status` events. Phase 2 authenticates and deduplicates deliveries, updates access and repository identity, and invalidates repository/review state for pushes, pull requests, checks, and statuses.
 
 Generate and download a private key. Create a disposable repository with at least one commit on its default branch, then install the App on only that repository during phased acceptance.
 
@@ -64,6 +64,6 @@ npm run build
 npx wrangler deploy --config dist/server/wrangler.json
 ```
 
-The repository connection is read-only at the product-workflow level in Phase 1. Although the GitHub App has future branch permissions, OpenFloor exposes no ref creation, update, deletion, commit, pull-request, or merge operation until its accepted later phase.
+Phase 2 exposes one write: **Enable execution** creates a server-generated candidate ref at the verified base SHA. **Sync repository** only reads and compares remote state. OpenFloor exposes no caller-selected ref, force push, base write, candidate update/deletion, commit, pull request, or merge operation.
 
 Required check commands are optional while connecting a repository. A later runner or integration action must refuse to execute until the owner configures at least one command.

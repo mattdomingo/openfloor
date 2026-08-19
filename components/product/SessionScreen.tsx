@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { BASE_PATH } from "@/components/basePath";
 import { formatShortDate } from "@/lib/date-format";
 import { reducePresence } from "@/lib/presence";
-import type { AppUser, PresenceEvent, RepositoryConnection, SessionMember, SessionSummary } from "@/lib/session-types";
+import type { AppUser, PresenceEvent, RepositoryCandidate, RepositoryConnection, SessionMember, SessionSummary } from "@/lib/session-types";
 import { AppHeader, initials } from "./AppHeader";
 import { RepositoryCard } from "./RepositoryCard";
 
@@ -17,12 +17,14 @@ export function SessionScreen({
   session,
   initialMembers,
   initialRepository,
+  initialCandidate,
   githubSetup,
 }: {
   user: AppUser;
   session: SessionSummary;
   initialMembers: SessionMember[];
   initialRepository: RepositoryConnection | null;
+  initialCandidate: RepositoryCandidate | null;
   githubSetup: boolean;
 }) {
   const router = useRouter();
@@ -70,6 +72,7 @@ export function SessionScreen({
           setOnlineIds((current) => reducePresence(current, event));
         }
         if (event.type === "members.changed") void refreshMembers();
+        if (event.type === "floor.changed" && event.domains.some((domain) => domain === "repository" || domain === "review")) router.refresh();
       });
       socket.addEventListener("close", () => {
         if (disposed) return;
@@ -86,7 +89,7 @@ export function SessionScreen({
       if (retryTimer) window.clearTimeout(retryTimer);
       socket?.close(1000, "Session page closed");
     };
-  }, [refreshMembers, session.id]);
+  }, [refreshMembers, router, session.id]);
 
   useEffect(() => {
     if (session.role !== "owner") return;
@@ -172,7 +175,7 @@ export function SessionScreen({
           ) : (
             <section className="action-card"><p className="eyebrow">Membership</p><h2>You are a member</h2><p>Leaving removes this session from your home and ends your live connection.</p><button className="button danger-button" onClick={leave}>Leave session</button></section>
           )}
-          <RepositoryCard sessionId={session.id} role={session.role} initialRepository={initialRepository} beginSetup={githubSetup} />
+          <RepositoryCard key={`${initialRepository?.updatedAt ?? 0}:${initialCandidate?.updatedAt ?? 0}`} sessionId={session.id} role={session.role} initialRepository={initialRepository} initialCandidate={initialCandidate} beginSetup={githubSetup} />
           <section className="action-card quiet-card"><p className="eyebrow">What persists</p><p>The room, objective, membership, and invite state are stored. Presence reflects live authenticated connections.</p></section>
           {notice && <p className="notice" role="status">{notice}</p>}
         </aside>

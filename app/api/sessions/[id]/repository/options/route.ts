@@ -13,7 +13,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
   }
   const pending = await getPendingGitHubInstallation(sessionId, user.id);
   const existing = await getRepositoryConnectionForMember(sessionId, user.id);
-  const installationId = pending?.installationId ?? (existing?.status === "connected" ? existing.installationId : null);
+  const installationId = pending?.installationId ?? (existing && !["disconnected", "revoked", "inaccessible"].includes(existing.status) ? existing.installationId : null);
   if (!installationId) return Response.json({ error: "GitHub setup is not available" }, { status: 409 });
   try {
     const config = getGitHubAppConfig();

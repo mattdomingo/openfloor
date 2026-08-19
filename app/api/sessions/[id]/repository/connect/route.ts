@@ -9,7 +9,7 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
   if (isApiError(user)) return user;
   const sessionId = (await params).id;
   const existing = await getRepositoryConnectionForMember(sessionId, user.id);
-  if (existing?.status === "connected") {
+  if (existing && !["disconnected", "revoked", "inaccessible"].includes(existing.status)) {
     return Response.json({ error: "Disconnect the current repository before connecting another one" }, { status: 409 });
   }
   const stateId = await createGitHubConnectionState(sessionId, user.id);

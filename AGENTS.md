@@ -152,13 +152,16 @@ WebSocket events notify clients about presence or changed domains. D1 remains au
 - Durable GitHub installation/repository identifiers, selected base branch, and ordered required-check commands.
 - Member-visible repository details with owner-only connect, configure, disconnect, and reconnect controls.
 - A public GitHub webhook boundary that caps payloads and verifies the raw-body HMAC before acknowledging them.
+- One durable active repository candidate per session, created at a verified base SHA on a server-generated `openfloor/<session-short>/candidate/<candidate-short>` branch.
+- Owner-only repository synchronization with connected, ready, revoked, inaccessible, externally modified, and behind-base presentation.
+- Idempotent GitHub installation, repository-access, rename, push, pull-request, check, and status delivery processing keyed by delivery ID.
 
 ### Explicitly deferred
 
 - Agent model or provider selection.
 - Agent execution, cancellation, retry, runtime scheduling, or queue consumption.
 - Provider credentials and secret management for agent runtimes.
-- Repository checkout, reconciliation, worktrees, branch creation/update/deletion, commits, pull requests, or attachments.
+- Repository checkout, worktrees, run-branch creation, branch update/deletion, commits, pull requests, or attachments.
 - Runtime status, progress, steps, logs, agent-authored messages, or terminal output.
 - File discovery, changed-file lists, checks, warnings, diffs, conflicts, or generated review candidates.
 - Review approval persistence, merge, deploy, or repository modification.
@@ -356,8 +359,20 @@ Do not hand-edit Drizzle metadata. If a generated migration is wrong, correct th
 
 - There is at most one row per session.
 - Numeric GitHub installation and repository IDs are stored as strings and remain authoritative across repository renames; owner/name/full-name are display metadata.
-- The selected base branch is configuration only in Phase 1. No OpenFloor route creates, updates, or deletes a Git ref.
-- Disconnect changes status to `disconnected` and preserves the connection metadata and check configuration.
+- Status is `connected`, `ready`, `revoked`, `inaccessible`, `externally_modified`, or `disconnected`; GitHub is authoritative and synchronization never repairs a changed ref automatically.
+- Disconnect changes status to `disconnected` and preserves connection, candidate, and check history.
+
+#### `repository_candidates`
+
+- Durable rows record the exact base SHA, generated candidate ref, expected candidate SHA, last observed remote SHAs, and synchronization time.
+- A partial unique index permits only one `creating` or `active` candidate per session.
+- Candidate refs are generated only by the server as `openfloor/<session-short>/candidate/<candidate-short>` and are created without force from the configured base ref. Phase 2 exposes no generic ref name or update/delete API.
+- A newer base SHA marks the candidate behind; an unexpected candidate head marks the connection externally modified. Neither condition rewrites GitHub.
+
+#### `github_webhook_deliveries`
+
+- The GitHub delivery ID is the primary key, so a replay is acknowledged without applying its state transition twice.
+- Installation, repository-access, repository rename/delete, push, pull-request, check-run/check-suite, and status events update or invalidate repository/review state only after raw-body HMAC verification.
 
 #### `repository_check_commands`
 
@@ -410,9 +425,11 @@ Do not hand-edit Drizzle metadata. If a generated migration is wrong, correct th
 - `assignments`
 - `messages`
 - `queue`
+- `repository`
+- `activeCandidate`
 - `review`
 
-`review` is deliberately nullable and currently always `null` in `db/floor.ts`. Extend the contract with nullable runtime/review fields when the real backend exists; do not populate it from UI fixtures.
+`FloorSnapshot` now includes nullable `repository` and `activeCandidate` fields. `review` is deliberately nullable and currently always `null` in `db/floor.ts`; do not populate it from UI fixtures.
 
 ### Mutation pattern
 
@@ -512,7 +529,9 @@ All paths below are shown without the production `/app` prefix.
 | `POST /api/sessions/[id]/repository` | Owner with pending callback | Persist the selected repository, base branch, and required commands. |
 | `PATCH /api/sessions/[id]/repository` | Owner | Change the base branch or required commands for the same connected repository. |
 | `DELETE /api/sessions/[id]/repository` | Owner | Mark the connection disconnected without mutating GitHub. |
-| `POST /webhooks/github` | Valid GitHub HMAC | Acknowledge a bounded signed delivery; durable event processing starts in Phase 2. |
+| `POST /api/sessions/[id]/repository/candidate` | Owner | Verify the configured base SHA and create the single server-named candidate branch without force. |
+| `POST /api/sessions/[id]/repository/sync` | Owner | Reconcile repository metadata and base/candidate heads without modifying GitHub. |
+| `POST /webhooks/github` | Valid GitHub HMAC | Deduplicate and process bounded installation, access, repository, push, PR, check, and status deliveries. |
 
 Response conventions:
 
@@ -707,6 +726,7 @@ Use the Cloudflare Vitest worker pool and local migrations to test:
 - Assignment, message, DM privacy, queue, ordering, and merging behavior.
 - Revision increments and persistence after reread.
 - Owner-only repository setup/disconnect, member reads, outsider concealment, and ordered required-check persistence.
+- Candidate uniqueness, webhook delivery deduplication, behind-base reconciliation, and external candidate mutation detection.
 
 ### Durable Object tests
 
@@ -747,7 +767,7 @@ The Playwright test uses two authenticated browser contexts and verifies the rea
 - Live teammate draft text appears in realtime.
 - Typing, Everyone, and Hidden draft modes behave correctly.
 - Review stays empty without fabricated repository data.
-- Signed GitHub webhook rejection/acceptance and the owner/member repository connection, reload, configure, disconnect, and reconnect flow through a deterministic test-only adapter.
+- Signed GitHub webhook rejection/acceptance and the owner/member repository connection, reload, configure, disconnect, reconnect, candidate creation, and synchronization flow through a deterministic test-only adapter.
 - Reload persistence, disconnect/reconnect, leave, and roster updates work.
 
 When adding a collaborative feature, prefer extending this two-context flow over testing only one browser.
@@ -881,7 +901,7 @@ Migrations must land before code that requires them. The build generates `dist/s
 - The Worker route `opnflr.com/app*` is intentionally broader than `/app/*` due query-string routing behavior.
 - Access protects the app at the edge, but the Worker still verifies JWTs. Do not remove defense in depth.
 - `/app/webhooks/github` is deliberately public and must never process a payload before its raw-body HMAC and size are verified.
-- Phase 1 GitHub permissions are future-facing, but the product exposes only installation/repository/branch reads. No branch or content mutation route exists yet.
+- Phase 2 uses Contents write only to create the server-generated candidate ref. It exposes no generic branch CRUD, force push, base write, run branch, commit, PR, or deletion route.
 - Set `GITHUB_APP_PRIVATE_KEY` by piping the complete downloaded PEM file into `wrangler secret put`; an App installation redirect can succeed even when this key is malformed, but repository discovery cannot. The GitHub client accepts both GitHub's PKCS#1 `RSA PRIVATE KEY` download and PKCS#8 `PRIVATE KEY` PEM formats.
 - Floor snapshots are caller-specific because of DM filtering.
 - Realtime `floor.changed` is a refetch signal, not the changed records themselves.
@@ -895,7 +915,7 @@ Migrations must land before code that requires them. The build generates `dist/s
 
 ## Roadmap guidance
 
-The next accepted milestone is Phase 2: a durable candidate workspace and GitHub reconciliation without agent execution. It must preserve these already-decided questions and boundaries:
+The next accepted milestone after Phase 2 is Phase 3: real isolated repository preflight without agent-authored changes. It must preserve these already-decided questions and boundaries:
 
 1. Which service owns agent execution and credentials?
 2. How does it authenticate internal writes to a session?
@@ -1031,6 +1051,14 @@ Do not begin by filling the existing UI with guessed fields. Define the authorit
 **Rationale:** Repository authorization and selection are useful independently of knowing the repository's test commands. Requiring commands during connection prevents owners from completing GitHub setup and discovering the repository before deciding how it should be verified.
 
 **Consequences:** The repository API accepts zero to eight commands. Future preflight, agent-run, publication, and integration actions must fail closed until the owner configures at least one command; an empty list must never be treated as a passing check suite.
+
+### 2026-08-19 — Reconcile one immutable candidate ref without automatic repair
+
+**Decision:** Enabling execution creates one durable active candidate at the current configured base SHA on a server-generated `openfloor/<session-short>/candidate/<candidate-short>` ref. OpenFloor records expected and observed SHAs, treats GitHub as authoritative, and reports a newer base as behind or an unexpected candidate head as externally modified. It never force-pushes or repairs either condition in Phase 2.
+
+**Rationale:** A single candidate gives later runs a stable integration target while immutable expected SHAs make races and external edits visible. Server-only naming and non-force creation prevent callers from turning the session API into generic Git ref authority.
+
+**Consequences:** Candidate creation and synchronization are owner-only; members receive the state read-only. Candidate creation is reserved durably before the GitHub write and records a failed reservation if the write fails. Signed GitHub deliveries are deduplicated by delivery ID, bump `floor_revision`, and broadcast `repository` and `review` invalidations. Disconnect/reconnect preserves candidate history. Run branches, local execution, candidate updates, pull requests, integration, and deletion remain deferred.
 
 ## How to record the next decision
 

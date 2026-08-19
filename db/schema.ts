@@ -179,7 +179,7 @@ export const repositoryConnections = sqliteTable(
     repositoryPrivate: integer("repository_private", { mode: "boolean" }).notNull(),
     defaultBranch: text("default_branch").notNull(),
     baseBranch: text("base_branch").notNull(),
-    status: text("status", { enum: ["connected", "disconnected"] }).notNull(),
+    status: text("status", { enum: ["connected", "ready", "revoked", "inaccessible", "externally_modified", "disconnected"] }).notNull(),
     connectedBy: text("connected_by").notNull().references(() => users.id),
     connectedAt: integer("connected_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
@@ -188,8 +188,49 @@ export const repositoryConnections = sqliteTable(
   (table) => [
     uniqueIndex("idx_repository_connections_one_per_session").on(table.sessionId),
     index("idx_repository_connections_installation").on(table.installationId),
-    check("repository_connections_status_check", sql`${table.status} in ('connected', 'disconnected')`),
+    check("repository_connections_status_check", sql`${table.status} in ('connected', 'ready', 'revoked', 'inaccessible', 'externally_modified', 'disconnected')`),
   ],
+);
+
+export const repositoryCandidates = sqliteTable(
+  "repository_candidates",
+  {
+    id: text("id").primaryKey(),
+    sessionId: text("session_id").notNull().references(() => sessions.id, { onDelete: "cascade" }),
+    connectionId: text("connection_id").notNull().references(() => repositoryConnections.id),
+    branchName: text("branch_name").notNull(),
+    baseBranch: text("base_branch").notNull(),
+    baseSha: text("base_sha").notNull(),
+    candidateSha: text("candidate_sha"),
+    remoteBaseSha: text("remote_base_sha"),
+    remoteCandidateSha: text("remote_candidate_sha"),
+    status: text("status", { enum: ["creating", "active", "creation_failed"] }).notNull(),
+    createdBy: text("created_by").notNull().references(() => users.id),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+    lastSyncedAt: integer("last_synced_at"),
+  },
+  (table) => [
+    index("idx_repository_candidates_session_created").on(table.sessionId, table.createdAt),
+    uniqueIndex("idx_repository_candidates_one_live")
+      .on(table.sessionId)
+      .where(sql`${table.status} in ('creating', 'active')`),
+    uniqueIndex("idx_repository_candidates_branch").on(table.connectionId, table.branchName),
+    check("repository_candidates_status_check", sql`${table.status} in ('creating', 'active', 'creation_failed')`),
+  ],
+);
+
+export const githubWebhookDeliveries = sqliteTable(
+  "github_webhook_deliveries",
+  {
+    deliveryId: text("delivery_id").primaryKey(),
+    event: text("event").notNull(),
+    action: text("action"),
+    installationId: text("installation_id"),
+    repositoryId: text("repository_id"),
+    receivedAt: integer("received_at").notNull(),
+  },
+  (table) => [index("idx_github_webhook_deliveries_received").on(table.receivedAt)],
 );
 
 export const repositoryCheckCommands = sqliteTable(

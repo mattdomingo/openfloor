@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { BASE_PATH } from "@/components/basePath";
 import type {
   GitHubRepositoryOption,
+  RepositoryCandidate,
   RepositoryConnection,
   SessionRole,
 } from "@/lib/session-types";
@@ -25,15 +26,18 @@ export function RepositoryCard({
   sessionId,
   role,
   initialRepository,
+  initialCandidate,
   beginSetup,
 }: {
   sessionId: string;
   role: SessionRole;
   initialRepository: RepositoryConnection | null;
+  initialCandidate: RepositoryCandidate | null;
   beginSetup: boolean;
 }) {
   const router = useRouter();
   const [repository, setRepository] = useState(initialRepository);
+  const [candidate, setCandidate] = useState(initialCandidate);
   const [editing, setEditing] = useState(beginSetup);
   const [repositories, setRepositories] = useState<GitHubRepositoryOption[]>([]);
   const [branches, setBranches] = useState<string[]>([]);
@@ -153,6 +157,22 @@ export function RepositoryCard({
     setBusy(false);
   }
 
+  async function candidateAction(action: "candidate" | "sync") {
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    const response = await fetch(`${BASE_PATH}/api/sessions/${sessionId}/repository/${action}`, { method: "POST" });
+    const body = await readResponse<{ repository?: RepositoryConnection; candidate?: RepositoryCandidate; error?: string }>(response);
+    if (!response.ok || !body.repository || !body.candidate) {
+      setError(body.error ?? "Unable to update the repository candidate");
+    } else {
+      setRepository(body.repository);
+      setCandidate(body.candidate);
+      setNotice(action === "candidate" ? "Execution enabled. Candidate branch created." : "Repository state synchronized with GitHub.");
+    }
+    setBusy(false);
+  }
+
   function edit() {
     setRepositoryId(repository?.repositoryId ?? "");
     setBaseBranch(repository?.baseBranch ?? "");
@@ -180,6 +200,15 @@ export function RepositoryCard({
             <span>{repository.repositoryPrivate ? "Private" : "Public"} · base <code>{repository.baseBranch}</code></span>
             <span data-status={repository.status}>{repository.status}</span>
           </div>
+          {candidate && (
+            <div className="repository-checks">
+              <span>Active candidate</span>
+              <p><code>{candidate.branchName}</code></p>
+              <p>Candidate <code>{candidate.candidateSha?.slice(0, 8) ?? "creating"}</code> · base <code>{(candidate.remoteBaseSha ?? candidate.baseSha).slice(0, 8)}</code></p>
+              {candidate.behindBase && <p className="form-error">Candidate is behind the current base branch.</p>}
+              {repository.status === "externally_modified" && <p className="form-error">The candidate branch was modified outside OpenFloor.</p>}
+            </div>
+          )}
           <div className="repository-checks">
             <span>Required checks</span>
             {repository.checkCommands.length > 0
@@ -188,9 +217,11 @@ export function RepositoryCard({
           </div>
           {role === "owner" && (
             <div className="button-row">
-              {repository.status === "connected" ? (
+              {repository.status !== "disconnected" && repository.status !== "revoked" && repository.status !== "inaccessible" ? (
                 <>
                   <button className="button" onClick={edit} disabled={busy}>Configure</button>
+                  {!candidate && repository.status === "connected" && <button className="button" data-variant="primary" onClick={() => void candidateAction("candidate")} disabled={busy}>Enable execution</button>}
+                  {candidate && <button className="button" data-variant="primary" onClick={() => void candidateAction("sync")} disabled={busy}>Sync repository</button>}
                   <button className="button danger-button" onClick={disconnect} disabled={busy}>Disconnect</button>
                 </>
               ) : <button className="button" data-variant="primary" onClick={connect} disabled={busy}>Reconnect GitHub</button>}
@@ -219,7 +250,7 @@ export function RepositoryCard({
           </label>
           <div className="button-row">
             <button className="button" data-variant="primary" onClick={save} disabled={busy || !selectedRepository || !baseBranch}>Save repository</button>
-            {!beginSetup && repository?.status === "connected" && <button className="button" onClick={() => setEditing(false)} disabled={busy}>Cancel</button>}
+            {!beginSetup && repository?.status !== "disconnected" && <button className="button" onClick={() => setEditing(false)} disabled={busy}>Cancel</button>}
           </div>
         </div>
       )}

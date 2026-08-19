@@ -80,6 +80,17 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await owner.getByLabel("Required check commands").fill("npm test");
   await owner.getByRole("button", { name: "Save repository" }).click();
   await expect(owner.getByText("connected", { exact: true })).toBeVisible();
+  await owner.getByRole("button", { name: "Enable execution" }).click();
+  await expect(owner.getByText("Execution enabled. Candidate branch created.")).toBeVisible();
+  await expect(owner.getByText(/openfloor\/[0-9a-f]{8}\/candidate\/[0-9a-f]{8}/)).toBeVisible();
+  await expect(owner.getByText("ready", { exact: true })).toBeVisible();
+  await owner.reload();
+  await expect(owner.getByRole("button", { name: "Sync repository" })).toBeVisible();
+  await owner.getByRole("button", { name: "Sync repository" }).click();
+  await expect(owner.getByText("ready", { exact: true })).toBeVisible();
+  await member.reload();
+  await expect(member.getByText(/openfloor\/[0-9a-f]{8}\/candidate\/[0-9a-f]{8}/)).toBeVisible();
+  await expect(member.getByRole("button", { name: "Sync repository" })).toHaveCount(0);
 
   await owner.getByRole("link", { name: "Enter agent floor" }).click();
   await member.getByRole("link", { name: "Enter agent floor" }).click();

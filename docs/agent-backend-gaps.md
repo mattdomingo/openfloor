@@ -1,16 +1,16 @@
 # Agent backend gaps
 
-The current backend persists collaboration state plus Phase 1 repository configuration. A session owner can connect one GitHub App installation/repository through a signed, expiring, single-use callback, select a base branch, optionally configure ordered required-check commands, disconnect, and reconnect. Session members can read the connection. A public bounded webhook route verifies GitHub HMAC signatures before acknowledging deliveries. These records survive reloads, but Phase 1 deliberately performs no GitHub ref or content mutation.
+The current backend persists collaboration state plus the Phase 2 repository candidate. A session owner can connect one GitHub App installation/repository, then enable execution to create one server-named candidate branch at the verified base SHA. Owners can reconcile the base and candidate refs; members can read the state. Signed GitHub deliveries are deduplicated and update revoked, inaccessible, renamed, behind-base, or externally-modified state. No repository code is executed and no run branch, commit, pull request, merge, or deletion exists yet.
 
 The following capabilities require a separate trusted agent-runtime and repository integration and are intentionally not simulated:
 
 - Model/provider discovery, credentials, execution, cancellation, and retry.
-- Repository reconciliation, checkout, worktrees, branches, file scopes, attachments, and code modification.
+- Repository checkout, worktrees, run branches, file scopes, attachments, and code modification.
 - Runtime progress, current steps, agent-generated messages, status transitions, and queue consumption.
 - Check execution, files changed, diffs, conflicts, review candidates, approval persistence, merge, and deployment.
 - Agent editing, archival/deletion, ownership transfer, and queue completion/removal.
 
-Repository connection data is currently session-lobby state rather than part of `FloorSnapshot`. Phase 2 will add candidate/repository invalidation contracts. `FloorSnapshot` still separates persisted collaboration records from nullable review data. A future runtime must write authoritative runtime/review records through authenticated internal APIs, increment the session floor revision, and broadcast `floor.changed`; UI components must continue to render missing fields as absent rather than inventing defaults.
+Repository connection and active-candidate data are included in `FloorSnapshot`; large future logs and bundles remain excluded. Repository mutations increment the session floor revision and broadcast `repository` and `review` invalidations. `review` itself remains null until real run output exists. A future runtime must write authoritative runtime/review records through authenticated internal APIs and continue to render missing fields as absent rather than inventing defaults.
 
 ## Deployment order
 

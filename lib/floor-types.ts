@@ -1,4 +1,6 @@
-export type FloorDomain = "agents" | "assignments" | "messages" | "queue" | "review";
+import type { RepositoryCandidate, RepositoryConnection } from "./session-types";
+
+export type FloorDomain = "agents" | "assignments" | "messages" | "queue" | "repository" | "runs" | "review";
 
 export type FloorParticipant = {
   id: string;
@@ -88,6 +90,8 @@ export type FloorSnapshot = {
   assignments: FloorAssignment[];
   messages: FloorMessage[];
   queue: FloorQueueItem[];
+  repository: RepositoryConnection | null;
+  activeCandidate: RepositoryCandidate | null;
   review: FloorReviewSnapshot | null;
 };
 

@@ -17,9 +17,15 @@ import {
   consumeGitHubConnectionState,
   createGitHubConnectionState,
   disconnectRepository,
+  activateRepositoryCandidate,
+  findRepositoryWebhookTargets,
+  getActiveRepositoryCandidateForMember,
   getPendingGitHubInstallation,
   getRepositoryConnectionForMember,
   saveRepositoryConnection,
+  recordGitHubWebhookDelivery,
+  reserveRepositoryCandidate,
+  updateRepositoryPushState,
 } from "@/db/repositories";
 
 function identity(id: string, name: string) {
@@ -139,5 +145,28 @@ describe("D1 session persistence", () => {
     await expect(getRepositoryConnectionForMember(created.session.id, outsider.id, env.DB)).resolves.toBeNull();
     await expect(disconnectRepository(created.session.id, member.id, env.DB)).resolves.toBeNull();
     await expect(disconnectRepository(created.session.id, owner.id, env.DB)).resolves.toEqual(expect.objectContaining({ status: "disconnected" }));
+  });
+
+  it("persists one active candidate and reconciles webhook pushes idempotently", async () => {
+    const owner = await upsertUser(identity("candidate-owner", "Owner"), env.DB);
+    const created = await createSession(owner.id, { title: "Candidate room", objective: null }, env.DB);
+    const saved = await saveRepositoryConnection(created.session.id, owner.id, null, "installation-2", {
+      id: "repository-2", nodeId: "R_two", owner: "openfloor-test", name: "candidate",
+      fullName: "openfloor-test/candidate", private: true, defaultBranch: "main",
+    }, "main", [], env.DB);
+    const candidateId = crypto.randomUUID();
+    const branch = `openfloor/${created.session.id.slice(0, 8)}/candidate/${candidateId.slice(0, 8)}`;
+    await expect(reserveRepositoryCandidate(created.session.id, owner.id, saved!.id, candidateId, branch, "main", "a".repeat(40), env.DB)).resolves.toBe(true);
+    await expect(reserveRepositoryCandidate(created.session.id, owner.id, saved!.id, crypto.randomUUID(), `${branch}x`, "main", "a".repeat(40), env.DB)).resolves.toBe(false);
+    await activateRepositoryCandidate(created.session.id, candidateId, "a".repeat(40), env.DB);
+    expect(await getActiveRepositoryCandidateForMember(created.session.id, owner.id, env.DB)).toEqual(expect.objectContaining({ branchName: branch, behindBase: false }));
+
+    await expect(recordGitHubWebhookDelivery("delivery-1", "push", null, "installation-2", "repository-2", env.DB)).resolves.toBe(true);
+    await expect(recordGitHubWebhookDelivery("delivery-1", "push", null, "installation-2", "repository-2", env.DB)).resolves.toBe(false);
+    const [target] = await findRepositoryWebhookTargets("installation-2", "repository-2", env.DB);
+    await updateRepositoryPushState(target.sessionId, "refs/heads/main", "b".repeat(40), target.baseBranch, target.candidateBranch, target.candidateSha, env.DB);
+    expect(await getActiveRepositoryCandidateForMember(created.session.id, owner.id, env.DB)).toEqual(expect.objectContaining({ behindBase: true, remoteBaseSha: "b".repeat(40) }));
+    await updateRepositoryPushState(target.sessionId, `refs/heads/${branch}`, "c".repeat(40), target.baseBranch, target.candidateBranch, target.candidateSha, env.DB);
+    expect(await getRepositoryConnectionForMember(created.session.id, owner.id, env.DB)).toEqual(expect.objectContaining({ status: "externally_modified" }));
   });
 });

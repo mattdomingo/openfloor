@@ -2,7 +2,7 @@ import { SignJWT, importPKCS8 } from "jose";
 import { BASE_PATH } from "@/components/basePath";
 import type { GitHubRepositoryOption } from "@/lib/session-types";
 
-export type GitHubTestRepository = GitHubRepositoryOption & { branches: string[] };
+export type GitHubTestRepository = GitHubRepositoryOption & { branches: string[]; branchShas?: Record<string, string> };
 
 export type GitHubAppConfig = {
   appId: string;
@@ -15,6 +15,7 @@ export type GitHubAppConfig = {
 
 const API_ROOT = "https://api.github.com";
 const API_VERSION = "2026-03-10";
+const testRefs = new Map<string, string>();
 
 export function githubInstallationUrl(config: GitHubAppConfig, state: string): string {
   if (config.testData) {
@@ -87,6 +88,72 @@ export async function listRepositoryBranches(
     if (page > 10) throw new GitHubApiError("Repository has too many branches to configure safely", 422);
   }
   return branches;
+}
+
+export async function getInstallationRepository(
+  config: GitHubAppConfig,
+  installationId: string,
+  repositoryId: string,
+): Promise<GitHubRepositoryOption> {
+  const repository = (await listInstallationRepositories(config, installationId)).find((item) => item.id === repositoryId);
+  if (!repository) throw new GitHubApiError("Repository is not available", 404);
+  return repository;
+}
+
+export async function getRepositoryRefSha(
+  config: GitHubAppConfig,
+  installationId: string,
+  repository: GitHubRepositoryOption,
+  branch: string,
+): Promise<string> {
+  if (config.testData) {
+    const match = config.testData.repositories.find((item) => item.id === repository.id);
+    if (!match || installationId !== config.testData.installationId) throw new GitHubApiError("Repository is not available", 404);
+    const key = `${installationId}:${repository.id}:${branch}`;
+    const sha = testRefs.get(key) ?? match.branchShas?.[branch] ?? (match.branches.includes(branch) ? "1".repeat(40) : null);
+    if (!sha) throw new GitHubApiError("Branch is not available", 404);
+    return sha;
+  }
+  const token = await createInstallationToken(config, installationId, repository.id);
+  const response = await githubFetch(
+    `${API_ROOT}/repos/${encodeURIComponent(repository.owner)}/${encodeURIComponent(repository.name)}/git/ref/heads/${branch.split("/").map(encodeURIComponent).join("/")}`,
+    token,
+  );
+  const body = await response.json() as { object?: { sha?: string } };
+  if (!body.object?.sha) throw new GitHubApiError("GitHub did not return a branch SHA", 502);
+  return body.object.sha;
+}
+
+export async function createRepositoryBranch(
+  config: GitHubAppConfig,
+  installationId: string,
+  repository: GitHubRepositoryOption,
+  branch: string,
+  sha: string,
+): Promise<string> {
+  if (!branch.startsWith("openfloor/") || !/^[a-z0-9/_-]+$/.test(branch)) {
+    throw new GitHubApiError("OpenFloor generated an invalid branch", 500);
+  }
+  if (config.testData) {
+    const match = config.testData.repositories.find((item) => item.id === repository.id);
+    if (!match || installationId !== config.testData.installationId) throw new GitHubApiError("Repository is not available", 404);
+    const key = `${installationId}:${repository.id}:${branch}`;
+    if (testRefs.has(key)) throw new GitHubApiError("Reference already exists", 422);
+    testRefs.set(key, sha);
+    return sha;
+  }
+  const token = await createInstallationToken(config, installationId, repository.id);
+  const response = await fetch(
+    `${API_ROOT}/repos/${encodeURIComponent(repository.owner)}/${encodeURIComponent(repository.name)}/git/refs`,
+    {
+      method: "POST",
+      headers: { ...githubHeaders(token), "content-type": "application/json" },
+      body: JSON.stringify({ ref: `refs/heads/${branch}`, sha }),
+    },
+  );
+  if (!response.ok) throw await githubError(response);
+  const body = await response.json() as { object?: { sha?: string } };
+  return body.object?.sha ?? sha;
 }
 
 export class GitHubApiError extends Error {

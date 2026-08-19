@@ -1,4 +1,4 @@
-import type { GitHubRepositoryOption, RepositoryConnection, RepositoryCheckCommand } from "@/lib/session-types";
+import type { GitHubRepositoryOption, RepositoryCandidate, RepositoryConnection, RepositoryConnectionStatus, RepositoryCheckCommand } from "@/lib/session-types";
 import { getDb, type D1DatabaseLike } from "./index";
 import { getMembershipRole } from "./sessions";
 
@@ -142,7 +142,7 @@ export async function saveRepositoryConnection(
            repository_private = excluded.repository_private,
            default_branch = excluded.default_branch,
            base_branch = excluded.base_branch,
-           status = 'connected',
+           status = CASE WHEN repository_connections.status IN ('ready', 'externally_modified') THEN repository_connections.status ELSE 'connected' END,
            connected_by = excluded.connected_by,
            updated_at = excluded.updated_at,
            disconnected_at = NULL`,
@@ -159,7 +159,7 @@ export async function saveRepositoryConnection(
          VALUES (?, ?, ?, ?, ?, ?)`,
       )
       .bind(crypto.randomUUID(), connectionId, position, command, now, now)),
-    database.prepare("UPDATE sessions SET updated_at = ? WHERE id = ?").bind(now, sessionId),
+    database.prepare("UPDATE sessions SET floor_revision = floor_revision + 1, updated_at = ? WHERE id = ?").bind(now, sessionId),
   ];
   if (stateId) {
     statements.push(
@@ -179,14 +179,15 @@ export async function disconnectRepository(
 ): Promise<RepositoryConnection | null> {
   if ((await getMembershipRole(sessionId, userId, database)) !== "owner") return null;
   const now = Date.now();
-  const result = await database
-    .prepare(
+  const existing = await database.prepare("SELECT id FROM repository_connections WHERE session_id = ? AND status != 'disconnected'").bind(sessionId).first();
+  if (!existing) return null;
+  await database.batch([
+    database.prepare(
       `UPDATE repository_connections SET status = 'disconnected', disconnected_at = ?, updated_at = ?
-       WHERE session_id = ? AND status = 'connected'`,
-    )
-    .bind(now, now, sessionId)
-    .run();
-  if (!result.success || Number(result.meta?.changes ?? 0) !== 1) return null;
+       WHERE session_id = ? AND status != 'disconnected'`,
+    ).bind(now, now, sessionId),
+    database.prepare("UPDATE sessions SET floor_revision = floor_revision + 1, updated_at = ? WHERE id = ?").bind(now, sessionId),
+  ]);
   return getRepositoryConnectionForMember(sessionId, userId, database);
 }
 
@@ -198,4 +199,199 @@ export async function getRepositoryConnectionRecord(
     .prepare("SELECT installation_id AS installationId, repository_id AS repositoryId FROM repository_connections WHERE session_id = ?")
     .bind(sessionId)
     .first<{ installationId: string; repositoryId: string }>();
+}
+
+type CandidateRecord = Omit<RepositoryCandidate, "behindBase">;
+
+export async function getActiveRepositoryCandidateForMember(
+  sessionId: string,
+  userId: string,
+  database = getDb(),
+): Promise<RepositoryCandidate | null> {
+  if (!(await getMembershipRole(sessionId, userId, database))) return null;
+  return getActiveRepositoryCandidate(sessionId, database);
+}
+
+export async function getActiveRepositoryCandidate(
+  sessionId: string,
+  database: D1DatabaseLike,
+): Promise<RepositoryCandidate | null> {
+  const record = await database.prepare(
+    `SELECT id, session_id AS sessionId, connection_id AS connectionId, branch_name AS branchName,
+            base_branch AS baseBranch, base_sha AS baseSha, candidate_sha AS candidateSha,
+            remote_base_sha AS remoteBaseSha, remote_candidate_sha AS remoteCandidateSha,
+            status, created_by AS createdBy, created_at AS createdAt, updated_at AS updatedAt,
+            last_synced_at AS lastSyncedAt
+     FROM repository_candidates WHERE session_id = ? AND status IN ('creating', 'active')
+     ORDER BY created_at DESC LIMIT 1`,
+  ).bind(sessionId).first<CandidateRecord>();
+  return record ? { ...record, behindBase: Boolean(record.remoteBaseSha && record.remoteBaseSha !== record.baseSha) } : null;
+}
+
+export async function reserveRepositoryCandidate(
+  sessionId: string,
+  userId: string,
+  connectionId: string,
+  candidateId: string,
+  branchName: string,
+  baseBranch: string,
+  baseSha: string,
+  database = getDb(),
+): Promise<boolean> {
+  if ((await getMembershipRole(sessionId, userId, database)) !== "owner") return false;
+  const now = Date.now();
+  try {
+    const result = await database.prepare(
+      `INSERT INTO repository_candidates
+       (id, session_id, connection_id, branch_name, base_branch, base_sha, status, created_by, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, 'creating', ?, ?, ?)`,
+    ).bind(candidateId, sessionId, connectionId, branchName, baseBranch, baseSha, userId, now, now).run();
+    return result.success;
+  } catch (error) {
+    if (String(error).toLowerCase().includes("unique")) return false;
+    throw error;
+  }
+}
+
+export async function activateRepositoryCandidate(
+  sessionId: string,
+  candidateId: string,
+  sha: string,
+  database = getDb(),
+): Promise<number> {
+  const now = Date.now();
+  await database.batch([
+    database.prepare(
+      `UPDATE repository_candidates SET status = 'active', candidate_sha = ?, remote_base_sha = ?,
+              remote_candidate_sha = ?, last_synced_at = ?, updated_at = ?
+       WHERE id = ? AND session_id = ? AND status = 'creating'`,
+    ).bind(sha, sha, sha, now, now, candidateId, sessionId),
+    database.prepare("UPDATE repository_connections SET status = 'ready', updated_at = ? WHERE session_id = ?").bind(now, sessionId),
+    database.prepare("UPDATE sessions SET floor_revision = floor_revision + 1, updated_at = ? WHERE id = ?").bind(now, sessionId),
+  ]);
+  return getFloorRevision(sessionId, database);
+}
+
+export async function failRepositoryCandidate(candidateId: string, database = getDb()): Promise<void> {
+  await database.prepare("UPDATE repository_candidates SET status = 'creation_failed', updated_at = ? WHERE id = ? AND status = 'creating'")
+    .bind(Date.now(), candidateId).run();
+}
+
+export async function reconcileRepositoryCandidate(
+  sessionId: string,
+  metadata: GitHubRepositoryOption,
+  remoteBaseSha: string,
+  remoteCandidateSha: string,
+  status: RepositoryConnectionStatus,
+  database = getDb(),
+): Promise<number> {
+  const now = Date.now();
+  await database.batch([
+    database.prepare(
+      `UPDATE repository_connections SET repository_owner = ?, repository_name = ?, repository_full_name = ?,
+              repository_private = ?, default_branch = ?, status = ?, updated_at = ? WHERE session_id = ?`,
+    ).bind(metadata.owner, metadata.name, metadata.fullName, metadata.private ? 1 : 0, metadata.defaultBranch, status, now, sessionId),
+    database.prepare(
+      `UPDATE repository_candidates SET remote_base_sha = ?, remote_candidate_sha = ?, last_synced_at = ?, updated_at = ?
+       WHERE session_id = ? AND status = 'active'`,
+    ).bind(remoteBaseSha, remoteCandidateSha, now, now, sessionId),
+    database.prepare("UPDATE sessions SET floor_revision = floor_revision + 1, updated_at = ? WHERE id = ?").bind(now, sessionId),
+  ]);
+  return getFloorRevision(sessionId, database);
+}
+
+export async function setRepositoryAvailability(
+  sessionId: string,
+  status: Extract<RepositoryConnectionStatus, "revoked" | "inaccessible" | "connected" | "externally_modified">,
+  database = getDb(),
+): Promise<number> {
+  const now = Date.now();
+  await database.batch([
+    database.prepare("UPDATE repository_connections SET status = ?, updated_at = ? WHERE session_id = ? AND status != 'disconnected'").bind(status, now, sessionId),
+    database.prepare("UPDATE sessions SET floor_revision = floor_revision + 1, updated_at = ? WHERE id = ?").bind(now, sessionId),
+  ]);
+  return getFloorRevision(sessionId, database);
+}
+
+export async function recordGitHubWebhookDelivery(
+  deliveryId: string,
+  event: string,
+  action: string | null,
+  installationId: string | null,
+  repositoryId: string | null,
+  database = getDb(),
+): Promise<boolean> {
+  const result = await database.prepare(
+    `INSERT OR IGNORE INTO github_webhook_deliveries
+     (delivery_id, event, action, installation_id, repository_id, received_at) VALUES (?, ?, ?, ?, ?, ?)`,
+  ).bind(deliveryId, event, action, installationId, repositoryId, Date.now()).run();
+  return Number(result.meta?.changes ?? 0) === 1;
+}
+
+export async function findRepositoryWebhookTargets(
+  installationId: string | null,
+  repositoryId: string | null,
+  database = getDb(),
+): Promise<Array<{ sessionId: string; repositoryId: string; baseBranch: string; candidateBranch: string | null; candidateSha: string | null }>> {
+  if (!installationId) return [];
+  const result = await database.prepare(
+    `SELECT rc.session_id AS sessionId, rc.repository_id AS repositoryId, rc.base_branch AS baseBranch,
+            c.branch_name AS candidateBranch, c.candidate_sha AS candidateSha
+     FROM repository_connections rc
+     LEFT JOIN repository_candidates c ON c.session_id = rc.session_id AND c.status = 'active'
+     WHERE rc.installation_id = ? AND rc.status != 'disconnected' AND (? IS NULL OR rc.repository_id = ?)`,
+  ).bind(installationId, repositoryId, repositoryId).all<{ sessionId: string; repositoryId: string; baseBranch: string; candidateBranch: string | null; candidateSha: string | null }>();
+  return result.results;
+}
+
+export async function updateRepositoryPushState(
+  sessionId: string,
+  ref: string,
+  after: string,
+  baseBranch: string,
+  candidateBranch: string | null,
+  candidateSha: string | null,
+  database = getDb(),
+): Promise<number> {
+  const now = Date.now();
+  const statements = [database.prepare("UPDATE sessions SET floor_revision = floor_revision + 1, updated_at = ? WHERE id = ?").bind(now, sessionId)];
+  if (ref === `refs/heads/${baseBranch}`) {
+    statements.push(database.prepare("UPDATE repository_candidates SET remote_base_sha = ?, last_synced_at = ?, updated_at = ? WHERE session_id = ? AND status = 'active'").bind(after, now, now, sessionId));
+  }
+  if (candidateBranch && ref === `refs/heads/${candidateBranch}`) {
+    statements.push(database.prepare("UPDATE repository_candidates SET remote_candidate_sha = ?, last_synced_at = ?, updated_at = ? WHERE session_id = ? AND status = 'active'").bind(after, now, now, sessionId));
+    if (after !== candidateSha) statements.push(database.prepare("UPDATE repository_connections SET status = 'externally_modified', updated_at = ? WHERE session_id = ?").bind(now, sessionId));
+  }
+  await database.batch(statements);
+  return getFloorRevision(sessionId, database);
+}
+
+export async function updateRepositoryIdentity(
+  sessionId: string,
+  repository: { owner: string; name: string; fullName: string },
+  database = getDb(),
+): Promise<number> {
+  const now = Date.now();
+  await database.batch([
+    database.prepare(
+      "UPDATE repository_connections SET repository_owner = ?, repository_name = ?, repository_full_name = ?, updated_at = ? WHERE session_id = ?",
+    ).bind(repository.owner, repository.name, repository.fullName, now, sessionId),
+    database.prepare("UPDATE sessions SET floor_revision = floor_revision + 1, updated_at = ? WHERE id = ?").bind(now, sessionId),
+  ]);
+  return getFloorRevision(sessionId, database);
+}
+
+export async function touchRepositoryReview(sessionId: string, database = getDb()): Promise<number> {
+  const now = Date.now();
+  await database.prepare("UPDATE sessions SET floor_revision = floor_revision + 1, updated_at = ? WHERE id = ?").bind(now, sessionId).run();
+  return getFloorRevision(sessionId, database);
+}
+
+async function getFloorRevision(sessionId: string, database: D1DatabaseLike): Promise<number> {
+  const row = await database.prepare("SELECT floor_revision AS revision FROM sessions WHERE id = ?").bind(sessionId).first<{ revision: number }>();
+  return Number(row?.revision ?? 0);
+}
+
+export async function getRepositoryFloorRevision(sessionId: string, database = getDb()): Promise<number> {
+  return getFloorRevision(sessionId, database);
 }
