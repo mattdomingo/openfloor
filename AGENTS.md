@@ -674,6 +674,7 @@ worker/
   presence.ts                Authenticated WebSocket route and SessionPresence object
   preflight-workflow.ts      Durable exact-source Sandbox preflight orchestration
 Dockerfile.sandbox           Version-matched Cloudflare Sandbox runtime image
+.github/workflows/deploy.yml Push-to-main production deploy (test → migrate → build → deploy)
 tests/
   unit/                      Pure functions, validation, identity, signing, reducers
   worker/                    Local D1 and Durable Object integration tests
@@ -867,6 +868,8 @@ npx wrangler deploy --config dist/server/wrangler.json
 
 Migrations must land before code that requires them. The build generates `dist/server/wrangler.json`; deployment uses that built config.
 
+Pushes to `main` run this exact sequence automatically via `.github/workflows/deploy.yml` (GitHub secrets `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`); merging to `main` is the deploy authorization. The manual sequence above remains for emergencies and for changes GitHub Actions cannot see (secrets, Access policy).
+
 ### Smoke test after deployment
 
 1. Open public `https://opnflr.com/app` without an Access session.
@@ -979,6 +982,14 @@ After Phase 3 is deployed and accepted in the browser, the next milestone is Pha
 Do not begin by filling the existing UI with guessed fields. Define the authoritative service and public contract, add nullable persisted types and migrations, then connect components to genuine data.
 
 ## Key decision log
+
+### 2026-08-19 — Pushes to main deploy production via GitHub Actions
+
+**Decision:** `.github/workflows/deploy.yml` runs the documented deploy sequence — `npm test`, `wrangler d1 migrations apply DB --remote`, `npm run build`, `wrangler deploy --config dist/server/wrangler.json` — on every push to `main`, serialized by a `production-deploy` concurrency group that never cancels in-flight runs. Auth comes from repository secrets `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`; Worker runtime secrets stay in Cloudflare and are untouched by CI.
+
+**Rationale:** The runbook was four commands executed by hand, so production lagged merged work and depended on someone remembering the order (migrations before code). Encoding the same sequence in CI changes when it runs, not what runs. GitHub Actions over Cloudflare Workers Builds because the pipeline lives in the repo, is reviewable, and needs no dashboard state beyond two secrets.
+
+**Consequences:** Merging to `main` is deploying — the full test pipeline still gates it, but a red deploy job means production did not pick up the merge; check the Actions log. Migrations apply before build/deploy, same as the manual order. The e2e step installs Playwright chromium in CI; the sandbox container image builds on the Actions runner's Docker. Rotating the API token happens in GitHub repo secrets, not in code.
 
 ### 2026-08-19 — Two themes from one token sheet
 
@@ -1183,4 +1194,4 @@ Before handing off a change, verify the applicable items:
 - `README.md`, `docs/agent-backend-gaps.md`, and this file are updated where relevant.
 - New durable decisions are appended to the decision log.
 - No secrets, local environment files, build output, or test artifacts are included.
-- Deployment and production mutation occur only with explicit authorization.
+- Deployment and production mutation occur only with explicit authorization. Merging to `main` is that authorization: it triggers the automatic production deploy. Agents still never run manual deploys or mutate production state directly without being asked.
