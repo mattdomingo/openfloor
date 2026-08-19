@@ -137,6 +137,7 @@ WebSocket events notify clients about presence or changed domains. D1 remains au
 - Internal user records keyed by the stable external provider subject.
 - Session creation, listing, objective editing, membership, roles, and leaving.
 - Owner-only session ending: `ended_at` marks the session read-only for everyone, revokes the active invite, and broadcasts `session.ended`; ended sessions stay readable and members can still leave.
+- Owner-only session deletion (immediate, cascading) and a daily cron that purges sessions ended more than 30 days ago. The home screen groups Active and Ended sessions.
 - HMAC-signed, reusable owner invitations with rotation and revocation.
 - Session lobby with real roster and live online status.
 - Protected Agent Floor with real session title, objective, members, and presence.
@@ -338,7 +339,8 @@ Do not hand-edit Drizzle metadata. If a generated migration is wrong, correct th
 - UUID, title, nullable objective, timestamps.
 - `floor_revision` is a monotonically increasing integer for persisted floor reconciliation.
 - Session creation also creates owner membership and an active invite in one D1 batch.
-- Nullable `ended_at` is the lifecycle marker. Null means live; a timestamp means ended and read-only. Writes authorize through `getActiveMembershipRole` (throws `SessionEndedError` for members of ended sessions); reads keep using `getMembershipRole` so ended sessions stay viewable. `leaveSession`, `endSession`, and non-member concealment intentionally bypass the ended guard.
+- Nullable `ended_at` is the lifecycle marker. Null means live; a timestamp means ended and read-only. Writes authorize through `getActiveMembershipRole` (throws `SessionEndedError` for members of ended sessions); reads keep using `getMembershipRole` so ended sessions stay viewable. `leaveSession`, `endSession`, `deleteSession`, and non-member concealment intentionally bypass the ended guard.
+- Retention: the Worker's `scheduled()` handler (daily cron in `wrangler.jsonc`) runs `purgeExpiredSessions`, deleting sessions with `ended_at` older than `ENDED_SESSION_RETENTION_MS` (30 days). Never-ended sessions are never purged automatically — silently deleting a live room is worse than list clutter; owners have End and Delete for manual cleanup.
 
 #### `session_members`
 
@@ -533,6 +535,7 @@ All paths below are shown without the production `/app` prefix.
 | `POST /api/invites/[token]/accept` | Authenticated user | Idempotently add member and broadcast `members.changed`. |
 | `DELETE /api/sessions/[id]/membership` | Non-owner member | Leave, disconnect presence, and notify roster. |
 | `POST /api/sessions/[id]/end` | Owner | Idempotently set `ended_at`, revoke the active invite, and broadcast `session.ended`. |
+| `DELETE /api/sessions/[id]` | Owner | Hard-delete the session; children cascade. Broadcasts `members.changed` so open tabs refetch, hit the 404 concealment, and return to `/home`. |
 | `GET /api/sessions/[id]/floor` | Session member | Return the caller-specific authoritative `FloorSnapshot`. |
 | `POST /api/sessions/[id]/agents` | Session member | Create `{ name, role, task, ownerUserId }`. |
 | `PATCH /api/sessions/[id]/assignments/[memberId]` | Session member | Persist `{ task: string \| null }`. |
@@ -971,6 +974,14 @@ After Phase 3 is deployed and accepted in the browser, the next milestone is Pha
 Do not begin by filling the existing UI with guessed fields. Define the authoritative service and public contract, add nullable persisted types and migrations, then connect components to genuine data.
 
 ## Key decision log
+
+### 2026-08-19 — Retention purges only ended sessions, on a daily cron
+
+**Decision:** A `triggers.crons` entry plus a thin Worker `scheduled()` export runs `purgeExpiredSessions` daily, hard-deleting sessions whose `ended_at` is older than 30 days (`ENDED_SESSION_RETENTION_MS`). Owners can also hard-delete any of their sessions immediately via `DELETE /api/sessions/[id]`. Never-ended sessions are not purged automatically.
+
+**Rationale:** "Automatic delete with an expiration timer" needs a background trigger, not a read-path side effect (a lazy sweep in `listSessionsForUser` deletes as a side effect of reads and never runs for idle users; a DO alarm is per-session machinery for a global batch job). Ended-only purging avoids silently destroying a live room someone may return to. Cascade foreign keys make deletion a single statement.
+
+**Consequences:** `wrangler.jsonc` owns the schedule; the logic stays in the testable db helper. Purging leaves orphaned bounded logs in the private R2 bucket — the cheap fix is an R2 lifecycle rule on `openfloor-preflight-logs`, not code. If sessions ever need purge-by-inactivity, it is one more constant and an `OR` clause in the same statement.
 
 ### 2026-08-19 — Sessions end with a timestamp, not a status enum
 
