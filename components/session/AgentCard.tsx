@@ -1,7 +1,7 @@
 "use client";
 
 import type { FloorAgent } from "@/lib/floor-types";
-import { formatShortDate, formatShortTime } from "@/lib/date-format";
+import { LocalDateTime } from "@/components/LocalDateTime";
 import { Icon } from "./primitives";
 import { agentTone } from "./data";
 
@@ -16,7 +16,7 @@ export function AgentCard({ agent, selected, onFocus, onHistory }: { agent: Floo
         <span className="agent-head-trailing"><span className="agent-state">Created</span><button type="button" className="button agent-chat-button" data-size="sm" onClick={(event) => { event.stopPropagation(); onHistory(); }}><Icon name="message" size={12} />Prompts</button></span>
       </div>
       <div className="agent-task"><strong>{agent.task}</strong></div>
-      <div className="agent-foot"><span>Owned by {agent.ownerName}</span><span>{formatShortDate(agent.createdAt)} · {formatShortTime(agent.createdAt)} UTC</span></div>
+      <div className="agent-foot"><span>Owned by {agent.ownerName}</span><span><LocalDateTime timestamp={agent.createdAt} /></span></div>
     </article>
   );
 }
@@ -31,7 +31,7 @@ export function AgentSpotlight({ agent, onHistory }: { agent: FloorAgent; onHist
       </div>
       <div className="spotlight-row"><span className="label">Task</span><p className="agent-detail-line">{agent.task}</p></div>
       <div className="spotlight-row"><span className="label">Execution</span><p className="review-empty">No runtime is connected. Progress, files, and output will appear here only when reported by a real agent backend.</p></div>
-      <div className="spotlight-foot"><span>{formatShortDate(agent.createdAt)} · {formatShortTime(agent.createdAt)} UTC</span><button type="button" className="button agent-chat-button" data-size="sm" onClick={onHistory}><Icon name="message" size={12} />Prompt history</button></div>
+      <div className="spotlight-foot"><span><LocalDateTime timestamp={agent.createdAt} /></span><button type="button" className="button agent-chat-button" data-size="sm" onClick={onHistory}><Icon name="message" size={12} />Prompt history</button></div>
     </article>
   );
 }
