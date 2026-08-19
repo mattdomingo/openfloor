@@ -9,9 +9,10 @@ import {
 } from "../lib/identity";
 import { handlePresenceRequest, SessionPresence } from "./presence";
 import { RepositoryPreflightWorkflow } from "./preflight-workflow";
+import { AgentRunWorkflow } from "./agent-run-workflow";
 export { Sandbox, ContainerProxy } from "@cloudflare/sandbox";
 
-export { RepositoryPreflightWorkflow, SessionPresence };
+export { AgentRunWorkflow, RepositoryPreflightWorkflow, SessionPresence };
 
 type DurableObjectStubLike = { fetch(request: Request): Promise<Response> };
 type DurableObjectNamespaceLike = {

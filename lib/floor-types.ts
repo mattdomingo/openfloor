@@ -57,10 +57,57 @@ export type FloorQueueItem = {
   agentId: string | null;
   agentName: string | null;
   position: number;
-  status: "queued";
+  status: "queued" | "running" | "blocked" | "completed";
   prompts: FloorQueuePrompt[];
   createdAt: number;
   updatedAt: number;
+};
+
+export type AgentRunStatus = "provisioning" | "running" | "checking" | "ready" | "publishing" | "published" | "integrating" | "integrated" | "conflicted" | "failed" | "cancel_requested" | "cancelled";
+
+export type AgentRunCheck = {
+  id: string;
+  position: number;
+  command: string;
+  status: "pending" | "running" | "passed" | "failed" | "timed_out";
+  exitCode: number | null;
+  durationMs: number | null;
+  outputExcerpt: string | null;
+  hasLog: boolean;
+  startedAt: number | null;
+  completedAt: number | null;
+};
+
+export type AgentRunFile = {
+  id: string;
+  path: string;
+  changeKind: "add" | "update" | "delete";
+  additions: number;
+  deletions: number;
+  summary: string | null;
+  diffPreview: string;
+};
+
+export type AgentRun = {
+  id: string;
+  queueItemId: string;
+  agentId: string;
+  agentName: string;
+  candidateId: string;
+  candidateSha: string;
+  attempt: number;
+  status: AgentRunStatus;
+  model: string;
+  summary: string | null;
+  finalResponse: string | null;
+  createdBy: string;
+  createdAt: number;
+  startedAt: number | null;
+  completedAt: number | null;
+  cancelRequestedAt: number | null;
+  updatedAt: number;
+  checks: AgentRunCheck[];
+  files: AgentRunFile[];
 };
 
 export type FloorReviewSnapshot = {
@@ -93,6 +140,7 @@ export type FloorSnapshot = {
   repository: RepositoryConnection | null;
   activeCandidate: RepositoryCandidate | null;
   latestPreflight: RepositoryPreflight | null;
+  runs: AgentRun[];
   review: FloorReviewSnapshot | null;
 };
 

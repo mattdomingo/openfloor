@@ -17,10 +17,10 @@ const githubTestData = JSON.stringify({
     branches: ["main", "develop"],
   }],
 });
-const wranglerArgs = ["wrangler", "--config", "dist/server/wrangler.json"];
+const wranglerConfig = "tests/e2e/wrangler.jsonc";
 const migration = spawnSync(
   "npx",
-  [...wranglerArgs.slice(0, 1), "d1", "migrations", "apply", "DB", "--local", "--config", "wrangler.jsonc", "--persist-to", statePath],
+  ["wrangler", "d1", "migrations", "apply", "DB", "--local", "--config", wranglerConfig, "--persist-to", statePath],
   { stdio: "inherit" },
 );
 
@@ -33,7 +33,7 @@ const server = spawn("npx", [
   "wrangler",
   "dev",
   "--config",
-  "dist/server/wrangler.json",
+  wranglerConfig,
   "--port",
   "8787",
   "--persist-to",
@@ -47,7 +47,9 @@ const server = spawn("npx", [
   "GITHUB_WEBHOOK_SECRET:e2e-test-github-webhook-secret",
   `OPENFLOOR_TEST_GITHUB_DATA:${githubTestData}`,
   "PREFLIGHT_ENABLED:true",
+  "AGENT_RUN_ENABLED:true",
   "OPENFLOOR_TEST_PREFLIGHT_DATA:{\"checks\":[{\"exitCode\":0,\"stdout\":\"preflight check passed\\n\"},{\"exitCode\":0,\"stdout\":\"build check passed\\n\"}],\"failCommands\":[\"false\"]}",
+  "OPENFLOOR_TEST_AGENT_RUN_DATA:{\"holdPrompts\":[\"Hold for cancellation\"],\"failPrompts\":[\"intentionally failing\"],\"changedPath\":\"src/agent-change.ts\"}",
   "--var",
   "OPENFLOOR_TEST_ALLOW_IDENTITY_HEADERS:true",
   "--show-interactive-dev-session=false",

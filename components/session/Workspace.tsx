@@ -20,7 +20,7 @@ const RAIL_COLLAPSED_WIDTH = 40;
 const RAIL_MIN_WIDTH = 250;
 const RAIL_MAX_WIDTH = 520;
 
-export function Workspace({ user, session, members, floorData, typingDrafts, onTypingUpdate, onSaveObjective }: {
+export function Workspace({ user, session, members, floorData, typingDrafts, onTypingUpdate, onSaveObjective, agentRunEnabled }: {
   user: AppUser;
   session: SessionSummary;
   members: SessionMember[];
@@ -28,8 +28,9 @@ export function Workspace({ user, session, members, floorData, typingDrafts, onT
   typingDrafts: ReadonlyMap<string, TypingDraft>;
   onTypingUpdate: (text: string, typing: boolean) => void;
   onSaveObjective: (objective: string | null) => Promise<boolean>;
+  agentRunEnabled: boolean;
 }) {
-  const { agents, assignments, queue, messages, review } = floorData.floor;
+  const { agents, assignments, queue, messages, review, runs } = floorData.floor;
   const participants = useMemo(() => floorParticipants(members, user), [members, user]);
   const [screen, setScreen] = useState<WorkspaceScreen>("workspace");
   const [queueScope, setQueueScope] = useState<QueueScope>("team");
@@ -71,7 +72,7 @@ export function Workspace({ user, session, members, floorData, typingDrafts, onT
     const floor = await floorData.addQueueItem(prompt, agentId);
     if (!floor) return false;
     if (queueMergeMode === "auto") {
-      const matching = floor.queue.filter((item) => item.agentId === agentId).map((item) => item.id);
+      const matching = floor.queue.filter((item) => item.status === "queued" && item.agentId === agentId).map((item) => item.id);
       if (matching.length > 1 && !(await floorData.mergeQueue(matching))) return false;
     }
     setQueueScope("mine");
@@ -123,8 +124,8 @@ export function Workspace({ user, session, members, floorData, typingDrafts, onT
 
   function renderPanel(panel: PanelId, chrome: PanelChrome) {
     if (panel === "brief") return <BriefRail chrome={chrome} assignments={assignments} agents={agents} queue={queue} onAssignmentChange={async (id, task) => Boolean(await floorData.updateAssignment(id, task))} view={teamPanelView} onViewChange={setTeamPanelView} messages={messages} onSendMessage={async (text, recipient) => Boolean(await floorData.sendMessage(text, recipient))} chatThread={chatThread} onChatThreadChange={setChatThread} participants={participants} currentUserId={user.id} />;
-    if (panel === "queue") return <PromptQueue chrome={chrome} items={queue} currentUserId={user.id} scope={queueScope} onScope={setQueueScope} orderMode={queueOrderMode} onOrderMode={setQueueOrderMode} mergeMode={queueMergeMode} onMergeMode={setQueueMergeMode} onMergeNow={() => void mergeQueueNow()} draggedItemId={draggedQueueItem} onItemDragStart={setDraggedQueueItem} onItemDragEnd={() => setDraggedQueueItem(null)} onItemDrop={(id) => void dropQueueItem(id)} />;
-    return <AgentFloor chrome={chrome} agents={agents} selected={selectedAgent} onSelect={setSelectedAgentId} agentLayout={agentLayout} onAgentLayout={setAgentLayout} onCreateAgent={createAgent} queue={queue} participants={participants} currentUserId={user.id} />;
+    if (panel === "queue") return <PromptQueue chrome={chrome} items={queue} runs={runs} owner={session.role === "owner"} runEnabled={agentRunEnabled} busy={floorData.busy} onRun={async (id) => { const result = await floorData.runQueueItem(id); if (result) setNotice("Agent run started"); }} onCancel={async (id) => { const result = await floorData.cancelRun(id); if (result) setNotice("Cancellation requested"); }} currentUserId={user.id} scope={queueScope} onScope={setQueueScope} orderMode={queueOrderMode} onOrderMode={setQueueOrderMode} mergeMode={queueMergeMode} onMergeMode={setQueueMergeMode} onMergeNow={() => void mergeQueueNow()} draggedItemId={draggedQueueItem} onItemDragStart={setDraggedQueueItem} onItemDragEnd={() => setDraggedQueueItem(null)} onItemDrop={(id) => void dropQueueItem(id)} />;
+    return <AgentFloor chrome={chrome} agents={agents} runs={runs} selected={selectedAgent} onSelect={setSelectedAgentId} agentLayout={agentLayout} onAgentLayout={setAgentLayout} onCreateAgent={createAgent} queue={queue} participants={participants} currentUserId={user.id} />;
   }
 
   return <main className="app-shell" data-screen={screen}>

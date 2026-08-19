@@ -200,6 +200,42 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await expect(owner.getByText(/typing/i)).toHaveCount(0);
   await expect(owner.getByText(/terminal/i)).toHaveCount(0);
 
+  await owner.getByRole("button", { name: "Workspace" }).click();
+  await expect(member.getByRole("button", { name: "Run", exact: true })).toHaveCount(0);
+  await owner.getByRole("button", { name: "Run", exact: true }).click();
+  await expect(owner.getByText("ready", { exact: true }).first()).toBeVisible();
+  await expect(agentFloor.getByText("1 changed file", { exact: false })).toBeVisible();
+  await owner.reload();
+  await expect(owner.getByText("ready", { exact: true }).first()).toBeVisible();
+  await owner.getByRole("button", { name: "Review" }).click();
+  await expect(owner.getByRole("heading", { name: /openfloor\// })).toBeVisible();
+  await expect(owner.getByText("agent-change.ts", { exact: true })).toBeVisible();
+  await expect(owner.getByText("export const implemented = true;", { exact: true })).toBeVisible();
+  await expect(owner.getByText("npm test", { exact: true })).toBeVisible();
+
+  await owner.getByRole("button", { name: "Workspace" }).click();
+  await owner.getByLabel("Queue target").selectOption({ label: "Lumen" });
+  await owner.getByLabel("Prompt to add to the queue").fill("Create an intentionally failing change");
+  await owner.getByRole("button", { name: "Add to queue" }).click();
+  const failingItem = owner.locator("li.queue-item", { hasText: "Create an intentionally failing change" });
+  await expect(failingItem).toBeVisible();
+  await failingItem.getByRole("button", { name: "Run", exact: true }).click();
+  await expect(owner.getByText("failed", { exact: true }).first()).toBeVisible();
+  await expect(failingItem.getByRole("button", { name: "Run", exact: true })).toBeVisible();
+
+  await owner.getByLabel("Prompt to add to the queue").fill("Hold for cancellation");
+  await owner.getByRole("button", { name: "Add to queue" }).click();
+  const cancellableItem = owner.locator("li.queue-item", { hasText: "Hold for cancellation" });
+  await expect(cancellableItem).toBeVisible();
+  await cancellableItem.getByRole("button", { name: "Run", exact: true }).click();
+  await expect(owner.getByText("running", { exact: true }).first()).toBeVisible();
+  await owner.reload();
+  await expect(owner.getByRole("button", { name: "Cancel", exact: true })).toBeVisible();
+  await expect(member.getByRole("button", { name: "Cancel", exact: true })).toHaveCount(0);
+  await owner.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(owner.getByText("cancelled", { exact: true }).first()).toBeVisible();
+  await expect(cancellableItem.getByRole("button", { name: "Run", exact: true })).toBeVisible();
+
   await member.reload();
   await expect(member.getByText("Lumen", { exact: true }).first()).toBeVisible();
   await expect(member.getByText("Document the next backend contract")).toBeVisible();

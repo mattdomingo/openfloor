@@ -147,7 +147,7 @@ WebSocket events notify clients about presence or changed domains. D1 remains au
 - Realtime floor revision notifications and snapshot refetching.
 - Ephemeral realtime teammate prompt drafts with Everyone, Typing, and Hidden viewing modes.
 - Movable, resizable, collapsible, expandable panels and responsive floor layout.
-- Review navigation with an authoritative empty state.
+- Review navigation backed by genuine local agent-run files, diff previews, and checks when a run exists; otherwise it keeps an authoritative empty state.
 - One GitHub repository connection per session, configured by the owner through a signed single-use GitHub App callback.
 - Durable GitHub installation/repository identifiers, selected base branch, and ordered required-check commands.
 - Member-visible repository details with owner-only connect, configure, disconnect, and reconnect controls.
@@ -157,15 +157,17 @@ WebSocket events notify clients about presence or changed domains. D1 remains au
 - Idempotent GitHub installation, repository-access, rename, push, pull-request, check, and status delivery processing keyed by delivery ID.
 - Owner-started repository preflight through a durable Cloudflare Workflow and an isolated Cloudflare Sandbox at the exact candidate SHA.
 - Ordered required-check results in D1 with bounded command logs in private R2 and reload-safe provisioning, running, passed, failed, and timed-out UI states.
+- Owner-started and owner-cancelled queue execution through a durable `AgentRunWorkflow`, with one active run per queue item.
+- Server-side Codex SDK execution using `gpt-5.6-terra` in an isolated Sandbox at the exact candidate SHA, with workspace-write permission and no repository network access.
+- Durable run, event, check, changed-file, and artifact metadata; bounded complete logs and diffs live in private R2.
+- Real run status and file/check data in Agent cards and Review. Passing Phase 4 runs remain local and block the queue item pending Phase 5 publication; failed and cancelled items are retryable.
 
 ### Explicitly deferred
 
-- Agent model or provider selection.
-- Agent execution, cancellation, retry, runtime scheduling, or queue consumption.
-- Provider credentials and secret management for agent runtimes.
-- Repository checkout, worktrees, run-branch creation, branch update/deletion, commits, pull requests, or attachments.
-- Agent runtime status, progress, steps, agent-authored messages, or terminal output.
-- File discovery, changed-file lists, agent-run checks, warnings, diffs, conflicts, or generated review candidates.
+- Agent model/provider selection and user-managed provider credentials; Phase 4 deliberately uses one server-configured Codex model and project credential.
+- Run-branch creation, branch update/deletion, commits, pull requests, or GitHub publication of local agent output.
+- Agent-authored chat messages, live terminal streaming, and generic artifact download UI.
+- Repository conflicts and multi-run candidate integration.
 - Review approval persistence, merge, deploy, or repository modification.
 - Agent edit, archive, deletion, or lifecycle states beyond `created`.
 - Queue completion, removal, consumption, or retry workflows.
@@ -242,8 +244,9 @@ Per-session WebSocket
 - Cloudflare D1 is the relational database bound as `DB`.
 - `SessionPresence` is a SQLite-backed Durable Object bound as `SESSION_PRESENCE`.
 - `RepositoryPreflightWorkflow` is bound as `REPOSITORY_PREFLIGHT`; it durably coordinates exact-source checkout, ordered checks, result persistence, and cleanup.
+- `AgentRunWorkflow` is bound as `AGENT_RUN_WORKFLOW`; it durably coordinates exact-source checkout, Codex, required checks, result persistence, cancellation, and cleanup.
 - `Sandbox` is the `@cloudflare/sandbox` Durable Object bound as `SANDBOX`, backed by the matching `cloudflare/sandbox:0.12.7` container image.
-- Private bounded preflight logs are stored in R2 bucket `openfloor-preflight-logs`, bound as `PREFLIGHT_LOGS`.
+- Private bounded preflight and run artifacts are stored in R2 bucket `openfloor-preflight-logs`, bound as `PREFLIGHT_LOGS`.
 - Cloudflare static assets are bound as `ASSETS`.
 - Cloudflare Images is bound as `IMAGES` for vinext image optimization.
 - Drizzle defines the schema and generates migrations; runtime data access uses prepared D1 SQL.
@@ -392,6 +395,15 @@ Do not hand-edit Drizzle metadata. If a generated migration is wrong, correct th
 - D1 owns bounded status, timing, exit code, excerpt, and R2 log-key metadata. Full bounded logs stay in private R2 and never enter snapshots.
 - Statuses are `provisioning`, `running`, `passed`, `failed`, `cancelled`, or `timed_out`; check statuses are `pending`, `running`, `passed`, `failed`, or `timed_out`.
 
+#### `agent_runs`, `agent_run_events`, `agent_run_checks`, `agent_run_files`, and `agent_run_artifacts`
+
+- One active run may exist per queue item. Runs pin the agent, candidate, exact SHA, attempt, model, prompt inputs, timestamps, and terminal summary.
+- The owner may start or cancel; members may read caller-visible run summaries but receive no mutation controls. Unassigned or nonqueued items cannot execute.
+- Run statuses are `provisioning`, `running`, `checking`, `ready`, `publishing`, `published`, `integrating`, `integrated`, `conflicted`, `failed`, `cancel_requested`, and `cancelled`; later-phase statuses are reserved in the durable contract.
+- Each run snapshots ordered required checks. D1 stores bounded output excerpts, file metadata, and diff previews; complete bounded Codex logs, check logs, and diffs stay in private R2.
+- Phase 4 `ready` means checks passed locally. The queue item becomes `blocked` until Phase 5 validates and publishes it; failed or cancelled runs restore the item to `queued` for a new attempt.
+- Workflow-file changes under `.github/workflows/` are rejected because the GitHub App has no Workflows permission.
+
 #### `floor_agents`
 
 - Session-scoped UUID.
@@ -419,7 +431,7 @@ Do not hand-edit Drizzle metadata. If a generated migration is wrong, correct th
 
 - Ordered by integer `position` within a session.
 - Nullable agent target represents an unassigned prompt.
-- Only current status is `queued`.
+- Status is `queued`, `running`, `blocked`, or `completed`. Only queued items can be merged or started.
 - Agent foreign key uses `ON DELETE SET NULL` for future lifecycle support, although deletion is not exposed today.
 
 #### `floor_queue_prompts`
@@ -440,9 +452,10 @@ Do not hand-edit Drizzle metadata. If a generated migration is wrong, correct th
 - `repository`
 - `activeCandidate`
 - `latestPreflight`
+- `runs`
 - `review`
 
-`FloorSnapshot` includes nullable `repository`, `activeCandidate`, and bounded `latestPreflight` fields. Large preflight logs are fetched separately. `review` is deliberately nullable and currently always `null` in `db/floor.ts`; do not populate it from UI fixtures.
+`FloorSnapshot` includes nullable `repository`, `activeCandidate`, bounded `latestPreflight`, and the latest 20 caller-visible runs. Large logs and artifacts are fetched separately. `review` is null until a real run has changed files, then is derived only from persisted run/check/file data; never populate it from UI fixtures.
 
 ### Mutation pattern
 
@@ -548,6 +561,11 @@ All paths below are shown without the production `/app` prefix.
 | `POST /api/sessions/[id]/repository/preflight` | Owner | Start one durable preflight for the exact active candidate; requires at least one command. |
 | `GET /api/sessions/[id]/repository/preflight/[preflightId]/logs` | Session member | Stream the caller-authorized bounded command logs from private R2. |
 | `GET /runtime/preflight/source` | Short-lived source JWT | Proxy the exact candidate archive without exposing a GitHub installation token to the Sandbox process. |
+| `POST /api/sessions/[id]/queue/[queueItemId]/run` | Owner | Start a durable Codex run for an assigned queued item at the exact active candidate SHA. |
+| `POST /api/sessions/[id]/runs/[runId]/cancel` | Owner | Request cancellation of an active run. |
+| `GET /api/sessions/[id]/runs/[runId]/artifacts` | Session member | Return caller-authorized bounded run artifacts from private R2. |
+| `GET /runtime/run/source` | Short-lived run source JWT | Proxy the exact candidate archive for one run. |
+| `POST /runtime/openai/v1/responses` | Short-lived run OpenAI JWT | Forward one active run's Codex request while injecting the project credential outside the repository process. |
 | `POST /webhooks/github` | Valid GitHub HMAC | Deduplicate and process bounded installation, access, repository, push, PR, check, and status deliveries. |
 
 Response conventions:
@@ -642,6 +660,7 @@ db/
   floor.ts                   Prepared D1 floor snapshot and mutation queries
   repositories.ts            Owner-gated GitHub connection and check-command persistence
   preflights.ts              Durable preflight/check state and internal Workflow transitions
+  runs.ts                    Durable agent-run lifecycle, checks, files, artifacts, and execution context
 drizzle/                     Generated D1 migrations and metadata
 lib/
   floor-types.ts             Public persisted floor types
@@ -651,7 +670,7 @@ lib/
   invites.ts                 HMAC signing and constant-time verification
   github.ts                  GitHub App JWT, installation-token, repository, and branch reads
   github-state.ts            Signed callback state and webhook HMAC verification
-  runtime-token.ts           Short-lived preflight gateway JWT signing and verification
+  runtime-token.ts           Short-lived preflight/run operation-scoped gateway JWTs
   presence-server.ts         Internal application-to-Durable-Object notifications
   floor-api.ts               Shared floor route response helpers
   floor-state.ts             Pure queue/mention/revision client helpers
@@ -660,7 +679,9 @@ worker/
   index.ts                   Cloudflare entry, identity boundary, assets, app dispatch
   presence.ts                Authenticated WebSocket route and SessionPresence object
   preflight-workflow.ts      Durable exact-source Sandbox preflight orchestration
+  agent-run-workflow.ts      Durable Codex/check/cancellation Sandbox orchestration
 Dockerfile.sandbox           Version-matched Cloudflare Sandbox runtime image
+scripts/codex-runner.mjs     Pinned server-side Codex SDK runner inside the Sandbox image
 tests/
   unit/                      Pure functions, validation, identity, signing, reducers
   worker/                    Local D1 and Durable Object integration tests
@@ -809,12 +830,15 @@ Defined in `wrangler.jsonc`:
 - `ASSETS`: built client assets.
 - `IMAGES`: Cloudflare Images transform binding.
 - `REPOSITORY_PREFLIGHT`: Cloudflare Workflow binding.
+- `AGENT_RUN_WORKFLOW`: Cloudflare Workflow binding.
 - `SANDBOX`: Cloudflare Sandbox Durable Object/container binding.
 - `PREFLIGHT_LOGS`: private R2 bucket `openfloor-preflight-logs`.
 
 The phased GitHub rollout currently uses the existing production Worker and D1 database. GitHub App setup and deployment are documented in `docs/github-production.md`. Until the user establishes staging, install the App only on the disposable acceptance repository and complete each phase's browser acceptance before expanding repository access.
 
 Cloudflare Containers requires a Workers Paid account. `PREFLIGHT_ENABLED` is the production rollout gate: production is enabled only after the container image, `SANDBOX`, and `REPOSITORY_PREFLIGHT` bindings deploy successfully. While disabled, the UI omits **Verify runner** and the start endpoint returns `503`; repository connection and candidate reconciliation remain available. Tests explicitly enable the deterministic test adapter.
+
+`AGENT_RUN_ENABLED` independently gates Phase 4. Production is enabled only after the updated image and Workflow deploy and `OPENAI_API_KEY` is configured; while false the UI omits **Run** and direct starts return `503`. Tests enable only the deterministic test adapter.
 
 Durable Object migration `v1` registers `SessionPresence`; `v2` registers `Sandbox`. Keep migration syntax compatible with the pinned Wrangler version.
 
@@ -829,6 +853,7 @@ Durable Object migration `v1` registers `SessionPresence`; `v2` registers `Sandb
 - `GITHUB_STATE_SECRET`
 - `GITHUB_WEBHOOK_SECRET`
 - `RUNTIME_GATEWAY_SECRET`
+- `OPENAI_API_KEY`
 
 Set a secret by its variable name, then enter the value when prompted:
 
@@ -940,27 +965,14 @@ Migrations must land before code that requires them. The build generates `dist/s
 - Draft Hidden mode does not stop outbound sharing.
 - Agent names may contain spaces, while the current `@mention` helper recognizes a single word-like name. Explicit target selection is the reliable path for multiword agent names until mention parsing is redesigned.
 - Owners cannot leave because ownership transfer is deferred.
-- Review types look complete enough to render future data, but no review persistence or runtime writer exists.
+- Review is derived from bounded persisted run files and checks; complete artifacts remain outside the snapshot, and no GitHub PR exists until a later phase.
 - The UI contains restored visual affordances from a prototype; verify backend wiring before claiming any action is real.
 - Wrangler is pinned. A newer compatibility date may be rejected until Wrangler is upgraded deliberately.
 - This `AGENTS.md` is the comprehensive context source; keep shorter README and focused docs consistent with it.
 
 ## Roadmap guidance
 
-After Phase 3 is deployed and accepted in the browser, the next milestone is Phase 4: Codex produces a real local candidate without publishing it to GitHub. It must preserve these already-decided questions and boundaries:
-
-1. Which service owns agent execution and credentials?
-2. How does it authenticate internal writes to a session?
-3. How are agents scheduled from queue items, cancelled, retried, and made idempotent?
-4. Which runtime states are authoritative, and where are they persisted?
-5. Repository access is scoped by the stored installation and repository IDs; every OpenFloor ref is server-generated and the base branch is never written.
-6. How are files, diffs, checks, warnings, conflicts, and review candidates modeled?
-7. How do runtime writes increment `floor_revision` and notify connected clients?
-8. How are agent messages distinguished from human-authored messages?
-9. What can owners, members, and agent owners do?
-10. What is the recovery model for disconnects, duplicate delivery, and partially completed work?
-
-Do not begin by filling the existing UI with guessed fields. Define the authoritative service and public contract, add nullable persisted types and migrations, then connect components to genuine data.
+After Phase 4 is deployed and accepted in the browser, the next milestone is Phase 5: validate and publish a passing local result to a server-generated run branch, then safely discard an unmodified OpenFloor-owned run branch. The Sandbox must export a Git bundle without GitHub credentials; the trusted repository gateway validates repository/base ancestry, expected file limits, workflow-file exclusion, objects, refs, and recorded SHA before minting a repository-limited installation token. Phase 5 must not integrate into the candidate branch or create a pull request.
 
 ## Key decision log
 
@@ -1106,7 +1118,23 @@ Do not begin by filling the existing UI with guessed fields. Define the authorit
 
 **Rationale:** A Worker version can deploy before its container image is publishable, which would otherwise expose an action backed by missing Sandbox and Workflow bindings. The gate preserves honest product behavior and keeps the accepted Phase 2 repository flow operational during infrastructure setup.
 
-**Consequences:** The Workers Paid upgrade and container-enabled deployment succeeded on 2026-08-19, so production now sets the flag to `true` and Phase 3 browser acceptance can begin. Other environments must keep it disabled until their own runtime bindings are live. Automated tests explicitly enable preflight and continue to exercise deterministic Workflow/Sandbox behavior without weakening production checks.
+**Consequences:** The Workers Paid upgrade, container deployment, and Phase 3 browser acceptance succeeded on 2026-08-19, so production sets the flag to `true`. Other environments must keep it disabled until their own runtime bindings are live. Automated tests explicitly enable preflight and continue to exercise deterministic Workflow/Sandbox behavior without weakening production checks.
+
+### 2026-08-19 — Execute Codex locally before granting GitHub write authority
+
+**Decision:** Phase 4 runs the pinned server-side Codex SDK `0.148.0` with model `gpt-5.6-terra` inside a unique Cloudflare Sandbox checked out at the recorded candidate SHA. `AgentRunWorkflow` owns orchestration and cancellation. One active run is allowed per queue item, owner actions start/cancel compute, and passing changes remain local rather than being pushed to GitHub.
+
+**Rationale:** This makes genuine code generation, required checks, recovery, and review observable before introducing remote branch writes. Durable records separate run lifecycle from preflight history, while an isolated writable workspace contains repository-controlled code and commands.
+
+**Consequences:** The Worker supplies exact source through a run-scoped source JWT and proxies Codex Responses requests through a separate short-lived run-scoped JWT, injecting `OPENAI_API_KEY` only at the trusted boundary. The Sandbox and repository process never receive GitHub installation or OpenAI project credentials. D1 stores bounded run/check/file summaries; R2 stores bounded complete logs and diffs. Passing items become `blocked` pending Phase 5 publication, failures and cancellations are retryable, and workflow-file changes are rejected.
+
+### 2026-08-19 — Gate production agent execution independently
+
+**Decision:** `AGENT_RUN_ENABLED` remains false until the Phase 4 image and Workflow are deployed and `OPENAI_API_KEY` is configured in that environment.
+
+**Rationale:** Repository connection and preflight should remain available during a partial rollout, while an owner must never see an execution action backed by missing credentials or runtime bindings.
+
+**Consequences:** The rendered Run control is absent and direct starts return `503` while disabled. Deterministic tests explicitly enable their test adapter. The production image, Workflow, and secret were verified on 2026-08-19, so production now enables the flag for Phase 4 browser acceptance.
 
 ## How to record the next decision
 

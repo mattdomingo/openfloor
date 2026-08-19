@@ -4,12 +4,14 @@ import type {
   FloorMessage,
   FloorQueueItem,
   FloorQueuePrompt,
+  FloorReviewSnapshot,
   FloorSnapshot,
 } from "@/lib/floor-types";
 import type { AgentInput, AssignmentInput, MessageInput, QueuePromptInput } from "@/lib/validation";
 import { getDb, type D1DatabaseLike } from "./index";
 import { getActiveRepositoryCandidate, getRepositoryConnectionForMember } from "./repositories";
 import { getLatestRepositoryPreflight } from "./preflights";
+import { getAgentRuns } from "./runs";
 import { getMembershipRole } from "./sessions";
 
 type AgentRecord = FloorAgent;
@@ -31,7 +33,7 @@ export async function getFloorSnapshot(
 }
 
 async function readFloorSnapshot(sessionId: string, userId: string, database: D1DatabaseLike): Promise<FloorSnapshot> {
-  const [session, agents, assignments, messages, queue, prompts, repository, activeCandidate, latestPreflight] = await Promise.all([
+  const [session, agents, assignments, messages, queue, prompts, repository, activeCandidate, latestPreflight, runs] = await Promise.all([
     database.prepare("SELECT floor_revision AS revision FROM sessions WHERE id = ?").bind(sessionId).first<{ revision: number }>(),
     database.prepare(
       `SELECT a.id, a.name, a.role, a.task, a.owner_user_id AS ownerUserId,
@@ -80,6 +82,7 @@ async function readFloorSnapshot(sessionId: string, userId: string, database: D1
     getRepositoryConnectionForMember(sessionId, userId, database),
     getActiveRepositoryCandidate(sessionId, database),
     getLatestRepositoryPreflight(sessionId, database),
+    getAgentRuns(sessionId, database),
   ]);
 
   const promptsByItem = new Map<string, FloorQueuePrompt[]>();
@@ -104,8 +107,52 @@ async function readFloorSnapshot(sessionId: string, userId: string, database: D1
     repository,
     activeCandidate,
     latestPreflight,
-    review: null,
+    runs,
+    review: buildRunReview(runs, activeCandidate?.branchName ?? null, activeCandidate?.baseBranch ?? null),
   };
+}
+
+function buildRunReview(runs: Awaited<ReturnType<typeof getAgentRuns>>, branch: string | null, baseBranch: string | null): FloorReviewSnapshot | null {
+  const run = runs.find((item) => item.files.length > 0);
+  if (!run || !branch || !baseBranch) return null;
+  return {
+    id: run.id,
+    status: "awaiting",
+    branch,
+    baseBranch,
+    commitSha: null,
+    files: run.files.map((file) => ({
+      id: file.id,
+      path: file.path,
+      agentId: run.agentId,
+      agentName: run.agentName,
+      additions: file.additions,
+      deletions: file.deletions,
+      summary: file.summary,
+      diff: diffLines(file.diffPreview),
+    })),
+    checks: run.checks.map((check) => ({
+      id: check.id,
+      name: check.command,
+      detail: check.outputExcerpt,
+      state: check.status === "passed" ? "passed" : check.status === "failed" || check.status === "timed_out" ? "failed" : "waiting",
+    })),
+    warnings: run.status === "ready" ? [] : [{
+      id: `${run.id}-status`,
+      title: "Run is not ready",
+      detail: run.summary ?? `The run is currently ${run.status.replace("_", " ")}.`,
+      severity: "warning",
+    }],
+    updatedAt: run.updatedAt,
+  };
+}
+
+function diffLines(diff: string): FloorReviewSnapshot["files"][number]["diff"] {
+  return diff.split("\n").slice(0, 500).map((line) => {
+    if (line.startsWith("+") && !line.startsWith("+++")) return { type: "add" as const, text: line.slice(1) };
+    if (line.startsWith("-") && !line.startsWith("---")) return { type: "remove" as const, text: line.slice(1) };
+    return { type: "context" as const, text: line.startsWith(" ") ? line.slice(1) : line };
+  });
 }
 
 export async function createFloorAgent(
@@ -231,11 +278,12 @@ export async function mergeFloorQueue(
 ): Promise<FloorSnapshot | null> {
   if (!(await getMembershipRole(sessionId, userId, database))) return null;
   const selected = await database.prepare(
-    `SELECT id, agent_id AS agentId, position FROM floor_queue_items
+    `SELECT id, agent_id AS agentId, position, status FROM floor_queue_items
      WHERE session_id = ? AND id IN (${itemIds.map(() => "?").join(", ")})
      ORDER BY position, created_at, id`,
-  ).bind(sessionId, ...itemIds).all<{ id: string; agentId: string | null; position: number }>();
+  ).bind(sessionId, ...itemIds).all<{ id: string; agentId: string | null; position: number; status: string }>();
   if (selected.results.length !== itemIds.length) throw new FloorConflictError("One or more queue items no longer exist.");
+  if (selected.results.some((item) => item.status !== "queued")) throw new FloorConflictError("Only queued items can be merged.");
   const target = selected.results[0]?.agentId ?? null;
   if (selected.results.some((item) => (item.agentId ?? null) !== target)) {
     throw new FloorTargetError("Only queue items with the same target can be merged.");

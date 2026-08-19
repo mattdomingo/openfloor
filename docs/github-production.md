@@ -1,6 +1,6 @@
 # Production GitHub App rollout
 
-Phase 3 connects the existing production OpenFloor application to a GitHub App, creates one real candidate branch, and executes required checks in Cloudflare Sandbox. During phased acceptance, install the App only on a real disposable repository.
+Phase 4 connects the production OpenFloor application to a GitHub App, keeps one real candidate branch, and runs Codex plus required checks in Cloudflare Sandbox. Passing changes are reviewed locally in OpenFloor and are not pushed to GitHub until Phase 5. During phased acceptance, install the App only on a real disposable repository.
 
 ## Production host and Cloudflare Access
 
@@ -61,9 +61,17 @@ openssl rand -hex 32 | npx wrangler secret put RUNTIME_GATEWAY_SECRET
 
 The gateway token can fetch only the exact candidate archive for one preflight. It is not a GitHub credential.
 
+Add an OpenAI project API key for server-side Codex execution:
+
+```bash
+npx wrangler secret put OPENAI_API_KEY
+```
+
+Enter the key at Wrangler's prompt. Do not place it in a repository, check command, queue prompt, or command-line argument. OpenFloor injects it only at the trusted Responses gateway; the Sandbox receives a short-lived run token instead of the project key.
+
 ## Configure Workflow, Sandbox, and R2
 
-`wrangler.jsonc` defines the `REPOSITORY_PREFLIGHT` Workflow, `SANDBOX` container/Durable Object, and private `PREFLIGHT_LOGS` R2 binding. Create the bucket once:
+`wrangler.jsonc` defines the `REPOSITORY_PREFLIGHT` and `AGENT_RUN_WORKFLOW` Workflows, `SANDBOX` container/Durable Object, and private `PREFLIGHT_LOGS` R2 binding. Create the bucket once:
 
 ```bash
 npx wrangler r2 bucket create openfloor-preflight-logs
@@ -84,8 +92,8 @@ npm run build
 npx wrangler deploy --config dist/server/wrangler.json
 ```
 
-After the container-enabled deployment succeeds, set `PREFLIGHT_ENABLED` to `true`, rebuild, and deploy again. Do not enable the flag before all runtime bindings are live.
+After the container-enabled deployment succeeds, set `PREFLIGHT_ENABLED` to `true`, rebuild, and deploy again. Keep `AGENT_RUN_ENABLED=false` until the updated Codex image and `AGENT_RUN_WORKFLOW` deploy and `OPENAI_API_KEY` appears in `npx wrangler secret list`. Then set it to `true`, rebuild, and deploy again. Do not enable either flag before its runtime prerequisites are live.
 
-Phase 3 adds **Verify runner**, which reads the exact candidate archive through the trusted gateway and executes configured commands in an isolated Sandbox. It stores bounded output in private R2 and cleans up the Sandbox. OpenFloor still exposes no caller-selected ref, force push, base write, candidate update/deletion, commit, pull request, or merge operation.
+Phase 4 adds owner-only **Run** and **Cancel** controls for assigned queue items. Codex uses `gpt-5.6-terra` with workspace-write permission against the exact candidate SHA, then OpenFloor runs the configured checks and displays real changed files/diffs. Passing changes remain inside the isolated runtime and leave the queue item blocked for Phase 5 publication. Failed and cancelled items remain retryable. OpenFloor still exposes no caller-selected ref, force push, base write, run-branch publication, pull request, or merge operation.
 
 Required check commands are optional while connecting a repository. A later runner or integration action must refuse to execute until the owner configures at least one command.

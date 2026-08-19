@@ -1,0 +1,281 @@
+import type { AgentRun, AgentRunCheck, AgentRunFile, AgentRunStatus } from "@/lib/floor-types";
+import { getDb, type D1DatabaseLike } from "./index";
+import { getMembershipRole } from "./sessions";
+
+export const AGENT_RUN_MODEL = "gpt-5.6-terra";
+export class AgentRunConflictError extends Error {}
+export class AgentRunNotReadyError extends Error {}
+
+type RunRecord = Omit<AgentRun, "checks" | "files">;
+type CheckRecord = Omit<AgentRunCheck, "hasLog"> & { logKey: string | null };
+
+export async function getAgentRunsForMember(sessionId: string, userId: string, database = getDb()): Promise<AgentRun[] | null> {
+  if (!(await getMembershipRole(sessionId, userId, database))) return null;
+  return getAgentRuns(sessionId, database);
+}
+
+export async function getAgentRuns(sessionId: string, database = getDb()): Promise<AgentRun[]> {
+  const rows = await database.prepare(
+    `SELECT r.id, r.queue_item_id AS queueItemId, r.agent_id AS agentId, a.name AS agentName,
+            r.candidate_id AS candidateId, r.candidate_sha AS candidateSha, r.attempt, r.status,
+            r.model, r.summary, r.final_response AS finalResponse, r.created_by AS createdBy,
+            r.created_at AS createdAt, r.started_at AS startedAt, r.completed_at AS completedAt,
+            r.cancel_requested_at AS cancelRequestedAt, r.updated_at AS updatedAt
+     FROM agent_runs r JOIN floor_agents a ON a.id = r.agent_id
+     WHERE r.session_id = ? ORDER BY r.created_at DESC, r.id DESC LIMIT 20`,
+  ).bind(sessionId).all<RunRecord>();
+  return Promise.all(rows.results.map(async (run) => ({
+    ...run,
+    attempt: Number(run.attempt),
+    checks: await getRunChecks(run.id, database),
+    files: await getRunFiles(run.id, database),
+  })));
+}
+
+export async function createAgentRun(sessionId: string, queueItemId: string, userId: string, database = getDb()): Promise<AgentRun> {
+  if ((await getMembershipRole(sessionId, userId, database)) !== "owner") throw new AgentRunNotReadyError("Session not found");
+  const context = await database.prepare(
+    `SELECT q.id AS queueItemId, q.status AS queueStatus, q.agent_id AS agentId,
+            rc.id AS connectionId, rc.status AS connectionStatus,
+            c.id AS candidateId, c.candidate_sha AS candidateSha, c.remote_candidate_sha AS remoteCandidateSha
+     FROM floor_queue_items q
+     LEFT JOIN repository_connections rc ON rc.session_id = q.session_id
+     LEFT JOIN repository_candidates c ON c.session_id = q.session_id AND c.status = 'active'
+     WHERE q.session_id = ? AND q.id = ?`,
+  ).bind(sessionId, queueItemId).first<{
+    queueItemId: string; queueStatus: string; agentId: string | null; connectionId: string | null;
+    connectionStatus: string | null; candidateId: string | null; candidateSha: string | null; remoteCandidateSha: string | null;
+  }>();
+  if (!context) throw new AgentRunNotReadyError("Queue item not found");
+  if (!context.agentId) throw new AgentRunNotReadyError("Assign this queue item to an agent before running it");
+  if (context.queueStatus !== "queued") throw new AgentRunConflictError("This queue item is not ready to run");
+  if (!context.connectionId || context.connectionStatus !== "ready" || !context.candidateId || !context.candidateSha || context.remoteCandidateSha !== context.candidateSha) {
+    throw new AgentRunNotReadyError("Synchronize a ready, unmodified candidate before starting an agent run");
+  }
+  const commands = await database.prepare(
+    "SELECT position, command FROM repository_check_commands WHERE connection_id = ? ORDER BY position",
+  ).bind(context.connectionId).all<{ position: number; command: string }>();
+  if (commands.results.length === 0) throw new AgentRunNotReadyError("Configure at least one required check command before starting an agent run");
+  const previous = await database.prepare("SELECT COALESCE(MAX(attempt), 0) AS attempt FROM agent_runs WHERE queue_item_id = ?")
+    .bind(queueItemId).first<{ attempt: number }>();
+  const attempt = Number(previous?.attempt ?? 0) + 1;
+  const id = crypto.randomUUID();
+  const now = Date.now();
+  try {
+    await database.batch([
+      database.prepare(
+        `INSERT INTO agent_runs
+         (id, session_id, queue_item_id, agent_id, candidate_id, candidate_sha, attempt, status, model,
+          workflow_instance_id, sandbox_id, created_by, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'provisioning', ?, ?, ?, ?, ?, ?)`,
+      ).bind(id, sessionId, queueItemId, context.agentId, context.candidateId, context.candidateSha, attempt,
+        AGENT_RUN_MODEL, id, `run-${id}`, userId, now, now),
+      ...commands.results.map((check) => database.prepare(
+        `INSERT INTO agent_run_checks (id, run_id, position, command, status, updated_at)
+         VALUES (?, ?, ?, ?, 'pending', ?)`,
+      ).bind(crypto.randomUUID(), id, Number(check.position), check.command, now)),
+      database.prepare("UPDATE floor_queue_items SET status = 'running', updated_at = ? WHERE id = ? AND session_id = ? AND status = 'queued'")
+        .bind(now, queueItemId, sessionId),
+      database.prepare("UPDATE sessions SET floor_revision = floor_revision + 1, updated_at = ? WHERE id = ?").bind(now, sessionId),
+    ]);
+  } catch (error) {
+    if (String(error).toLowerCase().includes("unique")) throw new AgentRunConflictError("This queue item already has an active run");
+    throw error;
+  }
+  await appendRunEvent(id, "queued", `Run attempt ${attempt} created.`, database);
+  return (await getAgentRun(id, database))!;
+}
+
+export async function getAgentRun(runId: string, database = getDb()): Promise<AgentRun | null> {
+  const row = await database.prepare(
+    `SELECT r.id, r.queue_item_id AS queueItemId, r.agent_id AS agentId, a.name AS agentName,
+            r.candidate_id AS candidateId, r.candidate_sha AS candidateSha, r.attempt, r.status,
+            r.model, r.summary, r.final_response AS finalResponse, r.created_by AS createdBy,
+            r.created_at AS createdAt, r.started_at AS startedAt, r.completed_at AS completedAt,
+            r.cancel_requested_at AS cancelRequestedAt, r.updated_at AS updatedAt
+     FROM agent_runs r JOIN floor_agents a ON a.id = r.agent_id WHERE r.id = ?`,
+  ).bind(runId).first<RunRecord>();
+  if (!row) return null;
+  return { ...row, attempt: Number(row.attempt), checks: await getRunChecks(runId, database), files: await getRunFiles(runId, database) };
+}
+
+export async function getRunExecutionContext(runId: string, database = getDb()) {
+  const run = await database.prepare(
+    `SELECT r.id, r.session_id AS sessionId, r.queue_item_id AS queueItemId, r.agent_id AS agentId,
+            r.candidate_sha AS candidateSha, r.status, r.sandbox_id AS sandboxId,
+            r.sandbox_process_id AS sandboxProcessId, r.model,
+            s.title AS sessionTitle, s.objective, a.name AS agentName, a.role AS agentRole, a.task AS agentTask,
+            rc.installation_id AS installationId, rc.repository_id AS repositoryId,
+            rc.repository_owner AS repositoryOwner, rc.repository_name AS repositoryName,
+            rc.repository_full_name AS repositoryFullName,
+            c.branch_name AS candidateBranch
+     FROM agent_runs r
+     JOIN sessions s ON s.id = r.session_id
+     JOIN floor_agents a ON a.id = r.agent_id
+     JOIN repository_candidates c ON c.id = r.candidate_id
+     JOIN repository_connections rc ON rc.id = c.connection_id
+     WHERE r.id = ?`,
+  ).bind(runId).first<{
+    id: string; sessionId: string; queueItemId: string; agentId: string; candidateSha: string; status: AgentRunStatus;
+    sandboxId: string; sandboxProcessId: string | null; model: string; sessionTitle: string; objective: string | null;
+    agentName: string; agentRole: string; agentTask: string; installationId: string; repositoryId: string;
+    repositoryOwner: string; repositoryName: string; repositoryFullName: string; candidateBranch: string;
+  }>();
+  if (!run) return null;
+  const prompts = await database.prepare(
+    `SELECT p.text, u.display_name AS authorName FROM floor_queue_prompts p
+     JOIN users u ON u.id = p.author_user_id WHERE p.queue_item_id = ? ORDER BY p.created_at, p.id`,
+  ).bind(run.queueItemId).all<{ text: string; authorName: string }>();
+  const checks = await database.prepare("SELECT id, position, command FROM agent_run_checks WHERE run_id = ? ORDER BY position")
+    .bind(runId).all<{ id: string; position: number; command: string }>();
+  return { ...run, prompts: prompts.results, checks: checks.results.map((check) => ({ ...check, position: Number(check.position) })) };
+}
+
+export async function markRunRunning(runId: string, processId: string | null, database = getDb()): Promise<void> {
+  const now = Date.now();
+  await database.prepare(
+    `UPDATE agent_runs SET status = 'running', sandbox_process_id = COALESCE(?, sandbox_process_id),
+            started_at = COALESCE(started_at, ?), updated_at = ? WHERE id = ? AND status IN ('provisioning', 'running')`,
+  ).bind(processId, now, now, runId).run();
+  await appendRunEvent(runId, "running", "Codex started in the isolated workspace.", database);
+}
+
+export async function setRunProcessId(runId: string, processId: string, database = getDb()): Promise<void> {
+  await database.prepare("UPDATE agent_runs SET sandbox_process_id = ?, updated_at = ? WHERE id = ?")
+    .bind(processId, Date.now(), runId).run();
+}
+
+export async function markRunChecking(runId: string, threadId: string | null, finalResponse: string | null, database = getDb()): Promise<void> {
+  const now = Date.now();
+  await database.prepare(
+    `UPDATE agent_runs SET status = 'checking', codex_thread_id = ?, final_response = ?, updated_at = ?
+     WHERE id = ? AND status IN ('running', 'checking')`,
+  ).bind(threadId, finalResponse?.slice(0, 20_000) ?? null, now, runId).run();
+  await appendRunEvent(runId, "checking", "Codex finished; required checks are running.", database);
+}
+
+export async function markRunCheckRunning(runId: string, checkId: string, database = getDb()): Promise<void> {
+  const now = Date.now();
+  await database.prepare("UPDATE agent_run_checks SET status = 'running', started_at = COALESCE(started_at, ?), updated_at = ? WHERE id = ? AND run_id = ?")
+    .bind(now, now, checkId, runId).run();
+}
+
+export async function finishRunCheck(runId: string, checkId: string, result: {
+  status: "passed" | "failed" | "timed_out"; exitCode: number | null; durationMs: number; outputExcerpt: string; logKey: string;
+}, database = getDb()): Promise<void> {
+  const now = Date.now();
+  await database.prepare(
+    `UPDATE agent_run_checks SET status = ?, exit_code = ?, duration_ms = ?, output_excerpt = ?, log_key = ?,
+            completed_at = ?, updated_at = ? WHERE id = ? AND run_id = ?`,
+  ).bind(result.status, result.exitCode, result.durationMs, result.outputExcerpt.slice(-2_000), result.logKey, now, now, checkId, runId).run();
+}
+
+export async function replaceRunFiles(runId: string, files: Array<Omit<AgentRunFile, "id">>, database = getDb()): Promise<void> {
+  const now = Date.now();
+  await database.batch([
+    database.prepare("DELETE FROM agent_run_files WHERE run_id = ?").bind(runId),
+    ...files.map((file) => database.prepare(
+      `INSERT INTO agent_run_files (id, run_id, path, change_kind, additions, deletions, summary, diff_preview, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).bind(crypto.randomUUID(), runId, file.path, file.changeKind, file.additions, file.deletions,
+      file.summary?.slice(0, 500) ?? null, file.diffPreview.slice(0, 20_000), now)),
+  ]);
+}
+
+export async function recordRunArtifact(runId: string, kind: "codex_log" | "diff", r2Key: string, contentType: string, sizeBytes: number, database = getDb()): Promise<void> {
+  await database.prepare(
+    `INSERT INTO agent_run_artifacts (id, run_id, kind, r2_key, content_type, size_bytes, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(run_id, kind) DO UPDATE SET r2_key = excluded.r2_key, content_type = excluded.content_type,
+       size_bytes = excluded.size_bytes, created_at = excluded.created_at`,
+  ).bind(crypto.randomUUID(), runId, kind, r2Key, contentType, sizeBytes, Date.now()).run();
+}
+
+export async function finishAgentRun(runId: string, status: "ready" | "failed" | "cancelled", summary: string, database = getDb()): Promise<{ sessionId: string; revision: number } | null> {
+  const run = await database.prepare("SELECT session_id AS sessionId, queue_item_id AS queueItemId, status FROM agent_runs WHERE id = ?")
+    .bind(runId).first<{ sessionId: string; queueItemId: string; status: AgentRunStatus }>();
+  if (!run) return null;
+  if (["ready", "failed", "cancelled", "published", "integrated", "conflicted"].includes(run.status)) {
+    const current = await database.prepare("SELECT floor_revision AS revision FROM sessions WHERE id = ?").bind(run.sessionId).first<{ revision: number }>();
+    return { sessionId: run.sessionId, revision: Number(current?.revision ?? 0) };
+  }
+  const now = Date.now();
+  await database.batch([
+    database.prepare(
+      `UPDATE agent_runs SET status = ?, summary = ?, completed_at = ?, updated_at = ?
+       WHERE id = ? AND status IN ('provisioning', 'running', 'checking', 'cancel_requested')`,
+    ).bind(status, summary.slice(0, 1_000), now, now, runId),
+    database.prepare("UPDATE floor_queue_items SET status = ?, updated_at = ? WHERE id = ?")
+      .bind(status === "ready" ? "blocked" : "queued", now, run.queueItemId),
+    database.prepare("UPDATE sessions SET floor_revision = floor_revision + 1, updated_at = ? WHERE id = ?").bind(now, run.sessionId),
+  ]);
+  await appendRunEvent(runId, status, summary, database);
+  const revision = await database.prepare("SELECT floor_revision AS revision FROM sessions WHERE id = ?").bind(run.sessionId).first<{ revision: number }>();
+  return { sessionId: run.sessionId, revision: Number(revision?.revision ?? 0) };
+}
+
+export async function requestAgentRunCancellation(sessionId: string, runId: string, userId: string, database = getDb()): Promise<boolean | null> {
+  if ((await getMembershipRole(sessionId, userId, database)) !== "owner") return null;
+  const now = Date.now();
+  const result = await database.prepare(
+    `UPDATE agent_runs SET status = 'cancel_requested', cancel_requested_at = ?, updated_at = ?
+     WHERE id = ? AND session_id = ? AND status IN ('provisioning', 'running', 'checking')`,
+  ).bind(now, now, runId, sessionId).run();
+  if (!result.meta?.changes) return false;
+  await database.batch([
+    database.prepare("UPDATE sessions SET floor_revision = floor_revision + 1, updated_at = ? WHERE id = ?").bind(now, sessionId),
+    database.prepare(
+      `INSERT INTO agent_run_events (id, run_id, sequence, kind, detail, created_at)
+       SELECT ?, ?, COALESCE(MAX(sequence), 0) + 1, 'cancel_requested', 'Cancellation requested by the session owner.', ?
+       FROM agent_run_events WHERE run_id = ?`,
+    ).bind(crypto.randomUUID(), runId, now, runId),
+  ]);
+  return true;
+}
+
+export async function isRunCancellationRequested(runId: string, database = getDb()): Promise<boolean> {
+  const row = await database.prepare("SELECT status FROM agent_runs WHERE id = ?").bind(runId).first<{ status: AgentRunStatus }>();
+  return row?.status === "cancel_requested";
+}
+
+export async function bumpAgentRunRevision(runId: string, database = getDb()): Promise<{ sessionId: string; revision: number } | null> {
+  const row = await database.prepare("SELECT session_id AS sessionId FROM agent_runs WHERE id = ?").bind(runId).first<{ sessionId: string }>();
+  if (!row) return null;
+  const now = Date.now();
+  await database.prepare("UPDATE sessions SET floor_revision = floor_revision + 1, updated_at = ? WHERE id = ?").bind(now, row.sessionId).run();
+  const revision = await database.prepare("SELECT floor_revision AS revision FROM sessions WHERE id = ?").bind(row.sessionId).first<{ revision: number }>();
+  return { sessionId: row.sessionId, revision: Number(revision?.revision ?? 0) };
+}
+
+export async function getRunArtifactKeysForMember(sessionId: string, runId: string, userId: string, database = getDb()) {
+  if (!(await getMembershipRole(sessionId, userId, database))) return null;
+  const rows = await database.prepare(
+    `SELECT a.kind, a.r2_key AS r2Key, a.content_type AS contentType
+     FROM agent_run_artifacts a JOIN agent_runs r ON r.id = a.run_id WHERE r.id = ? AND r.session_id = ? ORDER BY a.kind`,
+  ).bind(runId, sessionId).all<{ kind: string; r2Key: string; contentType: string }>();
+  return rows.results;
+}
+
+async function appendRunEvent(runId: string, kind: string, detail: string, database: D1DatabaseLike): Promise<void> {
+  await database.prepare(
+    `INSERT INTO agent_run_events (id, run_id, sequence, kind, detail, created_at)
+     SELECT ?, ?, COALESCE(MAX(sequence), 0) + 1, ?, ?, ? FROM agent_run_events WHERE run_id = ?`,
+  ).bind(crypto.randomUUID(), runId, kind, detail.slice(0, 2_000), Date.now(), runId).run();
+}
+
+async function getRunChecks(runId: string, database: D1DatabaseLike): Promise<AgentRunCheck[]> {
+  const rows = await database.prepare(
+    `SELECT id, position, command, status, exit_code AS exitCode, duration_ms AS durationMs,
+            output_excerpt AS outputExcerpt, log_key AS logKey, started_at AS startedAt, completed_at AS completedAt
+     FROM agent_run_checks WHERE run_id = ? ORDER BY position`,
+  ).bind(runId).all<CheckRecord>();
+  return rows.results.map(({ logKey, ...check }) => ({ ...check, position: Number(check.position), hasLog: Boolean(logKey) }));
+}
+
+async function getRunFiles(runId: string, database: D1DatabaseLike): Promise<AgentRunFile[]> {
+  const rows = await database.prepare(
+    `SELECT id, path, change_kind AS changeKind, additions, deletions, summary, diff_preview AS diffPreview
+     FROM agent_run_files WHERE run_id = ? ORDER BY path`,
+  ).bind(runId).all<AgentRunFile>();
+  return rows.results.map((file) => ({ ...file, additions: Number(file.additions), deletions: Number(file.deletions) }));
+}

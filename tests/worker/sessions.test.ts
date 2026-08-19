@@ -37,6 +37,20 @@ import {
   markPreflightRunning,
   PreflightConflictError,
 } from "@/db/preflights";
+import { createFloorAgent, createFloorQueueItem, getFloorSnapshot } from "@/db/floor";
+import {
+  AgentRunNotReadyError,
+  createAgentRun,
+  finishAgentRun,
+  finishRunCheck,
+  getRunExecutionContext,
+  markRunChecking,
+  markRunCheckRunning,
+  markRunRunning,
+  replaceRunFiles,
+  requestAgentRunCancellation,
+} from "@/db/runs";
+import { parseAgentInput } from "@/lib/validation";
 
 function identity(id: string, name: string) {
   return { providerUserId: `chatgpt-${id}`, email: `${id}@example.com`, displayName: name, fullName: name };
@@ -207,5 +221,52 @@ describe("D1 session persistence", () => {
     const timedOut = await createRepositoryPreflight(created.session.id, owner.id, env.DB);
     await finishRepositoryPreflight(timedOut.id, "timed_out", "Required check timed out", env.DB);
     expect(await getLatestRepositoryPreflightForMember(created.session.id, owner.id, env.DB)).toEqual(expect.objectContaining({ status: "timed_out" }));
+  });
+
+  it("persists owner-gated agent runs, real files, checks, retry, and cancellation", async () => {
+    const owner = await upsertUser(identity("run-owner", "Run Owner"), env.DB);
+    const member = await upsertUser(identity("run-member", "Run Member"), env.DB);
+    const created = await createSession(owner.id, { title: "Run room", objective: "Make a focused change" }, env.DB);
+    await acceptInvite(created.inviteId, member.id, env.DB);
+    const saved = await saveRepositoryConnection(created.session.id, owner.id, null, "installation-run", {
+      id: "repository-run", nodeId: "R_run", owner: "openfloor-test", name: "run",
+      fullName: "openfloor-test/run", private: true, defaultBranch: "main",
+    }, "main", ["npm test"], env.DB);
+    const candidateId = crypto.randomUUID();
+    const branch = `openfloor/${created.session.id.slice(0, 8)}/candidate/${candidateId.slice(0, 8)}`;
+    await reserveRepositoryCandidate(created.session.id, owner.id, saved!.id, candidateId, branch, "main", "d".repeat(40), env.DB);
+    await activateRepositoryCandidate(created.session.id, candidateId, "d".repeat(40), env.DB);
+    const parsed = parseAgentInput({ name: "Builder", role: "Engineer", task: "Implement the request", ownerUserId: owner.id });
+    if (!parsed) throw new Error("Invalid agent fixture");
+    let floor = await createFloorAgent(created.session.id, owner.id, parsed, env.DB);
+    floor = await createFloorQueueItem(created.session.id, owner.id, { prompt: "Add a real file", agentId: floor!.agents[0].id }, env.DB);
+    const queueItemId = floor!.queue[0].id;
+    await expect(createAgentRun(created.session.id, queueItemId, member.id, env.DB)).rejects.toBeInstanceOf(AgentRunNotReadyError);
+    const run = await createAgentRun(created.session.id, queueItemId, owner.id, env.DB);
+    expect(run).toEqual(expect.objectContaining({ status: "provisioning", model: "gpt-5.6-terra", attempt: 1 }));
+    const context = await getRunExecutionContext(run.id, env.DB);
+    expect(context).toEqual(expect.objectContaining({ candidateSha: "d".repeat(40), agentName: "Builder" }));
+    await markRunRunning(run.id, "process-1", env.DB);
+    await markRunChecking(run.id, "thread-1", "Implemented", env.DB);
+    await replaceRunFiles(run.id, [{ path: "src/change.ts", changeKind: "add", additions: 1, deletions: 0, summary: null, diffPreview: "+export const changed = true;" }], env.DB);
+    await markRunCheckRunning(run.id, context!.checks[0].id, env.DB);
+    await finishRunCheck(run.id, context!.checks[0].id, { status: "passed", exitCode: 0, durationMs: 5, outputExcerpt: "ok", logKey: `runs/${run.id}/checks/0.log` }, env.DB);
+    await finishAgentRun(run.id, "ready", "Ready locally", env.DB);
+    floor = await getFloorSnapshot(created.session.id, member.id, env.DB);
+    expect(floor?.queue[0].status).toBe("blocked");
+    expect(floor?.runs[0]).toEqual(expect.objectContaining({ status: "ready", files: [expect.objectContaining({ path: "src/change.ts" })] }));
+    expect(floor?.review).toEqual(expect.objectContaining({ id: run.id, commitSha: null }));
+    await finishAgentRun(run.id, "failed", "Late duplicate completion", env.DB);
+    floor = await getFloorSnapshot(created.session.id, owner.id, env.DB);
+    expect(floor?.queue[0].status).toBe("blocked");
+    expect(floor?.runs[0].status).toBe("ready");
+
+    await env.DB.prepare("UPDATE floor_queue_items SET status = 'queued' WHERE id = ?").bind(queueItemId).run();
+    const retry = await createAgentRun(created.session.id, queueItemId, owner.id, env.DB);
+    expect(retry.attempt).toBe(2);
+    await expect(requestAgentRunCancellation(created.session.id, retry.id, member.id, env.DB)).resolves.toBeNull();
+    await expect(requestAgentRunCancellation(created.session.id, retry.id, owner.id, env.DB)).resolves.toBe(true);
+    await finishAgentRun(retry.id, "cancelled", "Cancelled", env.DB);
+    expect((await getFloorSnapshot(created.session.id, owner.id, env.DB))?.queue[0].status).toBe("queued");
   });
 });
