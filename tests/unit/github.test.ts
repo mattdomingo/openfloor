@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { generateKeyPairSync } from "node:crypto";
 import {
+  createRepositoryBranch,
+  deleteTestRepositoryBranchIfMatches,
+  getRepositoryRefSha,
   importGitHubAppPrivateKey,
   listInstallationRepositories,
   type GitHubAppConfig,
@@ -35,5 +38,20 @@ describe("GitHub App client", () => {
       status: 500,
       message: "GitHub App private key could not be read",
     });
+  });
+
+  it("deletes only an OpenFloor test ref whose head still matches", async () => {
+    const repository = { id: "1", nodeId: "R_1", owner: "openfloor", name: "test", fullName: "openfloor/test", private: true, defaultBranch: "main" };
+    const config: GitHubAppConfig = {
+      appId: "1", slug: "openfloor-test", privateKey: "test", stateSecret: "state", webhookSecret: "webhook",
+      testData: { installationId: "installation", repositories: [{ ...repository, branches: ["main"] }] },
+    };
+    const branch = "openfloor/session1/run/run1";
+    const sha = "a".repeat(40);
+    await createRepositoryBranch(config, "installation", repository, branch, sha);
+    await expect(deleteTestRepositoryBranchIfMatches(config, "installation", repository, branch, "b".repeat(40))).resolves.toBe(false);
+    await expect(getRepositoryRefSha(config, "installation", repository, branch)).resolves.toBe(sha);
+    await expect(deleteTestRepositoryBranchIfMatches(config, "installation", repository, branch, sha)).resolves.toBe(true);
+    await expect(getRepositoryRefSha(config, "installation", repository, branch)).rejects.toMatchObject({ status: 404 });
   });
 });

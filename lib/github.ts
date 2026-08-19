@@ -156,6 +156,24 @@ export async function createRepositoryBranch(
   return body.object?.sha ?? sha;
 }
 
+export async function deleteTestRepositoryBranchIfMatches(
+  config: GitHubAppConfig,
+  installationId: string,
+  repository: GitHubRepositoryOption,
+  branch: string,
+  expectedSha: string,
+): Promise<boolean> {
+  if (!config.testData) throw new GitHubApiError("Test repository adapter is unavailable", 500);
+  if (!branch.startsWith("openfloor/") || !/^[a-z0-9/_-]+$/.test(branch)) throw new GitHubApiError("OpenFloor generated an invalid branch", 500);
+  const match = config.testData.repositories.find((item) => item.id === repository.id);
+  if (!match || installationId !== config.testData.installationId) throw new GitHubApiError("Repository is not available", 404);
+  const key = `${installationId}:${repository.id}:${branch}`;
+  const current = testRefs.get(key);
+  if (current !== expectedSha) return false;
+  testRefs.delete(key);
+  return true;
+}
+
 export async function downloadRepositoryArchive(
   config: GitHubAppConfig,
   installationId: string,
@@ -200,7 +218,7 @@ function mapRepository(repository: GitHubRepositoryRecord): GitHubRepositoryOpti
   };
 }
 
-async function createInstallationToken(
+export async function createInstallationToken(
   config: GitHubAppConfig,
   installationId: string,
   repositoryId?: string,

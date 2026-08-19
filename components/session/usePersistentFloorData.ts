@@ -72,6 +72,7 @@ export function usePersistentFloorData(sessionId: string, initialFloor: FloorSna
     mergeQueue: (itemIds: string[]) => request("/queue/merge", "POST", { itemIds }),
     runQueueItem: (queueItemId: string) => request(`/queue/${encodeURIComponent(queueItemId)}/run`, "POST"),
     cancelRun: (runId: string) => request(`/runs/${encodeURIComponent(runId)}/cancel`, "POST"),
+    discardRun: (runId: string) => request(`/runs/${encodeURIComponent(runId)}/discard`, "POST"),
   };
 }
 

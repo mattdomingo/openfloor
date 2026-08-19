@@ -5,13 +5,17 @@ import {
   createAgentRun,
   finishAgentRun,
   finishRunCheck,
+  finishRunPublished,
   getRunExecutionContext,
   markRunChecking,
   markRunCheckRunning,
   markRunRunning,
+  markRunPublishing,
   recordRunArtifact,
   replaceRunFiles,
 } from "@/db/runs";
+import { getGitHubAppConfig } from "@/db";
+import { createRepositoryBranch, getInstallationRepository } from "@/lib/github";
 import { notifyFloorChanged } from "@/lib/presence-server";
 import { isApiError, requireApiUser } from "@/lib/server-auth";
 import { env } from "cloudflare:workers";
@@ -36,7 +40,8 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
   try {
     const run = await createAgentRun(sessionId, queueItemId, user.id);
     if (bindings.OPENFLOOR_TEST_ALLOW_IDENTITY_HEADERS === "true" && bindings.OPENFLOOR_TEST_AGENT_RUN_DATA && bindings.PREFLIGHT_LOGS) {
-      await runTestAgent(run.id, bindings.OPENFLOOR_TEST_AGENT_RUN_DATA, bindings.PREFLIGHT_LOGS);
+      const result = await runTestAgent(run.id, bindings.OPENFLOOR_TEST_AGENT_RUN_DATA, bindings.PREFLIGHT_LOGS);
+      if (result === "ready") await publishTestRun(run.id);
     } else {
       if (!bindings.AGENT_RUN_WORKFLOW) throw new Error("Agent run Workflow binding is unavailable");
       await bindings.AGENT_RUN_WORKFLOW.create({ id: run.id, params: { runId: run.id } });
@@ -52,14 +57,15 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
   }
 }
 
-async function runTestAgent(runId: string, encoded: string, bucket: R2BucketLike) {
-  const data = JSON.parse(encoded) as { holdPrompts?: string[]; failPrompts?: string[]; changedPath?: string; diff?: string };
+async function runTestAgent(runId: string, encoded: string, bucket: R2BucketLike): Promise<"hold" | "failed" | "ready"> {
+  const data = JSON.parse(encoded) as { holdPrompts?: string[]; failPrompts?: string[]; changedPath?: string; pathByPrompt?: Record<string, string>; diff?: string };
   const context = await getRunExecutionContext(runId);
   if (!context) throw new Error("Test run context is missing");
   await markRunRunning(runId, `test-${runId}`);
-  if (data.holdPrompts?.some((value) => context.prompts.some((prompt) => prompt.text.includes(value)))) return;
+  if (data.holdPrompts?.some((value) => context.prompts.some((prompt) => prompt.text.includes(value)))) return "hold";
   const shouldFail = data.failPrompts?.some((value) => context.prompts.some((prompt) => prompt.text.includes(value))) ?? false;
-  const path = data.changedPath ?? "src/agent-change.ts";
+  const matchedPath = Object.entries(data.pathByPrompt ?? {}).find(([prompt]) => context.prompts.some((item) => item.text.includes(prompt)))?.[1];
+  const path = matchedPath ?? data.changedPath ?? "src/agent-change.ts";
   const diff = data.diff ?? `diff --git a/${path} b/${path}\nnew file mode 100644\n--- /dev/null\n+++ b/${path}\n@@ -0,0 +1 @@\n+export const implemented = true;\n`;
   const codexLogKey = `runs/${runId}/codex.log`;
   await bucket.put(codexLogKey, "Codex test adapter completed a real deterministic run contract.\n");
@@ -78,4 +84,18 @@ async function runTestAgent(runId: string, encoded: string, bucket: R2BucketLike
     if (shouldFail) break;
   }
   await finishAgentRun(runId, shouldFail ? "failed" : "ready", shouldFail ? "A required check failed." : "Codex changed 1 file; all required checks passed. Changes remain local to OpenFloor.");
+  return shouldFail ? "failed" : "ready";
+}
+
+async function publishTestRun(runId: string) {
+  const context = await getRunExecutionContext(runId);
+  if (!context?.runBranch) throw new Error("Test run branch is missing");
+  const bytes = new TextEncoder().encode(`${runId}:${context.runBranch}`);
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-1", bytes));
+  const commitSha = Array.from(digest, (value) => value.toString(16).padStart(2, "0")).join("");
+  await markRunPublishing(runId, { bundleKey: `runs/${runId}/result.bundle`, bundleSizeBytes: bytes.length, localCommitSha: commitSha });
+  const config = getGitHubAppConfig();
+  const repository = await getInstallationRepository(config, context.installationId, context.repositoryId);
+  const remoteSha = await createRepositoryBranch(config, context.installationId, repository, context.runBranch, commitSha);
+  await finishRunPublished(runId, commitSha, remoteSha);
 }

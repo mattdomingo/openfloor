@@ -18,4 +18,11 @@ describe("agent run gateway tokens", () => {
     await expect(verifyRunGatewayToken(token, "runtime-secret", "source")).resolves.toBeNull();
     await expect(verifyRunGatewayToken(token, "wrong-secret", "openai")).resolves.toBeNull();
   });
+
+  it("does not interchange bundle upload and trusted bundle read operations", async () => {
+    const claims = { runId: "run-2", sessionId: "session-1", repositoryId: "repo-1", candidateSha: "c".repeat(40), operation: "bundle_upload" as const };
+    const token = await signRunGatewayToken(claims, "runtime-secret");
+    await expect(verifyRunGatewayToken(token, "runtime-secret", "bundle_upload")).resolves.toEqual(claims);
+    await expect(verifyRunGatewayToken(token, "runtime-secret", "bundle_read")).resolves.toBeNull();
+  });
 });

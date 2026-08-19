@@ -42,11 +42,14 @@ import {
   AgentRunNotReadyError,
   createAgentRun,
   finishAgentRun,
+  finishRunPublished,
   finishRunCheck,
   getRunExecutionContext,
   markRunChecking,
   markRunCheckRunning,
   markRunRunning,
+  markRunDiscarded,
+  markRunPublishing,
   replaceRunFiles,
   requestAgentRunCancellation,
 } from "@/db/runs";
@@ -256,10 +259,19 @@ describe("D1 session persistence", () => {
     expect(floor?.queue[0].status).toBe("blocked");
     expect(floor?.runs[0]).toEqual(expect.objectContaining({ status: "ready", files: [expect.objectContaining({ path: "src/change.ts" })] }));
     expect(floor?.review).toEqual(expect.objectContaining({ id: run.id, commitSha: null }));
+    const publishedSha = "e".repeat(40);
+    await markRunPublishing(run.id, { bundleKey: `runs/${run.id}/result.bundle`, bundleSizeBytes: 100, localCommitSha: "f".repeat(40) }, env.DB);
+    await finishRunPublished(run.id, publishedSha, publishedSha, env.DB);
+    floor = await getFloorSnapshot(created.session.id, owner.id, env.DB);
+    expect(floor?.runs[0]).toEqual(expect.objectContaining({ status: "published", runCommitSha: publishedSha, remoteRunSha: publishedSha }));
+    expect(floor?.review).toEqual(expect.objectContaining({ commitSha: publishedSha, branch: run.runBranch }));
+    expect(await markRunDiscarded(created.session.id, run.id, member.id, env.DB)).toBeNull();
+    expect(await markRunDiscarded(created.session.id, run.id, owner.id, env.DB)).not.toBeNull();
+    expect((await getFloorSnapshot(created.session.id, owner.id, env.DB))?.runs[0].discardedAt).not.toBeNull();
     await finishAgentRun(run.id, "failed", "Late duplicate completion", env.DB);
     floor = await getFloorSnapshot(created.session.id, owner.id, env.DB);
     expect(floor?.queue[0].status).toBe("blocked");
-    expect(floor?.runs[0].status).toBe("ready");
+    expect(floor?.runs[0].status).toBe("published");
 
     await env.DB.prepare("UPDATE floor_queue_items SET status = 'queued' WHERE id = ?").bind(queueItemId).run();
     const retry = await createAgentRun(created.session.id, queueItemId, owner.id, env.DB);

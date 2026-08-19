@@ -69,7 +69,7 @@ export async function POST(request: Request) {
     } else {
       revision = await touchRepositoryReview(target.sessionId);
     }
-    await notifyFloorChanged(target.sessionId, revision, ["repository", "review"]);
+    await notifyFloorChanged(target.sessionId, revision, ["repository", "runs", "review"]);
   }
   return Response.json({ accepted: true, event }, { status: 202 });
 }

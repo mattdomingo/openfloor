@@ -362,6 +362,11 @@ export async function updateRepositoryPushState(
     statements.push(database.prepare("UPDATE repository_candidates SET remote_candidate_sha = ?, last_synced_at = ?, updated_at = ? WHERE session_id = ? AND status = 'active'").bind(after, now, now, sessionId));
     if (after !== candidateSha) statements.push(database.prepare("UPDATE repository_connections SET status = 'externally_modified', updated_at = ? WHERE session_id = ?").bind(now, sessionId));
   }
+  if (ref.startsWith("refs/heads/openfloor/")) {
+    statements.push(database.prepare(
+      "UPDATE agent_runs SET remote_run_sha = ?, updated_at = ? WHERE session_id = ? AND run_branch = ? AND status = 'published'",
+    ).bind(after, now, sessionId, ref.slice("refs/heads/".length)));
+  }
   await database.batch(statements);
   return getFloorRevision(sessionId, database);
 }

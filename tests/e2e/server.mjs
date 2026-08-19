@@ -49,7 +49,7 @@ const server = spawn("npx", [
   "PREFLIGHT_ENABLED:true",
   "AGENT_RUN_ENABLED:true",
   "OPENFLOOR_TEST_PREFLIGHT_DATA:{\"checks\":[{\"exitCode\":0,\"stdout\":\"preflight check passed\\n\"},{\"exitCode\":0,\"stdout\":\"build check passed\\n\"}],\"failCommands\":[\"false\"]}",
-  "OPENFLOOR_TEST_AGENT_RUN_DATA:{\"holdPrompts\":[\"Hold for cancellation\"],\"failPrompts\":[\"intentionally failing\"],\"changedPath\":\"src/agent-change.ts\"}",
+  "OPENFLOOR_TEST_AGENT_RUN_DATA:{\"holdPrompts\":[\"Hold for cancellation\"],\"failPrompts\":[\"intentionally failing\"],\"changedPath\":\"src/agent-change.ts\",\"pathByPrompt\":{\"second published\":\"src/second-change.ts\"}}",
   "--var",
   "OPENFLOOR_TEST_ALLOW_IDENTITY_HEADERS:true",
   "--show-interactive-dev-session=false",

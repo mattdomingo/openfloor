@@ -160,14 +160,16 @@ WebSocket events notify clients about presence or changed domains. D1 remains au
 - Owner-started and owner-cancelled queue execution through a durable `AgentRunWorkflow`, with one active run per queue item.
 - Server-side Codex SDK execution using `gpt-5.6-terra` in an isolated Sandbox at the exact candidate SHA, with workspace-write permission and no repository network access.
 - Durable run, event, check, changed-file, and artifact metadata; bounded complete logs and diffs live in private R2.
-- Real run status and file/check data in Agent cards and Review. Passing Phase 4 runs remain local and block the queue item pending Phase 5 publication; failed and cancelled items are retryable.
+- Real run status and file/check data in Agent cards and Review. Each passing run is automatically preserved on its own verified `openfloor/<session-short>/run/<run-short>` GitHub branch; consecutive prompts retain separate branches and audit history.
+- Trusted incremental Git-bundle validation and non-force publication from a clean publisher Sandbox, followed by GitHub SHA reconciliation.
+- Owner-only safe discard using an expected-SHA lease; externally modified run branches are never deleted.
 
 ### Explicitly deferred
 
 - Agent model/provider selection and user-managed provider credentials; Phase 4 deliberately uses one server-configured Codex model and project credential.
-- Run-branch creation, branch update/deletion, commits, pull requests, or GitHub publication of local agent output.
+- Candidate-branch integration, pull requests, and merging. Phase 5 publishes isolated run branches only.
 - Agent-authored chat messages, live terminal streaming, and generic artifact download UI.
-- Repository conflicts and multi-run candidate integration.
+- Merge-conflict handling and multi-run candidate integration.
 - Review approval persistence, merge, deploy, or repository modification.
 - Agent edit, archive, deletion, or lifecycle states beyond `created`.
 - Queue completion, removal, consumption, or retry workflows.
@@ -244,7 +246,7 @@ Per-session WebSocket
 - Cloudflare D1 is the relational database bound as `DB`.
 - `SessionPresence` is a SQLite-backed Durable Object bound as `SESSION_PRESENCE`.
 - `RepositoryPreflightWorkflow` is bound as `REPOSITORY_PREFLIGHT`; it durably coordinates exact-source checkout, ordered checks, result persistence, and cleanup.
-- `AgentRunWorkflow` is bound as `AGENT_RUN_WORKFLOW`; it durably coordinates exact-source checkout, Codex, required checks, result persistence, cancellation, and cleanup.
+- `AgentRunWorkflow` is bound as `AGENT_RUN_WORKFLOW`; it durably coordinates exact-source checkout, Codex, required checks, Git-bundle export, trusted publication, reconciliation, cancellation, and cleanup.
 - `Sandbox` is the `@cloudflare/sandbox` Durable Object bound as `SANDBOX`, backed by the matching `cloudflare/sandbox:0.12.7` container image.
 - Private bounded preflight and run artifacts are stored in R2 bucket `openfloor-preflight-logs`, bound as `PREFLIGHT_LOGS`.
 - Cloudflare static assets are bound as `ASSETS`.
@@ -401,7 +403,10 @@ Do not hand-edit Drizzle metadata. If a generated migration is wrong, correct th
 - The owner may start or cancel; members may read caller-visible run summaries but receive no mutation controls. Unassigned or nonqueued items cannot execute.
 - Run statuses are `provisioning`, `running`, `checking`, `ready`, `publishing`, `published`, `integrating`, `integrated`, `conflicted`, `failed`, `cancel_requested`, and `cancelled`; later-phase statuses are reserved in the durable contract.
 - Each run snapshots ordered required checks. D1 stores bounded output excerpts, file metadata, and diff previews; complete bounded Codex logs, check logs, and diffs stay in private R2.
-- Phase 4 `ready` means checks passed locally. The queue item becomes `blocked` until Phase 5 validates and publishes it; failed or cancelled runs restore the item to `queued` for a new attempt.
+- `ready` means checks passed locally; Phase 5 immediately moves through `publishing` to `published` after trusted validation and GitHub reconciliation. The queue item stays `blocked` pending Phase 6 integration; failed or cancelled runs restore it to `queued`.
+- Each new run stores a server-generated run branch, bundle key/size, local bundle commit, trusted published commit, observed remote SHA, publication time, and nullable discard audit fields. Older Phase 4 runs may have null publication fields.
+- The agent Sandbox uploads a bounded incremental bundle through an operation-scoped JWT. A separate clean publisher Sandbox reconstructs the deterministic archive baseline from the exact candidate tree, verifies one ref and one result commit, compares the recorded file set, enforces object/file limits, and performs a fixed non-force push with a repository-limited token.
+- Discard reads the current remote ref and deletes with `--force-with-lease=<expected-sha>` only when the server-generated branch and recorded/reconciled SHAs still match. D1/R2 audit history remains.
 - Workflow-file changes under `.github/workflows/` are rejected because the GitHub App has no Workflows permission.
 
 #### `floor_agents`
@@ -563,8 +568,10 @@ All paths below are shown without the production `/app` prefix.
 | `GET /runtime/preflight/source` | Short-lived source JWT | Proxy the exact candidate archive without exposing a GitHub installation token to the Sandbox process. |
 | `POST /api/sessions/[id]/queue/[queueItemId]/run` | Owner | Start a durable Codex run for an assigned queued item at the exact active candidate SHA. |
 | `POST /api/sessions/[id]/runs/[runId]/cancel` | Owner | Request cancellation of an active run. |
+| `POST /api/sessions/[id]/runs/[runId]/discard` | Owner | Delete only an unchanged, verified OpenFloor run branch using an expected-SHA lease; retain audit history. |
 | `GET /api/sessions/[id]/runs/[runId]/artifacts` | Session member | Return caller-authorized bounded run artifacts from private R2. |
 | `GET /runtime/run/source` | Short-lived run source JWT | Proxy the exact candidate archive for one run. |
+| `POST/GET /runtime/run/bundle` | Short-lived operation JWT | Store an agent-exported bounded Git bundle and serve it only to the clean trusted publisher. |
 | `POST /runtime/openai/v1/responses` | Short-lived run OpenAI JWT | Forward one active run's Codex request while injecting the project credential outside the repository process. |
 | `POST /webhooks/github` | Valid GitHub HMAC | Deduplicate and process bounded installation, access, repository, push, PR, check, and status deliveries. |
 
@@ -682,6 +689,7 @@ worker/
   agent-run-workflow.ts      Durable Codex/check/cancellation Sandbox orchestration
 Dockerfile.sandbox           Version-matched Cloudflare Sandbox runtime image
 scripts/codex-runner.mjs     Pinned server-side Codex SDK runner inside the Sandbox image
+scripts/publish-bundle.mjs   Fixed trusted bundle/ref/ancestry/file/object validation and non-force publication
 tests/
   unit/                      Pure functions, validation, identity, signing, reducers
   worker/                    Local D1 and Durable Object integration tests
@@ -972,7 +980,7 @@ Migrations must land before code that requires them. The build generates `dist/s
 
 ## Roadmap guidance
 
-After Phase 4 is deployed and accepted in the browser, the next milestone is Phase 5: validate and publish a passing local result to a server-generated run branch, then safely discard an unmodified OpenFloor-owned run branch. The Sandbox must export a Git bundle without GitHub credentials; the trusted repository gateway validates repository/base ancestry, expected file limits, workflow-file exclusion, objects, refs, and recorded SHA before minting a repository-limited installation token. Phase 5 must not integrate into the candidate branch or create a pull request.
+After Phase 5 is deployed and accepted in the browser, the next milestone is Phase 6: serialize integration into the active candidate, reconcile base/candidate/run SHAs, merge each published run without force, preserve true conflicts as blocked, and create one draft pull request after the first successful integration. A retry must create a new attempt/run branch rather than rewriting history.
 
 ## Key decision log
 
@@ -1135,6 +1143,22 @@ After Phase 4 is deployed and accepted in the browser, the next milestone is Pha
 **Rationale:** Repository connection and preflight should remain available during a partial rollout, while an owner must never see an execution action backed by missing credentials or runtime bindings.
 
 **Consequences:** The rendered Run control is absent and direct starts return `503` while disabled. Deterministic tests explicitly enable their test adapter. The production image, Workflow, and secret were verified on 2026-08-19, so production now enables the flag for Phase 4 browser acceptance.
+
+### 2026-08-19 — Preserve every passing run on an independently verified branch
+
+**Decision:** Phase 5 automatically publishes every passing owner-authorized run to a unique server-generated `openfloor/<session-short>/run/<run-short>` branch. The agent Sandbox exports a bounded incremental Git bundle and receives no GitHub credential. A separate clean publisher Sandbox validates the bundle against the exact candidate tree and recorded file set, constructs one commit whose parent is the candidate SHA, pushes without force using a repository-limited installation token, and reconciles the returned GitHub SHA before marking the run published.
+
+**Rationale:** Phase 4 intentionally destroyed local workspaces, which made consecutive successful prompts appear to replace one another. Independent verified branches preserve every result and its attribution without prematurely combining unreviewed changes. A clean publisher prevents repository processes from gaining GitHub write credentials or controlling the validation commands.
+
+**Consequences:** D1 records local/published/remote SHAs, run branch, bundle metadata, publication time, and discard audit data; bounded bundles remain private in R2. Validation permits exactly one generated ref and result commit, requires the reconstructed archive tree to equal the candidate tree, compares the complete changed-path set, rejects workflow files, and caps files, objects, individual object size, and total object size. Queue items remain blocked until Phase 6 integration. Review shows the latest real run while every run branch remains visible beside its queue item.
+
+### 2026-08-19 — Delete run branches only with an expected-SHA lease
+
+**Decision:** Owner-only discard first reconciles the remote run head and then deletes through a fixed Git push using `--force-with-lease` for the recorded SHA. OpenFloor never exposes arbitrary ref deletion and never deletes a candidate or base branch through this action.
+
+**Rationale:** GitHub's REST ref deletion endpoint has no conditional expected-SHA parameter, leaving a race between read and delete. A Git lease makes the remote head comparison atomic with deletion.
+
+**Consequences:** External push webhooks update each run's observed remote SHA. Any mismatch, missing branch, wrong status, non-OpenFloor ref, or lease failure returns a conflict and preserves the branch. Successful discard deletes only the GitHub ref; all run, check, file, diff, bundle, event, and attribution records remain durable.
 
 ## How to record the next decision
 

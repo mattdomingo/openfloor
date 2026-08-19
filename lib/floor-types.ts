@@ -95,6 +95,10 @@ export type AgentRun = {
   agentName: string;
   candidateId: string;
   candidateSha: string;
+  runBranch: string | null;
+  localCommitSha: string | null;
+  runCommitSha: string | null;
+  remoteRunSha: string | null;
   attempt: number;
   status: AgentRunStatus;
   model: string;
@@ -104,6 +108,8 @@ export type AgentRun = {
   createdAt: number;
   startedAt: number | null;
   completedAt: number | null;
+  publishedAt: number | null;
+  discardedAt: number | null;
   cancelRequestedAt: number | null;
   updatedAt: number;
   checks: AgentRunCheck[];

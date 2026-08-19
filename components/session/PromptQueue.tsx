@@ -10,7 +10,7 @@ import { QueueOrderMenu } from "./QueueOrderMenu";
 
 const scopeOptions: { value: QueueScope; label: string }[] = [{ value: "mine", label: "You" }, { value: "team", label: "Team" }];
 
-export function PromptQueue({ chrome, items, runs, owner, runEnabled, busy, onRun, onCancel, currentUserId, scope, onScope, orderMode, onOrderMode, mergeMode, onMergeMode, onMergeNow, draggedItemId, onItemDragStart, onItemDragEnd, onItemDrop }: {
+export function PromptQueue({ chrome, items, runs, owner, runEnabled, busy, onRun, onCancel, onDiscard, currentUserId, scope, onScope, orderMode, onOrderMode, mergeMode, onMergeMode, onMergeNow, draggedItemId, onItemDragStart, onItemDragEnd, onItemDrop }: {
   chrome: PanelChrome;
   items: FloorQueueItem[];
   runs: AgentRun[];
@@ -19,6 +19,7 @@ export function PromptQueue({ chrome, items, runs, owner, runEnabled, busy, onRu
   busy: boolean;
   onRun: (queueItemId: string) => Promise<void>;
   onCancel: (runId: string) => Promise<void>;
+  onDiscard: (runId: string) => Promise<void>;
   currentUserId: string;
   scope: QueueScope;
   onScope: (scope: QueueScope) => void;
@@ -55,7 +56,7 @@ export function PromptQueue({ chrome, items, runs, owner, runEnabled, busy, onRu
         <div className="queue-item-head"><span className="queue-identity">{manual && <span className="queue-grip" title="Drag to reorder" aria-hidden="true"><Icon name="grip" /></span>}<span className="queue-position" aria-label={`Queue position ${item.position}`}>#{item.position}</span><span className="queue-chip" data-kind="author">{item.prompts.length > 1 ? `${item.prompts.length} prompts` : first?.authorName}</span><span className="queue-chip" data-kind="agent">{item.agentName ?? "Unassigned"}</span></span>{first && <span className="queue-time">{formatShortDate(first.createdAt)} · {formatShortTime(first.createdAt)} UTC</span>}</div>
         {item.prompts.length > 1 ? <ul className="queue-prompt queue-prompt-stack" data-expanded={open ? "true" : "false"}>{item.prompts.map((prompt) => <li key={prompt.id}><strong>{prompt.authorName}</strong> · {prompt.text}</li>)}</ul> : <p className="queue-prompt" data-expanded={open ? "true" : "false"}>{first?.text}</p>}
         {long && <button type="button" className="queue-expand" aria-expanded={open} onClick={() => setExpanded((current) => ({ ...current, [item.id]: !open }))}>{open ? "Show less" : "Show more"}</button>}
-        <div className="queue-run-row"><span className="queue-chip" data-kind="status">{run?.status.replace("_", " ") ?? item.status}</span>{owner && runEnabled && item.status === "queued" && item.agentId && <button type="button" className="button" data-size="sm" disabled={busy} onClick={() => void onRun(item.id)}>Run</button>}{owner && cancellable && run.status !== "cancel_requested" && <button type="button" className="button danger-button" data-size="sm" disabled={busy} onClick={() => void onCancel(run.id)}>Cancel</button>}</div>
+        <div className="queue-run-row"><span className="queue-chip" data-kind="status">{run?.discardedAt ? "discarded" : run?.status.replace("_", " ") ?? item.status}</span>{run?.runBranch && <code className="queue-run-branch">{run.runBranch}</code>}{owner && runEnabled && item.status === "queued" && item.agentId && <button type="button" className="button" data-size="sm" disabled={busy} onClick={() => void onRun(item.id)}>Run</button>}{owner && cancellable && run.status !== "cancel_requested" && <button type="button" className="button danger-button" data-size="sm" disabled={busy} onClick={() => void onCancel(run.id)}>Cancel</button>}{owner && run?.status === "published" && !run.discardedAt && <button type="button" className="button danger-button" data-size="sm" disabled={busy} onClick={() => void onDiscard(run.id)}>Discard candidate</button>}</div>
       </li>;
     })}</ul>}
   </Panel>;

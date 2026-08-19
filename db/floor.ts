@@ -118,9 +118,9 @@ function buildRunReview(runs: Awaited<ReturnType<typeof getAgentRuns>>, branch: 
   return {
     id: run.id,
     status: "awaiting",
-    branch,
+    branch: run.runBranch ?? branch,
     baseBranch,
-    commitSha: null,
+    commitSha: run.runCommitSha,
     files: run.files.map((file) => ({
       id: file.id,
       path: file.path,
@@ -137,10 +137,10 @@ function buildRunReview(runs: Awaited<ReturnType<typeof getAgentRuns>>, branch: 
       detail: check.outputExcerpt,
       state: check.status === "passed" ? "passed" : check.status === "failed" || check.status === "timed_out" ? "failed" : "waiting",
     })),
-    warnings: run.status === "ready" ? [] : [{
+    warnings: run.status === "published" && !run.discardedAt ? [] : [{
       id: `${run.id}-status`,
-      title: "Run is not ready",
-      detail: run.summary ?? `The run is currently ${run.status.replace("_", " ")}.`,
+      title: run.discardedAt ? "Run branch discarded" : "Run is not published",
+      detail: run.discardedAt ? "The verified run branch was safely deleted from GitHub; its audit history remains in OpenFloor." : run.summary ?? `The run is currently ${run.status.replace("_", " ")}.`,
       severity: "warning",
     }],
     updatedAt: run.updatedAt,

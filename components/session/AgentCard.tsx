@@ -30,7 +30,7 @@ export function AgentSpotlight({ agent, latestRun, onHistory }: { agent: FloorAg
         <span className="agent-state">{latestRun?.status.replace("_", " ") ?? "Created"}</span>
       </div>
       <div className="spotlight-row"><span className="label">Task</span><p className="agent-detail-line">{agent.task}</p></div>
-      <div className="spotlight-row"><span className="label">Execution</span>{latestRun ? <div><p>{latestRun.summary ?? `Run is ${latestRun.status.replace("_", " ")}.`}</p><p className="review-empty">{latestRun.files.length} changed file{latestRun.files.length === 1 ? "" : "s"} · {latestRun.checks.filter((check) => check.status === "passed").length}/{latestRun.checks.length} checks passed</p></div> : <p className="review-empty">No agent run has started.</p>}</div>
+      <div className="spotlight-row"><span className="label">Execution</span>{latestRun ? <div><p>{latestRun.summary ?? `Run is ${latestRun.status.replace("_", " ")}.`}</p><p className="review-empty">{latestRun.files.length} changed file{latestRun.files.length === 1 ? "" : "s"} · {latestRun.checks.filter((check) => check.status === "passed").length}/{latestRun.checks.length} checks passed</p>{latestRun.runBranch && <p className="review-empty"><code>{latestRun.runBranch}</code>{latestRun.discardedAt ? " · discarded" : ""}</p>}</div> : <p className="review-empty">No agent run has started.</p>}</div>
       <div className="spotlight-foot"><span>{formatShortDate(agent.createdAt)} · {formatShortTime(agent.createdAt)} UTC</span><button type="button" className="button agent-chat-button" data-size="sm" onClick={onHistory}><Icon name="message" size={12} />Prompt history</button></div>
     </article>
   );

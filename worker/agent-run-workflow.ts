@@ -5,16 +5,22 @@ import {
   bumpAgentRunRevision,
   finishAgentRun,
   finishRunCheck,
+  finishRunPublished,
   getRunExecutionContext,
   isRunCancellationRequested,
   markRunChecking,
   markRunCheckRunning,
   markRunRunning,
+  markRunPublishing,
+  recordRunPublicationFailure,
   recordRunArtifact,
   replaceRunFiles,
   setRunProcessId,
 } from "../db/runs";
+import { getGitHubAppConfig } from "../db";
+import { createInstallationToken, getRepositoryRefSha } from "../lib/github";
 import type { AgentRunFile } from "../lib/floor-types";
+import type { GitHubRepositoryOption } from "../lib/session-types";
 import { notifyFloorChanged } from "../lib/presence-server";
 import { signRunGatewayToken } from "../lib/runtime-token";
 
@@ -48,6 +54,12 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
       normalizeId: true,
       labels: { sessionId: context.sessionId, runId },
     });
+    const publisher = getSandbox(this.env.SANDBOX, `publisher-${runId}`, {
+      keepAlive: true,
+      enableDefaultSession: false,
+      normalizeId: true,
+      labels: { sessionId: context.sessionId, runId, purpose: "trusted-publisher" },
+    });
     let finalStatus: "ready" | "failed" | "cancelled" = "failed";
     let summary = "Agent run failed before Codex completed.";
     try {
@@ -67,7 +79,10 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
              tar -xz --strip-components=1 -C /workspace/repository &&
            git -C /workspace/repository init -q && git -C /workspace/repository config user.name OpenFloor &&
            git -C /workspace/repository config user.email runtime@opnflr.com && git -C /workspace/repository add -A &&
-           git -C /workspace/repository commit -q -m "OpenFloor candidate baseline"`,
+           OPENFLOOR_TREE=$(git -C /workspace/repository write-tree) &&
+           OPENFLOOR_BASE=$(printf 'OpenFloor candidate baseline\n' | env GIT_AUTHOR_NAME=OpenFloor GIT_AUTHOR_EMAIL=runtime@opnflr.com GIT_COMMITTER_NAME=OpenFloor GIT_COMMITTER_EMAIL=runtime@opnflr.com GIT_AUTHOR_DATE=2000-01-01T00:00:00Z GIT_COMMITTER_DATE=2000-01-01T00:00:00Z git -C /workspace/repository commit-tree "$OPENFLOOR_TREE") &&
+           git -C /workspace/repository update-ref refs/heads/openfloor-base "$OPENFLOOR_BASE" &&
+           git -C /workspace/repository reset -q --hard "$OPENFLOOR_BASE"`,
           { timeout: 4 * 60 * 1000, env: {
             OPENFLOOR_SOURCE_TOKEN: sourceToken,
             OPENFLOOR_SOURCE_URL: `${this.env.OPENFLOOR_RUNTIME_ORIGIN}/runtime/run/source`,
@@ -214,9 +229,92 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
         return await this.complete(runId, finalStatus, summary);
       }
       finalStatus = "ready";
-      summary = `Codex changed ${files.length} file${files.length === 1 ? "" : "s"}; all required checks passed. Changes remain local to OpenFloor.`;
-      return await this.complete(runId, finalStatus, summary);
+      summary = `Codex changed ${files.length} file${files.length === 1 ? "" : "s"}; all required checks passed. Preparing the verified run branch.`;
+      await this.complete(runId, finalStatus, summary);
+
+      const bundle = await step.do("export run bundle", { retries: { limit: 1, delay: "5 seconds" }, timeout: "5 minutes" }, async () => {
+        if (!context.runBranch) throw new Error("Run branch was not generated");
+        const uploadToken = await signRunGatewayToken({
+          runId, sessionId: context.sessionId, repositoryId: context.repositoryId,
+          candidateSha: context.candidateSha, operation: "bundle_upload",
+        }, this.env.RUNTIME_GATEWAY_SECRET);
+        const result = await sandbox.exec(
+          `git -c core.hooksPath=/dev/null add -A &&
+           git -c core.hooksPath=/dev/null commit -q -m "OpenFloor local run $OPENFLOOR_RUN_SHORT" &&
+           git update-ref "refs/heads/$OPENFLOOR_RUN_BRANCH" HEAD &&
+           git bundle create /tmp/openfloor/result.bundle "refs/heads/$OPENFLOOR_RUN_BRANCH" ^refs/heads/openfloor-base &&
+           curl --fail --silent --show-error --max-time 300 -X POST -H "Authorization: Bearer $OPENFLOOR_BUNDLE_TOKEN" -H "Content-Type: application/x-git-bundle" --data-binary @/tmp/openfloor/result.bundle "$OPENFLOOR_BUNDLE_URL" >/tmp/openfloor/bundle-response.json &&
+           printf '%s %s' "$(git rev-parse HEAD)" "$(wc -c </tmp/openfloor/result.bundle)"`,
+          { cwd: "/workspace/repository", timeout: 4 * 60 * 1000, env: {
+            OPENFLOOR_RUN_BRANCH: context.runBranch,
+            OPENFLOOR_RUN_SHORT: runId.slice(0, 8),
+            OPENFLOOR_BUNDLE_TOKEN: uploadToken,
+            OPENFLOOR_BUNDLE_URL: `${this.env.OPENFLOOR_RUNTIME_ORIGIN}/runtime/run/bundle`,
+          } },
+        );
+        if (!result.success) throw new Error("Run bundle export failed");
+        const [localCommitSha, sizeValue] = result.stdout.trim().split(/\s+/);
+        const bundleSizeBytes = Number(sizeValue);
+        if (!/^[0-9a-f]{40}$/.test(localCommitSha) || !Number.isSafeInteger(bundleSizeBytes)) throw new Error("Run bundle export returned invalid metadata");
+        const bundleKey = `runs/${runId}/result.bundle`;
+        await markRunPublishing(runId, { bundleKey, bundleSizeBytes, localCommitSha }, this.env.DB);
+        await this.notify(runId);
+        return { bundleKey, bundleSizeBytes, localCommitSha };
+      });
+
+      const published = await step.do("validate and publish run branch", { retries: { limit: 3, delay: "10 seconds", backoff: "exponential" }, timeout: "20 minutes" }, async () => {
+        if (!context.runBranch) throw new Error("Run branch was not generated");
+        const config = getGitHubAppConfig();
+        const githubToken = await createInstallationToken(config, context.installationId, context.repositoryId);
+        const bundleToken = await signRunGatewayToken({
+          runId, sessionId: context.sessionId, repositoryId: context.repositoryId,
+          candidateSha: context.candidateSha, operation: "bundle_read",
+        }, this.env.RUNTIME_GATEWAY_SECRET);
+        const bundlePath = `/tmp/openfloor-${runId}.bundle`;
+        const resultPath = `/tmp/openfloor-${runId}.json`;
+        const download = await publisher.exec(
+          `curl --fail --silent --show-error --max-time 300 -H "Authorization: Bearer $OPENFLOOR_BUNDLE_TOKEN" "$OPENFLOOR_BUNDLE_URL" -o "$OPENFLOOR_BUNDLE_PATH" &&
+           node /opt/openfloor/publish-bundle.mjs`,
+          { timeout: 18 * 60 * 1000, env: {
+            OPENFLOOR_BUNDLE_TOKEN: bundleToken,
+            OPENFLOOR_BUNDLE_URL: `${this.env.OPENFLOOR_RUNTIME_ORIGIN}/runtime/run/bundle`,
+            OPENFLOOR_BUNDLE_PATH: bundlePath,
+            OPENFLOOR_PUBLISH_ROOT: `/workspace/publisher-${runId}`,
+            OPENFLOOR_REPOSITORY_URL: `https://github.com/${context.repositoryOwner}/${context.repositoryName}.git`,
+            OPENFLOOR_GITHUB_TOKEN: githubToken,
+            OPENFLOOR_CANDIDATE_BRANCH: context.candidateBranch,
+            OPENFLOOR_CANDIDATE_SHA: context.candidateSha,
+            OPENFLOOR_RUN_BRANCH: context.runBranch,
+            OPENFLOOR_EXPECTED_PATHS: JSON.stringify(files.map((file) => file.path)),
+            OPENFLOOR_RESULT_PATH: resultPath,
+            OPENFLOOR_COMMIT_DATE: new Date(context.createdAt).toISOString(),
+            OPENFLOOR_RUN_ID: runId,
+          } },
+        );
+        if (!download.success) throw new Error(`Trusted bundle publication failed: ${download.stderr.slice(-1_000)}`);
+        const resultFile = await publisher.exec(`cat "$OPENFLOOR_RESULT_PATH"`, { timeout: 10_000, env: { OPENFLOOR_RESULT_PATH: resultPath } });
+        const parsed = JSON.parse(resultFile.stdout) as { localCommit?: string; publishedCommit?: string };
+        if (parsed.localCommit !== bundle.localCommitSha || !parsed.publishedCommit || !/^[0-9a-f]{40}$/.test(parsed.publishedCommit)) {
+          throw new Error("Trusted publisher returned inconsistent commit metadata");
+        }
+        const repository: GitHubRepositoryOption = {
+          id: context.repositoryId, nodeId: "workflow-not-required", owner: context.repositoryOwner,
+          name: context.repositoryName, fullName: context.repositoryFullName, private: true, defaultBranch: context.candidateBranch,
+        };
+        const remoteSha = await getRepositoryRefSha(config, context.installationId, repository, context.runBranch);
+        if (remoteSha !== parsed.publishedCommit) throw new Error("Published run branch did not reconcile with GitHub");
+        return { commitSha: parsed.publishedCommit, remoteSha };
+      });
+      const completion = await finishRunPublished(runId, published.commitSha, published.remoteSha, this.env.DB);
+      if (completion) await notifyFloorChanged(completion.sessionId, completion.revision, ["queue", "runs", "review"]);
+      return { status: "published" };
     } catch (error) {
+      const current = await getRunExecutionContext(runId, this.env.DB);
+      if (current && ["ready", "publishing"].includes(current.status)) {
+        const failure = await recordRunPublicationFailure(runId, error instanceof Error ? error.message : "Run publication failed.", this.env.DB);
+        if (failure) await notifyFloorChanged(failure.sessionId, failure.revision, ["queue", "runs", "review"]);
+        return { status: current.status === "publishing" ? "publishing" : "failed" };
+      }
       finalStatus = await isRunCancellationRequested(runId, this.env.DB) ? "cancelled" : "failed";
       summary = finalStatus === "cancelled" ? "Agent run cancelled. No repository changes were published." : error instanceof Error ? error.message : "Agent run failed.";
       return await this.complete(runId, finalStatus, summary);
@@ -225,6 +323,11 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
         await step.do("destroy run sandbox", { retries: { limit: 2, delay: "5 seconds" }, timeout: "2 minutes" }, async () => sandbox.destroy());
       } catch {
         // The run is already terminal; platform cleanup can retry independently.
+      }
+      try {
+        await step.do("destroy publisher sandbox", { retries: { limit: 2, delay: "5 seconds" }, timeout: "2 minutes" }, async () => publisher.destroy());
+      } catch {
+        // The trusted publisher contains no reusable credentials after its process exits.
       }
     }
   }

@@ -48,7 +48,7 @@ export type RunGatewayClaims = {
   sessionId: string;
   repositoryId: string;
   candidateSha: string;
-  operation: "source" | "openai";
+  operation: "source" | "openai" | "bundle_upload" | "bundle_read";
 };
 
 export async function signRunGatewayToken(claims: RunGatewayClaims, secret: string): Promise<string> {

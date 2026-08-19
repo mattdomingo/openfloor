@@ -18,8 +18,11 @@ export async function getAgentRuns(sessionId: string, database = getDb()): Promi
   const rows = await database.prepare(
     `SELECT r.id, r.queue_item_id AS queueItemId, r.agent_id AS agentId, a.name AS agentName,
             r.candidate_id AS candidateId, r.candidate_sha AS candidateSha, r.attempt, r.status,
+            r.run_branch AS runBranch, r.local_commit_sha AS localCommitSha,
+            r.run_commit_sha AS runCommitSha, r.remote_run_sha AS remoteRunSha,
             r.model, r.summary, r.final_response AS finalResponse, r.created_by AS createdBy,
             r.created_at AS createdAt, r.started_at AS startedAt, r.completed_at AS completedAt,
+            r.published_at AS publishedAt, r.discarded_at AS discardedAt,
             r.cancel_requested_at AS cancelRequestedAt, r.updated_at AS updatedAt
      FROM agent_runs r JOIN floor_agents a ON a.id = r.agent_id
      WHERE r.session_id = ? ORDER BY r.created_at DESC, r.id DESC LIMIT 20`,
@@ -60,15 +63,16 @@ export async function createAgentRun(sessionId: string, queueItemId: string, use
     .bind(queueItemId).first<{ attempt: number }>();
   const attempt = Number(previous?.attempt ?? 0) + 1;
   const id = crypto.randomUUID();
+  const runBranch = `openfloor/${sessionId.slice(0, 8)}/run/${id.slice(0, 8)}`;
   const now = Date.now();
   try {
     await database.batch([
       database.prepare(
         `INSERT INTO agent_runs
-         (id, session_id, queue_item_id, agent_id, candidate_id, candidate_sha, attempt, status, model,
+         (id, session_id, queue_item_id, agent_id, candidate_id, candidate_sha, run_branch, attempt, status, model,
           workflow_instance_id, sandbox_id, created_by, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 'provisioning', ?, ?, ?, ?, ?, ?)`,
-      ).bind(id, sessionId, queueItemId, context.agentId, context.candidateId, context.candidateSha, attempt,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'provisioning', ?, ?, ?, ?, ?, ?)`,
+      ).bind(id, sessionId, queueItemId, context.agentId, context.candidateId, context.candidateSha, runBranch, attempt,
         AGENT_RUN_MODEL, id, `run-${id}`, userId, now, now),
       ...commands.results.map((check) => database.prepare(
         `INSERT INTO agent_run_checks (id, run_id, position, command, status, updated_at)
@@ -90,8 +94,11 @@ export async function getAgentRun(runId: string, database = getDb()): Promise<Ag
   const row = await database.prepare(
     `SELECT r.id, r.queue_item_id AS queueItemId, r.agent_id AS agentId, a.name AS agentName,
             r.candidate_id AS candidateId, r.candidate_sha AS candidateSha, r.attempt, r.status,
+            r.run_branch AS runBranch, r.local_commit_sha AS localCommitSha,
+            r.run_commit_sha AS runCommitSha, r.remote_run_sha AS remoteRunSha,
             r.model, r.summary, r.final_response AS finalResponse, r.created_by AS createdBy,
             r.created_at AS createdAt, r.started_at AS startedAt, r.completed_at AS completedAt,
+            r.published_at AS publishedAt, r.discarded_at AS discardedAt,
             r.cancel_requested_at AS cancelRequestedAt, r.updated_at AS updatedAt
      FROM agent_runs r JOIN floor_agents a ON a.id = r.agent_id WHERE r.id = ?`,
   ).bind(runId).first<RunRecord>();
@@ -103,7 +110,9 @@ export async function getRunExecutionContext(runId: string, database = getDb()) 
   const run = await database.prepare(
     `SELECT r.id, r.session_id AS sessionId, r.queue_item_id AS queueItemId, r.agent_id AS agentId,
             r.candidate_sha AS candidateSha, r.status, r.sandbox_id AS sandboxId,
+            r.run_branch AS runBranch, r.bundle_key AS bundleKey,
             r.sandbox_process_id AS sandboxProcessId, r.model,
+            r.created_at AS createdAt,
             s.title AS sessionTitle, s.objective, a.name AS agentName, a.role AS agentRole, a.task AS agentTask,
             rc.installation_id AS installationId, rc.repository_id AS repositoryId,
             rc.repository_owner AS repositoryOwner, rc.repository_name AS repositoryName,
@@ -117,6 +126,7 @@ export async function getRunExecutionContext(runId: string, database = getDb()) 
      WHERE r.id = ?`,
   ).bind(runId).first<{
     id: string; sessionId: string; queueItemId: string; agentId: string; candidateSha: string; status: AgentRunStatus;
+    runBranch: string; bundleKey: string | null; createdAt: number;
     sandboxId: string; sandboxProcessId: string | null; model: string; sessionTitle: string; objective: string | null;
     agentName: string; agentRole: string; agentTask: string; installationId: string; repositoryId: string;
     repositoryOwner: string; repositoryName: string; repositoryFullName: string; candidateBranch: string;
@@ -189,6 +199,92 @@ export async function recordRunArtifact(runId: string, kind: "codex_log" | "diff
      ON CONFLICT(run_id, kind) DO UPDATE SET r2_key = excluded.r2_key, content_type = excluded.content_type,
        size_bytes = excluded.size_bytes, created_at = excluded.created_at`,
   ).bind(crypto.randomUUID(), runId, kind, r2Key, contentType, sizeBytes, Date.now()).run();
+}
+
+export async function markRunPublishing(
+  runId: string,
+  input: { bundleKey: string; bundleSizeBytes: number; localCommitSha: string },
+  database = getDb(),
+): Promise<void> {
+  const now = Date.now();
+  const result = await database.prepare(
+    `UPDATE agent_runs SET status = 'publishing', bundle_key = ?, bundle_size_bytes = ?, local_commit_sha = ?, updated_at = ?
+     WHERE id = ? AND status IN ('ready', 'publishing')`,
+  ).bind(input.bundleKey, input.bundleSizeBytes, input.localCommitSha, now, runId).run();
+  if (result.meta?.changes) await appendRunEvent(runId, "publishing", "Validated local changes are being published to the server-generated run branch.", database);
+}
+
+export async function finishRunPublished(runId: string, commitSha: string, remoteSha: string, database = getDb()): Promise<{ sessionId: string; revision: number } | null> {
+  if (commitSha !== remoteSha) throw new AgentRunConflictError("GitHub did not reconcile the published commit");
+  const run = await database.prepare("SELECT session_id AS sessionId, status, run_commit_sha AS runCommitSha FROM agent_runs WHERE id = ?")
+    .bind(runId).first<{ sessionId: string; status: AgentRunStatus; runCommitSha: string | null }>();
+  if (!run) return null;
+  if (run.status === "published" && run.runCommitSha === commitSha) {
+    const current = await database.prepare("SELECT floor_revision AS revision FROM sessions WHERE id = ?").bind(run.sessionId).first<{ revision: number }>();
+    return { sessionId: run.sessionId, revision: Number(current?.revision ?? 0) };
+  }
+  if (run.status !== "publishing") throw new AgentRunConflictError("This run is not ready to publish");
+  const now = Date.now();
+  await database.batch([
+    database.prepare(
+      `UPDATE agent_runs SET status = 'published', run_commit_sha = ?, remote_run_sha = ?, published_at = ?, completed_at = ?,
+              summary = 'Changes published to the verified run branch.', updated_at = ? WHERE id = ? AND status = 'publishing'`,
+    ).bind(commitSha, remoteSha, now, now, now, runId),
+    database.prepare("UPDATE sessions SET floor_revision = floor_revision + 1, updated_at = ? WHERE id = ?").bind(now, run.sessionId),
+  ]);
+  await appendRunEvent(runId, "published", `Published and reconciled commit ${commitSha}.`, database);
+  const revision = await database.prepare("SELECT floor_revision AS revision FROM sessions WHERE id = ?").bind(run.sessionId).first<{ revision: number }>();
+  return { sessionId: run.sessionId, revision: Number(revision?.revision ?? 0) };
+}
+
+export async function recordRunPublicationFailure(runId: string, summary: string, database = getDb()): Promise<{ sessionId: string; revision: number } | null> {
+  const run = await database.prepare("SELECT session_id AS sessionId, queue_item_id AS queueItemId, status FROM agent_runs WHERE id = ?")
+    .bind(runId).first<{ sessionId: string; queueItemId: string; status: AgentRunStatus }>();
+  if (!run || !["ready", "publishing"].includes(run.status)) return null;
+  const now = Date.now();
+  const nextStatus = run.status === "ready" ? "failed" : "publishing";
+  const statements = [
+    database.prepare("UPDATE agent_runs SET status = ?, summary = ?, updated_at = ? WHERE id = ? AND status = ?")
+      .bind(nextStatus, summary.slice(0, 1_000), now, runId, run.status),
+    database.prepare("UPDATE sessions SET floor_revision = floor_revision + 1, updated_at = ? WHERE id = ?").bind(now, run.sessionId),
+  ];
+  if (run.status === "ready") statements.push(database.prepare("UPDATE floor_queue_items SET status = 'queued', updated_at = ? WHERE id = ?").bind(now, run.queueItemId));
+  await database.batch(statements);
+  await appendRunEvent(runId, "publication_failed", summary, database);
+  const revision = await database.prepare("SELECT floor_revision AS revision FROM sessions WHERE id = ?").bind(run.sessionId).first<{ revision: number }>();
+  return { sessionId: run.sessionId, revision: Number(revision?.revision ?? 0) };
+}
+
+export async function getRunDiscardContext(sessionId: string, runId: string, userId: string, database = getDb()) {
+  if ((await getMembershipRole(sessionId, userId, database)) !== "owner") return null;
+  return database.prepare(
+    `SELECT r.id, r.run_branch AS runBranch, r.run_commit_sha AS runCommitSha, r.remote_run_sha AS remoteRunSha,
+            r.discarded_at AS discardedAt, rc.installation_id AS installationId, rc.repository_id AS repositoryId,
+            rc.repository_owner AS repositoryOwner, rc.repository_name AS repositoryName,
+            rc.repository_full_name AS repositoryFullName, rc.repository_private AS repositoryPrivate,
+            rc.default_branch AS defaultBranch
+     FROM agent_runs r JOIN repository_candidates c ON c.id = r.candidate_id
+     JOIN repository_connections rc ON rc.id = c.connection_id
+     WHERE r.id = ? AND r.session_id = ? AND r.status = 'published'`,
+  ).bind(runId, sessionId).first<{
+    id: string; runBranch: string; runCommitSha: string; remoteRunSha: string; discardedAt: number | null;
+    installationId: string; repositoryId: string; repositoryOwner: string; repositoryName: string;
+    repositoryFullName: string; repositoryPrivate: boolean; defaultBranch: string;
+  }>();
+}
+
+export async function markRunDiscarded(sessionId: string, runId: string, userId: string, database = getDb()): Promise<number | null> {
+  if ((await getMembershipRole(sessionId, userId, database)) !== "owner") return null;
+  const now = Date.now();
+  const result = await database.prepare(
+    `UPDATE agent_runs SET discarded_at = ?, discarded_by = ?, updated_at = ?
+     WHERE id = ? AND session_id = ? AND status = 'published' AND discarded_at IS NULL`,
+  ).bind(now, userId, now, runId, sessionId).run();
+  if (!result.meta?.changes) return null;
+  await database.prepare("UPDATE sessions SET floor_revision = floor_revision + 1, updated_at = ? WHERE id = ?").bind(now, sessionId).run();
+  await appendRunEvent(runId, "discarded", "The verified OpenFloor-owned run branch was deleted from GitHub.", database);
+  const revision = await database.prepare("SELECT floor_revision AS revision FROM sessions WHERE id = ?").bind(sessionId).first<{ revision: number }>();
+  return Number(revision?.revision ?? 0);
 }
 
 export async function finishAgentRun(runId: string, status: "ready" | "failed" | "cancelled", summary: string, database = getDb()): Promise<{ sessionId: string; revision: number } | null> {
