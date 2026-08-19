@@ -26,7 +26,7 @@ The GitHub repository and agent-execution milestone is delivered one accepted ph
 
 1. Contain only that phase's documented functionality; do not pre-implement later phases behind hidden UI or dormant production paths.
 2. Pass the complete automated test pipeline before handoff.
-3. Deploy to the isolated development environment when its browser acceptance flow depends on GitHub, Cloudflare runtime resources, or OpenAI.
+3. Deploy to the active production environment when its browser acceptance flow depends on GitHub, Cloudflare runtime resources, or OpenAI, unless the user establishes a separate staging environment.
 4. End with browser-based acceptance instructions that exercise the newly real end-to-end behavior.
 5. Stop after handoff until the user explicitly accepts the phase.
 
@@ -148,13 +148,17 @@ WebSocket events notify clients about presence or changed domains. D1 remains au
 - Ephemeral realtime teammate prompt drafts with Everyone, Typing, and Hidden viewing modes.
 - Movable, resizable, collapsible, expandable panels and responsive floor layout.
 - Review navigation with an authoritative empty state.
+- One GitHub repository connection per session, configured by the owner through a signed single-use GitHub App callback.
+- Durable GitHub installation/repository identifiers, selected base branch, and ordered required-check commands.
+- Member-visible repository details with owner-only connect, configure, disconnect, and reconnect controls.
+- A public GitHub webhook boundary that caps payloads and verifies the raw-body HMAC before acknowledging them.
 
 ### Explicitly deferred
 
 - Agent model or provider selection.
 - Agent execution, cancellation, retry, runtime scheduling, or queue consumption.
 - Provider credentials and secret management for agent runtimes.
-- Repository authorization, checkout, worktrees, branches, write scopes, or attachments.
+- Repository checkout, reconciliation, worktrees, branch creation/update/deletion, commits, pull requests, or attachments.
 - Runtime status, progress, steps, logs, agent-authored messages, or terminal output.
 - File discovery, changed-file lists, checks, warnings, diffs, conflicts, or generated review candidates.
 - Review approval persistence, merge, deploy, or repository modification.
@@ -178,6 +182,7 @@ Production is mounted under `/app` on `opnflr.com`. Local `npm run dev` is mount
 | `/app/session/[id]/floor` | `/session/[id]/floor` | Protected/member-only | Main collaborative Agent Floor. |
 | `/app/api/...` | `/api/...` | Protected | Authenticated application interfaces. |
 | `/app/api/sessions/[id]/presence` | `/api/sessions/[id]/presence` | Protected/member-only | WebSocket upgrade. |
+| `/app/webhooks/github` | `/webhooks/github` | Public/signed | GitHub delivery boundary; verifies payload size and HMAC before acknowledging. |
 
 Important behavior:
 
@@ -190,6 +195,9 @@ Important behavior:
 - Non-members opening a session or floor get a 404-style not-found response rather than session details.
 - A member who leaves is disconnected from the room's presence object.
 - An owner receives a conflict response if they try to leave.
+- Repository details are visible to session members, but only the owner can connect, configure, disconnect, or reconnect.
+- The GitHub installation callback is protected by Access, signed, expires after 30 minutes, is bound to the initiating owner and session, and can be consumed once.
+- The webhook path must remain outside Cloudflare Access so GitHub can deliver events; signature verification is its authentication boundary.
 
 ## System architecture
 
@@ -337,6 +345,25 @@ Do not hand-edit Drizzle metadata. If a generated migration is wrong, correct th
 - GET reconstructs the active signed URL; POST revokes the old invite and creates a new one; DELETE revokes the active invite.
 - Invalid, forged, missing, or revoked tokens reveal no session information.
 
+#### `github_connection_states`
+
+- A state record binds a GitHub App installation attempt to one session owner.
+- The browser receives only `state-id.HMAC-SHA256-signature`; the signing secret stays in Worker bindings.
+- A state expires after 30 minutes and its callback can be consumed only once.
+- A consumed state remains pending until repository configuration succeeds, then receives `configured_at`.
+
+#### `repository_connections`
+
+- There is at most one row per session.
+- Numeric GitHub installation and repository IDs are stored as strings and remain authoritative across repository renames; owner/name/full-name are display metadata.
+- The selected base branch is configuration only in Phase 1. No OpenFloor route creates, updates, or deletes a Git ref.
+- Disconnect changes status to `disconnected` and preserves the connection metadata and check configuration.
+
+#### `repository_check_commands`
+
+- Stores one to eight owner-configured shell commands in explicit zero-based order.
+- Commands are inert configuration in Phase 1. The real preflight runner begins in Phase 3.
+
 #### `floor_agents`
 
 - Session-scoped UUID.
@@ -477,6 +504,14 @@ All paths below are shown without the production `/app` prefix.
 | `PATCH /api/sessions/[id]/queue/order` | Session member | Persist an exact unique `{ itemIds }` order. |
 | `POST /api/sessions/[id]/queue/merge` | Session member | Merge at least two existing same-target items, preserving prompts. |
 | `GET /api/sessions/[id]/presence` with Upgrade | Session member | Authenticated WebSocket handoff to the per-session Durable Object. |
+| `POST /api/sessions/[id]/repository/connect` | Owner | Create a short-lived signed GitHub installation state and return the installation URL. |
+| `GET /api/github/callback` | Authenticated initiating owner | Consume the signed installation callback once and return to repository setup. |
+| `GET /api/sessions/[id]/repository` | Session member | Return the durable repository connection and ordered required checks, or null. |
+| `GET /api/sessions/[id]/repository/options` | Owner | List repositories and branches available to the pending or connected installation. |
+| `POST /api/sessions/[id]/repository` | Owner with pending callback | Persist the selected repository, base branch, and required commands. |
+| `PATCH /api/sessions/[id]/repository` | Owner | Change the base branch or required commands for the same connected repository. |
+| `DELETE /api/sessions/[id]/repository` | Owner | Mark the connection disconnected without mutating GitHub. |
+| `POST /webhooks/github` | Valid GitHub HMAC | Acknowledge a bounded signed delivery; durable event processing starts in Phase 2. |
 
 Response conventions:
 
@@ -500,6 +535,8 @@ Keep server validation in `lib/validation.ts` and cover it with unit tests.
 - Queue prompt: required, trimmed, maximum 4,000.
 - Queue order/merge ID list: unique strings, maximum 500 items; merge requires at least two.
 - Live draft: maximum 4,000, not trimmed because it represents in-progress text.
+- Repository selection: repository ID maximum 100 characters; base branch required and maximum 255 characters.
+- Required check commands: one to eight ordered nonempty commands, trimmed, maximum 500 characters each.
 
 ## Frontend architecture
 
@@ -560,11 +597,13 @@ app/                         Next App Router pages and API route handlers
   session/                   Lobby and Agent Floor routes
   styles/                    Tokens, layout, product, and restored floor styles
 components/product/          Page-level product screens
+  RepositoryCard.tsx         Member-visible repository state and owner-only GitHub setup controls
 components/session/          Agent Floor workspace components and client data source
 db/
   schema.ts                  Drizzle schema source
   sessions.ts                Prepared D1 user/session/member/invite queries
   floor.ts                   Prepared D1 floor snapshot and mutation queries
+  repositories.ts            Owner-gated GitHub connection and check-command persistence
 drizzle/                     Generated D1 migrations and metadata
 lib/
   floor-types.ts             Public persisted floor types
@@ -572,6 +611,8 @@ lib/
   validation.ts              Bounded input parsing and normalization
   identity.ts                Access verification and local identity isolation
   invites.ts                 HMAC signing and constant-time verification
+  github.ts                  GitHub App JWT, installation-token, repository, and branch reads
+  github-state.ts            Signed callback state and webhook HMAC verification
   presence-server.ts         Internal application-to-Durable-Object notifications
   floor-api.ts               Shared floor route response helpers
   floor-state.ts             Pure queue/mention/revision client helpers
@@ -585,6 +626,7 @@ tests/
   render/                    Built Worker/server-rendering and route behavior
   e2e/                       Two authenticated browser-context product flow
 docs/agent-backend-gaps.md   Deferred execution/repository capabilities
+docs/github-production.md    Production GitHub App, Access, secrets, migration, and deploy runbook
 wrangler.jsonc               Production bindings, routes, migrations, compatibility
 ```
 
@@ -643,6 +685,7 @@ Use for pure behavior:
 
 - Identity claim parsing and development fallback isolation.
 - Invite signing and verification.
+- GitHub callback-state signing, expiry/one-time consumption, and webhook HMAC verification.
 - Validation and normalization.
 - Date formatting that is deterministic across server and browser.
 - Queue merge selection, mentions, and revision decisions.
@@ -662,6 +705,7 @@ Use the Cloudflare Vitest worker pool and local migrations to test:
 - Agent uniqueness and same-session ownership.
 - Assignment, message, DM privacy, queue, ordering, and merging behavior.
 - Revision increments and persistence after reread.
+- Owner-only repository setup/disconnect, member reads, outsider concealment, and ordered required-check persistence.
 
 ### Durable Object tests
 
@@ -702,6 +746,7 @@ The Playwright test uses two authenticated browser contexts and verifies the rea
 - Live teammate draft text appears in realtime.
 - Typing, Everyone, and Hidden draft modes behave correctly.
 - Review stays empty without fabricated repository data.
+- Signed GitHub webhook rejection/acceptance and the owner/member repository connection, reload, configure, disconnect, and reconnect flow through a deterministic test-only adapter.
 - Reload persistence, disconnect/reconnect, leave, and roster updates work.
 
 When adding a collaborative feature, prefer extending this two-context flow over testing only one browser.
@@ -721,6 +766,8 @@ Defined in `wrangler.jsonc`:
 - `ASSETS`: built client assets.
 - `IMAGES`: Cloudflare Images transform binding.
 
+The phased GitHub rollout currently uses the existing production Worker and D1 database. GitHub App setup and deployment are documented in `docs/github-production.md`. Until the user establishes staging, install the App only on the disposable acceptance repository and complete each phase's browser acceptance before expanding repository access.
+
 The Durable Object migration uses `new_sqlite_classes` with tag `v1`. Keep migration syntax compatible with the pinned Wrangler version.
 
 ### Required secrets
@@ -728,6 +775,11 @@ The Durable Object migration uses `new_sqlite_classes` with tag `v1`. Keep migra
 - `INVITE_SIGNING_SECRET`
 - `CF_ACCESS_TEAM_DOMAIN`
 - `CF_ACCESS_AUD`
+- `GITHUB_APP_ID`
+- `GITHUB_APP_SLUG`
+- `GITHUB_APP_PRIVATE_KEY`
+- `GITHUB_STATE_SECRET`
+- `GITHUB_WEBHOOK_SECRET`
 
 Set a secret by its variable name, then enter the value when prompted:
 
@@ -827,6 +879,9 @@ Migrations must land before code that requires them. The build generates `dist/s
 - Cloudflare Access configuration is external state; code passing locally does not prove the production policy paths are correct.
 - The Worker route `opnflr.com/app*` is intentionally broader than `/app/*` due query-string routing behavior.
 - Access protects the app at the edge, but the Worker still verifies JWTs. Do not remove defense in depth.
+- `/app/webhooks/github` is deliberately public and must never process a payload before its raw-body HMAC and size are verified.
+- Phase 1 GitHub permissions are future-facing, but the product exposes only installation/repository/branch reads. No branch or content mutation route exists yet.
+- Set `GITHUB_APP_PRIVATE_KEY` by piping the complete downloaded PEM file into `wrangler secret put`; an App installation redirect can succeed even when this key is malformed, but repository discovery cannot. The GitHub client accepts both GitHub's PKCS#1 `RSA PRIVATE KEY` download and PKCS#8 `PRIVATE KEY` PEM formats.
 - Floor snapshots are caller-specific because of DM filtering.
 - Realtime `floor.changed` is a refetch signal, not the changed records themselves.
 - Draft Hidden mode does not stop outbound sharing.
@@ -839,13 +894,13 @@ Migrations must land before code that requires them. The build generates `dist/s
 
 ## Roadmap guidance
 
-The next major backend milestone should introduce a trusted execution/repository boundary without weakening current invariants. A sound design should answer, in writing:
+The next accepted milestone is Phase 2: a durable candidate workspace and GitHub reconciliation without agent execution. It must preserve these already-decided questions and boundaries:
 
 1. Which service owns agent execution and credentials?
 2. How does it authenticate internal writes to a session?
 3. How are agents scheduled from queue items, cancelled, retried, and made idempotent?
 4. Which runtime states are authoritative, and where are they persisted?
-5. How are repository access, installation identity, branches, and worktrees scoped?
+5. Repository access is scoped by the stored installation and repository IDs; every OpenFloor ref is server-generated and the base branch is never written.
 6. How are files, diffs, checks, warnings, conflicts, and review candidates modeled?
 7. How do runtime writes increment `floor_revision` and notify connected clients?
 8. How are agent messages distinguished from human-authored messages?
@@ -942,7 +997,31 @@ Do not begin by filling the existing UI with guessed fields. Define the authorit
 
 **Rationale:** Repository credentials, remote Git refs, isolated execution, agent-authored code, integration, and merge each expand the product's authority and failure surface. Independent acceptance gates keep every expansion observable, testable, and reversible before more authority is added.
 
-**Consequences:** Phase 1 begins with this workflow rule and may implement only the isolated development environment and GitHub connection. Later runtime, branch, review, and merge capabilities must remain absent until their named phase. Each phase must keep this document, the focused gap document, setup instructions, tests, and browser acceptance steps synchronized with what is genuinely implemented.
+**Consequences:** Phase 1 begins with this workflow rule and may implement only the deployment environment and GitHub connection. Later runtime, branch, review, and merge capabilities must remain absent until their named phase. Each phase must keep this document, the focused gap document, setup instructions, tests, and browser acceptance steps synchronized with what is genuinely implemented. The original isolated-development rollout requirement was superseded on 2026-08-19 by the temporary production-rollout decision below.
+
+### 2026-08-19 — Use one owner-gated GitHub App repository per session
+
+**Decision:** A session may have one durable repository connection selected through a GitHub App installation. The initiating session owner is bound to a signed, expiring, single-use callback state. Members may read the selected repository, base branch, and ordered required-check commands; only the owner may mutate that configuration. GitHub installation and repository IDs are authoritative, while names are display metadata. The webhook endpoint is public, bounded, and HMAC-authenticated. Phase 1 performs repository and branch reads only.
+
+**Rationale:** A GitHub App provides narrowly scoped, short-lived installation credentials and repository selection without granting user-wide OAuth access. One repository gives each session a single coordination boundary, and owner-only mutation prevents ordinary members from expanding repository or future compute authority.
+
+**Consequences:** The app requests Metadata read, Contents read/write, Pull Requests read/write, Checks read, and Commit statuses read, with no Administration or Workflows permission. The write grants are reserved for later accepted phases; generic branch CRUD, force push, base-branch writes, and protection changes are never exposed. The original isolated-development deployment consequence was superseded on 2026-08-19; phased acceptance now uses production OpenFloor with repository access limited to a disposable repository.
+
+### 2026-08-19 — Target Workflows, Sandboxes, Codex, and a single candidate PR
+
+**Decision:** The accepted target architecture uses Cloudflare Workflows for durable orchestration, Cloudflare Sandboxes for isolated repository work, and the server-side Codex SDK with `gpt-5.6-terra`. Owner-authorized passing runs will eventually publish server-generated run branches, integrate automatically into one active candidate branch, maintain one draft pull request per candidate, and allow only the owner to request the final squash merge.
+
+**Rationale:** Durable workflows provide restart/retry semantics, sandboxes isolate untrusted repository commands, short-lived service credentials keep secrets out of repository processes, and a single candidate PR gives human reviewers one stable integration surface while preserving individual run attribution.
+
+**Consequences:** This entry records the future architecture but does not make later-phase behavior real. Cloudflare Workflow, Sandbox, R2, Codex, branches, checks, run records, pull requests, integration, and merge remain absent until their named accepted phases. GitHub protections remain authoritative and workflow-file changes stay excluded while the App lacks Workflows permission.
+
+### 2026-08-19 — Temporarily deliver repository phases directly to production
+
+**Decision:** Until the user establishes a staging environment, deploy each accepted repository-execution phase to the existing production OpenFloor Worker and D1 database at `opnflr.com/app`. Use a real disposable GitHub repository as the only App installation target during acceptance.
+
+**Rationale:** Reusing the working production application, Access policy, domain, and bindings removes a second environment's DNS, Access, secret, and deployment setup from the critical path. A disposable repository limits the GitHub-side impact while the integration matures.
+
+**Consequences:** The unused `openfloor-development` D1 database may remain for later cleanup but is not referenced by application configuration. Production migrations must precede code deployment. The five GitHub App secrets must be configured before deploying the repository UI, and each phase must still pass the complete pipeline and stop for explicit browser acceptance. Expanding the App beyond the disposable repository requires a separate deliberate decision.
 
 ## How to record the next decision
 

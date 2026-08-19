@@ -4,6 +4,19 @@ import { join } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 
 const statePath = mkdtempSync(join(tmpdir(), "openfloor-e2e-"));
+const githubTestData = JSON.stringify({
+  installationId: "test-installation",
+  repositories: [{
+    id: "9001",
+    nodeId: "R_test_repository",
+    owner: "openfloor-test",
+    name: "repository-integration",
+    fullName: "openfloor-test/repository-integration",
+    private: true,
+    defaultBranch: "main",
+    branches: ["main", "develop"],
+  }],
+});
 const wranglerArgs = ["wrangler", "--config", "dist/server/wrangler.json"];
 const migration = spawnSync(
   "npx",
@@ -27,6 +40,12 @@ const server = spawn("npx", [
   statePath,
   "--var",
   "INVITE_SIGNING_SECRET:e2e-test-secret",
+  "GITHUB_APP_ID:test-app",
+  "GITHUB_APP_SLUG:openfloor-test",
+  "GITHUB_APP_PRIVATE_KEY:test-private-key",
+  "GITHUB_STATE_SECRET:e2e-test-github-state-secret",
+  "GITHUB_WEBHOOK_SECRET:e2e-test-github-webhook-secret",
+  `OPENFLOOR_TEST_GITHUB_DATA:${githubTestData}`,
   "--var",
   "OPENFLOOR_TEST_ALLOW_IDENTITY_HEADERS:true",
   "--show-interactive-dev-session=false",

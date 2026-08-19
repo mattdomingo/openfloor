@@ -8,6 +8,7 @@ import {
   parseQueueMergeInput,
   parseQueueOrderInput,
   parseQueuePromptInput,
+  parseRepositoryConnectionInput,
   parseSessionInput,
 } from "@/lib/validation";
 
@@ -53,6 +54,16 @@ describe("floor input validation", () => {
     expect(parseAgentInput({ name: "", role: "Role", task: "Task", ownerUserId: "owner" })).toBeNull();
     expect(parseMessageInput({ text: "" })).toBeNull();
     expect(parseQueuePromptInput({ prompt: "x".repeat(4001) })).toBeNull();
+  });
+
+  it("normalizes repository selection and ordered check commands", () => {
+    expect(parseRepositoryConnectionInput({
+      repositoryId: " 123 ",
+      baseBranch: " main ",
+      checkCommands: [" npm test ", " npm run build "],
+    })).toEqual({ repositoryId: "123", baseBranch: "main", checkCommands: ["npm test", "npm run build"] });
+    expect(parseRepositoryConnectionInput({ repositoryId: "123", baseBranch: "main", checkCommands: [] })).toBeNull();
+    expect(parseRepositoryConnectionInput({ repositoryId: "123", baseBranch: "main", checkCommands: ["x".repeat(501)] })).toBeNull();
   });
 });
 

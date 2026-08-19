@@ -1,4 +1,5 @@
 import { expect, test, type Browser, type BrowserContext } from "@playwright/test";
+import { createHmac } from "node:crypto";
 
 function identityHeaders(id: string, email: string, name: string) {
   return {
@@ -19,6 +20,19 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   const member = await memberContext.newPage();
   const pageErrors: string[] = [];
   owner.on("pageerror", (error) => pageErrors.push(error.message));
+
+  const webhookPayload = JSON.stringify({ zen: "phase-one" });
+  const webhookSignature = createHmac("sha256", "e2e-test-github-webhook-secret").update(webhookPayload).digest("hex");
+  const rejectedWebhook = await owner.request.post("/app/webhooks/github", {
+    data: webhookPayload,
+    headers: { "content-type": "application/json", "x-github-event": "ping", "x-hub-signature-256": "sha256=invalid" },
+  });
+  expect(rejectedWebhook.status()).toBe(401);
+  const acceptedWebhook = await owner.request.post("/app/webhooks/github", {
+    data: webhookPayload,
+    headers: { "content-type": "application/json", "x-github-event": "ping", "x-hub-signature-256": `sha256=${webhookSignature}` },
+  });
+  expect(acceptedWebhook.status()).toBe(200);
 
   await owner.goto("/app/home");
   await owner.getByRole("button", { name: "New session" }).click();
@@ -41,6 +55,26 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await expect(owner.getByText("Member Example")).toBeVisible();
   await expect(owner.locator("li", { hasText: "Member Example" }).getByText("Online", { exact: true })).toBeVisible();
   await expect(member.locator("li", { hasText: "Owner Example" }).getByText("Online", { exact: true })).toBeVisible();
+
+  await owner.getByRole("button", { name: "Connect GitHub" }).click();
+  await expect(owner.getByRole("combobox", { name: "Connected repository" })).toHaveValue("9001");
+  await expect(owner.getByRole("combobox", { name: "Repository base branch" })).toHaveValue("main");
+  await owner.getByLabel("Required check commands").fill("npm test\nnpm run build");
+  await owner.getByRole("button", { name: "Save repository" }).click();
+  await expect(owner.getByText("openfloor-test/repository-integration")).toBeVisible();
+  await expect(owner.getByText("npm test", { exact: true })).toBeVisible();
+  await member.reload();
+  await expect(member.getByText("openfloor-test/repository-integration")).toBeVisible();
+  await expect(member.getByRole("button", { name: "Configure" })).toHaveCount(0);
+  await expect(member.getByRole("button", { name: "Disconnect" })).toHaveCount(0);
+
+  await owner.getByRole("button", { name: "Disconnect" }).click();
+  await expect(owner.getByText("disconnected", { exact: true })).toBeVisible();
+  await owner.getByRole("button", { name: "Reconnect GitHub" }).click();
+  await expect(owner.getByRole("combobox", { name: "Connected repository" })).toHaveValue("9001");
+  await owner.getByLabel("Required check commands").fill("npm test");
+  await owner.getByRole("button", { name: "Save repository" }).click();
+  await expect(owner.getByText("connected", { exact: true })).toBeVisible();
 
   await owner.getByRole("link", { name: "Enter agent floor" }).click();
   await member.getByRole("link", { name: "Enter agent floor" }).click();

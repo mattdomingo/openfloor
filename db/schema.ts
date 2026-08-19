@@ -146,3 +146,63 @@ export const floorQueuePrompts = sqliteTable(
   },
   (table) => [index("idx_floor_queue_prompts_item_created").on(table.queueItemId, table.createdAt)],
 );
+
+export const githubConnectionStates = sqliteTable(
+  "github_connection_states",
+  {
+    id: text("id").primaryKey(),
+    sessionId: text("session_id").notNull().references(() => sessions.id, { onDelete: "cascade" }),
+    userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    installationId: text("installation_id"),
+    createdAt: integer("created_at").notNull(),
+    expiresAt: integer("expires_at").notNull(),
+    usedAt: integer("used_at"),
+    configuredAt: integer("configured_at"),
+  },
+  (table) => [
+    index("idx_github_connection_states_session_user").on(table.sessionId, table.userId, table.createdAt),
+    index("idx_github_connection_states_expiry").on(table.expiresAt),
+  ],
+);
+
+export const repositoryConnections = sqliteTable(
+  "repository_connections",
+  {
+    id: text("id").primaryKey(),
+    sessionId: text("session_id").notNull().references(() => sessions.id, { onDelete: "cascade" }),
+    installationId: text("installation_id").notNull(),
+    repositoryId: text("repository_id").notNull(),
+    repositoryNodeId: text("repository_node_id").notNull(),
+    repositoryOwner: text("repository_owner").notNull(),
+    repositoryName: text("repository_name").notNull(),
+    repositoryFullName: text("repository_full_name").notNull(),
+    repositoryPrivate: integer("repository_private", { mode: "boolean" }).notNull(),
+    defaultBranch: text("default_branch").notNull(),
+    baseBranch: text("base_branch").notNull(),
+    status: text("status", { enum: ["connected", "disconnected"] }).notNull(),
+    connectedBy: text("connected_by").notNull().references(() => users.id),
+    connectedAt: integer("connected_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+    disconnectedAt: integer("disconnected_at"),
+  },
+  (table) => [
+    uniqueIndex("idx_repository_connections_one_per_session").on(table.sessionId),
+    index("idx_repository_connections_installation").on(table.installationId),
+    check("repository_connections_status_check", sql`${table.status} in ('connected', 'disconnected')`),
+  ],
+);
+
+export const repositoryCheckCommands = sqliteTable(
+  "repository_check_commands",
+  {
+    id: text("id").primaryKey(),
+    connectionId: text("connection_id").notNull().references(() => repositoryConnections.id, { onDelete: "cascade" }),
+    position: integer("position").notNull(),
+    command: text("command").notNull(),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("idx_repository_check_commands_position").on(table.connectionId, table.position),
+  ],
+);

@@ -49,3 +49,41 @@ export type AppUser = {
   createdAt: number;
   updatedAt: number;
 };
+
+export type RepositoryConnectionStatus = "connected" | "disconnected";
+
+export type RepositoryCheckCommand = {
+  id: string;
+  position: number;
+  command: string;
+};
+
+export type RepositoryConnection = {
+  id: string;
+  sessionId: string;
+  installationId: string;
+  repositoryId: string;
+  repositoryNodeId: string;
+  repositoryOwner: string;
+  repositoryName: string;
+  repositoryFullName: string;
+  repositoryPrivate: boolean;
+  defaultBranch: string;
+  baseBranch: string;
+  status: RepositoryConnectionStatus;
+  connectedBy: string;
+  connectedAt: number;
+  updatedAt: number;
+  disconnectedAt: number | null;
+  checkCommands: RepositoryCheckCommand[];
+};
+
+export type GitHubRepositoryOption = {
+  id: string;
+  nodeId: string;
+  owner: string;
+  name: string;
+  fullName: string;
+  private: boolean;
+  defaultBranch: string;
+};

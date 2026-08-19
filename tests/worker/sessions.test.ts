@@ -13,6 +13,14 @@ import {
   updateSessionObjective,
   upsertUser,
 } from "@/db/sessions";
+import {
+  consumeGitHubConnectionState,
+  createGitHubConnectionState,
+  disconnectRepository,
+  getPendingGitHubInstallation,
+  getRepositoryConnectionForMember,
+  saveRepositoryConnection,
+} from "@/db/repositories";
 
 function identity(id: string, name: string) {
   return { providerUserId: `chatgpt-${id}`, email: `${id}@example.com`, displayName: name, fullName: name };
@@ -86,5 +94,50 @@ describe("D1 session persistence", () => {
     expect(updated).toEqual(expect.objectContaining({ objective: "Second", role: "member" }));
     expect(updated!.updatedAt).toBeGreaterThanOrEqual(created.session.updatedAt);
     await expect(updateSessionObjective(created.session.id, outsider.id, "Hidden", env.DB)).resolves.toBeNull();
+  });
+
+  it("persists one owner-configured repository connection and ordered checks", async () => {
+    const owner = await upsertUser(identity("repo-owner", "Owner"), env.DB);
+    const member = await upsertUser(identity("repo-member", "Member"), env.DB);
+    const outsider = await upsertUser(identity("repo-outsider", "Outsider"), env.DB);
+    const created = await createSession(owner.id, { title: "Repository room", objective: null }, env.DB);
+    await acceptInvite(created.inviteId, member.id, env.DB);
+
+    await expect(createGitHubConnectionState(created.session.id, member.id, env.DB)).resolves.toBeNull();
+    const stateId = await createGitHubConnectionState(created.session.id, owner.id, env.DB);
+    expect(stateId).toBeTruthy();
+    await expect(consumeGitHubConnectionState(stateId!, outsider.id, "installation-1", env.DB)).resolves.toBeNull();
+    await expect(consumeGitHubConnectionState(stateId!, owner.id, "installation-1", env.DB)).resolves.toEqual({ sessionId: created.session.id });
+    await expect(consumeGitHubConnectionState(stateId!, owner.id, "installation-1", env.DB)).resolves.toBeNull();
+    await expect(getPendingGitHubInstallation(created.session.id, owner.id, env.DB)).resolves.toEqual({ stateId, installationId: "installation-1" });
+
+    const saved = await saveRepositoryConnection(
+      created.session.id,
+      owner.id,
+      stateId,
+      "installation-1",
+      {
+        id: "repository-1",
+        nodeId: "R_node",
+        owner: "openfloor-test",
+        name: "repository-integration",
+        fullName: "openfloor-test/repository-integration",
+        private: true,
+        defaultBranch: "main",
+      },
+      "main",
+      ["npm test", "npm run build"],
+      env.DB,
+    );
+    expect(saved).toEqual(expect.objectContaining({
+      repositoryId: "repository-1",
+      repositoryFullName: "openfloor-test/repository-integration",
+      status: "connected",
+    }));
+    expect(saved?.checkCommands.map((item) => item.command)).toEqual(["npm test", "npm run build"]);
+    await expect(getRepositoryConnectionForMember(created.session.id, member.id, env.DB)).resolves.toEqual(saved);
+    await expect(getRepositoryConnectionForMember(created.session.id, outsider.id, env.DB)).resolves.toBeNull();
+    await expect(disconnectRepository(created.session.id, member.id, env.DB)).resolves.toBeNull();
+    await expect(disconnectRepository(created.session.id, owner.id, env.DB)).resolves.toEqual(expect.objectContaining({ status: "disconnected" }));
   });
 });

@@ -6,8 +6,9 @@ import { useRouter } from "next/navigation";
 import { BASE_PATH } from "@/components/basePath";
 import { formatShortDate } from "@/lib/date-format";
 import { reducePresence } from "@/lib/presence";
-import type { AppUser, PresenceEvent, SessionMember, SessionSummary } from "@/lib/session-types";
+import type { AppUser, PresenceEvent, RepositoryConnection, SessionMember, SessionSummary } from "@/lib/session-types";
 import { AppHeader, initials } from "./AppHeader";
+import { RepositoryCard } from "./RepositoryCard";
 
 type ConnectionState = "connecting" | "connected" | "reconnecting";
 
@@ -15,10 +16,14 @@ export function SessionScreen({
   user,
   session,
   initialMembers,
+  initialRepository,
+  githubSetup,
 }: {
   user: AppUser;
   session: SessionSummary;
   initialMembers: SessionMember[];
+  initialRepository: RepositoryConnection | null;
+  githubSetup: boolean;
 }) {
   const router = useRouter();
   const [members, setMembers] = useState(initialMembers);
@@ -167,6 +172,7 @@ export function SessionScreen({
           ) : (
             <section className="action-card"><p className="eyebrow">Membership</p><h2>You are a member</h2><p>Leaving removes this session from your home and ends your live connection.</p><button className="button danger-button" onClick={leave}>Leave session</button></section>
           )}
+          <RepositoryCard sessionId={session.id} role={session.role} initialRepository={initialRepository} beginSetup={githubSetup} />
           <section className="action-card quiet-card"><p className="eyebrow">What persists</p><p>The room, objective, membership, and invite state are stored. Presence reflects live authenticated connections.</p></section>
           {notice && <p className="notice" role="status">{notice}</p>}
         </aside>

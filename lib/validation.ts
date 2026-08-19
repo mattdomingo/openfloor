@@ -6,6 +6,7 @@ export type MessageInput = { text: string; recipientUserId: string | null };
 export type QueuePromptInput = { prompt: string; agentId: string | null };
 export type QueueOrderInput = { itemIds: string[] };
 export type QueueMergeInput = { itemIds: string[] };
+export type RepositoryConnectionInput = { repositoryId: string; baseBranch: string; checkCommands: string[] };
 
 export function parseSessionInput(value: unknown): SessionInput | null {
   if (!value || typeof value !== "object") return null;
@@ -81,6 +82,20 @@ export function parseQueueOrderInput(value: unknown): QueueOrderInput | null {
 
 export function parseQueueMergeInput(value: unknown): QueueMergeInput | null {
   return parseIdList(value, "itemIds", 2);
+}
+
+export function parseRepositoryConnectionInput(value: unknown): RepositoryConnectionInput | null {
+  if (!value || typeof value !== "object") return null;
+  const input = value as Record<string, unknown>;
+  if (typeof input.repositoryId !== "string" || typeof input.baseBranch !== "string" || !Array.isArray(input.checkCommands)) return null;
+  const repositoryId = input.repositoryId.trim();
+  const baseBranch = input.baseBranch.trim();
+  if (!repositoryId || repositoryId.length > 100 || !baseBranch || baseBranch.length > 255) return null;
+  if (input.checkCommands.length === 0 || input.checkCommands.length > 8) return null;
+  if (input.checkCommands.some((command) => typeof command !== "string")) return null;
+  const checkCommands = input.checkCommands.map((command) => (command as string).trim());
+  if (checkCommands.some((command) => !command || command.length > 500)) return null;
+  return { repositoryId, baseBranch, checkCommands };
 }
 
 function parseIdList(value: unknown, key: string, minimum: number): { itemIds: string[] } | null {

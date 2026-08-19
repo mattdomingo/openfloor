@@ -25,3 +25,31 @@ export function getInviteSigningSecret(): string {
   if (!secret) throw new Error("`INVITE_SIGNING_SECRET` is unavailable.");
   return secret;
 }
+
+export function getGitHubAppConfig(): import("@/lib/github").GitHubAppConfig {
+  const bindings = env as unknown as Record<string, string | undefined>;
+  const testEnabled = bindings.OPENFLOOR_TEST_ALLOW_IDENTITY_HEADERS === "true";
+  const testDataValue = testEnabled ? bindings.OPENFLOOR_TEST_GITHUB_DATA : undefined;
+  let testData: import("@/lib/github").GitHubAppConfig["testData"] = null;
+  if (testDataValue) {
+    try {
+      testData = JSON.parse(testDataValue) as import("@/lib/github").GitHubAppConfig["testData"];
+    } catch {
+      throw new Error("`OPENFLOOR_TEST_GITHUB_DATA` is invalid JSON.");
+    }
+  }
+  const config = {
+    appId: bindings.GITHUB_APP_ID ?? "",
+    privateKey: bindings.GITHUB_APP_PRIVATE_KEY ?? "",
+    slug: bindings.GITHUB_APP_SLUG ?? "",
+    stateSecret: bindings.GITHUB_STATE_SECRET ?? "",
+    webhookSecret: bindings.GITHUB_WEBHOOK_SECRET ?? "",
+    testData,
+  };
+  if (!config.stateSecret) throw new Error("`GITHUB_STATE_SECRET` is unavailable.");
+  if (!config.webhookSecret) throw new Error("`GITHUB_WEBHOOK_SECRET` is unavailable.");
+  if (!testData && (!config.appId || !config.privateKey || !config.slug)) {
+    throw new Error("GitHub App bindings are unavailable.");
+  }
+  return config;
+}

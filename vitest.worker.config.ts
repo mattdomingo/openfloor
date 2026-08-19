@@ -16,6 +16,11 @@ export default defineConfig({
         durableObjects: { SESSION_PRESENCE: "SessionPresence" },
         bindings: {
           INVITE_SIGNING_SECRET: "worker-test-invite-secret",
+          GITHUB_APP_ID: "test-app",
+          GITHUB_APP_SLUG: "openfloor-test",
+          GITHUB_APP_PRIVATE_KEY: "test-private-key",
+          GITHUB_STATE_SECRET: "worker-test-github-state-secret",
+          GITHUB_WEBHOOK_SECRET: "worker-test-github-webhook-secret",
           OPENFLOOR_TEST_ALLOW_IDENTITY_HEADERS: "true",
           TEST_MIGRATIONS: JSON.stringify(migrations),
         },
