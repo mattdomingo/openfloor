@@ -8,7 +8,8 @@ import { usePersistentFloorData } from "@/components/session/usePersistentFloorD
 import { reducePresence } from "@/lib/presence";
 import type { FloorSnapshot } from "@/lib/floor-types";
 import { shouldRefreshFloor } from "@/lib/floor-state";
-import type { AppUser, PresenceEvent, SessionMember, SessionSummary } from "@/lib/session-types";
+import { reduceTypingDrafts } from "@/lib/typing-drafts";
+import type { AppUser, PresenceEvent, SessionMember, SessionSummary, TypingDraft, TypingUpdate } from "@/lib/session-types";
 
 export function AgentFloorScreen({
   user,
@@ -25,7 +26,10 @@ export function AgentFloorScreen({
   const [session, setSession] = useState(initialSession);
   const [members, setMembers] = useState(initialMembers);
   const [onlineIds, setOnlineIds] = useState<Set<string>>(new Set());
+  const [typingDrafts, setTypingDrafts] = useState<Map<string, TypingDraft>>(new Map());
   const retryRef = useRef(0);
+  const socketRef = useRef<WebSocket | null>(null);
+  const latestTypingUpdateRef = useRef<TypingUpdate>({ type: "typing.update", text: "", typing: false });
   const revisionRef = useRef(initialFloor.revision);
   const onMissing = useCallback(() => router.replace("/home"), [router]);
   const floorData = usePersistentFloorData(session.id, initialFloor, onMissing);
@@ -55,8 +59,10 @@ export function AgentFloorScreen({
       if (disposed) return;
       const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
       socket = new WebSocket(`${protocol}//${window.location.host}${BASE_PATH}/api/sessions/${session.id}/presence`);
+      socketRef.current = socket;
       socket.addEventListener("open", () => {
         retryRef.current = 0;
+        if (latestTypingUpdateRef.current.text) socket?.send(JSON.stringify(latestTypingUpdateRef.current));
         void refreshFloor();
       });
       socket.addEventListener("message", (message) => {
@@ -69,6 +75,9 @@ export function AgentFloorScreen({
         if (event.type === "presence.snapshot" || event.type === "presence.changed") {
           setOnlineIds((current) => reducePresence(current, event));
         }
+        if (event.type === "presence.snapshot" || event.type === "typing.changed") {
+          setTypingDrafts((current) => reduceTypingDrafts(current, event));
+        }
         if (event.type === "members.changed") {
           void refreshMembers();
           void refreshFloor();
@@ -79,6 +88,7 @@ export function AgentFloorScreen({
         if (shouldRefreshFloor(revisionRef.current, event)) void refreshFloor();
       });
       socket.addEventListener("close", () => {
+        if (socketRef.current === socket) socketRef.current = null;
         if (disposed) return;
         retryRef.current += 1;
         const delay = Math.min(10_000, 500 * 2 ** Math.min(retryRef.current - 1, 5));
@@ -90,6 +100,9 @@ export function AgentFloorScreen({
     return () => {
       disposed = true;
       if (retryTimer) window.clearTimeout(retryTimer);
+      if (socket?.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify({ type: "typing.update", text: "", typing: false } satisfies TypingUpdate));
+      }
       socket?.close(1000, "Agent floor closed");
     };
   }, [refreshFloor, refreshMembers, session.id]);
@@ -111,5 +124,11 @@ export function AgentFloorScreen({
     return true;
   }
 
-  return <Workspace user={user} session={session} members={visibleMembers} floorData={floorData} onSaveObjective={saveObjective} />;
+  const sendTypingUpdate = useCallback((text: string, typing: boolean) => {
+    const update: TypingUpdate = { type: "typing.update", text, typing: Boolean(text) && typing };
+    latestTypingUpdateRef.current = update;
+    if (socketRef.current?.readyState === WebSocket.OPEN) socketRef.current.send(JSON.stringify(update));
+  }, []);
+
+  return <Workspace user={user} session={session} members={visibleMembers} floorData={floorData} typingDrafts={typingDrafts} onTypingUpdate={sendTypingUpdate} onSaveObjective={saveObjective} />;
 }

@@ -18,9 +18,24 @@ export type SessionMember = {
   online: boolean;
 };
 
+export type TypingDraft = {
+  userId: string;
+  displayName: string;
+  text: string;
+  typing: boolean;
+  updatedAt: number;
+};
+
+export type TypingUpdate = {
+  type: "typing.update";
+  text: string;
+  typing: boolean;
+};
+
 export type PresenceEvent =
-  | { type: "presence.snapshot"; onlineUserIds: string[] }
+  | { type: "presence.snapshot"; onlineUserIds: string[]; typingDrafts: TypingDraft[] }
   | { type: "presence.changed"; userId: string; online: boolean }
+  | { type: "typing.changed"; draft: TypingDraft }
   | { type: "members.changed" }
   | { type: "session.changed"; objective: string | null; updatedAt: number }
   | { type: "floor.changed"; revision: number; domains: import("./floor-types").FloorDomain[] }

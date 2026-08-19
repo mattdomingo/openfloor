@@ -7,10 +7,12 @@ export function MentionComposer({
   ariaLabel,
   agents,
   textareaRef,
+  onValueChange,
 }: {
   ariaLabel: string;
   agents: FloorAgent[];
   textareaRef: RefObject<HTMLTextAreaElement | null>;
+  onValueChange?: (value: string) => void;
 }) {
   function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
     if (event.key === "Enter" && !event.shiftKey) {
@@ -25,6 +27,8 @@ export function MentionComposer({
         ref={textareaRef}
         className="mention-input"
         onKeyDown={handleKeyDown}
+        onInput={(event) => onValueChange?.(event.currentTarget.value)}
+        maxLength={4_000}
         aria-label={ariaLabel}
       />
     </div>

@@ -1,7 +1,7 @@
 "use client";
 
 import { CSSProperties, PointerEvent as ReactPointerEvent, useMemo, useRef, useState } from "react";
-import type { AppUser, SessionMember, SessionSummary } from "@/lib/session-types";
+import type { AppUser, SessionMember, SessionSummary, TypingDraft } from "@/lib/session-types";
 import type { CreateFloorAgentInput } from "@/lib/floor-types";
 import { firstMergeableQueueGroup, resolvePersistedAgentMention } from "@/lib/floor-state";
 import type { AgentLayout, ChatThread, PanelId, QueueMergeMode, QueueOrderMode, QueueScope, RailId, TeamPanelView, WorkspaceScreen } from "./data";
@@ -20,11 +20,13 @@ const RAIL_COLLAPSED_WIDTH = 40;
 const RAIL_MIN_WIDTH = 250;
 const RAIL_MAX_WIDTH = 520;
 
-export function Workspace({ user, session, members, floorData, onSaveObjective }: {
+export function Workspace({ user, session, members, floorData, typingDrafts, onTypingUpdate, onSaveObjective }: {
   user: AppUser;
   session: SessionSummary;
   members: SessionMember[];
   floorData: PersistentFloorDataSource;
+  typingDrafts: ReadonlyMap<string, TypingDraft>;
+  onTypingUpdate: (text: string, typing: boolean) => void;
   onSaveObjective: (objective: string | null) => Promise<boolean>;
 }) {
   const { agents, assignments, queue, messages, review } = floorData.floor;
@@ -128,7 +130,7 @@ export function Workspace({ user, session, members, floorData, onSaveObjective }
   return <main className="app-shell" data-screen={screen}>
     <TopBar screen={screen} onScreen={setScreen} onNotice={setNotice} session={session} user={user} members={members} />
     <ObjectiveBar objective={session.objective} updatedAt={session.updatedAt} onSave={onSaveObjective} />
-    {screen === "review" ? <ReviewScreen review={review} teamChat={messages} onSendTeamMessage={async (text, recipient) => Boolean(await floorData.sendMessage(text, recipient))} participants={participants} currentUserId={user.id} /> : <><div className="workspace" data-expanded={expandedPanel ? "true" : "false"} data-resizing={resizing ? "true" : "false"}>{panelOrder.map((panel, index) => { const next = panelOrder[index + 1]; const showHandle = !expandedPanel && next !== undefined && !(isCollapsed(panel) && panel !== "floor"); return <div key={panel} className="panel-slot" style={slotStyle(panel)} data-expanded={expandedPanel === panel ? "true" : "false"} data-collapsed={isCollapsed(panel) ? "true" : "false"} data-dragging={draggedPanel === panel ? "true" : "false"} data-drop-target={dragOverPanel === panel ? "true" : "false"} onDragOver={(event) => { event.preventDefault(); if (draggedPanel && draggedPanel !== panel) setDragOverPanel(panel); }} onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragOverPanel((current) => current === panel ? null : current); }} onDrop={() => dropPanel(panel)}>{renderPanel(panel, chromeFor(panel, index))}{showHandle && <div className="resize-handle" role="separator" aria-label={`Resize ${panel} panel`} onPointerDown={(event) => startResize(panel, next, event)} />}</div>; })}</div><FloorDock onSubmit={enqueuePrompt} agents={agents} queueTarget={queueTarget} onQueueTargetChange={setQueueTarget} textareaRef={composerRef} notice={notice} error={floorData.error} busy={floorData.busy} user={user} /></>}
+    {screen === "review" ? <ReviewScreen review={review} teamChat={messages} onSendTeamMessage={async (text, recipient) => Boolean(await floorData.sendMessage(text, recipient))} participants={participants} currentUserId={user.id} /> : <><div className="workspace" data-expanded={expandedPanel ? "true" : "false"} data-resizing={resizing ? "true" : "false"}>{panelOrder.map((panel, index) => { const next = panelOrder[index + 1]; const showHandle = !expandedPanel && next !== undefined && !(isCollapsed(panel) && panel !== "floor"); return <div key={panel} className="panel-slot" style={slotStyle(panel)} data-expanded={expandedPanel === panel ? "true" : "false"} data-collapsed={isCollapsed(panel) ? "true" : "false"} data-dragging={draggedPanel === panel ? "true" : "false"} data-drop-target={dragOverPanel === panel ? "true" : "false"} onDragOver={(event) => { event.preventDefault(); if (draggedPanel && draggedPanel !== panel) setDragOverPanel(panel); }} onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragOverPanel((current) => current === panel ? null : current); }} onDrop={() => dropPanel(panel)}>{renderPanel(panel, chromeFor(panel, index))}{showHandle && <div className="resize-handle" role="separator" aria-label={`Resize ${panel} panel`} onPointerDown={(event) => startResize(panel, next, event)} />}</div>; })}</div><FloorDock onSubmit={enqueuePrompt} agents={agents} queueTarget={queueTarget} onQueueTargetChange={setQueueTarget} textareaRef={composerRef} notice={notice} error={floorData.error} busy={floorData.busy} user={user} participants={participants} typingDrafts={typingDrafts} onTypingUpdate={onTypingUpdate} /></>}
     {screen === "review" && (notice || floorData.error) && <StatusBar notice={floorData.error ?? notice ?? ""} visible />}
   </main>;
 }

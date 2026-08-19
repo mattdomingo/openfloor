@@ -2422,7 +2422,7 @@
   background: none;
   outline: none;
   resize: none;
-  color: transparent;
+  color: var(--text-primary);
   caret-color: var(--text-primary);
 }
 
@@ -2581,6 +2581,10 @@
 
 .lane[data-typing="false"] p::after {
   background: var(--text-tertiary);
+}
+
+.lane p:empty::after {
+  display: none;
 }
 
 /* Create agent dialog --------------------------------------------------- */
@@ -4075,4 +4079,3 @@
   color: var(--accent);
   font-size: var(--text-xs);
 }
-

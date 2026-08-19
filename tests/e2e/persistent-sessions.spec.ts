@@ -52,6 +52,21 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await expect(owner.getByText("No review available")).toHaveCount(0);
   await expect(owner.getByText(/Atlas|Nova|Sentry|Proof|OpenMind/)).toHaveCount(0);
 
+  const ownerComposer = owner.getByLabel("Prompt to add to the queue");
+  const memberDraftControls = member.getByRole("group", { name: "Teammate drafts" });
+  await expect(memberDraftControls.getByRole("button", { name: "Typing" })).toHaveAttribute("aria-pressed", "true");
+  await ownerComposer.fill("A prompt still being written");
+  await expect(member.getByLabel("Owner Example's draft")).toContainText("A prompt still being written");
+  await expect(member.getByLabel("Owner Example's draft")).toContainText("typing");
+  await expect(member.getByLabel("Owner Example's draft")).toHaveCount(0, { timeout: 5_000 });
+  await memberDraftControls.getByRole("button", { name: "Everyone" }).click();
+  await expect(member.getByLabel("Owner Example's draft")).toContainText("A prompt still being written");
+  await expect(member.getByLabel("Owner Example's draft")).toContainText("idle");
+  await memberDraftControls.getByRole("button", { name: "Hidden" }).click();
+  await expect(member.getByLabel("Owner Example's draft")).toHaveCount(0);
+  await memberDraftControls.getByRole("button", { name: "Typing" }).click();
+  await ownerComposer.fill("");
+
   await owner.getByTitle("Edit session objective").click();
   await owner.getByLabel("Session objective").fill("Coordinate the restored agent floor");
   await owner.getByLabel("Session objective").blur();

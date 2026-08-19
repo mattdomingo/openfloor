@@ -62,6 +62,10 @@ describe("server rendering", () => {
     const html = await response.text();
     expect(html).toContain("No agents yet");
     expect(html).toContain("No prompts waiting");
+    expect(html).toContain("Teammate drafts");
+    expect(html).toContain("Everyone");
+    expect(html).toContain("Typing");
+    expect(html).toContain("Hidden");
     expect(html).not.toMatch(/Atlas|Nova|Sentry|Proof|OpenMind|server\/session\/reducer/i);
   });
 

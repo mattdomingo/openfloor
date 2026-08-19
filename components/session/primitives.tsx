@@ -146,9 +146,9 @@ export function Icon({ name, size = 14, className }: { name: IconName; size?: nu
   );
 }
 
-export function Avatar({ initials, tone, online }: { initials: string; tone: string; online?: boolean }) {
+export function Avatar({ initials, tone, online, typing }: { initials: string; tone: string; online?: boolean; typing?: boolean }) {
   return (
-    <span className="avatar" data-tone={tone} data-online={online ? "true" : undefined} aria-hidden="true">
+    <span className="avatar" data-tone={tone} data-online={online ? "true" : undefined} data-typing={typing ? "true" : undefined} aria-hidden="true">
       {initials}
     </span>
   );

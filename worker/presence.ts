@@ -6,7 +6,7 @@ import {
   localDevelopmentIdentity,
   type IdentityEnvironment,
 } from "../lib/identity";
-import type { PresenceEvent } from "../lib/session-types";
+import type { PresenceEvent, TypingDraft, TypingUpdate } from "../lib/session-types";
 import type { FloorDomain } from "../lib/floor-types";
 
 type DurableObjectStubLike = { fetch(request: Request): Promise<Response> };
@@ -20,7 +20,16 @@ export interface PresenceEnv extends IdentityEnvironment {
   SESSION_PRESENCE: DurableObjectNamespaceLike;
 }
 
-type SocketAttachment = { userId: string; displayName: string; connectionId: string };
+const MAX_DRAFT_LENGTH = 4_000;
+
+type SocketAttachment = {
+  userId: string;
+  displayName: string;
+  connectionId: string;
+  draft?: string;
+  typing?: boolean;
+  draftUpdatedAt?: number;
+};
 type AttachedWebSocket = WebSocket & {
   serializeAttachment(value: SocketAttachment): void;
   deserializeAttachment(): SocketAttachment | null;
@@ -73,21 +82,57 @@ export class SessionPresence extends DurableObject {
     const client = pair[0];
     const server = pair[1] as AttachedWebSocket;
     const wasOnline = this.socketsFor(userId).length > 0;
-    server.serializeAttachment({ userId, displayName, connectionId: crypto.randomUUID() });
+    server.serializeAttachment({ userId, displayName, connectionId: crypto.randomUUID(), draft: "", typing: false, draftUpdatedAt: 0 });
     this.ctx.acceptWebSocket(server);
-    server.send(JSON.stringify({ type: "presence.snapshot", onlineUserIds: this.onlineUserIds() } satisfies PresenceEvent));
+    server.send(JSON.stringify({
+      type: "presence.snapshot",
+      onlineUserIds: this.onlineUserIds(),
+      typingDrafts: this.typingDrafts(),
+    } satisfies PresenceEvent));
     if (!wasOnline) this.broadcast({ type: "presence.changed", userId, online: true }, server);
     return new Response(null, { status: 101, webSocket: client });
   }
 
   webSocketMessage(socket: AttachedWebSocket, message: string | ArrayBuffer): void {
-    if (message === "ping") socket.send("pong");
+    if (message === "ping") {
+      socket.send("pong");
+      return;
+    }
+    if (typeof message !== "string") {
+      socket.send(JSON.stringify({ type: "error", code: "typing.invalid" } satisfies PresenceEvent));
+      return;
+    }
+
+    let update: TypingUpdate;
+    try {
+      update = JSON.parse(message) as TypingUpdate;
+    } catch {
+      socket.send(JSON.stringify({ type: "error", code: "typing.invalid" } satisfies PresenceEvent));
+      return;
+    }
+    if (update.type !== "typing.update" || typeof update.text !== "string" || typeof update.typing !== "boolean" || update.text.length > MAX_DRAFT_LENGTH) {
+      socket.send(JSON.stringify({ type: "error", code: "typing.invalid" } satisfies PresenceEvent));
+      return;
+    }
+
+    const attachment = socket.deserializeAttachment();
+    if (!attachment) return;
+    socket.serializeAttachment({
+      ...attachment,
+      draft: update.text,
+      typing: update.text.length > 0 && update.typing,
+      draftUpdatedAt: this.nextDraftUpdatedAt(),
+    });
+    this.broadcastUserDraft(attachment.userId, attachment.displayName);
   }
 
   webSocketClose(socket: AttachedWebSocket): void {
     const attachment = socket.deserializeAttachment();
-    if (attachment && this.socketsFor(attachment.userId).length === 0) {
-      this.broadcast({ type: "presence.changed", userId: attachment.userId, online: false });
+    if (attachment) {
+      if (attachment.draft || attachment.typing) this.broadcastUserDraft(attachment.userId, attachment.displayName);
+      if (this.socketsFor(attachment.userId).length === 0) {
+        this.broadcast({ type: "presence.changed", userId: attachment.userId, online: false });
+      }
     }
   }
 
@@ -105,6 +150,43 @@ export class SessionPresence extends DurableObject {
 
   private onlineUserIds(): string[] {
     return [...new Set(this.sockets().filter((socket) => socket.readyState === WebSocket.OPEN).map((socket) => socket.deserializeAttachment()?.userId).filter((id): id is string => Boolean(id)))];
+  }
+
+  private typingDraftFor(userId: string, fallbackDisplayName: string): TypingDraft {
+    const attachments = this.socketsFor(userId)
+      .map((socket) => socket.deserializeAttachment())
+      .filter((attachment): attachment is SocketAttachment => Boolean(attachment));
+    const active = attachments.filter((attachment) => attachment.typing && attachment.draft);
+    const candidates = active.length > 0 ? active : attachments.filter((attachment) => attachment.draft);
+    const selected = candidates.sort((a, b) => (b.draftUpdatedAt ?? 0) - (a.draftUpdatedAt ?? 0))[0];
+    return {
+      userId,
+      displayName: selected?.displayName ?? fallbackDisplayName,
+      text: selected?.draft ?? "",
+      typing: active.length > 0,
+      updatedAt: Math.max(0, ...attachments.map((attachment) => attachment.draftUpdatedAt ?? 0)),
+    };
+  }
+
+  private nextDraftUpdatedAt(): number {
+    return Math.max(
+      Date.now(),
+      ...this.sockets().map((socket) => (socket.deserializeAttachment()?.draftUpdatedAt ?? 0) + 1),
+    );
+  }
+
+  private typingDrafts(): TypingDraft[] {
+    const users = new Map<string, string>();
+    for (const socket of this.sockets()) {
+      if (socket.readyState !== WebSocket.OPEN) continue;
+      const attachment = socket.deserializeAttachment();
+      if (attachment) users.set(attachment.userId, attachment.displayName);
+    }
+    return [...users].map(([userId, displayName]) => this.typingDraftFor(userId, displayName)).filter((draft) => draft.text || draft.typing);
+  }
+
+  private broadcastUserDraft(userId: string, displayName: string): void {
+    this.broadcast({ type: "typing.changed", draft: this.typingDraftFor(userId, displayName) });
   }
 
   private broadcast(event: PresenceEvent, except?: WebSocket): void {

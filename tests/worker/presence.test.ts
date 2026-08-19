@@ -35,14 +35,14 @@ describe("SessionPresence Durable Object", () => {
   it("broadcasts presence and deduplicates multiple tabs", async () => {
     const stub = env.SESSION_PRESENCE.get(env.SESSION_PRESENCE.idFromName("room-tabs"));
     const first = await connect(stub, "user-one", "One");
-    expect(first.initial).toEqual({ type: "presence.snapshot", onlineUserIds: ["user-one"] });
+    expect(first.initial).toEqual({ type: "presence.snapshot", onlineUserIds: ["user-one"], typingDrafts: [] });
 
     const second = await connect(stub, "user-one", "One");
-    expect(second.initial).toEqual({ type: "presence.snapshot", onlineUserIds: ["user-one"] });
+    expect(second.initial).toEqual({ type: "presence.snapshot", onlineUserIds: ["user-one"], typingDrafts: [] });
 
     const changed = nextMessage(first.socket);
     const other = await connect(stub, "user-two", "Two");
-    expect(other.initial).toEqual({ type: "presence.snapshot", onlineUserIds: expect.arrayContaining(["user-one", "user-two"]) });
+    expect(other.initial).toEqual({ type: "presence.snapshot", onlineUserIds: expect.arrayContaining(["user-one", "user-two"]), typingDrafts: [] });
     await expect(changed).resolves.toEqual({ type: "presence.changed", userId: "user-two", online: true });
 
     first.socket.close(1000, "first tab closed");
@@ -62,7 +62,7 @@ describe("SessionPresence Durable Object", () => {
     await expect(notification).resolves.toEqual({ type: "members.changed" });
 
     const second = await connect(stub, "user-two", "Two");
-    expect(second.initial).toEqual({ type: "presence.snapshot", onlineUserIds: expect.arrayContaining(["user-one", "user-two"]) });
+    expect(second.initial).toEqual({ type: "presence.snapshot", onlineUserIds: expect.arrayContaining(["user-one", "user-two"]), typingDrafts: [] });
     first.socket.close(1000, "done");
     second.socket.close(1000, "done");
   });
@@ -93,6 +93,51 @@ describe("SessionPresence Durable Object", () => {
     expect(response.status).toBe(204);
     await expect(notification).resolves.toEqual({ type: "floor.changed", revision: 7, domains: ["agents", "queue"] });
     first.socket.close(1000, "done");
+  });
+
+  it("broadcasts ephemeral drafts and preserves a draft across hibernation", async () => {
+    const stub = env.SESSION_PRESENCE.get(env.SESSION_PRESENCE.idFromName("room-drafts"));
+    const author = await connect(stub, "user-one", "One");
+    const observer = await connect(stub, "user-two", "Two");
+    const authorChanged = nextMessage(author.socket);
+    const observerChanged = nextMessage(observer.socket);
+    author.socket.send(JSON.stringify({ type: "typing.update", text: "Working together", typing: true }));
+    const expected = expect.objectContaining({
+      type: "typing.changed",
+      draft: expect.objectContaining({ userId: "user-one", displayName: "One", text: "Working together", typing: true }),
+    });
+    await expect(authorChanged).resolves.toEqual(expected);
+    await expect(observerChanged).resolves.toEqual(expected);
+
+    await evictDurableObject(stub);
+    const restored = await connect(stub, "user-three", "Three");
+    expect(restored.initial).toEqual(expect.objectContaining({
+      type: "presence.snapshot",
+      typingDrafts: [expect.objectContaining({ userId: "user-one", text: "Working together", typing: true })],
+    }));
+    author.socket.close(1000, "done");
+    observer.socket.close(1000, "done");
+    restored.socket.close(1000, "done");
+  });
+
+  it("keeps another tab's draft when one tab closes", async () => {
+    const stub = env.SESSION_PRESENCE.get(env.SESSION_PRESENCE.idFromName("room-draft-tabs"));
+    const first = await connect(stub, "user-one", "One");
+    const second = await connect(stub, "user-one", "One");
+    const observer = await connect(stub, "user-two", "Two");
+
+    const firstUpdate = nextMessage(observer.socket);
+    first.socket.send(JSON.stringify({ type: "typing.update", text: "First tab", typing: true }));
+    await firstUpdate;
+    const secondUpdate = nextMessage(observer.socket);
+    second.socket.send(JSON.stringify({ type: "typing.update", text: "Second tab", typing: true }));
+    await expect(secondUpdate).resolves.toEqual(expect.objectContaining({ draft: expect.objectContaining({ text: "Second tab", typing: true }) }));
+
+    const restored = nextMessage(observer.socket);
+    second.socket.close(1000, "second tab closed");
+    await expect(restored).resolves.toEqual(expect.objectContaining({ draft: expect.objectContaining({ text: "First tab", typing: true }) }));
+    first.socket.close(1000, "done");
+    observer.socket.close(1000, "done");
   });
 });
 

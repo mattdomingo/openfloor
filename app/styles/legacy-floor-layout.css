@@ -384,6 +384,7 @@
   align-items: stretch;
   gap: var(--space-3);
   padding: var(--space-2) var(--space-6);
+  overflow-x: auto;
 }
 
 /* Status line ------------------------------------------------------------
@@ -540,4 +541,3 @@
     flex-direction: column;
   }
 }
-

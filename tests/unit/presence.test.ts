@@ -3,7 +3,7 @@ import { reducePresence } from "@/lib/presence";
 
 describe("presence event reduction", () => {
   it("replaces state from a snapshot", () => {
-    expect([...reducePresence(new Set(["old"]), { type: "presence.snapshot", onlineUserIds: ["one", "two"] })]).toEqual(["one", "two"]);
+    expect([...reducePresence(new Set(["old"]), { type: "presence.snapshot", onlineUserIds: ["one", "two"], typingDrafts: [] })]).toEqual(["one", "two"]);
   });
 
   it("adds and removes individual users", () => {
