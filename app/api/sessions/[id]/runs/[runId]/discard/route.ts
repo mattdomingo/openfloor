@@ -3,6 +3,7 @@ import { getGitHubAppConfig } from "@/db";
 import { getFloorSnapshot } from "@/db/floor";
 import { getRunDiscardContext, markRunDiscarded } from "@/db/runs";
 import { createInstallationToken, deleteTestRepositoryBranchIfMatches, getRepositoryRefSha, GitHubApiError } from "@/lib/github";
+import { githubGitAuthorization } from "@/lib/github-git-auth";
 import { notifyFloorChanged } from "@/lib/presence-server";
 import { isApiError, requireApiUser } from "@/lib/server-auth";
 import type { GitHubRepositoryOption } from "@/lib/session-types";
@@ -37,19 +38,26 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
       const sandbox = getSandbox(bindings.SANDBOX, `discard-${runId}`, { keepAlive: false, enableDefaultSession: false, normalizeId: true });
       try {
         const token = await createInstallationToken(config, context.installationId, context.repositoryId);
+        const authorization = githubGitAuthorization(token);
         const result = await sandbox.exec(
           `rm -rf /tmp/openfloor-discard && mkdir /tmp/openfloor-discard && cd /tmp/openfloor-discard && git init -q &&
            git remote add origin "$OPENFLOOR_REPOSITORY_URL" &&
-           git -c credential.helper= -c "http.extraHeader=Authorization: Bearer $OPENFLOOR_GITHUB_TOKEN" push
+           git -c credential.helper= -c "http.extraHeader=$OPENFLOOR_GIT_AUTHORIZATION" push
              "--force-with-lease=refs/heads/$OPENFLOOR_RUN_BRANCH:$OPENFLOOR_EXPECTED_SHA" origin ":refs/heads/$OPENFLOOR_RUN_BRANCH"`,
           { timeout: 2 * 60 * 1000, env: {
             OPENFLOOR_REPOSITORY_URL: `https://github.com/${context.repositoryOwner}/${context.repositoryName}.git`,
-            OPENFLOOR_GITHUB_TOKEN: token,
+            OPENFLOOR_GIT_AUTHORIZATION: authorization,
             OPENFLOOR_RUN_BRANCH: context.runBranch,
             OPENFLOOR_EXPECTED_SHA: context.runCommitSha,
           } },
         );
-        if (!result.success) return Response.json({ error: "GitHub changed this run branch; OpenFloor refused to delete it" }, { status: 409 });
+        if (!result.success) {
+          const leaseMismatch = /stale info|fetch first|non-fast-forward/i.test(`${result.stdout}\n${result.stderr}`);
+          return Response.json(
+            { error: leaseMismatch ? "GitHub changed this run branch; OpenFloor refused to delete it" : "GitHub rejected the authenticated branch deletion" },
+            { status: leaseMismatch ? 409 : 502 },
+          );
+        }
       } finally {
         await sandbox.destroy().catch(() => undefined);
       }

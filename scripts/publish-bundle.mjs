@@ -1,5 +1,6 @@
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
+import { githubGitAuthorization } from "./github-git-auth.mjs";
 
 const required = ["OPENFLOOR_PUBLISH_ROOT", "OPENFLOOR_BUNDLE_PATH", "OPENFLOOR_REPOSITORY_URL", "OPENFLOOR_GITHUB_TOKEN", "OPENFLOOR_CANDIDATE_BRANCH", "OPENFLOOR_CANDIDATE_SHA", "OPENFLOOR_RUN_BRANCH", "OPENFLOOR_EXPECTED_PATHS", "OPENFLOOR_RESULT_PATH", "OPENFLOOR_COMMIT_DATE", "OPENFLOOR_RUN_ID"];
 for (const name of required) if (!process.env[name]) throw new Error(`Missing publisher setting: ${name}`);
@@ -13,7 +14,7 @@ const candidateSha = process.env.OPENFLOOR_CANDIDATE_SHA;
 const runBranch = process.env.OPENFLOOR_RUN_BRANCH;
 const resultPath = process.env.OPENFLOOR_RESULT_PATH;
 const expectedPaths = JSON.parse(process.env.OPENFLOOR_EXPECTED_PATHS);
-const auth = `Authorization: Bearer ${token}`;
+const auth = githubGitAuthorization(token);
 const fixedIdentity = {
   GIT_AUTHOR_NAME: "OpenFloor Agent",
   GIT_AUTHOR_EMAIL: "runtime@opnflr.com",

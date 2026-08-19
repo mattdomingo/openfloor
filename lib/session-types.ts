@@ -62,6 +62,12 @@ export type RepositoryCandidate = {
   candidateSha: string | null;
   remoteBaseSha: string | null;
   remoteCandidateSha: string | null;
+  integrationRunId: string | null;
+  pullRequestNumber: number | null;
+  pullRequestNodeId: string | null;
+  pullRequestUrl: string | null;
+  pullRequestState: "open" | "closed" | null;
+  pullRequestDraft: boolean | null;
   status: "creating" | "active" | "creation_failed";
   createdBy: string;
   createdAt: number;

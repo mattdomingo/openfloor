@@ -8,8 +8,16 @@ import {
   listInstallationRepositories,
   type GitHubAppConfig,
 } from "@/lib/github";
+import { githubGitAuthorization } from "@/lib/github-git-auth";
 
 describe("GitHub App client", () => {
+  it("encodes installation tokens for Git-over-HTTPS basic authentication", () => {
+    expect(githubGitAuthorization("ghs_example-token")).toBe(
+      `Authorization: Basic ${btoa("x-access-token:ghs_example-token")}`,
+    );
+    expect(() => githubGitAuthorization("bad\ntoken")).toThrow("Invalid GitHub installation token");
+  });
+
   it("accepts the PKCS#1 PEM format downloaded from GitHub", async () => {
     const { privateKey } = generateKeyPairSync("rsa", {
       modulusLength: 2048,

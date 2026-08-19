@@ -3,6 +3,14 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { githubGitAuthorization } from "../../scripts/github-git-auth.mjs";
+
+it("uses GitHub App installation tokens as the Git HTTPS password", () => {
+  expect(githubGitAuthorization("ghs_example-token")).toBe(
+    `Authorization: Basic ${Buffer.from("x-access-token:ghs_example-token").toString("base64")}`,
+  );
+  expect(() => githubGitAuthorization("bad\ntoken")).toThrow("Invalid GitHub installation token");
+});
 
 describe("trusted Git bundle publisher", () => {
   it("validates a single recorded change and publishes it on the exact candidate parent", () => {

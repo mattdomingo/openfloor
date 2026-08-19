@@ -54,7 +54,7 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
       normalizeId: true,
       labels: { sessionId: context.sessionId, runId },
     });
-    const publisher = getSandbox(this.env.SANDBOX, `publisher-${runId}`, {
+    const publisher = getSandbox(this.env.SANDBOX, `publisher-${event.instanceId}`, {
       keepAlive: true,
       enableDefaultSession: false,
       normalizeId: true,
@@ -63,6 +63,15 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
     let finalStatus: "ready" | "failed" | "cancelled" = "failed";
     let summary = "Agent run failed before Codex completed.";
     try {
+      if (context.status === "publishing") {
+        if (!context.bundleKey || !context.localCommitSha || context.files.length === 0) {
+          throw new Error("Stored publication metadata is incomplete");
+        }
+        const published = await this.publishBundle(runId, context, context.files, { localCommitSha: context.localCommitSha }, publisher, step);
+        const completion = await finishRunPublished(runId, published.commitSha, published.remoteSha, this.env.DB);
+        if (completion) await notifyFloorChanged(completion.sessionId, completion.revision, ["queue", "runs", "review"]);
+        return { status: "published" };
+      }
       if (await isRunCancellationRequested(runId, this.env.DB)) {
         finalStatus = "cancelled";
         summary = "Agent run cancelled before provisioning completed.";
@@ -262,49 +271,7 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
         return { bundleKey, bundleSizeBytes, localCommitSha };
       });
 
-      const published = await step.do("validate and publish run branch", { retries: { limit: 3, delay: "10 seconds", backoff: "exponential" }, timeout: "20 minutes" }, async () => {
-        if (!context.runBranch) throw new Error("Run branch was not generated");
-        const config = getGitHubAppConfig();
-        const githubToken = await createInstallationToken(config, context.installationId, context.repositoryId);
-        const bundleToken = await signRunGatewayToken({
-          runId, sessionId: context.sessionId, repositoryId: context.repositoryId,
-          candidateSha: context.candidateSha, operation: "bundle_read",
-        }, this.env.RUNTIME_GATEWAY_SECRET);
-        const bundlePath = `/tmp/openfloor-${runId}.bundle`;
-        const resultPath = `/tmp/openfloor-${runId}.json`;
-        const download = await publisher.exec(
-          `curl --fail --silent --show-error --max-time 300 -H "Authorization: Bearer $OPENFLOOR_BUNDLE_TOKEN" "$OPENFLOOR_BUNDLE_URL" -o "$OPENFLOOR_BUNDLE_PATH" &&
-           node /opt/openfloor/publish-bundle.mjs`,
-          { timeout: 18 * 60 * 1000, env: {
-            OPENFLOOR_BUNDLE_TOKEN: bundleToken,
-            OPENFLOOR_BUNDLE_URL: `${this.env.OPENFLOOR_RUNTIME_ORIGIN}/runtime/run/bundle`,
-            OPENFLOOR_BUNDLE_PATH: bundlePath,
-            OPENFLOOR_PUBLISH_ROOT: `/workspace/publisher-${runId}`,
-            OPENFLOOR_REPOSITORY_URL: `https://github.com/${context.repositoryOwner}/${context.repositoryName}.git`,
-            OPENFLOOR_GITHUB_TOKEN: githubToken,
-            OPENFLOOR_CANDIDATE_BRANCH: context.candidateBranch,
-            OPENFLOOR_CANDIDATE_SHA: context.candidateSha,
-            OPENFLOOR_RUN_BRANCH: context.runBranch,
-            OPENFLOOR_EXPECTED_PATHS: JSON.stringify(files.map((file) => file.path)),
-            OPENFLOOR_RESULT_PATH: resultPath,
-            OPENFLOOR_COMMIT_DATE: new Date(context.createdAt).toISOString(),
-            OPENFLOOR_RUN_ID: runId,
-          } },
-        );
-        if (!download.success) throw new Error(`Trusted bundle publication failed: ${download.stderr.slice(-1_000)}`);
-        const resultFile = await publisher.exec(`cat "$OPENFLOOR_RESULT_PATH"`, { timeout: 10_000, env: { OPENFLOOR_RESULT_PATH: resultPath } });
-        const parsed = JSON.parse(resultFile.stdout) as { localCommit?: string; publishedCommit?: string };
-        if (parsed.localCommit !== bundle.localCommitSha || !parsed.publishedCommit || !/^[0-9a-f]{40}$/.test(parsed.publishedCommit)) {
-          throw new Error("Trusted publisher returned inconsistent commit metadata");
-        }
-        const repository: GitHubRepositoryOption = {
-          id: context.repositoryId, nodeId: "workflow-not-required", owner: context.repositoryOwner,
-          name: context.repositoryName, fullName: context.repositoryFullName, private: true, defaultBranch: context.candidateBranch,
-        };
-        const remoteSha = await getRepositoryRefSha(config, context.installationId, repository, context.runBranch);
-        if (remoteSha !== parsed.publishedCommit) throw new Error("Published run branch did not reconcile with GitHub");
-        return { commitSha: parsed.publishedCommit, remoteSha };
-      });
+      const published = await this.publishBundle(runId, context, files, bundle, publisher, step);
       const completion = await finishRunPublished(runId, published.commitSha, published.remoteSha, this.env.DB);
       if (completion) await notifyFloorChanged(completion.sessionId, completion.revision, ["queue", "runs", "review"]);
       return { status: "published" };
@@ -335,6 +302,59 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
   private async notify(runId: string) {
     const update = await bumpAgentRunRevision(runId, this.env.DB);
     if (update) await notifyFloorChanged(update.sessionId, update.revision, ["queue", "runs", "review"]);
+  }
+
+  private async publishBundle(
+    runId: string,
+    context: NonNullable<Awaited<ReturnType<typeof getRunExecutionContext>>>,
+    files: Array<{ path: string }>,
+    bundle: { localCommitSha: string },
+    publisher: Sandbox,
+    step: WorkflowStep,
+  ) {
+    return step.do("validate and publish run branch", { retries: { limit: 3, delay: "10 seconds", backoff: "exponential" }, timeout: "20 minutes" }, async () => {
+      if (!context.runBranch) throw new Error("Run branch was not generated");
+      const config = getGitHubAppConfig();
+      const githubToken = await createInstallationToken(config, context.installationId, context.repositoryId);
+      const bundleToken = await signRunGatewayToken({
+        runId, sessionId: context.sessionId, repositoryId: context.repositoryId,
+        candidateSha: context.candidateSha, operation: "bundle_read",
+      }, this.env.RUNTIME_GATEWAY_SECRET);
+      const bundlePath = `/tmp/openfloor-${runId}.bundle`;
+      const resultPath = `/tmp/openfloor-${runId}.json`;
+      const download = await publisher.exec(
+        `curl --fail --silent --show-error --max-time 300 -H "Authorization: Bearer $OPENFLOOR_BUNDLE_TOKEN" "$OPENFLOOR_BUNDLE_URL" -o "$OPENFLOOR_BUNDLE_PATH" &&
+         node /opt/openfloor/publish-bundle.mjs`,
+        { timeout: 18 * 60 * 1000, env: {
+          OPENFLOOR_BUNDLE_TOKEN: bundleToken,
+          OPENFLOOR_BUNDLE_URL: `${this.env.OPENFLOOR_RUNTIME_ORIGIN}/runtime/run/bundle`,
+          OPENFLOOR_BUNDLE_PATH: bundlePath,
+          OPENFLOOR_PUBLISH_ROOT: `/workspace/publisher-${runId}`,
+          OPENFLOOR_REPOSITORY_URL: `https://github.com/${context.repositoryOwner}/${context.repositoryName}.git`,
+          OPENFLOOR_GITHUB_TOKEN: githubToken,
+          OPENFLOOR_CANDIDATE_BRANCH: context.candidateBranch,
+          OPENFLOOR_CANDIDATE_SHA: context.candidateSha,
+          OPENFLOOR_RUN_BRANCH: context.runBranch,
+          OPENFLOOR_EXPECTED_PATHS: JSON.stringify(files.map((file) => file.path)),
+          OPENFLOOR_RESULT_PATH: resultPath,
+          OPENFLOOR_COMMIT_DATE: new Date(context.createdAt).toISOString(),
+          OPENFLOOR_RUN_ID: runId,
+        } },
+      );
+      if (!download.success) throw new Error(`Trusted bundle publication failed: ${download.stderr.slice(-1_000)}`);
+      const resultFile = await publisher.exec(`cat "$OPENFLOOR_RESULT_PATH"`, { timeout: 10_000, env: { OPENFLOOR_RESULT_PATH: resultPath } });
+      const parsed = JSON.parse(resultFile.stdout) as { localCommit?: string; publishedCommit?: string };
+      if (parsed.localCommit !== bundle.localCommitSha || !parsed.publishedCommit || !/^[0-9a-f]{40}$/.test(parsed.publishedCommit)) {
+        throw new Error("Trusted publisher returned inconsistent commit metadata");
+      }
+      const repository: GitHubRepositoryOption = {
+        id: context.repositoryId, nodeId: "workflow-not-required", owner: context.repositoryOwner,
+        name: context.repositoryName, fullName: context.repositoryFullName, private: true, defaultBranch: context.candidateBranch,
+      };
+      const remoteSha = await getRepositoryRefSha(config, context.installationId, repository, context.runBranch);
+      if (remoteSha !== parsed.publishedCommit) throw new Error("Published run branch did not reconcile with GitHub");
+      return { commitSha: parsed.publishedCommit, remoteSha };
+    });
   }
 
   private async complete(runId: string, status: "ready" | "failed" | "cancelled", summary: string) {

@@ -109,6 +109,11 @@ export type AgentRun = {
   startedAt: number | null;
   completedAt: number | null;
   publishedAt: number | null;
+  integrationBaseSha: string | null;
+  integratedCandidateSha: string | null;
+  conflictReason: string | null;
+  integrationStartedAt: number | null;
+  integratedAt: number | null;
   discardedAt: number | null;
   cancelRequestedAt: number | null;
   updatedAt: number;
@@ -135,6 +140,7 @@ export type FloorReviewSnapshot = {
   checks: Array<{ id: string; name: string; detail: string | null; state: "passed" | "waiting" | "failed" }>;
   warnings: Array<{ id: string; title: string; detail: string; severity: "conflict" | "warning" }>;
   updatedAt: number;
+  pullRequest: { number: number; url: string; state: "open" | "closed"; draft: boolean } | null;
 };
 
 export type FloorSnapshot = {

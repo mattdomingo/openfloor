@@ -405,7 +405,7 @@ Do not hand-edit Drizzle metadata. If a generated migration is wrong, correct th
 - Each run snapshots ordered required checks. D1 stores bounded output excerpts, file metadata, and diff previews; complete bounded Codex logs, check logs, and diffs stay in private R2.
 - `ready` means checks passed locally; Phase 5 immediately moves through `publishing` to `published` after trusted validation and GitHub reconciliation. The queue item stays `blocked` pending Phase 6 integration; failed or cancelled runs restore it to `queued`.
 - Each new run stores a server-generated run branch, bundle key/size, local bundle commit, trusted published commit, observed remote SHA, publication time, and nullable discard audit fields. Older Phase 4 runs may have null publication fields.
-- The agent Sandbox uploads a bounded incremental bundle through an operation-scoped JWT. A separate clean publisher Sandbox reconstructs the deterministic archive baseline from the exact candidate tree, verifies one ref and one result commit, compares the recorded file set, enforces object/file limits, and performs a fixed non-force push with a repository-limited token.
+- The agent Sandbox uploads a bounded incremental bundle through an operation-scoped JWT. A separate clean publisher Sandbox reconstructs the deterministic archive baseline from the exact candidate tree, verifies one ref and one result commit, compares the recorded file set, enforces object/file limits, and performs a fixed non-force push with a repository-limited token. Git-over-HTTPS authenticates with `x-access-token` plus the installation token as the HTTP Basic password; REST-style Bearer authentication is not valid for this Git transport. Restarting a Workflow whose run is already `publishing` resumes from the stored bundle and file metadata without rerunning Codex or checks.
 - Discard reads the current remote ref and deletes with `--force-with-lease=<expected-sha>` only when the server-generated branch and recorded/reconciled SHAs still match. D1/R2 audit history remains.
 - Workflow-file changes under `.github/workflows/` are rejected because the GitHub App has no Workflows permission.
 
@@ -1159,6 +1159,14 @@ After Phase 5 is deployed and accepted in the browser, the next milestone is Pha
 **Rationale:** GitHub's REST ref deletion endpoint has no conditional expected-SHA parameter, leaving a race between read and delete. A Git lease makes the remote head comparison atomic with deletion.
 
 **Consequences:** External push webhooks update each run's observed remote SHA. Any mismatch, missing branch, wrong status, non-OpenFloor ref, or lease failure returns a conflict and preserves the branch. Successful discard deletes only the GitHub ref; all run, check, file, diff, bundle, event, and attribution records remain durable.
+
+### 2026-08-19 — Resume publication from durable bundle state
+
+**Decision:** GitHub installation tokens authenticate Git-over-HTTPS as the password for the fixed `x-access-token` username, encoded as an HTTP Basic authorization header that is never written into the repository URL. A restarted run Workflow detects `publishing` and resumes validation/publication from its stored bundle, recorded files, and local commit instead of rerunning Codex or checks.
+
+**Rationale:** GitHub's REST API accepts Bearer tokens, but its documented Git transport uses the installation token as an HTTP password. Publication is a distinct recoverable stage, and repeating paid agent execution after a transport or deployment failure would be slow and could produce different code.
+
+**Consequences:** Each Workflow instance receives a distinct publisher Sandbox identity so a recovery cannot reuse a stale container image. The clean publisher and discard Sandbox receive the short-lived Git credential only through their process environments; Git clone, push, and conditional deletion all use the same HTTP Basic transport contract, while REST calls continue to use Bearer authentication. Error messages never include the header or token and distinguish an actual expected-SHA lease mismatch from authentication or transport failure. Publication retries remain idempotent because an existing run ref is accepted only at the exact trusted commit, and the Workflow reconciles the remote SHA before recording success.
 
 ## How to record the next decision
 

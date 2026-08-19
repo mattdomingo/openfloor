@@ -110,7 +110,8 @@ export async function getRunExecutionContext(runId: string, database = getDb()) 
   const run = await database.prepare(
     `SELECT r.id, r.session_id AS sessionId, r.queue_item_id AS queueItemId, r.agent_id AS agentId,
             r.candidate_sha AS candidateSha, r.status, r.sandbox_id AS sandboxId,
-            r.run_branch AS runBranch, r.bundle_key AS bundleKey,
+            r.run_branch AS runBranch, r.bundle_key AS bundleKey, r.bundle_size_bytes AS bundleSizeBytes,
+            r.local_commit_sha AS localCommitSha,
             r.sandbox_process_id AS sandboxProcessId, r.model,
             r.created_at AS createdAt,
             s.title AS sessionTitle, s.objective, a.name AS agentName, a.role AS agentRole, a.task AS agentTask,
@@ -126,7 +127,7 @@ export async function getRunExecutionContext(runId: string, database = getDb()) 
      WHERE r.id = ?`,
   ).bind(runId).first<{
     id: string; sessionId: string; queueItemId: string; agentId: string; candidateSha: string; status: AgentRunStatus;
-    runBranch: string; bundleKey: string | null; createdAt: number;
+    runBranch: string; bundleKey: string | null; bundleSizeBytes: number | null; localCommitSha: string | null; createdAt: number;
     sandboxId: string; sandboxProcessId: string | null; model: string; sessionTitle: string; objective: string | null;
     agentName: string; agentRole: string; agentTask: string; installationId: string; repositoryId: string;
     repositoryOwner: string; repositoryName: string; repositoryFullName: string; candidateBranch: string;
@@ -138,7 +139,12 @@ export async function getRunExecutionContext(runId: string, database = getDb()) 
   ).bind(run.queueItemId).all<{ text: string; authorName: string }>();
   const checks = await database.prepare("SELECT id, position, command FROM agent_run_checks WHERE run_id = ? ORDER BY position")
     .bind(runId).all<{ id: string; position: number; command: string }>();
-  return { ...run, prompts: prompts.results, checks: checks.results.map((check) => ({ ...check, position: Number(check.position) })) };
+  return {
+    ...run,
+    prompts: prompts.results,
+    checks: checks.results.map((check) => ({ ...check, position: Number(check.position) })),
+    files: await getRunFiles(runId, database),
+  };
 }
 
 export async function markRunRunning(runId: string, processId: string | null, database = getDb()): Promise<void> {
