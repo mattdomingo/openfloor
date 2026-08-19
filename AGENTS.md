@@ -20,6 +20,18 @@ Examples that require an `AGENTS.md` update:
 
 Small implementation details do not need a decision-log entry, but this document must stay factually correct. When uncertain, update it. Add new decisions to the decision log near the end of this file, including the date, decision, rationale, and consequences. If a decision supersedes an older one, preserve the history and mark the old entry as superseded rather than silently deleting it.
 
+### Repository-execution milestone delivery protocol
+
+The GitHub repository and agent-execution milestone is delivered one accepted phase at a time. Every phase must:
+
+1. Contain only that phase's documented functionality; do not pre-implement later phases behind hidden UI or dormant production paths.
+2. Pass the complete automated test pipeline before handoff.
+3. Deploy to the isolated development environment when its browser acceptance flow depends on GitHub, Cloudflare runtime resources, or OpenAI.
+4. End with browser-based acceptance instructions that exercise the newly real end-to-end behavior.
+5. Stop after handoff until the user explicitly accepts the phase.
+
+The implementation plan currently has seven phases: GitHub connection; candidate workspace and reconciliation; sandbox preflight; local Codex candidate generation; run-branch publication; automatic integration and draft pull request; and final review, squash merge, and cleanup. Update this protocol and the decision log if that sequence is deliberately superseded.
+
 ## Read this first
 
 Before changing code:
@@ -923,6 +935,14 @@ Do not begin by filling the existing UI with guessed fields. Define the authorit
 **Rationale:** Teams benefit from seeing concurrent intent before submission, but unfinished text should not become durable floor history.
 
 **Consequences:** Drafts clear on submission/navigation/disconnect, are bounded to 4,000 characters, survive Durable Object hibernation only while sockets exist, and never enter D1. Hidden affects local viewing, not outbound sharing.
+
+### 2026-08-19 — Deliver repository execution through accepted end-to-end phases
+
+**Decision:** Build the repository and agent-execution milestone as seven sequential, user-accepted phases. Each phase must introduce a real browser-testable capability, pass the full test pipeline, and stop for explicit acceptance before the next phase begins.
+
+**Rationale:** Repository credentials, remote Git refs, isolated execution, agent-authored code, integration, and merge each expand the product's authority and failure surface. Independent acceptance gates keep every expansion observable, testable, and reversible before more authority is added.
+
+**Consequences:** Phase 1 begins with this workflow rule and may implement only the isolated development environment and GitHub connection. Later runtime, branch, review, and merge capabilities must remain absent until their named phase. Each phase must keep this document, the focused gap document, setup instructions, tests, and browser acceptance steps synchronized with what is genuinely implemented.
 
 ## How to record the next decision
 
