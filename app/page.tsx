@@ -27,7 +27,7 @@ export default async function LandingPage({ searchParams }: { searchParams: Prom
           OpenFloor gives a team one durable session for its objective, members, live presence, and connected
           repository.
         </p>
-        {authRequired && <p className="landing-auth-note" role="status">Sign in to open that page. You will be sent back to it.</p>}
+        {authRequired && <p className="landing-auth-note" role="status">Sign in to open that page. You will be sent back to it. Sign-in happens on a Cloudflare Access screen — continue with Google or a one-time code sent to your email.</p>}
         <div className="landing-actions">
           <a className="button" data-variant="primary" data-size="lg" href={primaryHref}>
             {user ? "Go to your sessions" : "Sign in"}
