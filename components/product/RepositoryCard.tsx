@@ -254,7 +254,21 @@ export function RepositoryCard({
       {!repository && !editing && (
         <>
           <p>No repository is connected yet. Connect GitHub so this session has a repository to work in.</p>
-          {role === "owner" && <button className="button" data-variant="primary" onClick={connect} disabled={busy}>Connect GitHub</button>}
+          {role === "owner" ? (
+            <>
+              <div className="repository-checks">
+                <span>What to expect</span>
+                <ol>
+                  <li>Connect GitHub opens github.com to install the OpenFloor App — you leave this page and return here when the install finishes.</li>
+                  <li>During the install, choose which repositories the App may access. Some organizations require an admin to approve it first.</li>
+                  <li>Back here, pick the repository and base branch, then save. Check commands are optional now, but agents cannot execute until at least one is configured.</li>
+                </ol>
+              </div>
+              <button className="button" data-variant="primary" onClick={connect} disabled={busy}>Connect GitHub</button>
+            </>
+          ) : (
+            <p className="repository-checks">Only the session owner can connect GitHub. Ask them to set it up from this page.</p>
+          )}
         </>
       )}
       {repository && !editing && (
