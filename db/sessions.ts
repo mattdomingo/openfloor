@@ -345,6 +345,34 @@ export async function leaveSession(
   return "left";
 }
 
+export const ENDED_SESSION_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+
+export async function purgeExpiredSessions(database = getDb(), now = Date.now()): Promise<number> {
+  // Every session-scoped child cascades on sessions.id, so one statement
+  // clears the whole graph. Only ended sessions expire: silently deleting a
+  // live room someone may return to is worse than list clutter.
+  // ponytail: unbatched DELETE — add a LIMIT loop only if row counts demand it.
+  const result = await database
+    .prepare("DELETE FROM sessions WHERE ended_at IS NOT NULL AND ended_at < ?")
+    .bind(now - ENDED_SESSION_RETENTION_MS)
+    .run();
+  // meta.changes includes cascade-deleted children; informational only.
+  return result.meta?.changes ?? 0;
+}
+
+export async function deleteSession(
+  sessionId: string,
+  userId: string,
+  database = getDb(),
+): Promise<"deleted" | "forbidden" | "missing"> {
+  // Plain guard on purpose: deleting must work on ended sessions too.
+  const role = await getMembershipRole(sessionId, userId, database);
+  if (!role) return "missing";
+  if (role !== "owner") return "forbidden";
+  await database.prepare("DELETE FROM sessions WHERE id = ?").bind(sessionId).run();
+  return "deleted";
+}
+
 export async function authorizePresence(
   sessionId: string,
   providerUserId: string,

@@ -1,6 +1,6 @@
-import { updateSessionObjective } from "@/db/sessions";
+import { deleteSession, updateSessionObjective } from "@/db/sessions";
 import { mutationErrorResponse } from "@/lib/floor-api";
-import { notifySessionChanged } from "@/lib/presence-server";
+import { notifyMembersChanged, notifySessionChanged } from "@/lib/presence-server";
 import { isApiError, requireApiUser } from "@/lib/server-auth";
 import { parseObjectiveInput } from "@/lib/validation";
 
@@ -26,4 +26,16 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   } catch (error) {
     return mutationErrorResponse(error);
   }
+}
+
+export async function DELETE(_request: Request, { params }: { params: Promise<{ id: string }> }) {
+  const user = await requireApiUser();
+  if (isApiError(user)) return user;
+  const sessionId = (await params).id;
+  const result = await deleteSession(sessionId, user.id);
+  if (result === "missing") return Response.json({ error: "Session not found" }, { status: 404 });
+  if (result === "forbidden") return Response.json({ error: "Only the owner can delete this session" }, { status: 403 });
+  // members.changed makes open tabs refetch, hit the 404, and leave for /home.
+  await notifyMembersChanged(sessionId);
+  return new Response(null, { status: 204 });
 }

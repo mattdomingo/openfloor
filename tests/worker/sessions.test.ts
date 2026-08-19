@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import {
   acceptInvite,
   createSession,
+  deleteSession,
+  ENDED_SESSION_RETENTION_MS,
   endSession,
   getActiveInviteId,
   getInvitePreview,
@@ -10,6 +12,7 @@ import {
   getSessionMembers,
   leaveSession,
   listSessionsForUser,
+  purgeExpiredSessions,
   revokeInvite,
   rotateInvite,
   SessionEndedError,
@@ -166,6 +169,40 @@ describe("D1 session persistence", () => {
     expect(await getFloorSnapshot(created.session.id, member.id, env.DB)).not.toBeNull();
     expect((await getSessionForMember(created.session.id, member.id, env.DB))?.objective).toBe("Before");
     await expect(leaveSession(created.session.id, member.id, env.DB)).resolves.toBe("left");
+  });
+
+  it("purges only ended sessions past the retention window", async () => {
+    const owner = await upsertUser(identity("purge-owner", "Owner"), env.DB);
+    const stale = await createSession(owner.id, { title: "Stale ended", objective: null }, env.DB);
+    const fresh = await createSession(owner.id, { title: "Fresh ended", objective: null }, env.DB);
+    const active = await createSession(owner.id, { title: "Still active", objective: null }, env.DB);
+    await endSession(stale.session.id, owner.id, env.DB);
+    await endSession(fresh.session.id, owner.id, env.DB);
+    await env.DB.prepare("UPDATE sessions SET ended_at = ? WHERE id = ?")
+      .bind(Date.now() - ENDED_SESSION_RETENTION_MS - 1_000, stale.session.id)
+      .run();
+
+    // meta.changes counts cascade-deleted children too, so assert on outcomes.
+    expect(await purgeExpiredSessions(env.DB)).toBeGreaterThanOrEqual(1);
+
+    const remaining = await listSessionsForUser(owner.id, env.DB);
+    expect(remaining.map((session) => session.id).sort()).toEqual([active.session.id, fresh.session.id].sort());
+    // Cascade sanity: the purged session's graph is gone with it.
+    expect(await getSessionForMember(stale.session.id, owner.id, env.DB)).toBeNull();
+    expect(await getInvitePreview(stale.inviteId, env.DB)).toBeNull();
+  });
+
+  it("lets only owners hard-delete sessions, including ended ones", async () => {
+    const owner = await upsertUser(identity("delete-owner", "Owner"), env.DB);
+    const member = await upsertUser(identity("delete-member", "Member"), env.DB);
+    const created = await createSession(owner.id, { title: "Doomed room", objective: null }, env.DB);
+    await acceptInvite(created.inviteId, member.id, env.DB);
+
+    await expect(deleteSession(created.session.id, member.id, env.DB)).resolves.toBe("forbidden");
+    await endSession(created.session.id, owner.id, env.DB);
+    await expect(deleteSession(created.session.id, owner.id, env.DB)).resolves.toBe("deleted");
+    expect(await getSessionForMember(created.session.id, owner.id, env.DB)).toBeNull();
+    await expect(deleteSession(created.session.id, owner.id, env.DB)).resolves.toBe("missing");
   });
 
   it("persists one owner-configured repository connection and ordered checks", async () => {

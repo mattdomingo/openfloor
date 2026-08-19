@@ -7,6 +7,7 @@ import {
   requestWithTrustedIdentity,
   type IdentityEnvironment,
 } from "../lib/identity";
+import { purgeExpiredSessions } from "../db/sessions";
 import { handlePresenceRequest, SessionPresence } from "./presence";
 import { RepositoryPreflightWorkflow } from "./preflight-workflow";
 export { Sandbox, ContainerProxy } from "@cloudflare/sandbox";
@@ -73,6 +74,12 @@ const worker = {
     const identity = localDevelopmentIdentity(identityHeaders, env)
       ?? await cloudflareAccessIdentity(identityHeaders, env);
     return handler.fetch(requestWithTrustedIdentity(request, identity), env, ctx);
+  },
+
+  // Daily retention sweep (wrangler.jsonc triggers.crons). Thin by design:
+  // the logic lives in the testable db helper.
+  async scheduled(_controller: unknown, env: Env, ctx: ExecutionContext): Promise<void> {
+    ctx.waitUntil(purgeExpiredSessions(env.DB));
   },
 };
 
