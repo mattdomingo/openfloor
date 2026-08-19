@@ -57,8 +57,8 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await expect(member.locator("li", { hasText: "Owner Example" }).getByText("Online", { exact: true })).toBeVisible();
 
   await owner.getByRole("button", { name: "Connect GitHub" }).click();
-  await expect(owner.getByRole("combobox", { name: "Connected repository" })).toHaveValue("9001");
-  await expect(owner.getByRole("combobox", { name: "Repository base branch" })).toHaveValue("main");
+  await expect(owner.getByRole("combobox", { name: "Connected repository" })).toContainText("openfloor-test/repository-integration");
+  await expect(owner.getByRole("combobox", { name: "Repository base branch" })).toContainText("main");
   await owner.getByRole("button", { name: "Save repository" }).click();
   await expect(owner.getByText("openfloor-test/repository-integration")).toBeVisible();
   await expect(owner.getByText("Not configured", { exact: true })).toBeVisible();
@@ -76,7 +76,7 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await owner.getByRole("button", { name: "Disconnect" }).click();
   await expect(owner.getByText("Disconnected", { exact: true })).toBeVisible();
   await owner.getByRole("button", { name: "Reconnect GitHub" }).click();
-  await expect(owner.getByRole("combobox", { name: "Connected repository" })).toHaveValue("9001");
+  await expect(owner.getByRole("combobox", { name: "Connected repository" })).toContainText("openfloor-test/repository-integration");
   await owner.getByLabel("Required check commands").fill("npm test");
   await owner.getByRole("button", { name: "Save repository" }).click();
   await expect(owner.getByText("Connected", { exact: true })).toBeVisible();
@@ -161,7 +161,8 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await expect(owner.getByText("Unassigned", { exact: true }).first()).toBeVisible();
   await expect(member.getByText("Document the next backend contract")).toBeVisible();
 
-  await owner.getByLabel("Queue target").selectOption({ label: "Lumen" });
+  await owner.getByRole("combobox", { name: "Queue target" }).click();
+  await owner.getByRole("option", { name: "Lumen" }).click();
   await owner.getByLabel("Prompt to add to the queue").fill("Inspect the real session contract");
   await owner.getByRole("button", { name: "Add to queue" }).click();
   await expect(owner.getByText("Inspect the real session contract")).toBeVisible();

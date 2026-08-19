@@ -30,6 +30,19 @@ input, textarea { width: 100%; padding: 11px 12px; border: 1px solid var(--line-
 .session-group-heading + .session-grid { margin-top: var(--space-3); }
 .session-card-foot-end { display: inline-flex; align-items: center; gap: var(--space-3); }
 .session-card-foot .button[data-size="sm"] { min-height: 26px; padding: 2px 10px; font-size: var(--text-xs); }
+
+/* The house select: trigger + styled listbox instead of the OS widget. */
+.select-menu { position: relative; min-width: 0; }
+.select-menu-trigger { display: inline-flex; align-items: center; gap: var(--space-2); max-width: 100%; padding: 6px var(--space-3); border: 1px solid var(--line-soft); border-radius: var(--radius-sm); background: var(--surface-raised); color: var(--text-primary); font: inherit; font-size: var(--text-sm); cursor: pointer; }
+.select-menu-trigger:hover, .select-menu-trigger[aria-expanded="true"] { border-color: var(--line-strong); }
+.select-menu-trigger:disabled { opacity: 0.55; cursor: default; }
+.select-menu-trigger > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.select-menu-list { position: absolute; z-index: 30; top: calc(100% + var(--space-1)); left: 0; min-width: max(100%, 170px); max-height: 240px; overflow-y: auto; margin: 0; padding: var(--space-1); list-style: none; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--surface-raised); box-shadow: var(--elevation-2); animation: popover-rise var(--dur-float) var(--ease-out); transform-origin: top left; }
+.select-menu[data-align="up"] .select-menu-list { top: auto; bottom: calc(100% + var(--space-1)); transform-origin: bottom left; }
+.select-menu-list li { display: grid; gap: 2px; padding: 7px var(--space-3); border-radius: var(--radius-sm); font-size: var(--text-sm); cursor: pointer; white-space: nowrap; }
+.select-menu-list li small { color: var(--text-tertiary); }
+.select-menu-list li[data-active="true"] { background: var(--surface-inset); }
+.select-menu-list li[data-selected="true"] { background: var(--accent-soft); color: var(--accent); }
 .empty-state { margin-top: var(--space-6); padding: 64px var(--space-6); text-align: center; }
 .empty-state strong { font: 400 26px var(--font-serif); }
 .empty-state p { margin-top: var(--space-2); color: var(--text-secondary); }
@@ -71,8 +84,8 @@ input, textarea { width: 100%; padding: 11px 12px; border: 1px solid var(--line-
 .repository-checks ol { display: grid; gap: 5px; margin: var(--space-2) 0 0; padding-left: var(--space-5); }
 .repository-log-output { max-height: 320px; overflow: auto; margin-top: var(--space-3); padding: var(--space-3); border-radius: var(--radius-sm); background: var(--surface-inset); color: var(--text-primary); white-space: pre-wrap; word-break: break-word; font-family: var(--font-mono); font-size: var(--text-xs); }
 .repository-form { display: grid; gap: var(--space-4); margin-top: var(--space-4); }
-.repository-form label { display: grid; gap: var(--space-2); color: var(--text-secondary); font-size: var(--text-sm); }
-.repository-form select, .repository-form textarea { width: 100%; border: 1px solid var(--line-soft); border-radius: var(--radius-sm); background: var(--surface-raised); color: var(--text-primary); padding: 10px 12px; }
+.repository-form label, .repository-form .repository-field { display: grid; gap: var(--space-2); color: var(--text-secondary); font-size: var(--text-sm); }
+.repository-form textarea { width: 100%; border: 1px solid var(--line-soft); border-radius: var(--radius-sm); background: var(--surface-raised); color: var(--text-primary); padding: 10px 12px; }
 .repository-form textarea { resize: vertical; font-family: var(--font-mono); font-size: var(--text-xs); line-height: 1.5; }
 .repository-form small { color: var(--text-tertiary); line-height: 1.45; }
 .invite-empty { margin-bottom: var(--space-3); padding: var(--space-4); border: 1px dashed var(--line-strong); color: var(--text-tertiary); text-align: center; }
