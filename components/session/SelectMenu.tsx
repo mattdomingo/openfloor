@@ -93,7 +93,7 @@ export function SelectMenu({
         disabled={disabled}
         onClick={() => (open ? setOpen(false) : openMenu())}
       >
-        <span>{selected?.label ?? ""}</span>
+        <span title={selected?.label || undefined}>{selected?.label ?? ""}</span>
         <Icon name="chevronDown" size={10} />
       </button>
       {open && (
