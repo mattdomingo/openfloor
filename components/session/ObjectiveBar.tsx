@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { formatShortTime } from "@/lib/date-format";
+import { LocalDateTime } from "@/components/LocalDateTime";
 import { Icon } from "./primitives";
 
 type SaveState = "idle" | "saving" | "saved" | "error";
@@ -79,7 +79,7 @@ export function ObjectiveBar({
         )}
       </div>
       <div className="objective-meta">
-        <span className="objective-fact"><Icon name="clock" />Updated {formatShortTime(updatedAt)} UTC</span>
+        <span className="objective-fact"><Icon name="clock" />Updated <LocalDateTime timestamp={updatedAt} mode="time" /></span>
       </div>
     </section>
   );

@@ -2,7 +2,7 @@
 
 import { useState, type DragEvent } from "react";
 import type { FloorQueueItem } from "@/lib/floor-types";
-import { formatShortDate, formatShortTime } from "@/lib/date-format";
+import { LocalDateTime } from "@/components/LocalDateTime";
 import type { QueueMergeMode, QueueOrderMode, QueueScope } from "./data";
 import { Icon, SegmentedControl } from "./primitives";
 import { Panel, type PanelChrome } from "./Rail";
@@ -44,7 +44,7 @@ export function PromptQueue({ chrome, items, currentUserId, scope, onScope, orde
         onDragOver={manual ? (event) => { event.preventDefault(); if (draggedItemId && draggedItemId !== item.id) setDragOverId(item.id); } : undefined}
         onDragLeave={manual ? (event: DragEvent<HTMLLIElement>) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragOverId((current) => current === item.id ? null : current); } : undefined}
         onDrop={manual ? () => { setDragOverId(null); onItemDrop(item.id); } : undefined}>
-        <div className="queue-item-head"><span className="queue-identity">{manual && <span className="queue-grip" title="Drag to reorder" aria-hidden="true"><Icon name="grip" /></span>}<span className="queue-position" aria-label={`Queue position ${item.position}`}>#{item.position}</span><span className="queue-chip" data-kind="author">{item.prompts.length > 1 ? `${item.prompts.length} prompts` : first?.authorName}</span><span className="queue-chip" data-kind="agent">{item.agentName ?? "Unassigned"}</span></span>{first && <span className="queue-time">{formatShortDate(first.createdAt)} · {formatShortTime(first.createdAt)} UTC</span>}</div>
+        <div className="queue-item-head"><span className="queue-identity">{manual && <span className="queue-grip" title="Drag to reorder" aria-hidden="true"><Icon name="grip" /></span>}<span className="queue-position" aria-label={`Queue position ${item.position}`}>#{item.position}</span><span className="queue-chip" data-kind="author">{item.prompts.length > 1 ? `${item.prompts.length} prompts` : first?.authorName}</span><span className="queue-chip" data-kind="agent">{item.agentName ?? "Unassigned"}</span></span>{first && <span className="queue-time"><LocalDateTime timestamp={first.createdAt} /></span>}</div>
         {item.prompts.length > 1 ? <ul className="queue-prompt queue-prompt-stack" data-expanded={open ? "true" : "false"}>{item.prompts.map((prompt) => <li key={prompt.id}><strong>{prompt.authorName}</strong> · {prompt.text}</li>)}</ul> : <p className="queue-prompt" data-expanded={open ? "true" : "false"}>{first?.text}</p>}
         {long && <button type="button" className="queue-expand" aria-expanded={open} onClick={() => setExpanded((current) => ({ ...current, [item.id]: !open }))}>{open ? "Show less" : "Show more"}</button>}
       </li>;

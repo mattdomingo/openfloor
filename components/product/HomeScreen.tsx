@@ -3,7 +3,7 @@
 import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
 import { BASE_PATH } from "@/components/basePath";
-import { formatShortDate } from "@/lib/date-format";
+import { LocalDateTime } from "@/components/LocalDateTime";
 import type { AppUser, SessionSummary } from "@/lib/session-types";
 import { AppHeader } from "./AppHeader";
 
@@ -61,7 +61,7 @@ export function HomeScreen({ user, sessions }: { user: AppUser; sessions: Sessio
               <a className="session-card" href={`${BASE_PATH}/session/${session.id}`} key={session.id}>
                 <div className="session-card-head"><strong>{session.title}</strong><span className="role-pill">{session.role}</span></div>
                 <p>{session.objective || "No objective has been written yet."}</p>
-                <div className="session-card-foot"><span>{session.memberCount} {session.memberCount === 1 ? "member" : "members"}</span><time>{formatShortDate(session.updatedAt)}</time></div>
+                <div className="session-card-foot"><span>{session.memberCount} {session.memberCount === 1 ? "member" : "members"}</span><time><LocalDateTime timestamp={session.updatedAt} mode="date" /></time></div>
               </a>
             ))}
           </div>
