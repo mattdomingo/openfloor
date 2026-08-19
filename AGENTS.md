@@ -680,6 +680,7 @@ tests/
   render/                    Built Worker/server-rendering and route behavior
   e2e/                       Two authenticated browser-context product flow
 docs/agent-backend-gaps.md   Deferred execution/repository capabilities
+docs/cloudflare-access-branding.md  Manual Zero Trust login/App Launcher branding steps
 docs/github-production.md    Production GitHub App, Access, secrets, migration, and deploy runbook
 wrangler.jsonc               Production bindings, routes, migrations, compatibility
 ```
@@ -940,7 +941,7 @@ Migrations must land before code that requires them. The build generates `dist/s
 - The database provider-identity column is still named `chatgpt_user_id`; it is not ChatGPT-specific anymore.
 - Production uses `/app`; local development does not. Manual paths are a common source of broken links and sockets.
 - Next `Link` and manual `fetch` have different base-path responsibilities.
-- Cloudflare Access configuration is external state; code passing locally does not prove the production policy paths are correct.
+- Cloudflare Access configuration is external state; code passing locally does not prove the production policy paths are correct. The hosted login screen's branding is dashboard-applied too — steps in `docs/cloudflare-access-branding.md`.
 - The Worker route `opnflr.com/app*` is intentionally broader than `/app/*` due query-string routing behavior.
 - Access protects the app at the edge, but the Worker still verifies JWTs. Do not remove defense in depth.
 - `/app/webhooks/github` is deliberately public and must never process a payload before its raw-body HMAC and size are verified.
