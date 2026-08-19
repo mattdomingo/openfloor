@@ -80,7 +80,6 @@ export function ObjectiveBar({
       </div>
       <div className="objective-meta">
         <span className="objective-fact"><Icon name="clock" />Updated {formatShortTime(updatedAt)} UTC</span>
-        <span className="prototype-badge">Prototype agent data</span>
       </div>
     </section>
   );

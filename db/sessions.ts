@@ -280,6 +280,7 @@ export async function leaveSession(
   if (!role) return "missing";
   if (role === "owner") return "owner";
   await database.batch([
+    database.prepare("DELETE FROM floor_assignments WHERE session_id = ? AND user_id = ?").bind(sessionId, userId),
     database.prepare("DELETE FROM session_members WHERE session_id = ? AND user_id = ?").bind(sessionId, userId),
     database.prepare("UPDATE sessions SET updated_at = ? WHERE id = ?").bind(Date.now(), sessionId),
   ]);

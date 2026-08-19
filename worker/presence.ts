@@ -7,6 +7,7 @@ import {
   type IdentityEnvironment,
 } from "../lib/identity";
 import type { PresenceEvent } from "../lib/session-types";
+import type { FloorDomain } from "../lib/floor-types";
 
 type DurableObjectStubLike = { fetch(request: Request): Promise<Response> };
 type DurableObjectNamespaceLike = {
@@ -39,6 +40,15 @@ export class SessionPresence extends DurableObject {
         return new Response("Invalid session change", { status: 400 });
       }
       this.broadcast({ type: "session.changed", objective: body.objective ?? null, updatedAt: body.updatedAt });
+      return new Response(null, { status: 204 });
+    }
+    if (url.pathname === "/floor-changed" && request.method === "POST") {
+      const body = (await request.json()) as { revision?: unknown; domains?: unknown };
+      const allowed = new Set<FloorDomain>(["agents", "assignments", "messages", "queue", "review"]);
+      if (typeof body.revision !== "number" || !Array.isArray(body.domains) || body.domains.some((domain) => typeof domain !== "string" || !allowed.has(domain as FloorDomain))) {
+        return new Response("Invalid floor change", { status: 400 });
+      }
+      this.broadcast({ type: "floor.changed", revision: body.revision, domains: body.domains as FloorDomain[] });
       return new Response(null, { status: 204 });
     }
     if (url.pathname === "/disconnect-user" && request.method === "POST") {

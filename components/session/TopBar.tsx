@@ -47,7 +47,6 @@ export function TopBar({
       <nav className="session-path" aria-label="Session location">
         <Link href="/home">Sessions</Link><span aria-hidden="true">/</span><strong>{session.title}</strong>
         <span className="live-pill"><Icon name="circle" size={7} />LIVE</span>
-        <span className="prototype-pill">Prototype agent data</span>
       </nav>
 
       <div className="topbar-actions">

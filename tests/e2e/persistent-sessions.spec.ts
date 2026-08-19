@@ -46,8 +46,11 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await member.getByRole("link", { name: "Enter agent floor" }).click();
   await expect(owner).toHaveURL(/\/app\/session\/[0-9a-f-]+\/floor$/);
   await expect(owner.getByRole("heading", { name: "Agent floor" })).toBeVisible();
-  await expect(owner.getByText("Prototype agent data").first()).toBeVisible();
   await expect(owner.getByText("Member Example").first()).toBeVisible();
+  await expect(owner.getByText("No agents yet")).toBeVisible();
+  await expect(owner.getByText("No prompts waiting")).toBeVisible();
+  await expect(owner.getByText("No review available")).toHaveCount(0);
+  await expect(owner.getByText(/Atlas|Nova|Sentry|Proof|OpenMind/)).toHaveCount(0);
 
   await owner.getByTitle("Edit session objective").click();
   await owner.getByLabel("Session objective").fill("Coordinate the restored agent floor");
@@ -61,29 +64,64 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   const agentFloor = owner.getByRole("region", { name: "Agent floor" });
   await agentFloor.getByRole("button", { name: "New agent" }).click();
   await owner.getByLabel("Name").fill("Lumen");
+  await owner.getByLabel("Role").fill("Researcher");
   await owner.getByLabel("Task").fill("Map the persistent agent API");
-  await owner.getByRole("button", { name: "Create agent" }).click();
+  await owner.getByRole("dialog").getByRole("button", { name: "Create agent" }).click();
   await expect(owner.getByRole("dialog")).toBeHidden();
   await expect(agentFloor.getByText("Lumen", { exact: true }).first()).toBeVisible();
+  await expect(member.getByText("Lumen", { exact: true }).first()).toBeVisible();
+  await expect(agentFloor.getByText(/server\/|app\/|tests\//)).toHaveCount(0);
 
   await owner.getByLabel("Prompt to add to the queue").fill("Document the next backend contract");
   await expect(owner.getByLabel("Prompt to add to the queue")).toHaveValue("Document the next backend contract");
   await owner.getByRole("button", { name: "Add to queue" }).click();
   expect(pageErrors).toEqual([]);
   await expect(owner.getByText("Document the next backend contract")).toBeVisible();
+  await expect(owner.getByText("Unassigned", { exact: true }).first()).toBeVisible();
+  await expect(member.getByText("Document the next backend contract")).toBeVisible();
+
+  await owner.getByLabel("Queue target").selectOption({ label: "Lumen" });
+  await owner.getByLabel("Prompt to add to the queue").fill("Inspect the real session contract");
+  await owner.getByRole("button", { name: "Add to queue" }).click();
+  await expect(owner.getByText("Inspect the real session contract")).toBeVisible();
+  await expect(member.getByText("Inspect the real session contract")).toBeVisible();
+  await owner.getByLabel("Prompt to add to the queue").fill("Confirm the persisted contract");
+  await owner.getByRole("button", { name: "Add to queue" }).click();
+  await owner.getByLabel("Queue settings").click();
+  await owner.getByRole("button", { name: /Merge now/ }).click();
+  await expect(owner.getByText("2 prompts", { exact: true })).toBeVisible();
 
   const teamPanel = owner.getByRole("region", { name: "Team" });
   await teamPanel.getByRole("button", { name: "Chat" }).click();
-  await teamPanel.getByLabel("Message the team…").fill("The restored floor is ready for backend wiring");
+  await teamPanel.getByLabel("Message the team").fill("The persistent floor is ready");
   await teamPanel.getByRole("button", { name: "Send message" }).click();
-  await expect(teamPanel.getByText("The restored floor is ready for backend wiring")).toBeVisible();
+  await expect(teamPanel.getByText("The persistent floor is ready")).toBeVisible();
+  const memberTeamPanel = member.getByRole("region", { name: "Team" });
+  await memberTeamPanel.getByRole("button", { name: "Chat" }).click();
+  await expect(memberTeamPanel.getByText("The persistent floor is ready")).toBeVisible();
+
+  await teamPanel.getByRole("button", { name: "Member Example" }).click();
+  await teamPanel.getByLabel("Message Member Example").fill("Private persisted note");
+  await teamPanel.getByRole("button", { name: "Send message" }).click();
+  await memberTeamPanel.getByRole("button", { name: "Owner Example" }).click();
+  await expect(memberTeamPanel.getByText("Private persisted note")).toBeVisible();
+
+  await teamPanel.getByRole("button", { name: "Goals" }).click();
+  await teamPanel.getByLabel("Assignment for Owner Example").fill("Own the persistent release");
+  await teamPanel.getByLabel("Assignment for Owner Example").blur();
+  await memberTeamPanel.getByRole("button", { name: "Goals" }).click();
+  await expect(memberTeamPanel.getByLabel("Assignment for Owner Example")).toHaveValue("Own the persistent release");
 
   await owner.getByRole("button", { name: "Review" }).click();
-  await expect(owner.getByRole("heading", { name: /openfloor\/session-presence/ })).toBeVisible();
-  await owner.getByRole("button", { name: "Approve candidate" }).click();
-  await expect(owner.getByText("Approved · not merged", { exact: true })).toBeVisible();
+  await expect(owner.getByRole("heading", { name: "No review available" })).toBeVisible();
+  await expect(owner.getByRole("button", { name: "Approve candidate" })).toHaveCount(0);
+  await expect(owner.getByText(/server\/session\/reducer|AgentCard\.tsx/)).toHaveCount(0);
   await expect(owner.getByText(/typing/i)).toHaveCount(0);
   await expect(owner.getByText(/terminal/i)).toHaveCount(0);
+
+  await member.reload();
+  await expect(member.getByText("Lumen", { exact: true }).first()).toBeVisible();
+  await expect(member.getByText("Document the next backend contract")).toBeVisible();
 
   await owner.getByRole("link", { name: "Session settings" }).click();
   await member.getByRole("link", { name: "Session settings" }).click();

@@ -15,6 +15,7 @@ describe("presence event reduction", () => {
   it("preserves presence for membership, session, and error events", () => {
     expect([...reducePresence(new Set(["one"]), { type: "members.changed" })]).toEqual(["one"]);
     expect([...reducePresence(new Set(["one"]), { type: "session.changed", objective: "Next", updatedAt: 10 })]).toEqual(["one"]);
+    expect([...reducePresence(new Set(["one"]), { type: "floor.changed", revision: 2, domains: ["queue"] })]).toEqual(["one"]);
     expect([...reducePresence(new Set(["one"]), { type: "error", code: "nope" })]).toEqual(["one"]);
   });
 });

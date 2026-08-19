@@ -5,7 +5,7 @@ import { QueueMergeMode, QueueOrderMode } from "./data";
 import { Icon } from "./primitives";
 
 const orderOptions: { value: QueueOrderMode; label: string; hint: string }[] = [
-  { value: "auto", label: "Auto", hint: "OpenMind orders" },
+  { value: "auto", label: "Saved order", hint: "Use the persisted queue order" },
   { value: "manual", label: "Manual", hint: "Drag to reorder" },
 ];
 
@@ -139,4 +139,3 @@ export function QueueOrderMenu({
     </div>
   );
 }
-

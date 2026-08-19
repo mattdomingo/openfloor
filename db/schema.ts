@@ -20,6 +20,7 @@ export const sessions = sqliteTable("sessions", {
   objective: text("objective"),
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull(),
+  floorRevision: integer("floor_revision").notNull().default(0),
 });
 
 export const sessionMembers = sqliteTable(
@@ -60,4 +61,88 @@ export const sessionInvites = sqliteTable(
       .on(table.sessionId)
       .where(sql`${table.revokedAt} is null`),
   ],
+);
+
+export const floorAgents = sqliteTable(
+  "floor_agents",
+  {
+    id: text("id").primaryKey(),
+    sessionId: text("session_id").notNull().references(() => sessions.id, { onDelete: "cascade" }),
+    createdBy: text("created_by").notNull().references(() => users.id),
+    ownerUserId: text("owner_user_id").notNull().references(() => users.id),
+    name: text("name").notNull(),
+    nameKey: text("name_key").notNull(),
+    role: text("role").notNull(),
+    task: text("task").notNull(),
+    state: text("state", { enum: ["created"] }).notNull(),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("idx_floor_agents_session_name").on(table.sessionId, table.nameKey),
+    index("idx_floor_agents_session_created").on(table.sessionId, table.createdAt),
+    index("idx_floor_agents_owner").on(table.ownerUserId),
+    check("floor_agents_state_check", sql`${table.state} in ('created')`),
+  ],
+);
+
+export const floorAssignments = sqliteTable(
+  "floor_assignments",
+  {
+    sessionId: text("session_id").notNull().references(() => sessions.id, { onDelete: "cascade" }),
+    userId: text("user_id").notNull().references(() => users.id),
+    task: text("task"),
+    updatedBy: text("updated_by").notNull().references(() => users.id),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.sessionId, table.userId] }),
+    index("idx_floor_assignments_updated_by").on(table.updatedBy),
+  ],
+);
+
+export const floorMessages = sqliteTable(
+  "floor_messages",
+  {
+    id: text("id").primaryKey(),
+    sessionId: text("session_id").notNull().references(() => sessions.id, { onDelete: "cascade" }),
+    authorUserId: text("author_user_id").notNull().references(() => users.id),
+    recipientUserId: text("recipient_user_id").references(() => users.id),
+    text: text("text").notNull(),
+    createdAt: integer("created_at").notNull(),
+  },
+  (table) => [
+    index("idx_floor_messages_session_created").on(table.sessionId, table.createdAt),
+    index("idx_floor_messages_recipient").on(table.recipientUserId),
+  ],
+);
+
+export const floorQueueItems = sqliteTable(
+  "floor_queue_items",
+  {
+    id: text("id").primaryKey(),
+    sessionId: text("session_id").notNull().references(() => sessions.id, { onDelete: "cascade" }),
+    agentId: text("agent_id").references(() => floorAgents.id, { onDelete: "set null" }),
+    position: integer("position").notNull(),
+    status: text("status", { enum: ["queued"] }).notNull(),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [
+    index("idx_floor_queue_session_position").on(table.sessionId, table.position),
+    index("idx_floor_queue_agent").on(table.agentId),
+    check("floor_queue_status_check", sql`${table.status} in ('queued')`),
+  ],
+);
+
+export const floorQueuePrompts = sqliteTable(
+  "floor_queue_prompts",
+  {
+    id: text("id").primaryKey(),
+    queueItemId: text("queue_item_id").notNull().references(() => floorQueueItems.id, { onDelete: "cascade" }),
+    authorUserId: text("author_user_id").notNull().references(() => users.id),
+    text: text("text").notNull(),
+    createdAt: integer("created_at").notNull(),
+  },
+  (table) => [index("idx_floor_queue_prompts_item_created").on(table.queueItemId, table.createdAt)],
 );

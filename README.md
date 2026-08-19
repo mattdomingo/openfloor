@@ -1,8 +1,8 @@
 # OpenFloor
 
-OpenFloor is a persistent multiplayer session shell for teams coordinating agent work. Cloudflare D1 stores users, sessions, memberships, and reusable signed invites. A per-session Durable Object provides live WebSocket presence in both the session lobby and its agent floor.
+OpenFloor is a persistent multiplayer session shell for teams coordinating agent work. Cloudflare D1 stores users, sessions, memberships, reusable signed invites, agents, assignments, prompts, queue ordering, and team/direct messages. A per-session Durable Object provides live WebSocket presence and floor-change notifications.
 
-Members enter a session at `/app/session/[id]`, then continue to the authenticated workspace at `/app/session/[id]/floor`. Identity, membership, invites, presence, and the shared objective are persistent. Agent cards, assignments, queues, chat, and review interactions currently use clearly labeled in-memory prototype data that resets on refresh; the typed floor data-source contract is ready for a persistent agent runtime to replace it.
+Members enter a session at `/app/session/[id]`, then continue to the authenticated workspace at `/app/session/[id]/floor`. A new floor starts empty. Everything shown comes from the session, persisted member actions, or a connected backend; OpenFloor does not seed sample agents, prompts, files, checks, or review candidates.
 
 ## Local development
 
@@ -30,8 +30,9 @@ To exercise the new path manually:
 1. Open `/home` and create a session.
 2. On the session lobby, click **Enter agent floor**.
 3. Confirm the floor shows the real session title, objective, and your online presence.
-4. Try creating an agent, queueing a prompt, using team chat, rearranging panels, and opening Review. These prototype interactions intentionally reset on refresh.
-5. Use **Session settings** to return to the lobby.
+4. Create a named agent, add assigned or unassigned prompts, edit an assignment, and use team chat. Reload and confirm they persist.
+5. Open Review and confirm it remains empty until a real agent backend supplies review data.
+6. Use **Session settings** to return to the lobby.
 
 The browser test runs the complete two-user flow with a temporary local database, including invite acceptance, live presence, floor navigation, reconnection, and leaving:
 
@@ -69,9 +70,12 @@ npx wrangler secret put CF_ACCESS_AUD
 
 ```bash
 npm test
+npx wrangler d1 migrations apply openfloor-production --remote
 npm run build
 npx wrangler deploy --config dist/server/wrangler.json
 ```
+
+Apply D1 migrations before deploying the Worker revision. See [`docs/agent-backend-gaps.md`](docs/agent-backend-gaps.md) for the intentional boundary between the persistent collaboration backend and future agent execution.
 
 The deployment expects the `DB`, `SESSION_PRESENCE`, `IMAGES`, and `ASSETS` bindings configured in `wrangler.jsonc`, plus `INVITE_SIGNING_SECRET`, `CF_ACCESS_TEAM_DOMAIN`, and `CF_ACCESS_AUD` as Worker secrets.
 

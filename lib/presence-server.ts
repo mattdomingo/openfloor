@@ -1,4 +1,5 @@
 import { env } from "cloudflare:workers";
+import type { FloorDomain } from "./floor-types";
 
 type DurableObjectStubLike = { fetch(request: Request | string, init?: RequestInit): Promise<Response> };
 type DurableObjectNamespaceLike = {
@@ -24,6 +25,14 @@ export async function notifySessionChanged(
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(change),
+  });
+}
+
+export async function notifyFloorChanged(sessionId: string, revision: number, domains: FloorDomain[]): Promise<void> {
+  await presenceStub(sessionId)?.fetch("https://presence.internal/floor-changed", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ revision, domains }),
   });
 }
 

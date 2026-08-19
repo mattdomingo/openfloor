@@ -1,7 +1,6 @@
 "use client";
 
 import { ReactNode, SyntheticEvent, useEffect, useRef } from "react";
-import { AgentStatus, Step } from "./data";
 
 /* Native <dialog> unmounts the instant its parent drops it, which cuts off any exit
    transition. This opens the dialog on mount and turns dismissals into a short
@@ -147,10 +146,6 @@ export function Icon({ name, size = 14, className }: { name: IconName; size?: nu
   );
 }
 
-export function StatusDot({ status }: { status: AgentStatus }) {
-  return <span className="status-dot" data-status={status} aria-hidden="true" />;
-}
-
 export function Avatar({ initials, tone, online }: { initials: string; tone: string; online?: boolean }) {
   return (
     <span className="avatar" data-tone={tone} data-online={online ? "true" : undefined} aria-hidden="true">
@@ -178,18 +173,5 @@ export function SegmentedControl<T extends string>({
         </button>
       ))}
     </div>
-  );
-}
-
-export function Stepper({ steps, compact = false }: { steps: Step[]; compact?: boolean }) {
-  return (
-    <ol className="stepper" data-compact={compact ? "true" : "false"}>
-      {steps.map((step, index) => (
-        <li key={step.label} data-state={step.state} title={compact ? step.label : undefined}>
-          <span className="step-mark">{step.state === "done" ? <Icon name="check" size={9} /> : <em>{index + 1}</em>}</span>
-          <span className="step-label">{step.label}</span>
-        </li>
-      ))}
-    </ol>
   );
 }

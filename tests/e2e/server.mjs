@@ -7,7 +7,7 @@ const statePath = mkdtempSync(join(tmpdir(), "openfloor-e2e-"));
 const wranglerArgs = ["wrangler", "--config", "dist/server/wrangler.json"];
 const migration = spawnSync(
   "npx",
-  [...wranglerArgs.slice(0, 1), "d1", "execute", "DB", "--local", "--config", "dist/server/wrangler.json", "--persist-to", statePath, "--file", "drizzle/0000_burly_champions.sql"],
+  [...wranglerArgs.slice(0, 1), "d1", "migrations", "apply", "DB", "--local", "--config", "wrangler.jsonc", "--persist-to", statePath],
   { stdio: "inherit" },
 );
 

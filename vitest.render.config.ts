@@ -1,5 +1,7 @@
-import { cloudflareTest } from "@cloudflare/vitest-pool-workers";
+import { cloudflareTest, readD1Migrations } from "@cloudflare/vitest-pool-workers";
 import { defineConfig } from "vitest/config";
+
+const migrations = await readD1Migrations("./drizzle");
 
 export default defineConfig({
   plugins: [
@@ -11,9 +13,13 @@ export default defineConfig({
         assets: { directory: "./dist/client", binding: "ASSETS", run_worker_first: true },
         d1Databases: ["DB"],
         durableObjects: { SESSION_PRESENCE: "SessionPresence" },
-        bindings: { INVITE_SIGNING_SECRET: "render-test-secret" },
+        bindings: {
+          INVITE_SIGNING_SECRET: "render-test-secret",
+          OPENFLOOR_TEST_ALLOW_IDENTITY_HEADERS: "true",
+          TEST_MIGRATIONS: JSON.stringify(migrations),
+        },
       },
     }),
   ],
-  test: { include: ["tests/render/**/*.test.ts"] },
+  test: { include: ["tests/render/**/*.test.ts"], setupFiles: ["./tests/render/setup.ts"] },
 });

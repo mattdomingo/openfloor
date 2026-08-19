@@ -11,6 +11,14 @@ function render(path = "/") {
   return fetchPath(path === "/" ? BASE_PATH : `${BASE_PATH}${path}`);
 }
 
+const authenticatedHeaders = {
+  accept: "text/html",
+  host: "localhost",
+  "x-openfloor-dev-user-id": "render-owner",
+  "x-openfloor-dev-user-email": "render@example.com",
+  "x-openfloor-dev-user-name": "Render Owner",
+};
+
 describe("server rendering", () => {
   it("renders the public OpenFloor landing page without demo auth", async () => {
     const response = await render();
@@ -39,6 +47,22 @@ describe("server rendering", () => {
     expect(html).toContain('property="og:title" content="OpenFloor"');
     expect(html).toContain('property="og:image" content="http://localhost:3000/app/og-v3.png"');
     expect(html).toContain('name="twitter:card" content="summary_large_image"');
+  });
+
+  it("renders an authenticated floor with no seeded product data", async () => {
+    const created = await SELF.fetch("http://localhost/app/api/sessions", {
+      method: "POST",
+      headers: { ...authenticatedHeaders, "content-type": "application/json", accept: "application/json" },
+      body: JSON.stringify({ title: "Empty floor" }),
+    });
+    expect(created.status).toBe(201);
+    const { session } = await created.json() as { session: { id: string } };
+    const response = await SELF.fetch(`http://localhost/app/session/${session.id}/floor`, { headers: authenticatedHeaders });
+    expect(response.status).toBe(200);
+    const html = await response.text();
+    expect(html).toContain("No agents yet");
+    expect(html).toContain("No prompts waiting");
+    expect(html).not.toMatch(/Atlas|Nova|Sentry|Proof|OpenMind|server\/session\/reducer/i);
   });
 
   it("serves nothing outside its base path", async () => {

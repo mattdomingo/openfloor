@@ -80,6 +80,20 @@ describe("SessionPresence Durable Object", () => {
     await expect(notification).resolves.toEqual({ type: "session.changed", objective: "Shared next step", updatedAt: 42 });
     first.socket.close(1000, "done");
   });
+
+  it("broadcasts floor revisions and changed domains", async () => {
+    const stub = env.SESSION_PRESENCE.get(env.SESSION_PRESENCE.idFromName("room-floor-change"));
+    const first = await connect(stub, "user-one", "One");
+    const notification = nextMessage(first.socket);
+    const response = await stub.fetch("https://presence.internal/floor-changed", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ revision: 7, domains: ["agents", "queue"] }),
+    });
+    expect(response.status).toBe(204);
+    await expect(notification).resolves.toEqual({ type: "floor.changed", revision: 7, domains: ["agents", "queue"] });
+    first.socket.close(1000, "done");
+  });
 });
 
 describe("authenticated presence upgrade", () => {

@@ -23,6 +23,7 @@ export type PresenceEvent =
   | { type: "presence.changed"; userId: string; online: boolean }
   | { type: "members.changed" }
   | { type: "session.changed"; objective: string | null; updatedAt: number }
+  | { type: "floor.changed"; revision: number; domains: import("./floor-types").FloorDomain[] }
   | { type: "error"; code: string };
 
 export type AppUser = {

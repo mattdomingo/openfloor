@@ -1,17 +1,15 @@
 "use client";
 
 import { KeyboardEvent, RefObject } from "react";
-import type { Agent } from "./data";
+import type { FloorAgent } from "@/lib/floor-types";
 
 export function MentionComposer({
-  placeholder,
   ariaLabel,
   agents,
   textareaRef,
 }: {
-  placeholder: string;
   ariaLabel: string;
-  agents: Agent[];
+  agents: FloorAgent[];
   textareaRef: RefObject<HTMLTextAreaElement | null>;
 }) {
   function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
@@ -27,7 +25,6 @@ export function MentionComposer({
         ref={textareaRef}
         className="mention-input"
         onKeyDown={handleKeyDown}
-        placeholder={placeholder}
         aria-label={ariaLabel}
       />
     </div>
