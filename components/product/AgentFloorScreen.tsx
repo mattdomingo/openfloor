@@ -85,6 +85,9 @@ export function AgentFloorScreen({
         if (event.type === "session.changed") {
           setSession((current) => event.updatedAt >= current.updatedAt ? { ...current, objective: event.objective, updatedAt: event.updatedAt } : current);
         }
+        if (event.type === "session.ended") {
+          setSession((current) => ({ ...current, endedAt: event.endedAt }));
+        }
         if (shouldRefreshFloor(revisionRef.current, event)) void refreshFloor();
       });
       socket.addEventListener("close", () => {

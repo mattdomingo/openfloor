@@ -59,7 +59,7 @@ export function HomeScreen({ user, sessions }: { user: AppUser; sessions: Sessio
           <div className="session-grid">
             {sessions.map((session) => (
               <a className="session-card" href={`${BASE_PATH}/session/${session.id}`} key={session.id}>
-                <div className="session-card-head"><strong>{session.title}</strong><span className="role-pill">{session.role}</span></div>
+                <div className="session-card-head"><strong>{session.title}</strong><span className="session-card-pills">{session.endedAt != null && <span className="role-pill">Ended</span>}<span className="role-pill">{session.role}</span></span></div>
                 <p>{session.objective || "No objective has been written yet."}</p>
                 <div className="session-card-foot"><span>{session.memberCount} {session.memberCount === 1 ? "member" : "members"}</span><time><LocalDateTime timestamp={session.updatedAt} mode="date" /></time></div>
               </a>

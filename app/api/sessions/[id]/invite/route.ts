@@ -1,6 +1,7 @@
 import { BASE_PATH } from "@/components/basePath";
 import { getInviteSigningSecret } from "@/db";
 import { getActiveInviteId, getMembershipRole, revokeInvite, rotateInvite } from "@/db/sessions";
+import { mutationErrorResponse } from "@/lib/floor-api";
 import { signInviteId } from "@/lib/invites";
 import { isApiError, requireApiUser } from "@/lib/server-auth";
 
@@ -24,15 +25,23 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   const user = await requireApiUser();
   if (isApiError(user)) return user;
   const sessionId = (await params).id;
-  const inviteId = await rotateInvite(sessionId, user.id);
-  if (!inviteId) return Response.json({ error: "Session not found" }, { status: 404 });
-  const token = await signInviteId(inviteId, getInviteSigningSecret());
-  return Response.json({ inviteUrl: new URL(`${BASE_PATH}/join/${encodeURIComponent(token)}`, request.url).toString() });
+  try {
+    const inviteId = await rotateInvite(sessionId, user.id);
+    if (!inviteId) return Response.json({ error: "Session not found" }, { status: 404 });
+    const token = await signInviteId(inviteId, getInviteSigningSecret());
+    return Response.json({ inviteUrl: new URL(`${BASE_PATH}/join/${encodeURIComponent(token)}`, request.url).toString() });
+  } catch (error) {
+    return mutationErrorResponse(error);
+  }
 }
 
 export async function DELETE(_request: Request, { params }: { params: Promise<{ id: string }> }) {
   const user = await requireApiUser();
   if (isApiError(user)) return user;
-  const ok = await revokeInvite((await params).id, user.id);
-  return ok ? new Response(null, { status: 204 }) : Response.json({ error: "Session not found" }, { status: 404 });
+  try {
+    const ok = await revokeInvite((await params).id, user.id);
+    return ok ? new Response(null, { status: 204 }) : Response.json({ error: "Session not found" }, { status: 404 });
+  } catch (error) {
+    return mutationErrorResponse(error);
+  }
 }
