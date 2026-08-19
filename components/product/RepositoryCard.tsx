@@ -253,8 +253,8 @@ export function RepositoryCard({
               <span>Active candidate</span>
               <p><code>{candidate.branchName}</code></p>
               <p>Candidate <code>{candidate.candidateSha?.slice(0, 8) ?? "creating"}</code> · base <code>{(candidate.remoteBaseSha ?? candidate.baseSha).slice(0, 8)}</code></p>
-              {candidate.behindBase && <p className="form-error">Candidate is behind the current base branch.</p>}
-              {repository.status === "externally_modified" && <p className="form-error">The candidate branch was modified outside OpenFloor.</p>}
+              {candidate.behindBase && <p className="form-note">Candidate is behind the current base branch.</p>}
+              {repository.status === "externally_modified" && <p className="form-note">The candidate branch was modified outside OpenFloor.</p>}
             </div>
           )}
           <div className="repository-checks">
