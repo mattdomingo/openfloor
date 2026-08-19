@@ -1,17 +1,48 @@
 # OpenFloor
 
-OpenFloor is a persistent multiplayer session shell for teams coordinating agent work. Cloudflare D1 stores users, sessions, memberships, and reusable signed invites. A per-session Durable Object provides live WebSocket presence.
+OpenFloor is a persistent multiplayer session shell for teams coordinating agent work. Cloudflare D1 stores users, sessions, memberships, and reusable signed invites. A per-session Durable Object provides live WebSocket presence in both the session lobby and its agent floor.
+
+Members enter a session at `/app/session/[id]`, then continue to the authenticated workspace at `/app/session/[id]/floor`. The floor currently reflects real session metadata and member presence; agent creation and execution are the next runtime capability.
 
 ## Local development
 
-Copy `.env.example` to an ignored `.dev.vars` file and set a long random invite-signing secret. The explicit development identity is accepted only by the local server.
+Install dependencies and create an ignored local environment file:
 
 ```bash
 npm install
+cp .env.example .dev.vars
+openssl rand -hex 32
+```
+
+Open `.dev.vars` and replace `INVITE_SIGNING_SECRET` with the random value printed by the last command. You can also change the three `OPENFLOOR_DEV_USER_*` values to the local name and email you want displayed. The Cloudflare Access placeholders can remain unchanged for local development.
+
+Create the local D1 tables, then start the development server:
+
+```bash
+npx wrangler d1 migrations apply openfloor-production --local
 npm run dev
 ```
 
-Open the local URL printed by the development server.
+Open the URL printed by the server, normally [http://localhost:3000](http://localhost:3000). Local development serves the application at the root, so use `/home` rather than `/app/home`; the `/app` prefix is added by production builds. You are automatically signed in with the identity from `.dev.vars`.
+
+To exercise the new path manually:
+
+1. Open `/home` and create a session.
+2. On the session lobby, click **Enter agent floor**.
+3. Confirm the floor shows the real session title, objective, and your online presence.
+4. Use **Session settings** to return to the lobby.
+
+The browser test runs the complete two-user flow with a temporary local database, including invite acceptance, live presence, floor navigation, reconnection, and leaving:
+
+```bash
+npm run test:e2e
+```
+
+Run every check with:
+
+```bash
+npm test
+```
 
 ## Cloudflare Access
 

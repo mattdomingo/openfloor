@@ -40,6 +40,13 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await expect(owner.locator("li", { hasText: "Member Example" }).getByText("Online", { exact: true })).toBeVisible();
   await expect(member.locator("li", { hasText: "Owner Example" }).getByText("Online", { exact: true })).toBeVisible();
 
+  await owner.getByRole("link", { name: "Enter agent floor" }).click();
+  await expect(owner).toHaveURL(/\/app\/session\/[0-9a-f-]+\/floor$/);
+  await expect(owner.getByRole("heading", { name: "Agent floor" })).toBeVisible();
+  await expect(owner.locator("li", { hasText: "Member Example" })).toBeVisible();
+  await expect(owner.locator("li", { hasText: "Member Example" }).getByLabel("Online")).toBeVisible();
+  await owner.getByRole("link", { name: "Session settings" }).click();
+
   await member.reload();
   await expect(member.getByRole("heading", { name: "Release coordination" })).toBeVisible();
   await expect(member.getByText("Ship persistent multiplayer sessions")).toBeVisible();

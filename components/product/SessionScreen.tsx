@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { BASE_PATH } from "@/components/basePath";
 import { reducePresence } from "@/lib/presence";
@@ -130,7 +131,10 @@ export function SessionScreen({
       <AppHeader user={user} sessionTitle={session.title} />
       <section className="session-hero">
         <div><p className="eyebrow">Live session</p><h1>{session.title}</h1><p>{session.objective || "No objective has been written yet."}</p></div>
-        <div className="connection-state" data-state={connection}><span aria-hidden="true" />{connection === "connected" ? `${onlineCount} online` : connection}</div>
+        <div className="session-hero-actions">
+          <div className="connection-state" data-state={connection}><span aria-hidden="true" />{connection === "connected" ? `${onlineCount} online` : connection}</div>
+          <Link className="button" data-variant="primary" data-size="lg" href={`/session/${session.id}/floor`}>Enter agent floor</Link>
+        </div>
       </section>
 
       <section className="session-layout">

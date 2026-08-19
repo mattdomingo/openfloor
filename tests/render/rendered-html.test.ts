@@ -26,7 +26,7 @@ describe("server rendering", () => {
   });
 
   it("redirects every protected page to the public landing page", async () => {
-    for (const path of ["/home", "/session/private-room", "/join/not-a-token"]) {
+    for (const path of ["/home", "/session/private-room", "/session/private-room/floor", "/join/not-a-token"]) {
       const response = await render(path);
       expect(response.status).toBeGreaterThanOrEqual(300);
       expect(response.status).toBeLessThan(400);
