@@ -56,6 +56,8 @@ export type RepositoryCandidate = {
   id: string;
   sessionId: string;
   connectionId: string;
+  name: string;
+  description: string;
   branchName: string;
   baseBranch: string;
   baseSha: string;

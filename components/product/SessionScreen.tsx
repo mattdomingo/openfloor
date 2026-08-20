@@ -179,7 +179,7 @@ export function SessionScreen({
           ) : (
             <section className="action-card"><p className="eyebrow">Membership</p><h2>You are a member</h2><p>Leaving removes this session from your home and ends your live connection.</p><button className="button danger-button" onClick={leave}>Leave session</button></section>
           )}
-          <RepositoryCard sessionId={session.id} role={session.role} initialRepository={initialRepository} initialCandidate={initialCandidate} initialPreflight={initialPreflight} preflightEnabled={preflightEnabled} beginSetup={githubSetup} />
+          <RepositoryCard sessionId={session.id} sessionTitle={session.title} sessionObjective={session.objective} role={session.role} initialRepository={initialRepository} initialCandidate={initialCandidate} initialPreflight={initialPreflight} preflightEnabled={preflightEnabled} beginSetup={githubSetup} />
           <section className="action-card quiet-card"><p className="eyebrow">What persists</p><p>The room, objective, membership, and invite state are stored. Presence reflects live authenticated connections.</p></section>
           {notice && <p className="notice" role="status">{notice}</p>}
         </aside>

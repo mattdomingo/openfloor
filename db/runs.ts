@@ -254,7 +254,8 @@ export async function beginRunIntegration(runId: string, database = getDb()) {
   const run = await database.prepare(
     `SELECT r.id, r.session_id AS sessionId, r.queue_item_id AS queueItemId, r.status,
             r.run_branch AS runBranch, r.run_commit_sha AS runCommitSha, r.remote_run_sha AS remoteRunSha,
-            c.id AS candidateId, c.branch_name AS candidateBranch, c.candidate_sha AS candidateSha,
+            c.id AS candidateId, c.name AS candidateName, c.description AS candidateDescription,
+            c.branch_name AS candidateBranch, c.candidate_sha AS candidateSha,
             c.remote_candidate_sha AS remoteCandidateSha, c.base_branch AS baseBranch,
             c.integration_run_id AS integrationRunId, c.pull_request_number AS pullRequestNumber,
             rc.status AS connectionStatus,
@@ -266,7 +267,8 @@ export async function beginRunIntegration(runId: string, database = getDb()) {
      WHERE r.id = ? AND r.discarded_at IS NULL`,
   ).bind(runId).first<{
     id: string; sessionId: string; queueItemId: string; status: AgentRunStatus; runBranch: string; runCommitSha: string;
-    remoteRunSha: string; candidateId: string; candidateBranch: string; candidateSha: string; remoteCandidateSha: string;
+    remoteRunSha: string; candidateId: string; candidateName: string; candidateDescription: string;
+    candidateBranch: string; candidateSha: string; remoteCandidateSha: string;
     baseBranch: string; integrationRunId: string | null; pullRequestNumber: number | null; installationId: string;
     connectionStatus: string;
     repositoryId: string; repositoryOwner: string; repositoryName: string; repositoryFullName: string;

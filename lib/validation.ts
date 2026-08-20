@@ -7,6 +7,7 @@ export type QueuePromptInput = { prompt: string; agentId: string | null };
 export type QueueOrderInput = { itemIds: string[] };
 export type QueueMergeInput = { itemIds: string[] };
 export type RepositoryConnectionInput = { repositoryId: string; baseBranch: string; checkCommands: string[] };
+export type RepositoryCandidateInput = { name: string; description: string };
 
 export function parseSessionInput(value: unknown): SessionInput | null {
   if (!value || typeof value !== "object") return null;
@@ -98,6 +99,16 @@ export function parseRepositoryConnectionInput(value: unknown): RepositoryConnec
   const checkCommands = rawCommands.map((command) => (command as string).trim());
   if (checkCommands.some((command) => !command || command.length > 500)) return null;
   return { repositoryId, baseBranch, checkCommands };
+}
+
+export function parseRepositoryCandidateInput(value: unknown): RepositoryCandidateInput | null {
+  if (!value || typeof value !== "object") return null;
+  const input = value as Record<string, unknown>;
+  if (typeof input.name !== "string" || typeof input.description !== "string") return null;
+  const name = input.name.normalize("NFKC").trim().replace(/\s+/g, " ");
+  const description = input.description.trim();
+  if (!name || name.length > 100 || description.length > 2_000) return null;
+  return { name, description };
 }
 
 function parseIdList(value: unknown, key: string, minimum: number): { itemIds: string[] } | null {

@@ -191,10 +191,10 @@ describe("D1 session persistence", () => {
     }, "main", [], env.DB);
     const candidateId = crypto.randomUUID();
     const branch = `openfloor/${created.session.id.slice(0, 8)}/candidate/${candidateId.slice(0, 8)}`;
-    await expect(reserveRepositoryCandidate(created.session.id, owner.id, saved!.id, candidateId, branch, "main", "a".repeat(40), env.DB)).resolves.toBe(true);
-    await expect(reserveRepositoryCandidate(created.session.id, owner.id, saved!.id, crypto.randomUUID(), `${branch}x`, "main", "a".repeat(40), env.DB)).resolves.toBe(false);
+    await expect(reserveRepositoryCandidate(created.session.id, owner.id, saved!.id, candidateId, "Candidate room", "Coordinate candidate work", branch, "main", "a".repeat(40), env.DB)).resolves.toBe(true);
+    await expect(reserveRepositoryCandidate(created.session.id, owner.id, saved!.id, crypto.randomUUID(), "Another candidate", "", `${branch}x`, "main", "a".repeat(40), env.DB)).resolves.toBe(false);
     await activateRepositoryCandidate(created.session.id, candidateId, "a".repeat(40), env.DB);
-    expect(await getActiveRepositoryCandidateForMember(created.session.id, owner.id, env.DB)).toEqual(expect.objectContaining({ branchName: branch, behindBase: false }));
+    expect(await getActiveRepositoryCandidateForMember(created.session.id, owner.id, env.DB)).toEqual(expect.objectContaining({ name: "Candidate room", description: "Coordinate candidate work", branchName: branch, behindBase: false }));
 
     await expect(recordGitHubWebhookDelivery("delivery-1", "push", null, "installation-2", "repository-2", env.DB)).resolves.toBe(true);
     await expect(recordGitHubWebhookDelivery("delivery-1", "push", null, "installation-2", "repository-2", env.DB)).resolves.toBe(false);
@@ -214,7 +214,7 @@ describe("D1 session persistence", () => {
     }, "main", ["npm test", "npm run build"], env.DB);
     const candidateId = crypto.randomUUID();
     const branch = `openfloor/${created.session.id.slice(0, 8)}/candidate/${candidateId.slice(0, 8)}`;
-    await reserveRepositoryCandidate(created.session.id, owner.id, saved!.id, candidateId, branch, "main", "a".repeat(40), env.DB);
+    await reserveRepositoryCandidate(created.session.id, owner.id, saved!.id, candidateId, "Preflight room", "", branch, "main", "a".repeat(40), env.DB);
     await activateRepositoryCandidate(created.session.id, candidateId, "a".repeat(40), env.DB);
     const preflight = await createRepositoryPreflight(created.session.id, owner.id, env.DB);
     expect(preflight.checks.map((check) => check.command)).toEqual(["npm test", "npm run build"]);
@@ -245,7 +245,7 @@ describe("D1 session persistence", () => {
     }, "main", ["npm test"], env.DB);
     const candidateId = crypto.randomUUID();
     const branch = `openfloor/${created.session.id.slice(0, 8)}/candidate/${candidateId.slice(0, 8)}`;
-    await reserveRepositoryCandidate(created.session.id, owner.id, saved!.id, candidateId, branch, "main", "d".repeat(40), env.DB);
+    await reserveRepositoryCandidate(created.session.id, owner.id, saved!.id, candidateId, "Run room", "Make a focused change", branch, "main", "d".repeat(40), env.DB);
     await activateRepositoryCandidate(created.session.id, candidateId, "d".repeat(40), env.DB);
     const parsed = parseAgentInput({ name: "Builder", role: "Engineer", task: "Implement the request", ownerUserId: owner.id });
     if (!parsed) throw new Error("Invalid agent fixture");
@@ -328,6 +328,6 @@ describe("D1 session persistence", () => {
     expect(floor?.runs.find((item) => item.id === run.id)?.branchDeletedAt).not.toBeNull();
     const nextCandidateId = crypto.randomUUID();
     await expect(reserveRepositoryCandidate(created.session.id, owner.id, saved!.id, nextCandidateId,
-      `openfloor/${created.session.id.slice(0, 8)}/candidate/${nextCandidateId.slice(0, 8)}`, "main", squashSha, env.DB)).resolves.toBe(true);
+      "Next candidate", "Next objective", `openfloor/${created.session.id.slice(0, 8)}/candidate/${nextCandidateId.slice(0, 8)}`, "main", squashSha, env.DB)).resolves.toBe(true);
   });
 });

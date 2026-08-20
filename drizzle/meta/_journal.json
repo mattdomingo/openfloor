@@ -64,6 +64,13 @@
       "when": 1787177115955,
       "tag": "0008_light_sleeper",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1787184225051,
+      "tag": "0009_flashy_black_bird",
+      "breakpoints": true
     }
   ]
 }

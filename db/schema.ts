@@ -198,6 +198,8 @@ export const repositoryCandidates = sqliteTable(
     id: text("id").primaryKey(),
     sessionId: text("session_id").notNull().references(() => sessions.id, { onDelete: "cascade" }),
     connectionId: text("connection_id").notNull().references(() => repositoryConnections.id),
+    name: text("name").notNull().default(""),
+    description: text("description").notNull().default(""),
     branchName: text("branch_name").notNull(),
     baseBranch: text("base_branch").notNull(),
     baseSha: text("base_sha").notNull(),

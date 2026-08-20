@@ -25,7 +25,7 @@ import {
   getRepositoryConnectionForMember,
   reserveRepositoryCandidate,
 } from "@/db/repositories";
-import { getMembershipRole } from "@/db/sessions";
+import { getMembershipRole, getSessionForMember } from "@/db/sessions";
 import { createDraftPullRequest, createRepositoryBranch, getInstallationRepository, getRepositoryRefSha, GitHubApiError, mergeRepositoryBranch, setTestRepositoryMergeConflict } from "@/lib/github";
 import { notifyFloorChanged } from "@/lib/presence-server";
 import { openFloorBranchName } from "@/lib/repository-refs";
@@ -75,12 +75,16 @@ async function ensureNextCandidateCycle(sessionId: string, userId: string): Prom
   if (await getActiveRepositoryCandidateForMember(sessionId, userId)) return;
   const connection = await getRepositoryConnectionForMember(sessionId, userId);
   if (!connection || connection.status !== "ready") return;
+  const session = await getSessionForMember(sessionId, userId);
+  if (!session) return;
   const candidateId = crypto.randomUUID();
-  const branchName = openFloorBranchName(sessionId, "candidate", candidateId);
+  const branchName = openFloorBranchName(sessionId, "candidate", candidateId, session.title);
   const config = getGitHubAppConfig();
   const repository = await getInstallationRepository(config, connection.installationId, connection.repositoryId);
   const baseSha = await getRepositoryRefSha(config, connection.installationId, repository, connection.baseBranch);
-  const reserved = await reserveRepositoryCandidate(sessionId, userId, connection.id, candidateId, branchName, connection.baseBranch, baseSha);
+  const reserved = await reserveRepositoryCandidate(
+    sessionId, userId, connection.id, candidateId, session.title, session.objective ?? "", branchName, connection.baseBranch, baseSha,
+  );
   if (!reserved) return;
   try {
     const candidateSha = await createRepositoryBranch(config, connection.installationId, repository, branchName, baseSha);
@@ -141,7 +145,7 @@ async function publishTestRun(runId: string, encoded: string) {
   try {
     const merged = await mergeRepositoryBranch(config, integration.installationId, repository, integration.candidateBranch, commitSha, `Integrate OpenFloor run ${runId.slice(0, 8)}`);
     const pullRequest = integration.pullRequestNumber ? null : await createDraftPullRequest(config, integration.installationId, repository, {
-      title: `OpenFloor: ${integration.repositoryName} candidate`, body: "Draft candidate maintained automatically by OpenFloor.",
+      title: integration.candidateName, body: integration.candidateDescription,
       head: integration.candidateBranch, base: integration.baseBranch,
     });
     await finishRunIntegrated(runId, merged.sha, pullRequest);

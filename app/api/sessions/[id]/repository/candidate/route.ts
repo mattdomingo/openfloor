@@ -7,13 +7,14 @@ import {
   reserveRepositoryCandidate,
   setRepositoryAvailability,
 } from "@/db/repositories";
-import { getMembershipRole } from "@/db/sessions";
+import { getMembershipRole, getSessionForMember } from "@/db/sessions";
 import { createRepositoryBranch, getInstallationRepository, getRepositoryRefSha, GitHubApiError } from "@/lib/github";
 import { notifyFloorChanged } from "@/lib/presence-server";
 import { openFloorBranchName } from "@/lib/repository-refs";
 import { isApiError, requireApiUser } from "@/lib/server-auth";
+import { parseRepositoryCandidateInput } from "@/lib/validation";
 
-export async function POST(_request: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const user = await requireApiUser();
   if (isApiError(user)) return user;
   const sessionId = (await params).id;
@@ -27,14 +28,27 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
   if (await getActiveRepositoryCandidateForMember(sessionId, user.id)) {
     return Response.json({ error: "This session already has an active candidate" }, { status: 409 });
   }
+  const session = await getSessionForMember(sessionId, user.id);
+  if (!session) return Response.json({ error: "Session not found" }, { status: 404 });
+  const inputText = await request.text();
+  let rawInput: unknown = null;
+  if (inputText.trim()) {
+    try {
+      rawInput = JSON.parse(inputText);
+    } catch {
+      return Response.json({ error: "Candidate name or description is invalid" }, { status: 400 });
+    }
+  }
+  const input = rawInput === null ? { name: session.title, description: session.objective ?? "" } : parseRepositoryCandidateInput(rawInput);
+  if (!input) return Response.json({ error: "Candidate name or description is invalid" }, { status: 400 });
   const candidateId = crypto.randomUUID();
-  const branchName = openFloorBranchName(sessionId, "candidate", candidateId);
+  const branchName = openFloorBranchName(sessionId, "candidate", candidateId, input.name);
   try {
     const config = getGitHubAppConfig();
     const repository = await getInstallationRepository(config, connection.installationId, connection.repositoryId);
     const baseSha = await getRepositoryRefSha(config, connection.installationId, repository, connection.baseBranch);
     const reserved = await reserveRepositoryCandidate(
-      sessionId, user.id, connection.id, candidateId, branchName, connection.baseBranch, baseSha,
+      sessionId, user.id, connection.id, candidateId, input.name, input.description, branchName, connection.baseBranch, baseSha,
     );
     if (!reserved) return Response.json({ error: "This session already has an active candidate" }, { status: 409 });
     try {

@@ -235,7 +235,7 @@ export async function getActiveRepositoryCandidate(
   database: D1DatabaseLike,
 ): Promise<RepositoryCandidate | null> {
   const record = await database.prepare(
-    `SELECT id, session_id AS sessionId, connection_id AS connectionId, branch_name AS branchName,
+    `SELECT id, session_id AS sessionId, connection_id AS connectionId, name, description, branch_name AS branchName,
             base_branch AS baseBranch, base_sha AS baseSha, candidate_sha AS candidateSha,
             remote_base_sha AS remoteBaseSha, remote_candidate_sha AS remoteCandidateSha,
             integration_run_id AS integrationRunId, pull_request_number AS pullRequestNumber,
@@ -256,7 +256,7 @@ export async function getActiveRepositoryCandidate(
 
 export async function getLatestRepositoryReviewCandidate(sessionId: string, database: D1DatabaseLike): Promise<RepositoryCandidate | null> {
   const record = await database.prepare(
-    `SELECT id, session_id AS sessionId, connection_id AS connectionId, branch_name AS branchName,
+    `SELECT id, session_id AS sessionId, connection_id AS connectionId, name, description, branch_name AS branchName,
             base_branch AS baseBranch, base_sha AS baseSha, candidate_sha AS candidateSha,
             remote_base_sha AS remoteBaseSha, remote_candidate_sha AS remoteCandidateSha,
             integration_run_id AS integrationRunId, pull_request_number AS pullRequestNumber,
@@ -294,6 +294,8 @@ export async function reserveRepositoryCandidate(
   userId: string,
   connectionId: string,
   candidateId: string,
+  name: string,
+  description: string,
   branchName: string,
   baseBranch: string,
   baseSha: string,
@@ -304,9 +306,9 @@ export async function reserveRepositoryCandidate(
   try {
     const result = await database.prepare(
       `INSERT INTO repository_candidates
-       (id, session_id, connection_id, branch_name, base_branch, base_sha, status, created_by, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, 'creating', ?, ?, ?)`,
-    ).bind(candidateId, sessionId, connectionId, branchName, baseBranch, baseSha, userId, now, now).run();
+       (id, session_id, connection_id, name, description, branch_name, base_branch, base_sha, status, created_by, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'creating', ?, ?, ?)`,
+    ).bind(candidateId, sessionId, connectionId, name, description, branchName, baseBranch, baseSha, userId, now, now).run();
     return result.success;
   } catch (error) {
     if (String(error).toLowerCase().includes("unique")) return false;

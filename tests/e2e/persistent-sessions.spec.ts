@@ -81,8 +81,15 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await owner.getByRole("button", { name: "Save repository" }).click();
   await expect(owner.getByText("connected", { exact: true })).toBeVisible();
   await owner.getByRole("button", { name: "Enable execution" }).click();
+  await expect(owner.getByLabel("Candidate branch name")).toHaveValue("Release coordination");
+  await expect(owner.getByLabel("Candidate description")).toHaveValue("Ship persistent multiplayer sessions");
+  await owner.getByLabel("Candidate branch name").fill("Release candidate");
+  await owner.getByLabel("Candidate description").fill("Integrate the repository execution release.");
+  await owner.getByRole("button", { name: "Create candidate" }).click();
   await expect(owner.getByText("Execution enabled. Candidate branch created.")).toBeVisible();
-  await expect(owner.getByText(/openfloor\/[0-9a-f]{8}\/candidate\/[0-9a-f]{8}/)).toBeVisible();
+  await expect(owner.getByText("Release candidate", { exact: true })).toBeVisible();
+  await expect(owner.getByText("Integrate the repository execution release.", { exact: true })).toBeVisible();
+  await expect(owner.getByText(/openfloor\/[0-9a-f]{8}\/candidate\/release-candidate-[0-9a-f]{8}/)).toBeVisible();
   await expect(owner.getByText("ready", { exact: true })).toBeVisible();
   await owner.reload();
   await expect(owner.getByRole("button", { name: "Sync repository" })).toBeVisible();
@@ -105,7 +112,7 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await owner.getByRole("button", { name: "Verify runner" }).click();
   await expect(owner.getByLabel("Runner verification").getByText("passed", { exact: true }).first()).toBeVisible();
   await member.reload();
-  await expect(member.getByText(/openfloor\/[0-9a-f]{8}\/candidate\/[0-9a-f]{8}/)).toBeVisible();
+  await expect(member.getByText(/openfloor\/[0-9a-f]{8}\/candidate\/release-candidate-[0-9a-f]{8}/)).toBeVisible();
   await expect(member.getByRole("button", { name: "Sync repository" })).toHaveCount(0);
 
   await owner.getByRole("link", { name: "Enter agent floor" }).click();
@@ -296,7 +303,7 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
 
   await member.reload();
   await expect(member.getByRole("heading", { name: "Release coordination" })).toBeVisible();
-  await expect(member.getByText("Coordinate the restored agent floor")).toBeVisible();
+  await expect(member.locator(".session-hero").getByText("Coordinate the restored agent floor")).toBeVisible();
 
   await member.close();
   await expect(owner.locator("li", { hasText: "Member Example" }).getByText("Offline", { exact: true })).toBeVisible();

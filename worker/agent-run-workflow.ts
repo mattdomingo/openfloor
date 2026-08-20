@@ -336,8 +336,8 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
           const reconciled = await getRepositoryRefSha(config, context.installationId, repository, context.candidateBranch);
           if (reconciled !== merged.sha) throw new Error("Candidate branch did not reconcile after integration");
           const pullRequest = context.pullRequestNumber ? null : await createDraftPullRequest(config, context.installationId, repository, {
-            title: `OpenFloor: ${context.repositoryName} candidate`,
-            body: "Draft candidate maintained automatically by OpenFloor. Individual run attribution remains available in the session.",
+            title: context.candidateName,
+            body: context.candidateDescription,
             head: context.candidateBranch,
             base: context.baseBranch,
           });

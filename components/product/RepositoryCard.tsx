@@ -25,6 +25,8 @@ async function readResponse<T extends { error?: string }>(response: Response): P
 
 export function RepositoryCard({
   sessionId,
+  sessionTitle,
+  sessionObjective,
   role,
   initialRepository,
   initialCandidate,
@@ -33,6 +35,8 @@ export function RepositoryCard({
   beginSetup,
 }: {
   sessionId: string;
+  sessionTitle: string;
+  sessionObjective: string | null;
   role: SessionRole;
   initialRepository: RepositoryConnection | null;
   initialCandidate: RepositoryCandidate | null;
@@ -54,6 +58,9 @@ export function RepositoryCard({
   const [busy, setBusy] = useState(beginSetup);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [namingCandidate, setNamingCandidate] = useState(false);
+  const [candidateName, setCandidateName] = useState(sessionTitle);
+  const [candidateDescription, setCandidateDescription] = useState(sessionObjective ?? "");
 
   const selectedRepository = useMemo(
     () => repositories.find((item) => item.id === repositoryId) ?? null,
@@ -187,13 +194,18 @@ export function RepositoryCard({
     setBusy(true);
     setError(null);
     setNotice(null);
-    const response = await fetch(`${BASE_PATH}/api/sessions/${sessionId}/repository/${action}`, { method: "POST" });
+    const response = await fetch(`${BASE_PATH}/api/sessions/${sessionId}/repository/${action}`, {
+      method: "POST",
+      headers: action === "candidate" ? { "content-type": "application/json" } : undefined,
+      body: action === "candidate" ? JSON.stringify({ name: candidateName, description: candidateDescription }) : undefined,
+    });
     const body = await readResponse<{ repository?: RepositoryConnection; candidate?: RepositoryCandidate; error?: string }>(response);
     if (!response.ok || !body.repository || !body.candidate) {
       setError(body.error ?? "Unable to update the repository candidate");
     } else {
       setRepository(body.repository);
       setCandidate(body.candidate);
+      setNamingCandidate(false);
       setNotice(action === "candidate" ? "Execution enabled. Candidate branch created." : "Repository state synchronized with GitHub.");
     }
     setBusy(false);
@@ -251,6 +263,8 @@ export function RepositoryCard({
           {candidate && (
             <div className="repository-checks">
               <span>Active candidate</span>
+              <p><strong>{candidate.name}</strong></p>
+              {candidate.description && <p>{candidate.description}</p>}
               <p><code>{candidate.branchName}</code></p>
               <p>Candidate <code>{candidate.candidateSha?.slice(0, 8) ?? "creating"}</code> · base <code>{(candidate.remoteBaseSha ?? candidate.baseSha).slice(0, 8)}</code></p>
               {candidate.behindBase && <p className="form-error">Candidate is behind the current base branch.</p>}
@@ -279,7 +293,7 @@ export function RepositoryCard({
               {repository.status !== "disconnected" && repository.status !== "revoked" && repository.status !== "inaccessible" ? (
                 <>
                   <button className="button" onClick={edit} disabled={busy}>Configure</button>
-                  {!candidate && repository.status === "connected" && <button className="button" data-variant="primary" onClick={() => void candidateAction("candidate")} disabled={busy}>Enable execution</button>}
+                  {!candidate && repository.status === "connected" && <button className="button" data-variant="primary" onClick={() => setNamingCandidate(true)} disabled={busy}>Enable execution</button>}
                   {candidate && <button className="button" data-variant="primary" onClick={() => void candidateAction("sync")} disabled={busy}>Sync repository</button>}
                   {preflightEnabled && candidate && repository.status === "ready" && (
                     <button className="button" onClick={() => void verifyRunner()} disabled={busy || repository.checkCommands.length === 0 || Boolean(preflight && ["provisioning", "running"].includes(preflight.status))}>Verify runner</button>
@@ -287,6 +301,24 @@ export function RepositoryCard({
                   <button className="button danger-button" onClick={disconnect} disabled={busy}>Disconnect</button>
                 </>
               ) : <button className="button" data-variant="primary" onClick={connect} disabled={busy}>Reconnect GitHub</button>}
+            </div>
+          )}
+          {role === "owner" && !candidate && namingCandidate && repository.status === "connected" && (
+            <div className="repository-form" aria-label="Candidate setup">
+              <label>
+                <span>Candidate branch name</span>
+                <input aria-label="Candidate branch name" value={candidateName} onChange={(event) => setCandidateName(event.target.value)} maxLength={100} />
+                <small>OpenFloor converts this name into a safe branch beneath its protected candidate prefix.</small>
+              </label>
+              <label>
+                <span>Candidate description</span>
+                <textarea aria-label="Candidate description" value={candidateDescription} onChange={(event) => setCandidateDescription(event.target.value)} maxLength={2000} rows={4} />
+                <small>This becomes the description of the draft pull request.</small>
+              </label>
+              <div className="button-row">
+                <button className="button" data-variant="primary" onClick={() => void candidateAction("candidate")} disabled={busy || !candidateName.trim()}>Create candidate</button>
+                <button className="button" onClick={() => setNamingCandidate(false)} disabled={busy}>Cancel</button>
+              </div>
             </div>
           )}
         </>

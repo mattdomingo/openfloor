@@ -152,7 +152,7 @@ WebSocket events notify clients about presence or changed domains. D1 remains au
 - Durable GitHub installation/repository identifiers, selected base branch, and ordered required-check commands.
 - Member-visible repository details with owner-only connect, configure, disconnect, and reconnect controls.
 - A public GitHub webhook boundary that caps payloads and verifies the raw-body HMAC before acknowledging them.
-- One durable active repository candidate per session, created at a verified base SHA on a server-generated `openfloor/<session-short>/candidate/<candidate-short>` branch.
+- One durable active repository candidate per session, created at a verified base SHA with owner-confirmed name/description on a server-generated `openfloor/<session-short>/candidate/<safe-name>-<candidate-short>` branch.
 - Owner-only repository synchronization with connected, ready, revoked, inaccessible, externally modified, and behind-base presentation.
 - Idempotent GitHub installation, repository-access, rename, push, pull-request, check, and status delivery processing keyed by delivery ID.
 - Owner-started repository preflight through a durable Cloudflare Workflow and an isolated Cloudflare Sandbox at the exact candidate SHA.
@@ -379,12 +379,12 @@ Do not hand-edit Drizzle metadata. If a generated migration is wrong, correct th
 
 #### `repository_candidates`
 
-- Durable rows record the exact base SHA, generated candidate ref, expected candidate SHA, last observed remote SHAs, and synchronization time.
+- Durable rows record the owner-confirmed candidate name and description, exact base SHA, generated candidate ref, expected candidate SHA, last observed remote SHAs, and synchronization time.
 - A partial unique index permits only one `creating` or `active` candidate per session.
-- Candidate refs are generated only by the server as `openfloor/<session-short>/candidate/<candidate-short>` and are created without force from the configured base ref. Phase 2 exposes no generic ref name or update/delete API.
+- Candidate refs are generated only by the server as `openfloor/<session-short>/candidate/<safe-name>-<candidate-short>` and are created without force from the configured base ref. The owner supplies bounded display metadata, not an arbitrary ref; OpenFloor normalizes the name into a lowercase ASCII slug and retains the unique ID suffix.
 - A newer base SHA marks the candidate behind; an unexpected candidate head marks the connection externally modified. Neither condition rewrites GitHub.
 - Status is `creating`, `active`, `merged`, or `creation_failed`. Only creating/active rows participate in the one-live-candidate constraint, so merged history does not block the next cycle.
-- The row stores the active PR identity/state plus GitHub mergeability, merge-requirement state, aggregate observed-check result, ready/merge audit timestamps, confirmed squash SHA, and cleanup outcome.
+- The row stores the active PR identity/state plus GitHub mergeability, merge-requirement state, aggregate observed-check result, ready/merge audit timestamps, confirmed squash SHA, and cleanup outcome. The first draft PR uses the persisted candidate name as its title and description as its body.
 
 #### `repository_candidate_files` and `repository_candidate_checks`
 
@@ -575,7 +575,7 @@ All paths below are shown without the production `/app` prefix.
 | `POST /api/sessions/[id]/repository` | Owner with pending callback | Persist the selected repository, base branch, and required commands. |
 | `PATCH /api/sessions/[id]/repository` | Owner | Change the base branch or required commands for the same connected repository. |
 | `DELETE /api/sessions/[id]/repository` | Owner | Mark the connection disconnected without mutating GitHub. |
-| `POST /api/sessions/[id]/repository/candidate` | Owner | Verify the configured base SHA and create the single server-named candidate branch without force. |
+| `POST /api/sessions/[id]/repository/candidate` | Owner | Accept bounded `{ name, description }` metadata (defaulted by the UI and legacy empty-body callers from the session title/objective), verify the configured base SHA, and create one safely slugged server-owned candidate branch without force. |
 | `POST /api/sessions/[id]/repository/sync` | Owner | Reconcile repository metadata and base/candidate heads without modifying GitHub. |
 | `GET /api/sessions/[id]/repository/preflight` | Session member | Return the latest bounded preflight/check state. |
 | `POST /api/sessions/[id]/repository/preflight` | Owner | Start one durable preflight for the exact active candidate; requires at least one command. |
@@ -617,6 +617,7 @@ Keep server validation in `lib/validation.ts` and cover it with unit tests.
 - Live draft: maximum 4,000, not trimmed because it represents in-progress text.
 - Repository selection: repository ID maximum 100 characters; base branch required and maximum 255 characters.
 - Required check commands: optional; zero to eight ordered nonempty commands, trimmed, maximum 500 characters each.
+- Candidate name: required, NFKC-normalized, whitespace-collapsed, maximum 100 characters; it is slugged server-side and never accepted as a complete ref. Candidate description: trimmed, maximum 2,000 characters and may be empty.
 
 ## Frontend architecture
 
@@ -980,7 +981,7 @@ Migrations must land before code that requires them. The build generates `dist/s
 - The Worker route `opnflr.com/app*` is intentionally broader than `/app/*` due query-string routing behavior.
 - Access protects the app at the edge, but the Worker still verifies JWTs. Do not remove defense in depth.
 - `/app/webhooks/github` is deliberately public and must never process a payload before its raw-body HMAC and size are verified.
-- Phase 2 uses Contents write only to create the server-generated candidate ref. It exposes no generic branch CRUD, force push, base write, run branch, commit, PR, or deletion route.
+- Candidate naming never accepts a complete Git ref. Contents write creates only the server-generated `openfloor/<session-short>/candidate/<safe-name>-<candidate-short>` ref; no generic branch CRUD, force push, base write, protection change, or arbitrary deletion is exposed.
 - Phase 3 source checkout proxies an exact GitHub archive through `/runtime/preflight/source`; the Sandbox receives only a short-lived source-only JWT, never the GitHub installation token.
 - `@cloudflare/sandbox` and `cloudflare/sandbox` are pinned together at `0.12.7`. Docker must be running for local development and deploys that build the container image.
 - The production preflight gate was enabled after the Workers Paid upgrade and successful container-enabled deployment. Do not expose **Verify runner** against missing runtime bindings in another environment.
@@ -1122,13 +1123,13 @@ Repository execution Phases 1–7 are implemented. Future milestones should focu
 
 **Consequences:** The repository API accepts zero to eight commands. Future preflight, agent-run, publication, and integration actions must fail closed until the owner configures at least one command; an empty list must never be treated as a passing check suite.
 
-### 2026-08-19 — Reconcile one immutable candidate ref without automatic repair
+### 2026-08-19 — Reconcile one immutable candidate ref without automatic repair (branch format superseded)
 
 **Decision:** Enabling execution creates one durable active candidate at the current configured base SHA on a server-generated `openfloor/<session-short>/candidate/<candidate-short>` ref. OpenFloor records expected and observed SHAs, treats GitHub as authoritative, and reports a newer base as behind or an unexpected candidate head as externally modified. It never force-pushes or repairs either condition in Phase 2.
 
 **Rationale:** A single candidate gives later runs a stable integration target while immutable expected SHAs make races and external edits visible. Server-only naming and non-force creation prevent callers from turning the session API into generic Git ref authority.
 
-**Consequences:** Candidate creation and synchronization are owner-only; members receive the state read-only. Candidate creation is reserved durably before the GitHub write and records a failed reservation if the write fails. Signed GitHub deliveries are deduplicated by delivery ID, bump `floor_revision`, and broadcast `repository` and `review` invalidations. Disconnect/reconnect preserves candidate history. Run branches, local execution, candidate updates, pull requests, integration, and deletion remain deferred.
+**Consequences:** Candidate creation and synchronization are owner-only; members receive the state read-only. Candidate creation is reserved durably before the GitHub write and records a failed reservation if the write fails. Signed GitHub deliveries are deduplicated by delivery ID, bump `floor_revision`, and broadcast `repository` and `review` invalidations. Disconnect/reconnect preserves candidate history. Run branches, local execution, candidate updates, pull requests, integration, and deletion remain deferred. The opaque `<candidate-short>` terminal segment was superseded later on 2026-08-19 by the safe-name-plus-ID format; the server-owned prefix and non-force/reconciliation rules remain in force.
 
 ### 2026-08-19 — Run exact-source preflight in durable isolated infrastructure
 
@@ -1209,6 +1210,14 @@ Repository execution Phases 1–7 are implemented. Future milestones should focu
 **Rationale:** D1 must support reloads and member-visible review without pretending to be the repository, while GitHub protection, review, status, and merge decisions must remain authoritative. An expected-head squash request closes the race between review and merge without granting branch-administration or workflow permissions.
 
 **Consequences:** Confirmed merges transition the candidate to durable `merged` history and record the squash SHA. Cleanup verifies every server-generated run/candidate ref and deletes only exact matches with Git `--force-with-lease`; changed refs are retained and cleanup is marked partial. Run cleanup uses `branch_deleted_at`, distinct from manual discard. A merged candidate no longer participates in the live-candidate unique index, and the next owner-started run creates a new candidate from the current base. No generic ref CRUD, force update, protection mutation, alternate merge method, or administration permission is exposed.
+
+### 2026-08-19 — Give candidates durable owner-facing names and descriptions
+
+**Decision:** Each candidate stores a bounded name and description. The enable-execution form defaults them from the session title and objective, the name becomes a sanitized segment inside the server-owned candidate ref, and the first draft PR uses the stored name and description as its title and body. Automatically created later candidate cycles use the current session title and objective.
+
+**Rationale:** Reviewers need candidate branches and pull requests to reflect the session's work instead of opaque IDs or generic repository text, while accepting a complete user-provided ref would weaken the existing branch-ownership boundary.
+
+**Consequences:** Candidate refs now have the form `openfloor/<session-short>/candidate/<safe-name>-<candidate-short>`. Names are NFKC-normalized and limited to 100 characters; descriptions are trimmed and limited to 2,000. Existing candidates are backfilled from their session title/objective. Members can read the metadata, only owners create candidates, and OpenFloor still controls the prefix, suffix, non-force creation, reconciliation, merge, and cleanup rules.
 
 ## How to record the next decision
 

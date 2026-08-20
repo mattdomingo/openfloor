@@ -8,6 +8,7 @@ import {
   parseQueueMergeInput,
   parseQueueOrderInput,
   parseQueuePromptInput,
+  parseRepositoryCandidateInput,
   parseRepositoryConnectionInput,
   parseSessionInput,
 } from "@/lib/validation";
@@ -69,6 +70,14 @@ describe("floor input validation", () => {
       repositoryId: "123", baseBranch: "main", checkCommands: [],
     });
     expect(parseRepositoryConnectionInput({ repositoryId: "123", baseBranch: "main", checkCommands: ["x".repeat(501)] })).toBeNull();
+  });
+
+  it("normalizes and bounds candidate metadata", () => {
+    expect(parseRepositoryCandidateInput({ name: "  Release   coordination  ", description: "  Ship the session objective.  " }))
+      .toEqual({ name: "Release coordination", description: "Ship the session objective." });
+    expect(parseRepositoryCandidateInput({ name: "", description: "" })).toBeNull();
+    expect(parseRepositoryCandidateInput({ name: "x".repeat(101), description: "" })).toBeNull();
+    expect(parseRepositoryCandidateInput({ name: "Candidate", description: "x".repeat(2001) })).toBeNull();
   });
 });
 
