@@ -157,7 +157,7 @@ export async function createRepositoryBranch(
   sha: string,
 ): Promise<string> {
   if (!branch.startsWith("openfloor/") || !/^[a-z0-9/_-]+$/.test(branch)) {
-    throw new GitHubApiError("OpenFloor generated an invalid branch", 500);
+    throw new GitHubApiError("openfloor generated an invalid branch", 500);
   }
   if (config.testData) {
     const match = config.testData.repositories.find((item) => item.id === repository.id);
@@ -427,7 +427,7 @@ export async function deleteTestRepositoryBranchIfMatches(
   expectedSha: string,
 ): Promise<boolean> {
   if (!config.testData) throw new GitHubApiError("Test repository adapter is unavailable", 500);
-  if (!branch.startsWith("openfloor/") || !/^[a-z0-9/_-]+$/.test(branch)) throw new GitHubApiError("OpenFloor generated an invalid branch", 500);
+  if (!branch.startsWith("openfloor/") || !/^[a-z0-9/_-]+$/.test(branch)) throw new GitHubApiError("openfloor generated an invalid branch", 500);
   const match = config.testData.repositories.find((item) => item.id === repository.id);
   if (!match || installationId !== config.testData.installationId) throw new GitHubApiError("Repository is not available", 404);
   const key = `${installationId}:${repository.id}:${branch}`;
@@ -592,7 +592,7 @@ function githubHeaders(token: string): HeadersInit {
   return {
     Accept: "application/vnd.github+json",
     Authorization: `Bearer ${token}`,
-    "User-Agent": "OpenFloor-GitHub-App",
+    "User-Agent": "openfloor-GitHub-App",
     "X-GitHub-Api-Version": API_VERSION,
   };
 }

@@ -20,7 +20,7 @@ const connectionStatusLabel: Record<RepositoryConnectionStatus, string> = {
   ready: "Ready",
   revoked: "Access revoked",
   inaccessible: "Inaccessible",
-  externally_modified: "Modified outside OpenFloor",
+  externally_modified: "Modified outside openfloor",
   disconnected: "Disconnected",
 };
 
@@ -271,7 +271,7 @@ export function RepositoryCard({
               <div className="repository-checks">
                 <span>What to expect</span>
                 <ol>
-                  <li>Connect GitHub opens github.com to install the OpenFloor App — you leave this page and return here when the install finishes.</li>
+                  <li>Connect GitHub opens github.com to install the openfloor App — you leave this page and return here when the install finishes.</li>
                   <li>During the install, choose which repositories the App may access. Some organizations require an admin to approve it first.</li>
                   <li>Back here, pick the repository and base branch, then save. Check commands are optional now, but agents cannot execute until at least one is configured.</li>
                 </ol>
@@ -298,7 +298,7 @@ export function RepositoryCard({
               <p><code>{candidate.branchName}</code></p>
               <p>Candidate <code>{candidate.candidateSha?.slice(0, 8) ?? "creating"}</code> · base <code>{(candidate.remoteBaseSha ?? candidate.baseSha).slice(0, 8)}</code></p>
               {candidate.behindBase && <p className="form-note">Candidate is behind the current base branch.</p>}
-              {repository.status === "externally_modified" && <p className="form-note">The candidate branch was modified outside OpenFloor.</p>}
+              {repository.status === "externally_modified" && <p className="form-note">The candidate branch was modified outside openfloor.</p>}
             </div>
           )}
           <div className="repository-checks">
@@ -338,7 +338,7 @@ export function RepositoryCard({
               <label>
                 <span>Candidate branch name</span>
                 <input aria-label="Candidate branch name" value={candidateName} onChange={(event) => setCandidateName(event.target.value)} maxLength={100} />
-                <small>OpenFloor converts this name into a safe branch beneath its protected candidate prefix.</small>
+                <small>openfloor converts this name into a safe branch beneath its protected candidate prefix.</small>
               </label>
               <label>
                 <span>Candidate description</span>

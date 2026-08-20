@@ -38,15 +38,15 @@ describe("trusted Git bundle publisher", () => {
       git(["-C", agent, "add", "-A"]);
       const tree = git(["-C", agent, "write-tree"]).trim();
       const baseline = git(["-C", agent, "commit-tree", tree], {
-        GIT_AUTHOR_NAME: "OpenFloor", GIT_AUTHOR_EMAIL: "runtime@opnflr.com",
-        GIT_COMMITTER_NAME: "OpenFloor", GIT_COMMITTER_EMAIL: "runtime@opnflr.com",
+        GIT_AUTHOR_NAME: "openfloor", GIT_AUTHOR_EMAIL: "runtime@opnflr.com",
+        GIT_COMMITTER_NAME: "openfloor", GIT_COMMITTER_EMAIL: "runtime@opnflr.com",
         GIT_AUTHOR_DATE: "2000-01-01T00:00:00Z", GIT_COMMITTER_DATE: "2000-01-01T00:00:00Z",
-      }, "OpenFloor candidate baseline\n").trim();
+      }, "openfloor candidate baseline\n").trim();
       git(["-C", agent, "update-ref", "refs/heads/openfloor-base", baseline]);
       git(["-C", agent, "reset", "-q", "--hard", baseline]);
       writeFileSync(join(agent, "src/change.txt"), "change\n");
       git(["-C", agent, "add", "-A"]);
-      git(["-C", agent, "-c", "user.name=OpenFloor", "-c", "user.email=runtime@opnflr.com", "commit", "-q", "-m", "run"]);
+      git(["-C", agent, "-c", "user.name=openfloor", "-c", "user.email=runtime@opnflr.com", "commit", "-q", "-m", "run"]);
       const branch = "openfloor/session/run/test";
       git(["-C", agent, "update-ref", `refs/heads/${branch}`, "HEAD"]);
       const bundle = join(root, "result.bundle");

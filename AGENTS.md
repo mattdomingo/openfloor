@@ -1,6 +1,6 @@
-# OpenFloor Engineering Guide
+# openfloor Engineering Guide
 
-This file is the authoritative repository-level guide for engineers and coding agents working on OpenFloor. It applies to the entire repository unless a more specific `AGENTS.md` is added in a subdirectory.
+This file is the authoritative repository-level guide for engineers and coding agents working on openfloor. It applies to the entire repository unless a more specific `AGENTS.md` is added in a subdirectory.
 
 Last verified against `main`: 2026-08-19.
 
@@ -49,7 +49,7 @@ The repository intentionally contains a polished UI whose future-facing affordan
 
 ### Ultimate goal
 
-OpenFloor is a multiplayer coordination environment for teams of humans and software agents working on the same objective.
+openfloor is a multiplayer coordination environment for teams of humans and software agents working on the same objective.
 
 The long-term product should let a team enter one durable room, understand who and what is working, direct work to specialized agents, coordinate prompts and assignments, observe execution, communicate in context, inspect proposed changes, resolve conflicts, and approve work without losing the shared thread across people, tabs, devices, reconnects, or long-running tasks.
 
@@ -69,7 +69,7 @@ The product should eventually coordinate real coding-agent execution and reposit
 
 ### Why the project exists
 
-Most agent tools are optimized for one person issuing one prompt to one agent. Real engineering work is collaborative: multiple people divide responsibilities, redirect work, ask each other questions, combine related prompts, watch progress, and review shared outcomes. OpenFloor is intended to make that multiplayer layer explicit and durable.
+Most agent tools are optimized for one person issuing one prompt to one agent. Real engineering work is collaborative: multiple people divide responsibilities, redirect work, ask each other questions, combine related prompts, watch progress, and review shared outcomes. openfloor is intended to make that multiplayer layer explicit and durable.
 
 The immediate engineering strategy is to build the trustworthy collaboration substrate first:
 
@@ -98,7 +98,7 @@ Production code must not seed, fabricate, or animate agents, prompts, messages, 
 
 ### Authoritative state has one clear owner
 
-OpenFloor has three intentionally separate state classes:
+openfloor has three intentionally separate state classes:
 
 1. **D1-authoritative collaboration state**: users, sessions, memberships, invites, objective, agents, assignments, messages, queue items, queue prompts, ordering, and floor revision.
 2. **Durable Object-coordinated ephemeral state**: online connections and teammate prompt drafts. This state is realtime but is not D1 history.
@@ -224,7 +224,7 @@ The request and synchronization flow is:
 ```text
 Browser
   -> Cloudflare Access policy for protected production paths
-  -> OpenFloor Worker
+  -> openfloor Worker
        -> verifies Access JWT or explicit loopback development identity
        -> strips any client-supplied trusted identity headers
        -> forwards verified identity to the vinext/Next application
@@ -266,7 +266,7 @@ Per-session WebSocket
 ### Important hosting topology
 
 - The marketing site owns the apex `opnflr.com` deployment.
-- The OpenFloor application is peeled off under `/app` by a more-specific Worker route.
+- The openfloor application is peeled off under `/app` by a more-specific Worker route.
 - `next.config.ts` sets `basePath` to `/app` only for production. Enabling it in development breaks stylesheet resolution because the source `app/` directory and URL prefix collide.
 - `components/basePath.ts` exists for literal public/API/WebSocket paths that the framework does not rewrite automatically.
 - Use Next `Link` with unprefixed application paths such as `/home` and `/session/...`; Next applies the production base path.
@@ -388,7 +388,7 @@ Do not hand-edit Drizzle metadata. If a generated migration is wrong, correct th
 
 - Durable rows record the owner-confirmed candidate name and description, exact base SHA, generated candidate ref, expected candidate SHA, last observed remote SHAs, and synchronization time.
 - A partial unique index permits only one `creating` or `active` candidate per session.
-- Candidate refs are generated only by the server as `openfloor/<session-short>/candidate/<safe-name>-<candidate-short>` and are created without force from the configured base ref. The owner supplies bounded display metadata, not an arbitrary ref; OpenFloor normalizes the name into a lowercase ASCII slug and retains the unique ID suffix.
+- Candidate refs are generated only by the server as `openfloor/<session-short>/candidate/<safe-name>-<candidate-short>` and are created without force from the configured base ref. The owner supplies bounded display metadata, not an arbitrary ref; openfloor normalizes the name into a lowercase ASCII slug and retains the unique ID suffix.
 - A newer base SHA marks the candidate behind; an unexpected candidate head marks the connection externally modified. Neither condition rewrites GitHub.
 - Status is `creating`, `active`, `merged`, or `creation_failed`. Only creating/active rows participate in the one-live-candidate constraint, so merged history does not block the next cycle.
 - The row stores the active PR identity/state plus GitHub mergeability, merge-requirement state, aggregate observed-check result, ready/merge audit timestamps, confirmed squash SHA, and cleanup outcome. The first draft PR uses the persisted candidate name as its title and description as its body.
@@ -596,10 +596,10 @@ All paths below are shown without the production `/app` prefix.
 | `GET /runtime/preflight/source` | Short-lived source JWT | Proxy the exact candidate archive without exposing a GitHub installation token to the Sandbox process. |
 | `POST /api/sessions/[id]/queue/[queueItemId]/run` | Owner | Start a durable Codex run for an assigned queued item at the exact active candidate SHA. |
 | `POST /api/sessions/[id]/runs/[runId]/cancel` | Owner | Request cancellation of an active run. |
-| `POST /api/sessions/[id]/runs/[runId]/discard` | Owner | Delete only an unchanged, verified OpenFloor run branch using an expected-SHA lease; retain audit history. |
+| `POST /api/sessions/[id]/runs/[runId]/discard` | Owner | Delete only an unchanged, verified openfloor run branch using an expected-SHA lease; retain audit history. |
 | `POST /api/sessions/[id]/runs/[runId]/retry` | Owner | Retry a conflicted queue item as a new run attempt pinned to the latest candidate SHA. |
 | `POST /api/sessions/[id]/review/ready` | Owner | Reconcile the exact active PR and use GitHub's ready-for-review mutation; preserve 404 concealment. |
-| `POST /api/sessions/[id]/review/merge` | Owner | Reconcile head/base/files/checks/mergeability, request an exact-head squash merge, confirm it, and safely clean matching OpenFloor refs. |
+| `POST /api/sessions/[id]/review/merge` | Owner | Reconcile head/base/files/checks/mergeability, request an exact-head squash merge, confirm it, and safely clean matching openfloor refs. |
 | `GET /api/sessions/[id]/runs/[runId]/artifacts` | Session member | Return caller-authorized bounded run artifacts from private R2. |
 | `GET /api/sessions/[id]/runs/[runId]/events` | Session member | Return one run's persisted activity timeline incrementally via `?after=<sequence>`. |
 | `POST /runtime/run/events` | Short-lived run events JWT | Ingest bounded, runner-sequenced activity events for one active run and broadcast them as `run.activity`. |
@@ -1086,7 +1086,7 @@ Repository execution Phases 1–7 are implemented. Future milestones should focu
 
 ### 2026-08-18 — Mount the product under `/app`
 
-**Decision:** Keep the marketing site at the apex and serve OpenFloor under `opnflr.com/app` in production; serve at root in local development.
+**Decision:** Keep the marketing site at the apex and serve openfloor under `opnflr.com/app` in production; serve at root in local development.
 
 **Rationale:** Marketing and product are separate deployments on one domain, and vinext development stylesheet behavior does not tolerate the production prefix cleanly.
 
@@ -1154,7 +1154,7 @@ Repository execution Phases 1–7 are implemented. Future milestones should focu
 
 **Rationale:** A GitHub App provides narrowly scoped, short-lived installation credentials and repository selection without granting user-wide OAuth access. One repository gives each session a single coordination boundary, and owner-only mutation prevents ordinary members from expanding repository or future compute authority.
 
-**Consequences:** The app requests Metadata read, Contents read/write, Pull Requests read/write, Checks read, and Commit statuses read, with no Administration or Workflows permission. The write grants are reserved for later accepted phases; generic branch CRUD, force push, base-branch writes, and protection changes are never exposed. The original isolated-development deployment consequence was superseded on 2026-08-19; phased acceptance now uses production OpenFloor with repository access limited to a disposable repository.
+**Consequences:** The app requests Metadata read, Contents read/write, Pull Requests read/write, Checks read, and Commit statuses read, with no Administration or Workflows permission. The write grants are reserved for later accepted phases; generic branch CRUD, force push, base-branch writes, and protection changes are never exposed. The original isolated-development deployment consequence was superseded on 2026-08-19; phased acceptance now uses production openfloor with repository access limited to a disposable repository.
 
 ### 2026-08-19 — Target Workflows, Sandboxes, Codex, and a single candidate PR
 
@@ -1166,7 +1166,7 @@ Repository execution Phases 1–7 are implemented. Future milestones should focu
 
 ### 2026-08-19 — Temporarily deliver repository phases directly to production
 
-**Decision:** Until the user establishes a staging environment, deploy each accepted repository-execution phase to the existing production OpenFloor Worker and D1 database at `opnflr.com/app`. Use a real disposable GitHub repository as the only App installation target during acceptance.
+**Decision:** Until the user establishes a staging environment, deploy each accepted repository-execution phase to the existing production openfloor Worker and D1 database at `opnflr.com/app`. Use a real disposable GitHub repository as the only App installation target during acceptance.
 
 **Rationale:** Reusing the working production application, Access policy, domain, and bindings removes a second environment's DNS, Access, secret, and deployment setup from the critical path. A disposable repository limits the GitHub-side impact while the integration matures.
 
@@ -1182,7 +1182,7 @@ Repository execution Phases 1–7 are implemented. Future milestones should focu
 
 ### 2026-08-19 — Reconcile one immutable candidate ref without automatic repair (branch format superseded)
 
-**Decision:** Enabling execution creates one durable active candidate at the current configured base SHA on a server-generated `openfloor/<session-short>/candidate/<candidate-short>` ref. OpenFloor records expected and observed SHAs, treats GitHub as authoritative, and reports a newer base as behind or an unexpected candidate head as externally modified. It never force-pushes or repairs either condition in Phase 2.
+**Decision:** Enabling execution creates one durable active candidate at the current configured base SHA on a server-generated `openfloor/<session-short>/candidate/<candidate-short>` ref. openfloor records expected and observed SHAs, treats GitHub as authoritative, and reports a newer base as behind or an unexpected candidate head as externally modified. It never force-pushes or repairs either condition in Phase 2.
 
 **Rationale:** A single candidate gives later runs a stable integration target while immutable expected SHAs make races and external edits visible. Server-only naming and non-force creation prevent callers from turning the session API into generic Git ref authority.
 
@@ -1230,11 +1230,11 @@ Repository execution Phases 1–7 are implemented. Future milestones should focu
 
 ### 2026-08-19 — Delete run branches only with an expected-SHA lease
 
-**Decision:** Owner-only discard first reconciles the remote run head and then deletes through a fixed Git push using `--force-with-lease` for the recorded SHA. OpenFloor never exposes arbitrary ref deletion and never deletes a candidate or base branch through this action.
+**Decision:** Owner-only discard first reconciles the remote run head and then deletes through a fixed Git push using `--force-with-lease` for the recorded SHA. openfloor never exposes arbitrary ref deletion and never deletes a candidate or base branch through this action.
 
 **Rationale:** GitHub's REST ref deletion endpoint has no conditional expected-SHA parameter, leaving a race between read and delete. A Git lease makes the remote head comparison atomic with deletion.
 
-**Consequences:** External push webhooks update each run's observed remote SHA. Any mismatch, missing branch, wrong status, non-OpenFloor ref, or lease failure returns a conflict and preserves the branch. Successful discard deletes only the GitHub ref; all run, check, file, diff, bundle, event, and attribution records remain durable.
+**Consequences:** External push webhooks update each run's observed remote SHA. Any mismatch, missing branch, wrong status, non-openfloor ref, or lease failure returns a conflict and preserves the branch. Successful discard deletes only the GitHub ref; all run, check, file, diff, bundle, event, and attribution records remain durable.
 
 ### 2026-08-19 — Resume publication from durable bundle state
 
@@ -1250,7 +1250,7 @@ Repository execution Phases 1–7 are implemented. Future milestones should focu
 
 **Rationale:** Per-run branches isolate concurrent agent work, while a single serialized candidate gives reviewers one stable integration surface. The D1 lease prevents two Workflows from updating the expected candidate head concurrently, and GitHub remains authoritative for the actual merge result and conflict decision.
 
-**Consequences:** Candidate records persist the integration lease and PR number/node/URL/state/draft metadata. Runs persist integration base, integrated candidate SHA, conflict reason, and timestamps. Successful integration marks the queue item completed; conflict leaves it blocked. Candidate push webhooks received while the matching lease is held do not falsely mark OpenFloor's own merge as an external mutation. Final PR readiness, protection enforcement, squash merge, and cleanup remain Phase 7.
+**Consequences:** Candidate records persist the integration lease and PR number/node/URL/state/draft metadata. Runs persist integration base, integrated candidate SHA, conflict reason, and timestamps. Successful integration marks the queue item completed; conflict leaves it blocked. Candidate push webhooks received while the matching lease is held do not falsely mark openfloor's own merge as an external mutation. Final PR readiness, protection enforcement, squash merge, and cleanup remain Phase 7.
 
 ### 2026-08-19 — Allow concurrent runs to publish from an ancestral candidate
 
@@ -1274,7 +1274,7 @@ Repository execution Phases 1–7 are implemented. Future milestones should focu
 
 **Rationale:** Reviewers need candidate branches and pull requests to reflect the session's work instead of opaque IDs or generic repository text, while accepting a complete user-provided ref would weaken the existing branch-ownership boundary.
 
-**Consequences:** Candidate refs now have the form `openfloor/<session-short>/candidate/<safe-name>-<candidate-short>`. Names are NFKC-normalized and limited to 100 characters; descriptions are trimmed and limited to 2,000. Existing candidates are backfilled from their session title/objective. Members can read the metadata, only owners create candidates, and OpenFloor still controls the prefix, suffix, non-force creation, reconciliation, merge, and cleanup rules.
+**Consequences:** Candidate refs now have the form `openfloor/<session-short>/candidate/<safe-name>-<candidate-short>`. Names are NFKC-normalized and limited to 100 characters; descriptions are trimmed and limited to 2,000. Existing candidates are backfilled from their session title/objective. Members can read the metadata, only owners create candidates, and openfloor still controls the prefix, suffix, non-force creation, reconciliation, merge, and cleanup rules.
 
 ## How to record the next decision
 

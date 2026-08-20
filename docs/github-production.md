@@ -1,6 +1,6 @@
 # Production GitHub App rollout
 
-OpenFloor connects the production application to a GitHub App, keeps one real candidate branch, and runs Codex plus required checks in Cloudflare Sandbox. Every passing result is retained on a separate verified run branch, then serialized into the candidate and its single draft pull request. The owner can mark that PR ready and request an exact-head squash merge after GitHub reports clean mergeability and passing checks. During acceptance, install the App only on a real disposable repository.
+openfloor connects the production application to a GitHub App, keeps one real candidate branch, and runs Codex plus required checks in Cloudflare Sandbox. Every passing result is retained on a separate verified run branch, then serialized into the candidate and its single draft pull request. The owner can mark that PR ready and request an exact-head squash merge after GitHub reports clean mergeability and passing checks. During acceptance, install the App only on a real disposable repository.
 
 ## Production host and Cloudflare Access
 
@@ -17,7 +17,7 @@ Do not put `opnflr.com/app/webhooks/github` behind Access. It is public only so 
 
 Create a private GitHub App in GitHub settings with:
 
-- GitHub App name: a unique name, such as `OpenFloor`.
+- GitHub App name: a unique name, such as `openfloor`.
 - Homepage URL: `https://opnflr.com/app`.
 - Setup URL: `https://opnflr.com/app/api/github/callback`.
 - Redirect on update: enabled.
@@ -51,7 +51,7 @@ npx wrangler secret put GITHUB_WEBHOOK_SECRET
 npx wrangler secret put GITHUB_APP_PRIVATE_KEY < /absolute/path/to/downloaded-private-key.pem
 ```
 
-Pipe the downloaded PEM file into Wrangler as shown. Do not type its path as the secret value and do not paste only the first PEM line. OpenFloor accepts both GitHub's downloaded `RSA PRIVATE KEY` (PKCS#1) format and PKCS#8 `PRIVATE KEY` format. Generate an independent random state secret; do not reuse the webhook secret.
+Pipe the downloaded PEM file into Wrangler as shown. Do not type its path as the secret value and do not paste only the first PEM line. openfloor accepts both GitHub's downloaded `RSA PRIVATE KEY` (PKCS#1) format and PKCS#8 `PRIVATE KEY` format. Generate an independent random state secret; do not reuse the webhook secret.
 
 Create and store an independent runtime-gateway secret:
 
@@ -67,7 +67,7 @@ Add an OpenAI project API key for server-side Codex execution:
 npx wrangler secret put OPENAI_API_KEY
 ```
 
-Enter the key at Wrangler's prompt. Do not place it in a repository, check command, queue prompt, or command-line argument. OpenFloor injects it only at the trusted Responses gateway; the Sandbox receives a short-lived run token instead of the project key.
+Enter the key at Wrangler's prompt. Do not place it in a repository, check command, queue prompt, or command-line argument. openfloor injects it only at the trusted Responses gateway; the Sandbox receives a short-lived run token instead of the project key.
 
 ## Configure Workflow, Sandbox, and R2
 
@@ -96,7 +96,7 @@ After the container-enabled deployment succeeds, set `PREFLIGHT_ENABLED` to `tru
 
 Each passing result is exported as an incremental Git bundle, validated in a clean publisher Sandbox, and pushed as a single commit without force to `openfloor/<session-short>/run/<run-short>`. A D1 candidate lease serializes GitHub merges into the active candidate branch. The first integration opens one draft pull request into the configured base; later integrations update the same PR. Conflicts leave the candidate unchanged and expose owner-only **Retry against latest candidate**, which creates a new attempt and branch.
 
-Phase 7 reconciles the PR head/base, bounded GitHub diff, checks/statuses, draft state, and mergeability. **Ready for review** uses GitHub's draft-review mutation. **Squash merge** is enabled only for the owner after GitHub reports an open, non-draft, clean, mergeable PR with all observed checks passing; the request includes the exact candidate SHA and GitHub protection failures are surfaced without claiming success. After GitHub confirms the squash commit, OpenFloor marks the candidate merged and deletes only matching server-generated run/candidate refs with Git `--force-with-lease`. Changed refs are preserved and reported as partial cleanup. The next run creates a fresh candidate from the latest base. OpenFloor still exposes no caller-selected ref, generic branch CRUD, force update, protection change, administration operation, or alternate merge method.
+Phase 7 reconciles the PR head/base, bounded GitHub diff, checks/statuses, draft state, and mergeability. **Ready for review** uses GitHub's draft-review mutation. **Squash merge** is enabled only for the owner after GitHub reports an open, non-draft, clean, mergeable PR with all observed checks passing; the request includes the exact candidate SHA and GitHub protection failures are surfaced without claiming success. After GitHub confirms the squash commit, openfloor marks the candidate merged and deletes only matching server-generated run/candidate refs with Git `--force-with-lease`. Changed refs are preserved and reported as partial cleanup. The next run creates a fresh candidate from the latest base. openfloor still exposes no caller-selected ref, generic branch CRUD, force update, protection change, administration operation, or alternate merge method.
 
 Known follow-up: production discard remains unresolved after the Phase 5 transport-authentication correction. Do not weaken its expected-SHA lease; verify Phase 6 independently and return to discard in its separate ticket.
 

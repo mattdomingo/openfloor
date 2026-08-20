@@ -414,7 +414,7 @@ export async function markRunDiscarded(sessionId: string, runId: string, userId:
   ).bind(now, userId, now, runId, sessionId).run();
   if (!result.meta?.changes) return null;
   await database.prepare("UPDATE sessions SET floor_revision = floor_revision + 1, updated_at = ? WHERE id = ?").bind(now, sessionId).run();
-  await appendRunEvent(runId, "discarded", "The verified OpenFloor-owned run branch was deleted from GitHub.", database);
+  await appendRunEvent(runId, "discarded", "The verified openfloor-owned run branch was deleted from GitHub.", database);
   const revision = await database.prepare("SELECT floor_revision AS revision FROM sessions WHERE id = ?").bind(sessionId).first<{ revision: number }>();
   return Number(revision?.revision ?? 0);
 }

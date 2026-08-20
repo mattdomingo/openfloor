@@ -1,8 +1,8 @@
-# OpenFloor
+# openfloor
 
-OpenFloor is a persistent multiplayer session shell for teams coordinating agent work. Cloudflare D1 stores users, sessions, memberships, reusable signed invites, agents, assignments, prompts, queue ordering, and team/direct messages. A per-session Durable Object provides live WebSocket presence and floor-change notifications.
+openfloor is a persistent multiplayer session shell for teams coordinating agent work. Cloudflare D1 stores users, sessions, memberships, reusable signed invites, agents, assignments, prompts, queue ordering, and team/direct messages. A per-session Durable Object provides live WebSocket presence and floor-change notifications.
 
-Members enter a session at `/app/session/[id]`, then continue to the authenticated workspace at `/app/session/[id]/floor`. A new floor starts empty. Everything shown comes from the session, persisted member actions, or a connected backend; OpenFloor does not seed sample agents, prompts, files, checks, or review candidates.
+Members enter a session at `/app/session/[id]`, then continue to the authenticated workspace at `/app/session/[id]/floor`. A new floor starts empty. Everything shown comes from the session, persisted member actions, or a connected backend; openfloor does not seed sample agents, prompts, files, checks, or review candidates.
 
 ## Local development
 
@@ -16,7 +16,7 @@ openssl rand -hex 32
 
 Open `.dev.vars` and replace `INVITE_SIGNING_SECRET` with the random value printed by the last command. You can also change the three `OPENFLOOR_DEV_USER_*` values to the local name and email you want displayed. The Cloudflare Access placeholders can remain unchanged for local development.
 
-Repository execution additionally requires a GitHub App, Cloudflare Workflows/Sandbox/private R2, and an OpenAI project API key. Follow [`docs/github-production.md`](docs/github-production.md). Owners name each candidate and describe its intent, with the session title and objective supplied as defaults; OpenFloor safely slugs the name inside its protected branch prefix and uses the metadata for the draft pull request. OpenFloor runs Codex at an exact candidate SHA, validates and publishes each passing result independently, serially integrates it into one draft pull request, reconciles GitHub files/checks/mergeability, and lets only the session owner mark ready and request a protected squash merge. Confirmed merges clean only exact-SHA OpenFloor branches and the next run starts a fresh candidate cycle.
+Repository execution additionally requires a GitHub App, Cloudflare Workflows/Sandbox/private R2, and an OpenAI project API key. Follow [`docs/github-production.md`](docs/github-production.md). Owners name each candidate and describe its intent, with the session title and objective supplied as defaults; openfloor safely slugs the name inside its protected branch prefix and uses the metadata for the draft pull request. openfloor runs Codex at an exact candidate SHA, validates and publishes each passing result independently, serially integrates it into one draft pull request, reconciles GitHub files/checks/mergeability, and lets only the session owner mark ready and request a protected squash merge. Confirmed merges clean only exact-SHA openfloor branches and the next run starts a fresh candidate cycle.
 
 Create the local D1 tables, then start the development server:
 
@@ -57,7 +57,7 @@ Production authentication is provided by one Cloudflare Access self-hosted appli
 - `opnflr.com/app/join/*`
 - `opnflr.com/app/api/*`
 
-Enable Google and One-time PIN as identity providers. The application policy determines who may authenticate; session membership and invite acceptance remain enforced by OpenFloor.
+Enable Google and One-time PIN as identity providers. The application policy determines who may authenticate; session membership and invite acceptance remain enforced by openfloor.
 
 Copy the Access team domain and the application's Audience (AUD) tag into Worker secrets:
 

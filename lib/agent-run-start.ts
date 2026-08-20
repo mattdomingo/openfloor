@@ -130,7 +130,7 @@ async function runTestAgent(runId: string, encoded: string, bucket: R2BucketLike
     await finishRunCheck(runId, check.id, { status: shouldFail ? "failed" : "passed", exitCode: shouldFail ? 1 : 0, durationMs: 10, outputExcerpt: log, logKey });
     if (shouldFail) break;
   }
-  await finishAgentRun(runId, shouldFail ? "failed" : "ready", shouldFail ? "A required check failed." : "Codex changed 1 file; all required checks passed. Changes remain local to OpenFloor.");
+  await finishAgentRun(runId, shouldFail ? "failed" : "ready", shouldFail ? "A required check failed." : "Codex changed 1 file; all required checks passed. Changes remain local to openfloor.");
   return shouldFail ? "failed" : "ready";
 }
 
@@ -151,7 +151,7 @@ async function publishTestRun(runId: string, encoded: string) {
   }
   const integration = await beginRunIntegration(runId);
   try {
-    const merged = await mergeRepositoryBranch(config, integration.installationId, repository, integration.candidateBranch, commitSha, `Integrate OpenFloor run ${runId.slice(0, 8)}`);
+    const merged = await mergeRepositoryBranch(config, integration.installationId, repository, integration.candidateBranch, commitSha, `Integrate openfloor run ${runId.slice(0, 8)}`);
     const pullRequest = integration.pullRequestNumber ? null : await createDraftPullRequest(config, integration.installationId, repository, {
       title: integration.candidateName, body: integration.candidateDescription,
       head: integration.candidateBranch, base: integration.baseBranch,

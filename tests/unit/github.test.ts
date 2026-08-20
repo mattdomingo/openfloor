@@ -53,7 +53,7 @@ describe("GitHub App client", () => {
     });
   });
 
-  it("deletes only an OpenFloor test ref whose head still matches", async () => {
+  it("deletes only an openfloor test ref whose head still matches", async () => {
     const repository = { id: "1", nodeId: "R_1", owner: "openfloor", name: "test", fullName: "openfloor/test", private: true, defaultBranch: "main" };
     const config: GitHubAppConfig = {
       appId: "1", slug: "openfloor-test", privateKey: "test", stateSecret: "state", webhookSecret: "webhook",

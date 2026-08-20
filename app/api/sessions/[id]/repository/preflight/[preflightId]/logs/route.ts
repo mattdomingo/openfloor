@@ -21,7 +21,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
     const log = await object.text();
     output += `${output ? "\n\n" : ""}$ ${item.command}\n${log}`;
     if (output.length >= MAX_RESPONSE_CHARS) {
-      output = `${output.slice(0, MAX_RESPONSE_CHARS)}\n\n[OpenFloor truncated the combined log response]`;
+      output = `${output.slice(0, MAX_RESPONSE_CHARS)}\n\n[openfloor truncated the combined log response]`;
       break;
     }
   }

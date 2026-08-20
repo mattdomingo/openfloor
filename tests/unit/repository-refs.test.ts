@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { openFloorBranchName } from "@/lib/repository-refs";
 
-describe("OpenFloor repository refs", () => {
+describe("openfloor repository refs", () => {
   it("derives candidate and run refs only from durable IDs", () => {
     expect(openFloorBranchName("12345678-abcd-4000-8000-123456789abc", "candidate", "abcdef12-1111-4000-8000-123456789abc"))
       .toBe("openfloor/12345678/candidate/abcdef12");

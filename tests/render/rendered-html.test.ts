@@ -20,13 +20,13 @@ const authenticatedHeaders = {
 };
 
 describe("server rendering", () => {
-  it("renders the public OpenFloor landing page without demo auth", async () => {
+  it("renders the public openfloor landing page without demo auth", async () => {
     const response = await render();
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toMatch(/^text\/html\b/i);
 
     const html = await response.text();
-    expect(html).toMatch(/<title>OpenFloor — Multiplayer agent development<\/title>/i);
+    expect(html).toMatch(/<title>openfloor — Multiplayer agent development<\/title>/i);
     expect(html).toContain("Build together without losing the thread.");
     expect(html).toContain("Sign in with your email or a Google account.");
     expect(html).not.toMatch(/Register|Guest|Session code|type="password"|mock/i);
@@ -62,7 +62,7 @@ describe("server rendering", () => {
 
   it("emits product social metadata from the request origin", async () => {
     const html = await (await render()).text();
-    expect(html).toContain('property="og:title" content="OpenFloor"');
+    expect(html).toContain('property="og:title" content="openfloor"');
     expect(html).toContain('property="og:image" content="http://localhost:3000/app/og-v3.png"');
     expect(html).toContain('name="twitter:card" content="summary_large_image"');
   });

@@ -16,7 +16,7 @@ export async function generateMetadata(): Promise<Metadata> {
 
   return {
     metadataBase: new URL(origin),
-    title: "OpenFloor — Multiplayer agent development",
+    title: "openfloor — Multiplayer agent development",
     description: "A shared control plane for teams coordinating coding agents against one software objective.",
     // basePath rewrites routes and bundled assets, not literal paths to files
     // in public/. Under /app those have to carry the prefix themselves, or they
@@ -27,13 +27,13 @@ export async function generateMetadata(): Promise<Metadata> {
     icons: { icon: `${BASE_PATH}/favicon.svg`, shortcut: `${BASE_PATH}/favicon.svg` },
     openGraph: {
       type: "website",
-      title: "OpenFloor",
+      title: "openfloor",
       description: "Multiplayer development for agent teams.",
-      images: [{ url: `${origin}${BASE_PATH}/og-v3.png`, width: 1200, height: 630, alt: "OpenFloor — multiplayer development for agent teams" }],
+      images: [{ url: `${origin}${BASE_PATH}/og-v3.png`, width: 1200, height: 630, alt: "openfloor — multiplayer development for agent teams" }],
     },
     twitter: {
       card: "summary_large_image",
-      title: "OpenFloor",
+      title: "openfloor",
       description: "Multiplayer development for agent teams.",
       images: [`${origin}${BASE_PATH}/og-v3.png`],
     },

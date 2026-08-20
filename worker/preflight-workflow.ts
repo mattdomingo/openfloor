@@ -124,5 +124,5 @@ function boundedLog(stdout: string, stderr: string): string {
   const combined = `${stdout}${stdout && stderr ? "\n" : ""}${stderr}`;
   if (combined.length <= MAX_LOG_BYTES) return combined;
   const half = Math.floor((MAX_LOG_BYTES - 80) / 2);
-  return `${combined.slice(0, half)}\n\n[OpenFloor truncated ${combined.length - half * 2} characters]\n\n${combined.slice(-half)}`;
+  return `${combined.slice(0, half)}\n\n[openfloor truncated ${combined.length - half * 2} characters]\n\n${combined.slice(-half)}`;
 }

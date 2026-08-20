@@ -35,10 +35,10 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
   };
   try {
     const observed = await getRepositoryRefSha(config, context.installationId, repository, context.runBranch);
-    if (observed !== context.runCommitSha) return Response.json({ error: "GitHub changed this run branch; OpenFloor refused to delete it" }, { status: 409 });
+    if (observed !== context.runCommitSha) return Response.json({ error: "GitHub changed this run branch; openfloor refused to delete it" }, { status: 409 });
     if (config.testData) {
       if (!(await deleteTestRepositoryBranchIfMatches(config, context.installationId, repository, context.runBranch, context.runCommitSha))) {
-        return Response.json({ error: "GitHub changed this run branch; OpenFloor refused to delete it" }, { status: 409 });
+        return Response.json({ error: "GitHub changed this run branch; openfloor refused to delete it" }, { status: 409 });
       }
     } else {
       const bindings = env as unknown as { SANDBOX?: DurableObjectNamespace<Sandbox> };
@@ -62,7 +62,7 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
         if (!result.success) {
           const leaseMismatch = /stale info|fetch first|non-fast-forward/i.test(`${result.stdout}\n${result.stderr}`);
           return Response.json(
-            { error: leaseMismatch ? "GitHub changed this run branch; OpenFloor refused to delete it" : "GitHub rejected the authenticated branch deletion" },
+            { error: leaseMismatch ? "GitHub changed this run branch; openfloor refused to delete it" : "GitHub rejected the authenticated branch deletion" },
             { status: leaseMismatch ? 409 : 502 },
           );
         }

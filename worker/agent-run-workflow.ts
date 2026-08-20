@@ -94,10 +94,10 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
           `mkdir -p /workspace/repository /tmp/openfloor && find /workspace/repository -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + &&
            curl --fail --silent --show-error --location --max-filesize 104857600 -H "Authorization: Bearer $OPENFLOOR_SOURCE_TOKEN" "$OPENFLOOR_SOURCE_URL" |
              tar -xz --strip-components=1 -C /workspace/repository &&
-           git -C /workspace/repository init -q && git -C /workspace/repository config user.name OpenFloor &&
+           git -C /workspace/repository init -q && git -C /workspace/repository config user.name openfloor &&
            git -C /workspace/repository config user.email runtime@opnflr.com && git -C /workspace/repository add -A &&
            OPENFLOOR_TREE=$(git -C /workspace/repository write-tree) &&
-           OPENFLOOR_BASE=$(printf 'OpenFloor candidate baseline\n' | env GIT_AUTHOR_NAME=OpenFloor GIT_AUTHOR_EMAIL=runtime@opnflr.com GIT_COMMITTER_NAME=OpenFloor GIT_COMMITTER_EMAIL=runtime@opnflr.com GIT_AUTHOR_DATE=2000-01-01T00:00:00Z GIT_COMMITTER_DATE=2000-01-01T00:00:00Z git -C /workspace/repository commit-tree "$OPENFLOOR_TREE") &&
+           OPENFLOOR_BASE=$(printf 'openfloor candidate baseline\n' | env GIT_AUTHOR_NAME=openfloor GIT_AUTHOR_EMAIL=runtime@opnflr.com GIT_COMMITTER_NAME=openfloor GIT_COMMITTER_EMAIL=runtime@opnflr.com GIT_AUTHOR_DATE=2000-01-01T00:00:00Z GIT_COMMITTER_DATE=2000-01-01T00:00:00Z git -C /workspace/repository commit-tree "$OPENFLOOR_TREE") &&
            git -C /workspace/repository update-ref refs/heads/openfloor-base "$OPENFLOOR_BASE" &&
            git -C /workspace/repository reset -q --hard "$OPENFLOOR_BASE"`,
           { timeout: 4 * 60 * 1000, env: {
@@ -263,7 +263,7 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
         }, this.env.RUNTIME_GATEWAY_SECRET);
         const result = await sandbox.exec(
           `git -c core.hooksPath=/dev/null add -A &&
-           git -c core.hooksPath=/dev/null commit -q -m "OpenFloor local run $OPENFLOOR_RUN_SHORT" &&
+           git -c core.hooksPath=/dev/null commit -q -m "openfloor local run $OPENFLOOR_RUN_SHORT" &&
            git update-ref "refs/heads/$OPENFLOOR_RUN_BRANCH" HEAD &&
            git bundle create /tmp/openfloor/result.bundle "refs/heads/$OPENFLOOR_RUN_BRANCH" ^refs/heads/openfloor-base &&
            curl --fail --silent --show-error --max-time 300 -X POST -H "Authorization: Bearer $OPENFLOOR_BUNDLE_TOKEN" -H "Content-Type: application/x-git-bundle" --data-binary @/tmp/openfloor/result.bundle "$OPENFLOOR_BUNDLE_URL" >/tmp/openfloor/bundle-response.json &&
@@ -338,7 +338,7 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
         try {
           const merged = await mergeRepositoryBranch(
             config, context.installationId, repository, context.candidateBranch, context.runCommitSha,
-            `Integrate OpenFloor run ${runId.slice(0, 8)}`,
+            `Integrate openfloor run ${runId.slice(0, 8)}`,
           );
           const reconciled = await getRepositoryRefSha(config, context.installationId, repository, context.candidateBranch);
           if (reconciled !== merged.sha) throw new Error("Candidate branch did not reconcile after integration");
@@ -442,7 +442,7 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
 
 function buildRunPrompt(context: NonNullable<Awaited<ReturnType<typeof getRunExecutionContext>>>): string {
   const prompts = context.prompts.map((prompt, index) => `${index + 1}. ${prompt.authorName}: ${prompt.text}`).join("\n");
-  return `You are ${context.agentName}, the ${context.agentRole} agent in the OpenFloor session "${context.sessionTitle}".\n\nSession objective:\n${context.objective ?? "No objective provided."}\n\nYour assigned responsibility:\n${context.agentTask}\n\nQueue request(s):\n${prompts}\n\nRepository: ${context.repositoryFullName}\nPinned candidate SHA: ${context.candidateSha}\n\nMake the requested code changes directly in the current workspace. Read and follow repository instructions such as AGENTS.md. Do not modify files under .github/workflows/. Do not commit, push, create branches, contact GitHub, or claim work that you did not perform. Keep the change focused and leave the workspace ready for the configured checks.`;
+  return `You are ${context.agentName}, the ${context.agentRole} agent in the openfloor session "${context.sessionTitle}".\n\nSession objective:\n${context.objective ?? "No objective provided."}\n\nYour assigned responsibility:\n${context.agentTask}\n\nQueue request(s):\n${prompts}\n\nRepository: ${context.repositoryFullName}\nPinned candidate SHA: ${context.candidateSha}\n\nMake the requested code changes directly in the current workspace. Read and follow repository instructions such as AGENTS.md. Do not modify files under .github/workflows/. Do not commit, push, create branches, contact GitHub, or claim work that you did not perform. Keep the change focused and leave the workspace ready for the configured checks.`;
 }
 
 function parseCodexResult(value: string): { ok: boolean; threadId: string | null; finalResponse: string | null; error: string | null } {
@@ -463,7 +463,7 @@ function bounded(stdout: string, stderr: string, limit: number): string {
   const combined = `${stdout}${stdout && stderr ? "\n" : ""}${stderr}`;
   if (combined.length <= limit) return combined;
   const half = Math.floor((limit - 80) / 2);
-  return `${combined.slice(0, half)}\n\n[OpenFloor truncated output]\n\n${combined.slice(-half)}`;
+  return `${combined.slice(0, half)}\n\n[openfloor truncated output]\n\n${combined.slice(-half)}`;
 }
 
 function delay(ms: number) {
