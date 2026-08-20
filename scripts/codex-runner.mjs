@@ -11,7 +11,7 @@ const eventsUrl = process.env.OPENFLOOR_EVENTS_URL;
 const eventsToken = process.env.OPENFLOOR_EVENTS_TOKEN;
 
 if (!promptPath || !resultPath || !workspace || !gatewayUrl || !gatewayToken || !model) {
-  throw new Error("OpenFloor Codex runner configuration is incomplete");
+  throw new Error("openfloor Codex runner configuration is incomplete");
 }
 
 const controller = new AbortController();

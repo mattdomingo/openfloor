@@ -16,15 +16,15 @@ const resultPath = process.env.OPENFLOOR_RESULT_PATH;
 const expectedPaths = JSON.parse(process.env.OPENFLOOR_EXPECTED_PATHS);
 const auth = githubGitAuthorization(token);
 const fixedIdentity = {
-  GIT_AUTHOR_NAME: "OpenFloor Agent",
+  GIT_AUTHOR_NAME: "openfloor agent",
   GIT_AUTHOR_EMAIL: "runtime@opnflr.com",
-  GIT_COMMITTER_NAME: "OpenFloor Agent",
+  GIT_COMMITTER_NAME: "openfloor agent",
   GIT_COMMITTER_EMAIL: "runtime@opnflr.com",
 };
 const baselineIdentity = {
-  GIT_AUTHOR_NAME: "OpenFloor",
+  GIT_AUTHOR_NAME: "openfloor",
   GIT_AUTHOR_EMAIL: "runtime@opnflr.com",
-  GIT_COMMITTER_NAME: "OpenFloor",
+  GIT_COMMITTER_NAME: "openfloor",
   GIT_COMMITTER_EMAIL: "runtime@opnflr.com",
 };
 
@@ -43,7 +43,7 @@ const baseline = git(["commit-tree", candidateTree], repository, {
   ...baselineIdentity,
   GIT_AUTHOR_DATE: "2000-01-01T00:00:00Z",
   GIT_COMMITTER_DATE: "2000-01-01T00:00:00Z",
-}, "OpenFloor candidate baseline\n").trim();
+}, "openfloor candidate baseline\n").trim();
 git(["update-ref", "refs/openfloor/baseline", baseline], repository);
 git(["bundle", "verify", bundle], repository);
 const expectedRef = `refs/heads/${runBranch}`;
@@ -76,7 +76,7 @@ const publishedCommit = git(["commit-tree", resultTree, "-p", candidateSha], rep
   ...fixedIdentity,
   GIT_AUTHOR_DATE: process.env.OPENFLOOR_COMMIT_DATE,
   GIT_COMMITTER_DATE: process.env.OPENFLOOR_COMMIT_DATE,
-}, `OpenFloor run ${process.env.OPENFLOOR_RUN_ID.slice(0, 8)}\n`).trim();
+}, `openfloor run ${process.env.OPENFLOOR_RUN_ID.slice(0, 8)}\n`).trim();
 const remote = git(["-c", `http.extraHeader=${auth}`, "ls-remote", "--heads", "origin", expectedRef], repository).trim();
 if (remote) {
   if (remote.split(/\s+/, 1)[0] !== publishedCommit) throw new Error("Run branch already exists at an unexpected commit");
