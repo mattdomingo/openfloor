@@ -59,7 +59,11 @@ export function OnboardingScreen({ displayName, returnTo }: { displayName: strin
       setSubmitting(false);
       return;
     }
-    router.replace(returnTo);
+    // returnTo carries the BASE_PATH prefix (it round-trips through a query
+    // param that must match real URLs), but next/navigation's router already
+    // applies basePath itself, so pass it a bare path or it doubles up.
+    const bareReturnTo = BASE_PATH && returnTo.startsWith(BASE_PATH) ? returnTo.slice(BASE_PATH.length) || "/" : returnTo;
+    router.replace(bareReturnTo);
   }
 
   return (
