@@ -8,6 +8,13 @@
 		"nodejs_compat"
 	],
 	"main": "./worker/index.ts",
+	// Daily retention sweep: purge sessions ended more than 30 days ago
+	// (ENDED_SESSION_RETENTION_MS in db/sessions.ts).
+	"triggers": {
+		"crons": [
+			"0 4 * * *"
+		]
+	},
 	"durable_objects": {
 		"bindings": [
 			{

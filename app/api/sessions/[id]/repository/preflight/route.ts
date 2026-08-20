@@ -13,6 +13,7 @@ import {
 } from "@/db/preflights";
 import { getRepositoryFloorRevision } from "@/db/repositories";
 import { getMembershipRole } from "@/db/sessions";
+import { activeOwnerErrorResponse, mutationErrorResponse } from "@/lib/floor-api";
 import { notifyFloorChanged } from "@/lib/presence-server";
 import { isApiError, requireApiUser } from "@/lib/server-auth";
 
@@ -31,7 +32,8 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
   const user = await requireApiUser();
   if (isApiError(user)) return user;
   const sessionId = (await params).id;
-  if ((await getMembershipRole(sessionId, user.id)) !== "owner") return Response.json({ error: "Session not found" }, { status: 404 });
+  const ownerError = await activeOwnerErrorResponse(sessionId, user.id);
+  if (ownerError) return ownerError;
   if ((env as unknown as { PREFLIGHT_ENABLED?: string }).PREFLIGHT_ENABLED !== "true") {
     return Response.json({ error: "Repository preflight is not available" }, { status: 503 });
   }
@@ -52,6 +54,7 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
     }
     return Response.json({ preflight: await getLatestRepositoryPreflightForMember(sessionId, user.id) }, { status: 202 });
   } catch (error) {
+    try { return mutationErrorResponse(error); } catch { /* continue with preflight mapping */ }
     if (error instanceof PreflightConflictError) return Response.json({ error: error.message }, { status: 409 });
     if (error instanceof PreflightNotReadyError) return Response.json({ error: error.message }, { status: error.message === "Session not found" ? 404 : 409 });
     const latest = await getLatestRepositoryPreflightForMember(sessionId, user.id);

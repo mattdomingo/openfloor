@@ -4,7 +4,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { BASE_PATH } from "@/components/basePath";
-import { formatShortDate } from "@/lib/date-format";
+import { LocalDateTime } from "@/components/LocalDateTime";
+import { useDialogDismiss } from "@/components/session/primitives";
 import { reducePresence } from "@/lib/presence";
 import type { AppUser, PresenceEvent, RepositoryCandidate, RepositoryConnection, RepositoryPreflight, SessionMember, SessionSummary } from "@/lib/session-types";
 import { AppHeader, initials } from "./AppHeader";
@@ -38,7 +39,9 @@ export function SessionScreen({
   const [inviteUrl, setInviteUrl] = useState<string | null | undefined>(undefined);
   const [inviteBusy, setInviteBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [ending, setEnding] = useState(false);
   const retryRef = useRef(0);
+  const endedAt = session.endedAt;
 
   const refreshMembers = useCallback(async () => {
     const response = await fetch(`${BASE_PATH}/api/sessions/${session.id}/members`, { cache: "no-store" });
@@ -76,6 +79,7 @@ export function SessionScreen({
           setOnlineIds((current) => reducePresence(current, event));
         }
         if (event.type === "members.changed") void refreshMembers();
+        if (event.type === "session.ended") router.refresh();
         if (event.type === "floor.changed" && event.domains.some((domain) => domain === "repository" || domain === "review")) router.refresh();
       });
       socket.addEventListener("close", () => {
@@ -143,7 +147,7 @@ export function SessionScreen({
     <main className="product-shell">
       <AppHeader user={user} sessionTitle={session.title} />
       <section className="session-hero">
-        <div><p className="eyebrow">Live session</p><h1>{session.title}</h1><p>{session.objective || "No objective has been written yet."}</p></div>
+        <div><p className="eyebrow">{endedAt != null ? "Ended session" : "Live session"}</p><h1>{session.title}</h1><p>{session.objective || "No objective has been written yet."}</p></div>
         <div className="session-hero-actions">
           <div className="connection-state" data-state={connection}><span aria-hidden="true" />{connection === "connected" ? `${onlineCount} online` : connection}</div>
           <Link className="button" data-variant="primary" data-size="lg" href={`/session/${session.id}/floor`}>Enter agent floor</Link>
@@ -157,7 +161,7 @@ export function SessionScreen({
             {visibleMembers.map((member) => (
               <li key={member.id}>
                 <span className="avatar" aria-hidden="true">{initials(member.displayName)}</span>
-                <div><strong>{member.displayName}{member.id === user.id && <em> You</em>}</strong><span>Joined {formatShortDate(member.joinedAt)}</span></div>
+                <div><strong title={member.displayName}>{member.displayName}{member.id === user.id && <em> You</em>}</strong><span>Joined <LocalDateTime timestamp={member.joinedAt} mode="date" /></span></div>
                 <span className="member-role">{member.role}</span>
                 <span className="presence-label" data-online={member.online}>{member.online ? "Online" : "Offline"}</span>
               </li>
@@ -166,24 +170,73 @@ export function SessionScreen({
         </div>
 
         <aside className="session-actions">
-          {session.role === "owner" ? (
-            <section className="action-card">
-              <p className="eyebrow">Invite people</p><h2>Bring your team in</h2><p>The active link is reusable until you rotate or revoke it.</p>
-              {inviteUrl ? <input className="invite-value" value={inviteUrl} readOnly onFocus={(event) => event.currentTarget.select()} aria-label="Active invite link" /> : <div className="invite-empty">No active invite link.</div>}
-              <div className="button-row">
-                {inviteUrl && <button className="button" data-variant="primary" onClick={copyInvite}>Copy link</button>}
-                <button className="button" onClick={rotateInvite} disabled={inviteBusy}>{inviteUrl ? "Rotate" : "Create link"}</button>
-                {inviteUrl && <button className="button danger-button" onClick={revokeInviteLink} disabled={inviteBusy}>Revoke</button>}
-              </div>
+          {endedAt != null && (
+            <section className="action-card quiet-card">
+              <p className="eyebrow">Session ended</p>
+              <p>This session ended <LocalDateTime timestamp={endedAt} mode="date" />. The floor is read-only and the invite link is revoked.</p>
             </section>
-          ) : (
-            <section className="action-card"><p className="eyebrow">Membership</p><h2>You are a member</h2><p>Leaving removes this session from your home and ends your live connection.</p><button className="button danger-button" onClick={leave}>Leave session</button></section>
           )}
-          <RepositoryCard sessionId={session.id} sessionTitle={session.title} sessionObjective={session.objective} role={session.role} initialRepository={initialRepository} initialCandidate={initialCandidate} initialPreflight={initialPreflight} preflightEnabled={preflightEnabled} beginSetup={githubSetup} />
-          <section className="action-card quiet-card"><p className="eyebrow">What persists</p><p>The room, objective, membership, and invite state are stored. Presence reflects live authenticated connections.</p></section>
+          {session.role === "owner" ? (
+            endedAt == null && (
+              <>
+                <section className="action-card">
+                  <p className="eyebrow">Invite people</p><h2>Bring your team in</h2><p>The active link is reusable until you rotate or revoke it.</p>
+                  {inviteUrl ? <input className="invite-value" value={inviteUrl} readOnly onFocus={(event) => event.currentTarget.select()} aria-label="Active invite link" /> : <div className="invite-empty">No active invite link.</div>}
+                  <div className="button-row">
+                    {inviteUrl && <button className="button" data-variant="primary" onClick={copyInvite}>Copy link</button>}
+                    <button className="button" onClick={rotateInvite} disabled={inviteBusy}>{inviteUrl ? "Rotate" : "Create link"}</button>
+                    {inviteUrl && <button className="button danger-button" onClick={revokeInviteLink} disabled={inviteBusy}>Revoke</button>}
+                  </div>
+                </section>
+                <section className="action-card">
+                  <p className="eyebrow">Wrap up</p><h2>End this session</h2><p>Ends it for everyone: the floor becomes read-only and the invite link stops working. Nothing is deleted.</p>
+                  <button className="button danger-button" onClick={() => setEnding(true)}>End session</button>
+                </section>
+              </>
+            )
+          ) : (
+            <section className="action-card"><p className="eyebrow">Membership</p><h2>Your membership</h2><p>Leaving removes this session from your home and ends your live connection.</p><button className="button danger-button" onClick={leave}>Leave session</button></section>
+          )}
+          {endedAt == null && <RepositoryCard sessionId={session.id} sessionTitle={session.title} sessionObjective={session.objective} role={session.role} initialRepository={initialRepository} initialCandidate={initialCandidate} initialPreflight={initialPreflight} preflightEnabled={preflightEnabled} beginSetup={githubSetup} />}
+          <section className="action-card quiet-card"><p className="eyebrow">Saved automatically</p><p>The session, its objective, members, and invite state are stored. Presence shows who is connected right now.</p></section>
           {notice && <p className="notice" role="status">{notice}</p>}
         </aside>
       </section>
+      {ending && <EndSessionDialog sessionId={session.id} onClose={() => setEnding(false)} />}
     </main>
+  );
+}
+
+function EndSessionDialog({ sessionId, onClose }: { sessionId: string; onClose: () => void }) {
+  const router = useRouter();
+  const { dismiss, dialogProps } = useDialogDismiss(onClose);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function end() {
+    setBusy(true);
+    setError(null);
+    const response = await fetch(`${BASE_PATH}/api/sessions/${sessionId}/end`, { method: "POST" });
+    if (!response.ok) {
+      const body = (await response.json().catch(() => null)) as { error?: string } | null;
+      setError(body?.error ?? "Unable to end the session");
+      setBusy(false);
+      return;
+    }
+    dismiss();
+    router.refresh();
+  }
+
+  return (
+    <dialog className="dialog" {...dialogProps} aria-labelledby="end-session-title">
+      <div className="dialog-head">
+        <div className="dialog-title"><h2 id="end-session-title">End this session?</h2><p>The floor becomes read-only for everyone and the invite link stops working. Nothing is deleted.</p></div>
+      </div>
+      {error && <div className="dialog-body"><p className="form-error" role="alert">{error}</p></div>}
+      <div className="dialog-foot">
+        <button type="button" className="button" data-variant="quiet" onClick={dismiss} disabled={busy}>Cancel</button>
+        <button type="button" className="button danger-button" onClick={end} disabled={busy}>End session</button>
+      </div>
+    </dialog>
   );
 }

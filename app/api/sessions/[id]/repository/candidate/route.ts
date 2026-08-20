@@ -7,7 +7,8 @@ import {
   reserveRepositoryCandidate,
   setRepositoryAvailability,
 } from "@/db/repositories";
-import { getMembershipRole, getSessionForMember } from "@/db/sessions";
+import { getSessionForMember } from "@/db/sessions";
+import { activeOwnerErrorResponse, mutationErrorResponse } from "@/lib/floor-api";
 import { createRepositoryBranch, getInstallationRepository, getRepositoryRefSha, GitHubApiError } from "@/lib/github";
 import { notifyFloorChanged } from "@/lib/presence-server";
 import { openFloorBranchName } from "@/lib/repository-refs";
@@ -18,9 +19,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   const user = await requireApiUser();
   if (isApiError(user)) return user;
   const sessionId = (await params).id;
-  if ((await getMembershipRole(sessionId, user.id)) !== "owner") {
-    return Response.json({ error: "Session not found" }, { status: 404 });
-  }
+  const ownerError = await activeOwnerErrorResponse(sessionId, user.id);
+  if (ownerError) return ownerError;
   const connection = await getRepositoryConnectionForMember(sessionId, user.id);
   if (!connection || connection.status !== "connected") {
     return Response.json({ error: "Connect an accessible repository before enabling execution" }, { status: 409 });
@@ -65,6 +65,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       throw error;
     }
   } catch (error) {
+    try { return mutationErrorResponse(error); } catch { /* continue with GitHub mapping */ }
     if (error instanceof GitHubApiError) {
       if (error.status === 403 || error.status === 404) {
         const revision = await setRepositoryAvailability(sessionId, "inaccessible");

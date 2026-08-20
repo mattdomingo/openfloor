@@ -81,6 +81,27 @@ describe("SessionPresence Durable Object", () => {
     first.socket.close(1000, "done");
   });
 
+  it("broadcasts the session ending without closing sockets", async () => {
+    const stub = env.SESSION_PRESENCE.get(env.SESSION_PRESENCE.idFromName("room-session-ended"));
+    const first = await connect(stub, "user-one", "One");
+    const notification = nextMessage(first.socket);
+    const response = await stub.fetch("https://presence.internal/session-ended", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ endedAt: 99 }),
+    });
+    expect(response.status).toBe(204);
+    await expect(notification).resolves.toEqual({ type: "session.ended", endedAt: 99 });
+    expect(first.socket.readyState).toBe(WebSocket.OPEN);
+    const invalid = await stub.fetch("https://presence.internal/session-ended", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ endedAt: "soon" }),
+    });
+    expect(invalid.status).toBe(400);
+    first.socket.close(1000, "done");
+  });
+
   it("broadcasts floor revisions and changed domains", async () => {
     const stub = env.SESSION_PRESENCE.get(env.SESSION_PRESENCE.idFromName("room-floor-change"));
     const first = await connect(stub, "user-one", "One");

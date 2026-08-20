@@ -1,5 +1,5 @@
-import { FloorConflictError, reorderFloorQueue } from "@/db/floor";
-import { floorMutationResponse, readJson } from "@/lib/floor-api";
+import { reorderFloorQueue } from "@/db/floor";
+import { floorMutationResponse, mutationErrorResponse, readJson } from "@/lib/floor-api";
 import { isApiError, requireApiUser } from "@/lib/server-auth";
 import { parseQueueOrderInput } from "@/lib/validation";
 
@@ -15,7 +15,6 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       ? floorMutationResponse(id, floor, ["queue"])
       : Response.json({ error: "Session not found" }, { status: 404 });
   } catch (error) {
-    if (error instanceof FloorConflictError) return Response.json({ error: error.message }, { status: 409 });
-    throw error;
+    return mutationErrorResponse(error);
   }
 }

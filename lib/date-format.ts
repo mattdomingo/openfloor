@@ -10,10 +10,30 @@ const shortTimeFormatter = new Intl.DateTimeFormat("en-US", {
   timeZone: "UTC",
 });
 
+/* Host-timezone variants for client-side rendering after mount. Server markup
+   must keep using the UTC formatters above so SSR output stays deterministic. */
+const localDateFormatter = new Intl.DateTimeFormat("en-US", {
+  month: "short",
+  day: "numeric",
+});
+
+const localTimeFormatter = new Intl.DateTimeFormat("en-US", {
+  hour: "numeric",
+  minute: "2-digit",
+});
+
 export function formatShortDate(timestamp: number) {
   return shortDateFormatter.format(new Date(timestamp));
 }
 
 export function formatShortTime(timestamp: number) {
   return shortTimeFormatter.format(new Date(timestamp));
+}
+
+export function formatShortDateLocal(timestamp: number) {
+  return localDateFormatter.format(new Date(timestamp));
+}
+
+export function formatShortTimeLocal(timestamp: number) {
+  return localTimeFormatter.format(new Date(timestamp));
 }

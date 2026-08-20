@@ -13,6 +13,7 @@ import type { GitHubRepositoryOption } from "@/lib/session-types";
 import { isApiError, requireApiUser } from "@/lib/server-auth";
 import { notifyFloorChanged } from "@/lib/presence-server";
 import { parseRepositoryConnectionInput } from "@/lib/validation";
+import { activeOwnerErrorResponse, mutationErrorResponse } from "@/lib/floor-api";
 
 export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
   const user = await requireApiUser();
@@ -28,7 +29,14 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   const user = await requireApiUser();
   if (isApiError(user)) return user;
   const sessionId = (await params).id;
-  const pending = await getPendingGitHubInstallation(sessionId, user.id);
+  const ownerError = await activeOwnerErrorResponse(sessionId, user.id);
+  if (ownerError) return ownerError;
+  let pending;
+  try {
+    pending = await getPendingGitHubInstallation(sessionId, user.id);
+  } catch (error) {
+    return mutationErrorResponse(error);
+  }
   if (!pending) return Response.json({ error: "Session not found" }, { status: 404 });
   const input = await readInput(request);
   if (!input) return Response.json({ error: "Select a valid repository and base branch, with no more than eight valid check commands" }, { status: 400 });
@@ -39,6 +47,8 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   const user = await requireApiUser();
   if (isApiError(user)) return user;
   const sessionId = (await params).id;
+  const ownerError = await activeOwnerErrorResponse(sessionId, user.id);
+  if (ownerError) return ownerError;
   const existing = await getRepositoryConnectionForMember(sessionId, user.id);
   if (!existing || (await getMembershipRole(sessionId, user.id)) !== "owner") {
     return Response.json({ error: "Session not found" }, { status: 404 });
@@ -62,7 +72,14 @@ export async function DELETE(_request: Request, { params }: { params: Promise<{ 
   const user = await requireApiUser();
   if (isApiError(user)) return user;
   const sessionId = (await params).id;
-  const repository = await disconnectRepository(sessionId, user.id);
+  const ownerError = await activeOwnerErrorResponse(sessionId, user.id);
+  if (ownerError) return ownerError;
+  let repository;
+  try {
+    repository = await disconnectRepository(sessionId, user.id);
+  } catch (error) {
+    return mutationErrorResponse(error);
+  }
   if (repository) await notifyFloorChanged(sessionId, await getRepositoryFloorRevision(sessionId), ["repository", "review"]);
   return repository
     ? Response.json({ repository })
@@ -104,6 +121,7 @@ async function configureFromGitHub(
       ? Response.json({ repository: saved }, { status: stateId ? 201 : 200 })
       : Response.json({ error: "Session not found" }, { status: 404 });
   } catch (error) {
+    try { return mutationErrorResponse(error); } catch { /* continue with GitHub mapping */ }
     if (error instanceof GitHubApiError) {
       return Response.json({ error: "GitHub repository access is unavailable" }, { status: error.status === 404 ? 404 : 502 });
     }

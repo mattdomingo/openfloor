@@ -30,6 +30,7 @@
 .landing-copy { max-width: 710px; margin-top: var(--space-6); color: var(--text-secondary); font-size: clamp(17px, 2vw, 22px); line-height: 1.55; }
 .landing-actions { display: flex; align-items: center; gap: var(--space-5); margin-top: var(--space-7); }
 .landing-actions span { max-width: 280px; color: var(--text-tertiary); font-size: var(--text-sm); line-height: 1.45; }
+.landing-auth-note { margin-top: var(--space-5); padding: var(--space-3) var(--space-4); border-left: 3px solid var(--status-attention); background: var(--status-attention-soft); color: var(--text-secondary); font-size: var(--text-sm); max-width: 520px; }
 .landing-proof { display: grid; grid-template-columns: repeat(3, 1fr); padding: 0 clamp(20px, 5vw, 72px); background: var(--surface-panel); }
 .landing-proof article { min-height: 170px; padding: var(--space-7); border-right: 1px solid var(--line-soft); }
 .landing-proof article:first-child { border-left: 1px solid var(--line-soft); }

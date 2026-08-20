@@ -9,7 +9,7 @@ export function StatusLine({ notice, visible }: { notice: string; visible: boole
   return (
     <p className="status-line" role="status" data-visible={visible ? "true" : "false"}>
       <Icon name="circle" size={7} />
-      <span>{notice}</span>
+      <span title={notice}>{notice}</span>
     </p>
   );
 }

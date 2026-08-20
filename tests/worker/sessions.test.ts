@@ -3,13 +3,19 @@ import { describe, expect, it } from "vitest";
 import {
   acceptInvite,
   createSession,
+  deleteSession,
+  ENDED_SESSION_RETENTION_MS,
+  endSession,
   getActiveInviteId,
   getInvitePreview,
+  getSessionForMember,
   getSessionMembers,
   leaveSession,
   listSessionsForUser,
+  purgeExpiredSessions,
   revokeInvite,
   rotateInvite,
+  SessionEndedError,
   updateSessionObjective,
   upsertUser,
 } from "@/db/sessions";
@@ -41,7 +47,7 @@ import {
   markPreflightRunning,
   PreflightConflictError,
 } from "@/db/preflights";
-import { createFloorAgent, createFloorQueueItem, getFloorSnapshot } from "@/db/floor";
+import { createFloorAgent, createFloorMessage, createFloorQueueItem, getFloorSnapshot } from "@/db/floor";
 import {
   beginRunIntegration,
   AgentRunNotReadyError,
@@ -135,6 +141,114 @@ describe("D1 session persistence", () => {
     expect(updated).toEqual(expect.objectContaining({ objective: "Second", role: "member" }));
     expect(updated!.updatedAt).toBeGreaterThanOrEqual(created.session.updatedAt);
     await expect(updateSessionObjective(created.session.id, outsider.id, "Hidden", env.DB)).resolves.toBeNull();
+  });
+
+  it("lets the owner end the session, kills the invite, and re-ends idempotently", async () => {
+    const owner = await upsertUser(identity("end-owner", "Owner"), env.DB);
+    const member = await upsertUser(identity("end-member", "Member"), env.DB);
+    const created = await createSession(owner.id, { title: "Ending room", objective: null }, env.DB);
+    await acceptInvite(created.inviteId, member.id, env.DB);
+
+    const result = await endSession(created.session.id, owner.id, env.DB);
+    expect(result).toEqual({ endedAt: expect.any(Number) });
+    const endedAt = (result as { endedAt: number }).endedAt;
+
+    expect((await getSessionForMember(created.session.id, member.id, env.DB))?.endedAt).toBe(endedAt);
+    expect(await getActiveInviteId(created.session.id, owner.id, env.DB)).toBeNull();
+    // The old invite is revoked by the same batch, so accepting it fails for everyone.
+    const outsider = await upsertUser(identity("end-late", "Late"), env.DB);
+    await expect(acceptInvite(created.inviteId, outsider.id, env.DB)).resolves.toBeNull();
+    expect(await getInvitePreview(created.inviteId, env.DB)).toBeNull();
+
+    await expect(endSession(created.session.id, owner.id, env.DB)).resolves.toEqual({ endedAt });
+  });
+
+  it("lets only owners end sessions and conceals them from outsiders", async () => {
+    const owner = await upsertUser(identity("end-auth-owner", "Owner"), env.DB);
+    const member = await upsertUser(identity("end-auth-member", "Member"), env.DB);
+    const outsider = await upsertUser(identity("end-auth-outsider", "Outsider"), env.DB);
+    const created = await createSession(owner.id, { title: "Guarded room", objective: null }, env.DB);
+    await acceptInvite(created.inviteId, member.id, env.DB);
+
+    await expect(endSession(created.session.id, member.id, env.DB)).resolves.toBe("forbidden");
+    await expect(endSession(created.session.id, outsider.id, env.DB)).resolves.toBe("missing");
+    expect((await getSessionForMember(created.session.id, owner.id, env.DB))?.endedAt).toBeNull();
+  });
+
+  it("blocks writes on ended sessions while reads and leaving still work", async () => {
+    const owner = await upsertUser(identity("end-guard-owner", "Owner"), env.DB);
+    const member = await upsertUser(identity("end-guard-member", "Member"), env.DB);
+    const outsider = await upsertUser(identity("end-guard-outsider", "Outsider"), env.DB);
+    const created = await createSession(owner.id, { title: "Read-only room", objective: "Before" }, env.DB);
+    await acceptInvite(created.inviteId, member.id, env.DB);
+    await endSession(created.session.id, owner.id, env.DB);
+
+    await expect(updateSessionObjective(created.session.id, member.id, "After", env.DB)).rejects.toBeInstanceOf(SessionEndedError);
+    await expect(rotateInvite(created.session.id, owner.id, env.DB)).rejects.toBeInstanceOf(SessionEndedError);
+    await expect(createFloorMessage(created.session.id, member.id, { text: "hello", recipientUserId: null }, env.DB)).rejects.toBeInstanceOf(SessionEndedError);
+    await expect(createFloorQueueItem(created.session.id, member.id, { prompt: "run it", agentId: null }, env.DB)).rejects.toBeInstanceOf(SessionEndedError);
+    await expect(createGitHubConnectionState(created.session.id, owner.id, env.DB)).rejects.toBeInstanceOf(SessionEndedError);
+    await expect(saveRepositoryConnection(created.session.id, owner.id, null, "ended-installation", {
+      id: "ended-repository", nodeId: "R_ended", owner: "openfloor-test", name: "ended",
+      fullName: "openfloor-test/ended", private: true, defaultBranch: "main",
+    }, "main", [], env.DB)).rejects.toBeInstanceOf(SessionEndedError);
+    await expect(createRepositoryPreflight(created.session.id, owner.id, env.DB)).rejects.toBeInstanceOf(SessionEndedError);
+    await expect(createAgentRun(created.session.id, "missing-queue-item", owner.id, env.DB)).rejects.toBeInstanceOf(SessionEndedError);
+    // Outsiders keep getting concealment, not the ended error.
+    await expect(updateSessionObjective(created.session.id, outsider.id, "Hidden", env.DB)).resolves.toBeNull();
+
+    expect(await getFloorSnapshot(created.session.id, member.id, env.DB)).not.toBeNull();
+    expect((await getSessionForMember(created.session.id, member.id, env.DB))?.objective).toBe("Before");
+    await expect(leaveSession(created.session.id, member.id, env.DB)).resolves.toBe("left");
+  });
+
+  it("purges only ended sessions past the retention window", async () => {
+    const owner = await upsertUser(identity("purge-owner", "Owner"), env.DB);
+    const stale = await createSession(owner.id, { title: "Stale ended", objective: null }, env.DB);
+    const fresh = await createSession(owner.id, { title: "Fresh ended", objective: null }, env.DB);
+    const active = await createSession(owner.id, { title: "Still active", objective: null }, env.DB);
+    await endSession(stale.session.id, owner.id, env.DB);
+    await endSession(fresh.session.id, owner.id, env.DB);
+    await env.DB.prepare("UPDATE sessions SET ended_at = ? WHERE id = ?")
+      .bind(Date.now() - ENDED_SESSION_RETENTION_MS - 1_000, stale.session.id)
+      .run();
+
+    expect(await purgeExpiredSessions(env.DB)).toEqual([stale.session.id]);
+
+    const remaining = await listSessionsForUser(owner.id, env.DB);
+    expect(remaining.map((session) => session.id).sort()).toEqual([active.session.id, fresh.session.id].sort());
+    // Cascade sanity: the purged session's graph is gone with it.
+    expect(await getSessionForMember(stale.session.id, owner.id, env.DB)).toBeNull();
+    expect(await getInvitePreview(stale.inviteId, env.DB)).toBeNull();
+  });
+
+  it("lets only owners hard-delete sessions, including ended ones", async () => {
+    const owner = await upsertUser(identity("delete-owner", "Owner"), env.DB);
+    const member = await upsertUser(identity("delete-member", "Member"), env.DB);
+    const created = await createSession(owner.id, { title: "Doomed room", objective: null }, env.DB);
+    await acceptInvite(created.inviteId, member.id, env.DB);
+
+    await expect(deleteSession(created.session.id, member.id, env.DB)).resolves.toBe("forbidden");
+    await endSession(created.session.id, owner.id, env.DB);
+    await expect(deleteSession(created.session.id, owner.id, env.DB)).resolves.toBe("deleted");
+    expect(await getSessionForMember(created.session.id, owner.id, env.DB)).toBeNull();
+    await expect(deleteSession(created.session.id, owner.id, env.DB)).resolves.toBe("missing");
+  });
+
+  it("preserves sessions with repository state until external cleanup is available", async () => {
+    const owner = await upsertUser(identity("delete-repository-owner", "Owner"), env.DB);
+    const created = await createSession(owner.id, { title: "Repository audit", objective: null }, env.DB);
+    await saveRepositoryConnection(created.session.id, owner.id, null, "installation-delete", {
+      id: "repository-delete", nodeId: "R_delete", owner: "openfloor-test", name: "audit",
+      fullName: "openfloor-test/audit", private: true, defaultBranch: "main",
+    }, "main", [], env.DB);
+    await endSession(created.session.id, owner.id, env.DB);
+    await env.DB.prepare("UPDATE sessions SET ended_at = ? WHERE id = ?")
+      .bind(Date.now() - ENDED_SESSION_RETENTION_MS - 1_000, created.session.id).run();
+
+    await expect(deleteSession(created.session.id, owner.id, env.DB)).resolves.toBe("repository_state");
+    await expect(purgeExpiredSessions(env.DB)).resolves.not.toContain(created.session.id);
+    expect(await getSessionForMember(created.session.id, owner.id, env.DB)).not.toBeNull();
   });
 
   it("persists one owner-configured repository connection and ordered checks", async () => {

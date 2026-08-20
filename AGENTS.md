@@ -136,6 +136,8 @@ WebSocket events notify clients about presence or changed domains. D1 remains au
 - Server-only loopback development identity from `.dev.vars`.
 - Internal user records keyed by the stable external provider subject.
 - Session creation, listing, objective editing, membership, roles, and leaving.
+- Owner-only session ending: `ended_at` marks the session read-only for everyone, revokes the active invite, and broadcasts `session.ended`; ended sessions stay readable and members can still leave.
+- Owner-only session deletion (immediate and cascading for repository-free sessions) and a daily cron that purges repository-free sessions ended more than 30 days ago. Sessions with repository state fail closed until durable external cleanup exists. The home screen groups Active and Ended sessions.
 - HMAC-signed, reusable owner invitations with rotation and revocation.
 - Session lobby with real roster and live online status.
 - Protected Agent Floor with real session title, objective, members, and presence.
@@ -209,6 +211,7 @@ Important behavior:
 - Non-members opening a session or floor get a 404-style not-found response rather than session details.
 - A member who leaves is disconnected from the room's presence object.
 - An owner receives a conflict response if they try to leave.
+- An owner can end the session instead. Ending is final in v1 (no un-end), idempotent, revokes the active invite in the same batch, and leaves all data readable. Collaboration, repository, preflight, run, and review mutations on an ended session return `409` with "This session has ended." — never `404`, which clients treat as "kicked from the session". Run cancellation remains available so already-running work can be stopped. Presence sockets stay open on ended sessions by design.
 - Repository details are visible to session members, but only the owner can connect, configure, disconnect, or reconnect.
 - The GitHub installation callback is protected by Access, signed, expires after 30 minutes, is bound to the initiating owner and session, and can be consumed once.
 - The webhook path must remain outside Cloudflare Access so GitHub can deliver events; signature verification is its authentication boundary.
@@ -346,6 +349,8 @@ Do not hand-edit Drizzle metadata. If a generated migration is wrong, correct th
 - UUID, title, nullable objective, timestamps.
 - `floor_revision` is a monotonically increasing integer for persisted floor reconciliation.
 - Session creation also creates owner membership and an active invite in one D1 batch.
+- Nullable `ended_at` is the lifecycle marker. Null means live; a timestamp means ended and read-only. Writes authorize through `getActiveMembershipRole` (throws `SessionEndedError` for members of ended sessions); reads keep using `getMembershipRole` so ended sessions stay viewable. `leaveSession`, `endSession`, `deleteSession`, and non-member concealment intentionally bypass the ended guard.
+- Retention: the Worker's `scheduled()` handler (daily cron in `wrangler.jsonc`) runs `purgeExpiredSessions`, deleting repository-free sessions with `ended_at` older than `ENDED_SESSION_RETENTION_MS` (30 days), then broadcasts `members.changed` so connected tabs refetch. Never-ended sessions and sessions with any repository connection are never purged automatically. Manual deletion uses the same repository-state guard.
 
 #### `session_members`
 
@@ -516,6 +521,7 @@ There is one `SessionPresence` Durable Object instance per session ID, obtained 
 - `typing.changed`
 - `members.changed`
 - `session.changed`
+- `session.ended`
 - `floor.changed`
 - `error`
 
@@ -523,6 +529,7 @@ Event behavior:
 
 - `members.changed` causes roster and floor refresh.
 - `session.changed` carries the objective and timestamp; clients use last-write-wins by timestamp.
+- `session.ended` carries `endedAt`; clients switch to the read-only presentation without closing their sockets.
 - `floor.changed` carries revision and changed domains; clients refetch if the event revision is newer.
 - Membership removal explicitly closes that user's sockets with a membership-ended code.
 
@@ -560,6 +567,8 @@ All paths below are shown without the production `/app` prefix.
 | `DELETE /api/sessions/[id]/invite` | Owner | Revoke active link. |
 | `POST /api/invites/[token]/accept` | Authenticated user | Idempotently add member and broadcast `members.changed`. |
 | `DELETE /api/sessions/[id]/membership` | Non-owner member | Leave, disconnect presence, and notify roster. |
+| `POST /api/sessions/[id]/end` | Owner | Idempotently set `ended_at`, revoke the active invite, and broadcast `session.ended`. |
+| `DELETE /api/sessions/[id]` | Owner | Hard-delete a repository-free session; children cascade. Returns `409` when repository state must be preserved. Broadcasts `members.changed` after deletion so open tabs refetch, hit the 404 concealment, and return to `/home`. |
 | `GET /api/sessions/[id]/floor` | Session member | Return the caller-specific authoritative `FloorSnapshot`. |
 | `POST /api/sessions/[id]/agents` | Session member | Create `{ name, role, task, ownerUserId }`. |
 | `PATCH /api/sessions/[id]/assignments/[memberId]` | Session member | Persist `{ task: string \| null }`. |
@@ -598,7 +607,7 @@ Response conventions:
 - `401` means no authenticated identity.
 - `400` means invalid input or a cross-session/invalid target.
 - `404` conceals nonexistent sessions, non-membership, unauthorized owner-only resources, invalid invites, and revoked invites.
-- `409` represents conflicts such as duplicate normalized agent name, stale queue order, or owner leave.
+- `409` represents conflicts such as duplicate normalized agent name, stale queue order, owner leave, or any mutation on an ended session ("This session has ended.").
 - Floor mutations return `{ floor }`; clients treat it as authoritative.
 
 ### Validation limits
@@ -655,10 +664,14 @@ The following currently reset on reload and must not be mistaken for shared data
 
 If product requirements call for any of these to persist or synchronize, add an explicit storage owner and document the decision.
 
+The theme choice is deliberately a per-device preference: localStorage `openfloor:theme`, owned by `components/ThemeToggle.tsx`, never synchronized through D1 or presence.
+
 ### Styling
 
 - Global styles are composed from `app/globals.css` and files under `app/styles/`.
 - `tokens.css` is the design-token source.
+- Theming: the bare `:root` block in `tokens.css` is the light theme; the dark values live twice (under `prefers-color-scheme` guarded by `:root:not([data-theme="light"])`, and under `:root[data-theme="dark"]`) and must stay identical. `components/ThemeToggle.tsx` cycles System → Light → Dark, persisting the manual choice in localStorage (`openfloor:theme`); an inline script in `app/layout.tsx` applies it pre-paint. Never hardcode a color a theme must change — the code workbench's inverse surfaces are the deliberate exception (dark in both themes).
+- `components/session/SelectMenu.tsx` is the house dropdown (trigger + styled listbox, combobox keyboard semantics). Do not introduce native `<select>` elements; the OS widget does not match the floor.
 - The `legacy-floor-*` filenames describe their origin in the preserved demo UI, not permission to restore demo behavior.
 - Reuse genuine visual primitives, but do not reintroduce fixture imports, fake terminals, or simulation logic with old CSS.
 - The responsive floor stacks panels and draft lanes on smaller screens.
@@ -707,6 +720,7 @@ worker/
   preflight-workflow.ts      Durable exact-source Sandbox preflight orchestration
   agent-run-workflow.ts      Durable Codex/check/cancellation Sandbox orchestration
 Dockerfile.sandbox           Version-matched Cloudflare Sandbox runtime image
+.github/workflows/deploy.yml Push-to-main production deploy (test → migrate → build → deploy)
 scripts/codex-runner.mjs     Pinned server-side Codex SDK runner inside the Sandbox image
 scripts/publish-bundle.mjs   Fixed trusted bundle/ref/ancestry/file/object validation and non-force publication
 tests/
@@ -715,6 +729,7 @@ tests/
   render/                    Built Worker/server-rendering and route behavior
   e2e/                       Two authenticated browser-context product flow
 docs/agent-backend-gaps.md   Deferred execution/repository capabilities
+docs/cloudflare-access-branding.md  Manual Zero Trust login/App Launcher branding steps
 docs/github-production.md    Production GitHub App, Access, secrets, migration, and deploy runbook
 wrangler.jsonc               Production bindings, routes, migrations, compatibility
 ```
@@ -846,6 +861,8 @@ When adding a collaborative feature, prefer extending this two-context flow over
 
 Server-rendered text must be deterministic. Do not render `Date.now()`, `Math.random()`, browser-locale-only formatting, or server/client branches into shared initial markup. Use the helpers in `lib/date-format.ts` or pass an explicit server snapshot. The project previously encountered hydration mismatch from locale/date differences; tests should guard any new timestamp presentation.
 
+Viewer-local timestamps are shown through `components/LocalDateTime.tsx`: it renders the deterministic UTC form on the server and on the first client render, then swaps to the host-timezone `formatShort*Local` variants after mount. Use it for any user-facing timestamp instead of calling the local formatters during render.
+
 ## Production configuration and deployment
 
 ### Required bindings
@@ -902,6 +919,8 @@ npx wrangler deploy --config dist/server/wrangler.json
 ```
 
 Migrations must land before code that requires them. The build generates `dist/server/wrangler.json`; deployment uses that built config.
+
+Pushes to `main` run this exact sequence automatically via `.github/workflows/deploy.yml` (GitHub secrets `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`); merging to `main` is the deploy authorization. Production Cloudflare credentials are step-scoped to migration and deployment and must never be exposed to dependency installation, tests, or builds. The manual sequence above remains for emergencies and for changes GitHub Actions cannot see (secrets, Access policy).
 
 ### Smoke test after deployment
 
@@ -977,7 +996,7 @@ Migrations must land before code that requires them. The build generates `dist/s
 - The database provider-identity column is still named `chatgpt_user_id`; it is not ChatGPT-specific anymore.
 - Production uses `/app`; local development does not. Manual paths are a common source of broken links and sockets.
 - Next `Link` and manual `fetch` have different base-path responsibilities.
-- Cloudflare Access configuration is external state; code passing locally does not prove the production policy paths are correct.
+- Cloudflare Access configuration is external state; code passing locally does not prove the production policy paths are correct. The hosted login screen's branding is dashboard-applied too — steps in `docs/cloudflare-access-branding.md`.
 - The Worker route `opnflr.com/app*` is intentionally broader than `/app/*` due query-string routing behavior.
 - Access protects the app at the edge, but the Worker still verifies JWTs. Do not remove defense in depth.
 - `/app/webhooks/github` is deliberately public and must never process a payload before its raw-body HMAC and size are verified.
@@ -1002,6 +1021,38 @@ Migrations must land before code that requires them. The build generates `dist/s
 Repository execution Phases 1–7 are implemented. Future milestones should focus on deployment integrations, resolving the separately tracked manual-discard issue without weakening its lease, and broader agent lifecycle/product work rather than expanding GitHub permissions casually.
 
 ## Key decision log
+
+### 2026-08-19 — Pushes to main deploy production via GitHub Actions
+
+**Decision:** `.github/workflows/deploy.yml` runs the documented deploy sequence — `npm test`, `wrangler d1 migrations apply DB --remote`, `npm run build`, `wrangler deploy --config dist/server/wrangler.json` — on every push to `main`, serialized by a `production-deploy` concurrency group that never cancels in-flight runs. Auth comes from repository secrets `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`; Worker runtime secrets stay in Cloudflare and are untouched by CI.
+
+**Rationale:** The runbook was four commands executed by hand, so production lagged merged work and depended on someone remembering the order (migrations before code). Encoding the same sequence in CI changes when it runs, not what runs. GitHub Actions over Cloudflare Workers Builds because the pipeline lives in the repo, is reviewable, and needs no dashboard state beyond two secrets.
+
+**Consequences:** Merging to `main` is deploying — the full test pipeline still gates it, but a red deploy job means production did not pick up the merge; check the Actions log. Migrations apply before build/deploy, same as the manual order. The e2e step installs Playwright chromium in CI; the sandbox container image builds on the Actions runner's Docker. The job has read-only repository permission, and Cloudflare secrets exist only on the migration and deploy steps so install scripts, tests, and builds cannot read them. Rotating the API token happens in GitHub repo secrets, not in code.
+
+### 2026-08-19 — Two themes from one token sheet
+
+**Decision:** The cream palette is the light theme; a warm-charcoal dark theme overrides the color tokens in `tokens.css` — once under `prefers-color-scheme: dark` (system default) and once under `[data-theme="dark"]` (manual override), kept identical. A ThemeToggle in both headers cycles System → Light → Dark, persisted per device in localStorage and applied pre-paint by an inline script in the root layout. The code workbench's inverse surfaces and the identity tints stay unchanged in both themes.
+
+**Rationale:** Every color already resolves through `tokens.css` (the components had no literal colors worth keeping except the workbench's), so a theme is one override block, not a rewrite. System-following alone was not enough — people demo on projectors and override their OS.
+
+**Consequences:** New colors must be tokens with values in all three blocks. The two dark blocks must stay byte-identical. Theme choice is per-device local state, never synced.
+
+### 2026-08-19 — Retention purges only ended sessions, on a daily cron
+
+**Decision:** A `triggers.crons` entry plus a thin Worker `scheduled()` export runs `purgeExpiredSessions` daily, hard-deleting repository-free sessions whose `ended_at` is older than 30 days (`ENDED_SESSION_RETENTION_MS`) and notifying their presence objects. Owners can also hard-delete repository-free sessions immediately via `DELETE /api/sessions/[id]`. Never-ended sessions and sessions with repository state are not purged automatically.
+
+**Rationale:** "Automatic delete with an expiration timer" needs a background trigger, not a read-path side effect (a lazy sweep in `listSessionsForUser` deletes as a side effect of reads and never runs for idle users; a DO alarm is per-session machinery for a global batch job). Ended-only purging avoids silently destroying a live room someone may return to. Cascade foreign keys make deletion a single statement.
+
+**Consequences:** `wrangler.jsonc` owns the schedule; the logic stays in the testable db helper. Manual deletion and retention fail closed when a repository connection exists because D1 contains the expected-SHA leases and audit state required to clean GitHub branches, Workflows, and private R2 safely. A future durable deletion workflow may supersede this restriction; until then, do not bypass it with cascading SQL. If sessions ever need purge-by-inactivity, it is one more constant and an `OR` clause in the guarded statement.
+
+### 2026-08-19 — Sessions end with a timestamp, not a status enum
+
+**Decision:** Session lifecycle is a nullable `sessions.ended_at` set by an owner-only idempotent `POST /api/sessions/[id]/end`. Ending revokes the active invite in the same batch, broadcasts `session.ended`, and makes collaboration plus owner repository/preflight/run/review mutations return `409` through `getActiveMembershipRole`; route checks run before external calls and floor SQL rechecks `ended_at IS NULL` inside its mutation batch. Reads, leaving, cancellation, and presence connections keep working. There is no un-end in v1.
+
+**Rationale:** The purge/retention work needs the timestamp anyway (precedent: `revoked_at`, `disconnectedAt`); a single write-only guard at the membership choke point beats per-route checks; `409` instead of `404` because clients treat `404` as membership loss and kick to `/home`; keeping sockets open preserves read access and avoids a pointless reconnect loop since `authorizePresence` is membership-based.
+
+**Consequences:** New user-triggered mutating db helpers must authorize with `getActiveMembershipRole`, not `getMembershipRole` (reads and explicit cancellation keep the latter). Mutations that can race ending must also include `ended_at IS NULL` in the same D1 batch or conditional statement; an earlier authorization read alone is insufficient. Ended sessions remain fully readable until an eligible repository-free retention purge deletes them.
 
 ### 2026-08-18 — Preserve the original prototype
 
@@ -1254,4 +1305,4 @@ Before handing off a change, verify the applicable items:
 - `README.md`, `docs/agent-backend-gaps.md`, and this file are updated where relevant.
 - New durable decisions are appended to the decision log.
 - No secrets, local environment files, build output, or test artifacts are included.
-- Deployment and production mutation occur only with explicit authorization.
+- Deployment and production mutation occur only with explicit authorization. Merging to `main` is that authorization: it triggers the automatic production deploy. Agents still never run manual deploys or mutate production state directly without being asked.

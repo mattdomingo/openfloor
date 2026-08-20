@@ -7,9 +7,11 @@ export type D1Prepared = {
   run(): Promise<{ success: boolean; meta?: { changes?: number } }>;
 };
 
+export type D1ResultLike = { success: boolean; meta?: { changes?: number } };
+
 export type D1DatabaseLike = {
   prepare(query: string): D1Prepared;
-  batch(statements: D1Prepared[]): Promise<unknown[]>;
+  batch(statements: D1Prepared[]): Promise<D1ResultLike[]>;
 };
 
 export function getDb(): D1DatabaseLike {

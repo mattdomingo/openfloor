@@ -10,7 +10,14 @@ type SessionRecord = {
   memberCount: number;
   createdAt: number;
   updatedAt: number;
+  endedAt: number | null;
 };
+
+export class SessionEndedError extends Error {
+  constructor() {
+    super("This session has ended.");
+  }
+}
 
 export type InvitePreview = {
   inviteId: string;
@@ -65,7 +72,7 @@ export async function listSessionsForUser(userId: string, database = getDb()): P
     .prepare(
       `SELECT s.id, s.title, s.objective, mine.role,
               COUNT(all_members.user_id) AS memberCount,
-              s.created_at AS createdAt, s.updated_at AS updatedAt
+              s.created_at AS createdAt, s.updated_at AS updatedAt, s.ended_at AS endedAt
        FROM sessions s
        JOIN session_members mine ON mine.session_id = s.id AND mine.user_id = ?
        JOIN session_members all_members ON all_members.session_id = s.id
@@ -107,6 +114,7 @@ export async function createSession(
       memberCount: 1,
       createdAt: now,
       updatedAt: now,
+      endedAt: null,
     },
     inviteId,
   };
@@ -121,7 +129,7 @@ export async function getSessionForMember(
     .prepare(
       `SELECT s.id, s.title, s.objective, mine.role,
               COUNT(all_members.user_id) AS memberCount,
-              s.created_at AS createdAt, s.updated_at AS updatedAt
+              s.created_at AS createdAt, s.updated_at AS updatedAt, s.ended_at AS endedAt
        FROM sessions s
        JOIN session_members mine ON mine.session_id = s.id AND mine.user_id = ?
        JOIN session_members all_members ON all_members.session_id = s.id
@@ -139,12 +147,15 @@ export async function updateSessionObjective(
   objective: string | null,
   database = getDb(),
 ): Promise<SessionSummary | null> {
-  if (!(await getMembershipRole(sessionId, userId, database))) return null;
+  if (!(await getActiveMembershipRole(sessionId, userId, database))) return null;
   const now = Date.now();
-  await database
-    .prepare("UPDATE sessions SET objective = ?, updated_at = ? WHERE id = ?")
+  const result = await database
+    .prepare("UPDATE sessions SET objective = ?, updated_at = ? WHERE id = ? AND ended_at IS NULL")
     .bind(objective, now, sessionId)
     .run();
+  if (Number(result.meta?.changes ?? 0) !== 1) {
+    if (!(await getActiveMembershipRole(sessionId, userId, database))) return null;
+  }
   return getSessionForMember(sessionId, userId, database);
 }
 
@@ -177,6 +188,56 @@ export async function getMembershipRole(
     .bind(sessionId, userId)
     .first<{ role: SessionRole }>();
   return row?.role ?? null;
+}
+
+/* The write guard. Every mutation on session-scoped data authorizes through
+   this instead of getMembershipRole so ended sessions reject writes in one
+   place; reads keep using getMembershipRole so ended sessions stay viewable.
+   Non-members still resolve to null first (404 concealment) — the ended check
+   only fires for actual members. */
+export async function getActiveMembershipRole(
+  sessionId: string,
+  userId: string,
+  database = getDb(),
+): Promise<SessionRole | null> {
+  const row = await database
+    .prepare(
+      `SELECT sm.role, s.ended_at AS endedAt
+       FROM session_members sm
+       JOIN sessions s ON s.id = sm.session_id
+       WHERE sm.session_id = ? AND sm.user_id = ?`,
+    )
+    .bind(sessionId, userId)
+    .first<{ role: SessionRole; endedAt: number | null }>();
+  if (!row) return null;
+  if (row.endedAt != null) throw new SessionEndedError();
+  return row.role;
+}
+
+export async function endSession(
+  sessionId: string,
+  userId: string,
+  database = getDb(),
+): Promise<"missing" | "forbidden" | { endedAt: number }> {
+  // Deliberately getMembershipRole, not the active guard: ending must work
+  // regardless of (and idempotently after) the ended state.
+  const role = await getMembershipRole(sessionId, userId, database);
+  if (!role) return "missing";
+  if (role !== "owner") return "forbidden";
+  const now = Date.now();
+  await database.batch([
+    database
+      .prepare("UPDATE sessions SET ended_at = ?, updated_at = ? WHERE id = ? AND ended_at IS NULL")
+      .bind(now, now, sessionId),
+    database
+      .prepare("UPDATE session_invites SET revoked_at = ? WHERE session_id = ? AND revoked_at IS NULL")
+      .bind(now, sessionId),
+  ]);
+  const row = await database
+    .prepare("SELECT ended_at AS endedAt FROM sessions WHERE id = ?")
+    .bind(sessionId)
+    .first<{ endedAt: number }>();
+  return { endedAt: row?.endedAt ?? now };
 }
 
 export async function getInvitePreview(inviteId: string, database = getDb()): Promise<InvitePreview | null> {
@@ -244,7 +305,7 @@ export async function rotateInvite(
   ownerId: string,
   database = getDb(),
 ): Promise<string | null> {
-  if ((await getMembershipRole(sessionId, ownerId, database)) !== "owner") return null;
+  if ((await getActiveMembershipRole(sessionId, ownerId, database)) !== "owner") return null;
   const inviteId = crypto.randomUUID();
   const now = Date.now();
   await database.batch([
@@ -263,7 +324,7 @@ export async function revokeInvite(
   ownerId: string,
   database = getDb(),
 ): Promise<boolean> {
-  if ((await getMembershipRole(sessionId, ownerId, database)) !== "owner") return false;
+  if ((await getActiveMembershipRole(sessionId, ownerId, database)) !== "owner") return false;
   await database
     .prepare("UPDATE session_invites SET revoked_at = ? WHERE session_id = ? AND revoked_at IS NULL")
     .bind(Date.now(), sessionId)
@@ -285,6 +346,44 @@ export async function leaveSession(
     database.prepare("UPDATE sessions SET updated_at = ? WHERE id = ?").bind(Date.now(), sessionId),
   ]);
   return "left";
+}
+
+export const ENDED_SESSION_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+
+export async function purgeExpiredSessions(database = getDb(), now = Date.now()): Promise<string[]> {
+  // Every session-scoped child cascades on sessions.id, so one statement
+  // clears an eligible graph. Repository connections fail closed because
+  // their D1 records hold the leases needed for future external cleanup.
+  // ponytail: unbatched DELETE — add a LIMIT loop only if row counts demand it.
+  const result = await database
+    .prepare(
+      `DELETE FROM sessions
+       WHERE ended_at IS NOT NULL AND ended_at < ?
+         AND NOT EXISTS (SELECT 1 FROM repository_connections WHERE session_id = sessions.id)
+       RETURNING id`,
+    )
+    .bind(now - ENDED_SESSION_RETENTION_MS)
+    .all<{ id: string }>();
+  return result.results.map((row) => row.id);
+}
+
+export async function deleteSession(
+  sessionId: string,
+  userId: string,
+  database = getDb(),
+): Promise<"deleted" | "forbidden" | "missing" | "repository_state"> {
+  // Plain guard on purpose: deleting must work on ended sessions too.
+  const role = await getMembershipRole(sessionId, userId, database);
+  if (!role) return "missing";
+  if (role !== "owner") return "forbidden";
+  const result = await database.prepare(
+    `DELETE FROM sessions WHERE id = ?
+     AND NOT EXISTS (SELECT 1 FROM repository_connections WHERE session_id = sessions.id)`,
+  ).bind(sessionId).run();
+  if (Number(result.meta?.changes ?? 0) > 0) return "deleted";
+  const repository = await database.prepare("SELECT 1 AS present FROM repository_connections WHERE session_id = ?")
+    .bind(sessionId).first<{ present: number }>();
+  return repository ? "repository_state" : "missing";
 }
 
 export async function authorizePresence(

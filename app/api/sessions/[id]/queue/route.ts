@@ -1,5 +1,5 @@
-import { createFloorQueueItem, FloorTargetError } from "@/db/floor";
-import { floorMutationResponse, readJson } from "@/lib/floor-api";
+import { createFloorQueueItem } from "@/db/floor";
+import { floorMutationResponse, mutationErrorResponse, readJson } from "@/lib/floor-api";
 import { isApiError, requireApiUser } from "@/lib/server-auth";
 import { parseQueuePromptInput } from "@/lib/validation";
 
@@ -15,7 +15,6 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       ? floorMutationResponse(id, floor, ["queue"], 201)
       : Response.json({ error: "Session not found" }, { status: 404 });
   } catch (error) {
-    if (error instanceof FloorTargetError) return Response.json({ error: error.message }, { status: 400 });
-    throw error;
+    return mutationErrorResponse(error);
   }
 }

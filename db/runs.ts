@@ -1,6 +1,6 @@
 import type { AgentRun, AgentRunCheck, AgentRunFile, AgentRunStatus } from "@/lib/floor-types";
 import { getDb, type D1DatabaseLike } from "./index";
-import { getMembershipRole } from "./sessions";
+import { getActiveMembershipRole, getMembershipRole } from "./sessions";
 
 export const AGENT_RUN_MODEL = "gpt-5.6-terra";
 export class AgentRunConflictError extends Error {}
@@ -40,7 +40,7 @@ export async function getAgentRuns(sessionId: string, database = getDb()): Promi
 }
 
 export async function createAgentRun(sessionId: string, queueItemId: string, userId: string, database = getDb()): Promise<AgentRun> {
-  if ((await getMembershipRole(sessionId, userId, database)) !== "owner") throw new AgentRunNotReadyError("Session not found");
+  if ((await getActiveMembershipRole(sessionId, userId, database)) !== "owner") throw new AgentRunNotReadyError("Session not found");
   const context = await database.prepare(
     `SELECT q.id AS queueItemId, q.status AS queueStatus, q.agent_id AS agentId,
             rc.id AS connectionId, rc.status AS connectionStatus,
@@ -361,7 +361,7 @@ export async function releaseRunIntegration(runId: string, reason: string, datab
 }
 
 export async function prepareConflictedRunRetry(sessionId: string, runId: string, userId: string, database = getDb()): Promise<string | null> {
-  if ((await getMembershipRole(sessionId, userId, database)) !== "owner") return null;
+  if ((await getActiveMembershipRole(sessionId, userId, database)) !== "owner") return null;
   const run = await database.prepare("SELECT queue_item_id AS queueItemId FROM agent_runs WHERE id = ? AND session_id = ? AND status = 'conflicted'")
     .bind(runId, sessionId).first<{ queueItemId: string }>();
   if (!run) return null;
@@ -388,7 +388,7 @@ export async function recordRunPublicationFailure(runId: string, summary: string
 }
 
 export async function getRunDiscardContext(sessionId: string, runId: string, userId: string, database = getDb()) {
-  if ((await getMembershipRole(sessionId, userId, database)) !== "owner") return null;
+  if ((await getActiveMembershipRole(sessionId, userId, database)) !== "owner") return null;
   return database.prepare(
     `SELECT r.id, r.run_branch AS runBranch, r.run_commit_sha AS runCommitSha, r.remote_run_sha AS remoteRunSha,
             r.discarded_at AS discardedAt, rc.installation_id AS installationId, rc.repository_id AS repositoryId,
@@ -406,7 +406,7 @@ export async function getRunDiscardContext(sessionId: string, runId: string, use
 }
 
 export async function markRunDiscarded(sessionId: string, runId: string, userId: string, database = getDb()): Promise<number | null> {
-  if ((await getMembershipRole(sessionId, userId, database)) !== "owner") return null;
+  if ((await getActiveMembershipRole(sessionId, userId, database)) !== "owner") return null;
   const now = Date.now();
   const result = await database.prepare(
     `UPDATE agent_runs SET discarded_at = ?, discarded_by = ?, updated_at = ?

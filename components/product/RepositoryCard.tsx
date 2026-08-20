@@ -3,23 +3,39 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { BASE_PATH } from "@/components/basePath";
+import { SelectMenu } from "@/components/session/SelectMenu";
 import type {
   GitHubRepositoryOption,
   RepositoryCandidate,
   RepositoryConnection,
+  RepositoryConnectionStatus,
   RepositoryPreflight,
   SessionRole,
 } from "@/lib/session-types";
 
 type OptionsResponse = { repositories: GitHubRepositoryOption[]; branches: string[]; error?: string };
 
+const connectionStatusLabel: Record<RepositoryConnectionStatus, string> = {
+  connected: "Connected",
+  ready: "Ready",
+  revoked: "Access revoked",
+  inaccessible: "Inaccessible",
+  externally_modified: "Modified outside OpenFloor",
+  disconnected: "Disconnected",
+};
+
+// For enum-ish statuses that are readable once the underscores go.
+function humanize(status: string) {
+  return status.replaceAll("_", " ");
+}
+
 async function readResponse<T extends { error?: string }>(response: Response): Promise<Partial<T>> {
   const text = await response.text();
-  if (!text) return { error: `OpenFloor returned an empty response (${response.status})` } as Partial<T>;
+  if (!text) return { error: `Something went wrong (${response.status}). Try again.` } as Partial<T>;
   try {
     return JSON.parse(text) as T;
   } catch {
-    return { error: `OpenFloor returned an invalid response (${response.status})` } as Partial<T>;
+    return { error: `Something went wrong (${response.status}). Try again.` } as Partial<T>;
   }
 }
 
@@ -249,8 +265,22 @@ export function RepositoryCard({
       <h2>GitHub connection</h2>
       {!repository && !editing && (
         <>
-          <p>No repository is connected. Agent execution remains unavailable.</p>
-          {role === "owner" && <button className="button" data-variant="primary" onClick={connect} disabled={busy}>Connect GitHub</button>}
+          <p>No repository is connected yet. Connect GitHub so this session has a repository to work in.</p>
+          {role === "owner" ? (
+            <>
+              <div className="repository-checks">
+                <span>What to expect</span>
+                <ol>
+                  <li>Connect GitHub opens github.com to install the OpenFloor App — you leave this page and return here when the install finishes.</li>
+                  <li>During the install, choose which repositories the App may access. Some organizations require an admin to approve it first.</li>
+                  <li>Back here, pick the repository and base branch, then save. Check commands are optional now, but agents cannot execute until at least one is configured.</li>
+                </ol>
+              </div>
+              <button className="button" data-variant="primary" onClick={connect} disabled={busy}>Connect GitHub</button>
+            </>
+          ) : (
+            <p className="repository-checks">Only the session owner can connect GitHub. Ask them to set it up from this page.</p>
+          )}
         </>
       )}
       {repository && !editing && (
@@ -258,7 +288,7 @@ export function RepositoryCard({
           <div className="repository-summary">
             <strong>{repository.repositoryFullName}</strong>
             <span>{repository.repositoryPrivate ? "Private" : "Public"} · base <code>{repository.baseBranch}</code></span>
-            <span data-status={repository.status}>{repository.status}</span>
+            <span data-status={repository.status}>{connectionStatusLabel[repository.status]}</span>
           </div>
           {candidate && (
             <div className="repository-checks">
@@ -267,8 +297,8 @@ export function RepositoryCard({
               {candidate.description && <p>{candidate.description}</p>}
               <p><code>{candidate.branchName}</code></p>
               <p>Candidate <code>{candidate.candidateSha?.slice(0, 8) ?? "creating"}</code> · base <code>{(candidate.remoteBaseSha ?? candidate.baseSha).slice(0, 8)}</code></p>
-              {candidate.behindBase && <p className="form-error">Candidate is behind the current base branch.</p>}
-              {repository.status === "externally_modified" && <p className="form-error">The candidate branch was modified outside OpenFloor.</p>}
+              {candidate.behindBase && <p className="form-note">Candidate is behind the current base branch.</p>}
+              {repository.status === "externally_modified" && <p className="form-note">The candidate branch was modified outside OpenFloor.</p>}
             </div>
           )}
           <div className="repository-checks">
@@ -280,9 +310,9 @@ export function RepositoryCard({
           {preflight && (
             <div className="repository-checks" aria-label="Runner verification">
               <span>Runner verification</span>
-              <p><strong>{preflight.status.replace("_", " ")}</strong>{preflight.summary ? ` · ${preflight.summary}` : ""}</p>
+              <p><strong data-status={preflight.status}>{humanize(preflight.status)}</strong>{preflight.summary ? ` · ${preflight.summary}` : ""}</p>
               <ol>{preflight.checks.map((check) => (
-                <li key={check.id}><code>{check.command}</code> — {check.status}{check.exitCode == null ? "" : ` (exit ${check.exitCode})`}</li>
+                <li key={check.id}><code>{check.command}</code> — <span data-status={check.status}>{humanize(check.status)}</span>{check.exitCode == null ? "" : ` (exit ${check.exitCode})`}</li>
               ))}</ol>
               {preflight.checks.some((check) => check.hasLog) && <button className="button" onClick={() => void openLogs()} disabled={busy}>Open command output</button>}
               {logs != null && <pre className="repository-log-output">{logs}</pre>}
@@ -325,22 +355,30 @@ export function RepositoryCard({
       )}
       {editing && role === "owner" && (
         <div className="repository-form">
-          <label>
+          <div className="repository-field">
             <span>Repository</span>
-            <select aria-label="Connected repository" value={repositoryId} onChange={(event) => void chooseRepository(event.target.value)} disabled={busy}>
-              {repositories.map((item) => <option key={item.id} value={item.id}>{item.fullName}</option>)}
-            </select>
-          </label>
-          <label>
+            <SelectMenu
+              label="Connected repository"
+              value={repositoryId}
+              onChange={(next) => void chooseRepository(next)}
+              disabled={busy}
+              options={repositories.map((item) => ({ value: item.id, label: item.fullName }))}
+            />
+          </div>
+          <div className="repository-field">
             <span>Base branch</span>
-            <select aria-label="Repository base branch" value={baseBranch} onChange={(event) => setBaseBranch(event.target.value)} disabled={busy || branches.length === 0}>
-              {branches.map((branch) => <option key={branch} value={branch}>{branch}</option>)}
-            </select>
-          </label>
+            <SelectMenu
+              label="Repository base branch"
+              value={baseBranch}
+              onChange={setBaseBranch}
+              disabled={busy || branches.length === 0}
+              options={branches.map((branch) => ({ value: branch, label: branch }))}
+            />
+          </div>
           <label>
             <span>Required check commands</span>
             <textarea aria-label="Required check commands" value={commands} onChange={(event) => setCommands(event.target.value)} rows={4} />
-            <small>Optional while connecting. Enter one shell command per line; execution will require checks to be configured first.</small>
+            <small>Optional while connecting. One command per line; agent execution will require at least one check.</small>
           </label>
           <div className="button-row">
             <button className="button" data-variant="primary" onClick={save} disabled={busy || !selectedRepository || !baseBranch}>Save repository</button>

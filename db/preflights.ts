@@ -1,6 +1,6 @@
 import type { RepositoryPreflight, RepositoryPreflightCheck, RepositoryPreflightStatus } from "@/lib/session-types";
 import { getDb, type D1DatabaseLike } from "./index";
-import { getMembershipRole } from "./sessions";
+import { getActiveMembershipRole, getMembershipRole } from "./sessions";
 
 export class PreflightConflictError extends Error {}
 export class PreflightNotReadyError extends Error {}
@@ -36,7 +36,7 @@ export async function createRepositoryPreflight(
   userId: string,
   database = getDb(),
 ): Promise<RepositoryPreflight> {
-  if ((await getMembershipRole(sessionId, userId, database)) !== "owner") throw new PreflightNotReadyError("Session not found");
+  if ((await getActiveMembershipRole(sessionId, userId, database)) !== "owner") throw new PreflightNotReadyError("Session not found");
   const context = await database.prepare(
     `SELECT rc.id AS connectionId, rc.status AS connectionStatus, c.id AS candidateId,
             c.candidate_sha AS candidateSha, c.remote_candidate_sha AS remoteCandidateSha

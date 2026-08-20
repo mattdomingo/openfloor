@@ -5,7 +5,7 @@ import {
   reconcileRepositoryCandidate,
   setRepositoryAvailability,
 } from "@/db/repositories";
-import { getMembershipRole } from "@/db/sessions";
+import { activeOwnerErrorResponse } from "@/lib/floor-api";
 import { getInstallationRepository, getRepositoryRefSha, GitHubApiError } from "@/lib/github";
 import { notifyFloorChanged } from "@/lib/presence-server";
 import { isApiError, requireApiUser } from "@/lib/server-auth";
@@ -14,9 +14,8 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
   const user = await requireApiUser();
   if (isApiError(user)) return user;
   const sessionId = (await params).id;
-  if ((await getMembershipRole(sessionId, user.id)) !== "owner") {
-    return Response.json({ error: "Session not found" }, { status: 404 });
-  }
+  const ownerError = await activeOwnerErrorResponse(sessionId, user.id);
+  if (ownerError) return ownerError;
   const connection = await getRepositoryConnectionForMember(sessionId, user.id);
   const candidate = await getActiveRepositoryCandidateForMember(sessionId, user.id);
   if (!connection || !candidate?.candidateSha || connection.status === "disconnected") {

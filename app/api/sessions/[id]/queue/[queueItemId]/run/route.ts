@@ -30,6 +30,7 @@ import { createDraftPullRequest, createRepositoryBranch, getInstallationReposito
 import { notifyFloorChanged } from "@/lib/presence-server";
 import { openFloorBranchName } from "@/lib/repository-refs";
 import { isApiError, requireApiUser } from "@/lib/server-auth";
+import { activeOwnerErrorResponse, mutationErrorResponse } from "@/lib/floor-api";
 import { env } from "cloudflare:workers";
 
 type WorkflowBinding = { create(options: { id: string; params: { runId: string } }): Promise<unknown> };
@@ -39,6 +40,8 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
   const user = await requireApiUser();
   if (isApiError(user)) return user;
   const { id: sessionId, queueItemId } = await params;
+  const ownerError = await activeOwnerErrorResponse(sessionId, user.id);
+  if (ownerError) return ownerError;
   const bindings = env as unknown as {
     AGENT_RUN_WORKFLOW?: WorkflowBinding;
     AGENT_RUN_ENABLED?: string;
@@ -64,6 +67,7 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
     await notifyFloorChanged(sessionId, floor.revision, ["queue", "runs", "review"]);
     return Response.json({ floor }, { status: 202 });
   } catch (error) {
+    try { return mutationErrorResponse(error); } catch { /* continue with run mapping */ }
     if (error instanceof AgentRunNotReadyError) return Response.json({ error: error.message }, { status: error.message === "Session not found" ? 404 : 409 });
     if (error instanceof AgentRunConflictError) return Response.json({ error: error.message }, { status: 409 });
     return Response.json({ error: "Agent run could not be started" }, { status: 502 });

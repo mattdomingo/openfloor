@@ -2,7 +2,9 @@
 
 import Link from "next/link";
 import { useRef, useState } from "react";
-import { BASE_PATH } from "@/components/basePath";
+import { ThemeToggle } from "@/components/ThemeToggle";
+import { initials } from "@/components/product/AppHeader";
+import { Brand } from "@/components/product/Brand";
 import type { AppUser, SessionMember, SessionSummary } from "@/lib/session-types";
 import { InviteDialog } from "./InviteDialog";
 import { Avatar, Icon } from "./primitives";
@@ -33,11 +35,7 @@ export function TopBar({
 
   return (
     <header className="topbar">
-      <Link href="/home" className="brand">
-        {/* eslint-disable-next-line @next/next/no-img-element -- static product mark */}
-        <img className="brand-mark" src={`${BASE_PATH}/openfloor-mark.png`} alt="" aria-hidden="true" />
-        OPENFLOOR
-      </Link>
+      <Brand />
 
       <nav className="screen-nav" aria-label="Workspace screens">
         <button type="button" aria-pressed={screen === "workspace"} onClick={() => onScreen("workspace")}>Workspace</button>
@@ -45,7 +43,7 @@ export function TopBar({
       </nav>
 
       <nav className="session-path" aria-label="Session location">
-        <Link href="/home">Sessions</Link><span aria-hidden="true">/</span><strong>{session.title}</strong>
+        <Link href="/home">Sessions</Link><span aria-hidden="true">/</span><Link href={`/session/${session.id}`}><strong title={session.title}>{session.title}</strong></Link>
         <span className="live-pill"><Icon name="circle" size={7} />LIVE</span>
       </nav>
 
@@ -61,16 +59,13 @@ export function TopBar({
           </button>
         )}
         <Link className="icon-button" aria-label="Session settings" title="Session settings" href={`/session/${session.id}`}>
-          <Icon name="more" />
+          <Icon name="sliders" />
         </Link>
+        <ThemeToggle />
         <a className="button" data-variant="quiet" href="/cdn-cgi/access/logout">Sign out</a>
       </div>
 
       {inviting && <InviteDialog session={session} members={members} onNotice={onNotice} onClose={closeInvite} />}
     </header>
   );
-}
-
-function initials(name: string) {
-  return name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join("").toUpperCase() || "?";
 }

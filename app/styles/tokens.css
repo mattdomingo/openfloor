@@ -1,6 +1,13 @@
-/* Design tokens. Every value used in the interface should resolve to one of these. */
+/* Design tokens. Every value used in the interface should resolve to one of these.
+
+   Theming: the bare :root block is the light (cream) theme. The dark values
+   live twice below — once under prefers-color-scheme for the system default,
+   once under [data-theme="dark"] for the manual override — and must stay
+   identical. html[data-theme] is set pre-paint by the inline script in
+   app/layout.tsx and controlled by components/ThemeToggle.tsx. */
 
 :root {
+  color-scheme: light;
   /* Surfaces. Each warm paper reads as a distinct layer, darkest to lightest:
      canvas, chrome band, window body, floating card.
      App bands use these deliberately:
@@ -117,4 +124,82 @@
   --dock-rail-height: 34px;
   --rail-collapsed-width: 40px;
   --focus-ring: 0 0 0 2px var(--surface-raised), 0 0 0 4px var(--accent-line);
+}
+
+/* Dark theme: warm charcoal papers mirroring the cream stack. The inverse
+   (workbench) surfaces, inverse text, and identity tints stay as they are —
+   they were born dark-safe. Keep this block and the [data-theme="dark"] block
+   below byte-identical. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+
+    --surface-page: #171a17;
+    --surface-header: #1d211d;
+    --surface-panel: #232823;
+    --surface-raised: #2a302a;
+    --surface-sunken: #121412;
+
+    --text-primary: #e8ede8;
+    --text-secondary: #a7aca3;
+    --text-tertiary: #7b8078;
+
+    --line-strong: #4a5147;
+    --line-soft: #343a33;
+
+    --accent: #e06a45;
+    --accent-hover: #eb7f5c;
+    --accent-soft: #3d2a22;
+    --accent-line: #7c4936;
+
+    --status-running: #5fa886;
+    --status-running-soft: #22322a;
+    --status-blocked: #d96a5e;
+    --status-blocked-soft: #3a2622;
+    --status-review: #7da3c2;
+    --status-review-soft: #232e37;
+    --status-waiting: #9a958a;
+    --status-waiting-soft: #2b2b26;
+    --status-attention: #d09a4a;
+    --status-attention-soft: #362b1c;
+
+    --elevation-1: 0 1px 2px rgba(0, 0, 0, 0.5), 0 1px 0 rgba(0, 0, 0, 0.3);
+    --elevation-2: 0 16px 36px rgba(0, 0, 0, 0.55);
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --surface-page: #171a17;
+  --surface-header: #1d211d;
+  --surface-panel: #232823;
+  --surface-raised: #2a302a;
+  --surface-sunken: #121412;
+
+  --text-primary: #e8ede8;
+  --text-secondary: #a7aca3;
+  --text-tertiary: #7b8078;
+
+  --line-strong: #4a5147;
+  --line-soft: #343a33;
+
+  --accent: #e06a45;
+  --accent-hover: #eb7f5c;
+  --accent-soft: #3d2a22;
+  --accent-line: #7c4936;
+
+  --status-running: #5fa886;
+  --status-running-soft: #22322a;
+  --status-blocked: #d96a5e;
+  --status-blocked-soft: #3a2622;
+  --status-review: #7da3c2;
+  --status-review-soft: #232e37;
+  --status-waiting: #9a958a;
+  --status-waiting-soft: #2b2b26;
+  --status-attention: #d09a4a;
+  --status-attention-soft: #362b1c;
+
+  --elevation-1: 0 1px 2px rgba(0, 0, 0, 0.5), 0 1px 0 rgba(0, 0, 0, 0.3);
+  --elevation-2: 0 16px 36px rgba(0, 0, 0, 0.55);
 }

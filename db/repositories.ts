@@ -1,7 +1,7 @@
 import type { GitHubRepositoryOption, RepositoryCandidate, RepositoryConnection, RepositoryConnectionStatus, RepositoryCheckCommand } from "@/lib/session-types";
 import type { GitHubPullRequestReview } from "@/lib/github";
 import { getDb, type D1DatabaseLike } from "./index";
-import { getMembershipRole } from "./sessions";
+import { getActiveMembershipRole, getMembershipRole } from "./sessions";
 
 type RepositoryConnectionRecord = Omit<RepositoryConnection, "repositoryPrivate" | "checkCommands"> & {
   repositoryPrivate: number | boolean;
@@ -12,7 +12,7 @@ export async function createGitHubConnectionState(
   userId: string,
   database = getDb(),
 ): Promise<string | null> {
-  if ((await getMembershipRole(sessionId, userId, database)) !== "owner") return null;
+  if ((await getActiveMembershipRole(sessionId, userId, database)) !== "owner") return null;
   const now = Date.now();
   const id = crypto.randomUUID();
   await database.batch([
@@ -42,9 +42,9 @@ export async function consumeGitHubConnectionState(
        SET installation_id = ?, used_at = ?
        WHERE id = ? AND user_id = ? AND used_at IS NULL AND expires_at > ?
          AND EXISTS (
-           SELECT 1 FROM session_members sm
+           SELECT 1 FROM session_members sm JOIN sessions s ON s.id = sm.session_id
            WHERE sm.session_id = github_connection_states.session_id
-             AND sm.user_id = ? AND sm.role = 'owner'
+             AND sm.user_id = ? AND sm.role = 'owner' AND s.ended_at IS NULL
          )`,
     )
     .bind(installationId, now, stateId, userId, now, userId)
@@ -61,7 +61,7 @@ export async function getPendingGitHubInstallation(
   userId: string,
   database = getDb(),
 ): Promise<{ stateId: string; installationId: string } | null> {
-  if ((await getMembershipRole(sessionId, userId, database)) !== "owner") return null;
+  if ((await getActiveMembershipRole(sessionId, userId, database)) !== "owner") return null;
   return database
     .prepare(
       `SELECT id AS stateId, installation_id AS installationId
@@ -118,7 +118,7 @@ export async function saveRepositoryConnection(
   checkCommands: string[],
   database = getDb(),
 ): Promise<RepositoryConnection | null> {
-  if ((await getMembershipRole(sessionId, userId, database)) !== "owner") return null;
+  if ((await getActiveMembershipRole(sessionId, userId, database)) !== "owner") return null;
   const existing = await database
     .prepare("SELECT id, connected_at AS connectedAt FROM repository_connections WHERE session_id = ?")
     .bind(sessionId)
@@ -178,7 +178,7 @@ export async function disconnectRepository(
   userId: string,
   database = getDb(),
 ): Promise<RepositoryConnection | null> {
-  if ((await getMembershipRole(sessionId, userId, database)) !== "owner") return null;
+  if ((await getActiveMembershipRole(sessionId, userId, database)) !== "owner") return null;
   const now = Date.now();
   const existing = await database.prepare("SELECT id FROM repository_connections WHERE session_id = ? AND status != 'disconnected'").bind(sessionId).first();
   if (!existing) return null;
@@ -301,7 +301,7 @@ export async function reserveRepositoryCandidate(
   baseSha: string,
   database = getDb(),
 ): Promise<boolean> {
-  if ((await getMembershipRole(sessionId, userId, database)) !== "owner") return false;
+  if ((await getActiveMembershipRole(sessionId, userId, database)) !== "owner") return false;
   const now = Date.now();
   try {
     const result = await database.prepare(
@@ -484,7 +484,7 @@ export async function getCandidateReviewMutationContext(
   userId: string,
   database = getDb(),
 ) {
-  if ((await getMembershipRole(sessionId, userId, database)) !== "owner") return null;
+  if ((await getActiveMembershipRole(sessionId, userId, database)) !== "owner") return null;
   const candidate = await database.prepare(
     `SELECT c.id AS candidateId, c.branch_name AS candidateBranch, c.base_branch AS baseBranch,
             c.candidate_sha AS candidateSha, c.remote_candidate_sha AS remoteCandidateSha,
