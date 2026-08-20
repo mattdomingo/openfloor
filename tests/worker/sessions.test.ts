@@ -74,13 +74,13 @@ function identity(id: string, name: string) {
 }
 
 describe("D1 session persistence", () => {
-  it("upserts users by stable provider identity", async () => {
+  it("upserts users by stable provider identity, refreshing email but not the onboarding-owned display name", async () => {
     const first = await upsertUser(identity("owner", "Owner One"), env.DB);
     const updated = await upsertUser({ ...identity("owner", "Owner Two"), email: "new@example.com" }, env.DB);
 
     expect(updated.id).toBe(first.id);
     expect(updated.providerUserId).toBe("chatgpt-owner");
-    expect(updated.displayName).toBe("Owner Two");
+    expect(updated.displayName).toBe("Owner One");
     expect(updated.email).toBe("new@example.com");
   });
 

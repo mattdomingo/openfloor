@@ -14,6 +14,14 @@ type SessionTab = "active" | "archived" | "ended";
 export function HomeScreen({ user, sessions: initialSessions }: { user: AppUser; sessions: SessionSummary[] }) {
   const router = useRouter();
   const [sessions, setSessions] = useState(initialSessions);
+  // router.refresh() (after delete) re-renders this Server Component prop without
+  // remounting HomeScreen, so local state needs to resync — done during render,
+  // React's documented pattern, rather than in an effect (avoids an extra render).
+  const [syncedSessions, setSyncedSessions] = useState(initialSessions);
+  if (syncedSessions !== initialSessions) {
+    setSyncedSessions(initialSessions);
+    setSessions(initialSessions);
+  }
   const [tab, setTab] = useState<SessionTab>("active");
   const [creating, setCreating] = useState(false);
   const [title, setTitle] = useState("");

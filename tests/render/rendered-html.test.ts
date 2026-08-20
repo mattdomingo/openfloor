@@ -68,6 +68,16 @@ describe("server rendering", () => {
   });
 
   it("renders an authenticated floor with no seeded product data", async () => {
+    const onboardingForm = new FormData();
+    onboardingForm.set("firstName", "Render");
+    onboardingForm.set("lastName", "Owner");
+    const onboarded = await SELF.fetch("http://localhost/app/api/account/onboarding", {
+      method: "POST",
+      headers: authenticatedHeaders,
+      body: onboardingForm,
+    });
+    expect(onboarded.status).toBe(204);
+
     const created = await SELF.fetch("http://localhost/app/api/sessions", {
       method: "POST",
       headers: { ...authenticatedHeaders, "content-type": "application/json", accept: "application/json" },
