@@ -1,12 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { BASE_PATH } from "@/components/basePath";
 import { LocalDateTime } from "@/components/LocalDateTime";
 import { useDialogDismiss } from "@/components/session/primitives";
 import { reducePresence } from "@/lib/presence";
+import { isRepositoryReadyForFloor } from "@/lib/repository-gate";
 import type { AppUser, PresenceEvent, RepositoryCandidate, RepositoryConnection, RepositoryPreflight, SessionMember, SessionSummary } from "@/lib/session-types";
 import { AppHeader, initials } from "./AppHeader";
 import { RepositoryCard } from "./RepositoryCard";
@@ -22,6 +23,7 @@ export function SessionScreen({
   initialPreflight,
   preflightEnabled,
   githubSetup,
+  repoGateRequested,
 }: {
   user: AppUser;
   session: SessionSummary;
@@ -31,6 +33,7 @@ export function SessionScreen({
   initialPreflight: RepositoryPreflight | null;
   preflightEnabled: boolean;
   githubSetup: boolean;
+  repoGateRequested: boolean;
 }) {
   const router = useRouter();
   const [members, setMembers] = useState(initialMembers);
@@ -40,8 +43,25 @@ export function SessionScreen({
   const [inviteBusy, setInviteBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [ending, setEnding] = useState(false);
+  const repositoryReady = isRepositoryReadyForFloor(initialRepository, initialCandidate);
+  const [repoGateOpen, setRepoGateOpen] = useState(repoGateRequested && !repositoryReady);
+  const [repositoryHighlighted, setRepositoryHighlighted] = useState(false);
+  const repositoryCardRef = useRef<HTMLDivElement>(null);
   const retryRef = useRef(0);
   const endedAt = session.endedAt;
+
+  function enterAgentFloor(event: MouseEvent<HTMLAnchorElement>) {
+    if (repositoryReady) return;
+    event.preventDefault();
+    setRepoGateOpen(true);
+  }
+
+  function goToRepositorySetup() {
+    setRepoGateOpen(false);
+    repositoryCardRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    setRepositoryHighlighted(true);
+    window.setTimeout(() => setRepositoryHighlighted(false), 2200);
+  }
 
   const refreshMembers = useCallback(async () => {
     const response = await fetch(`${BASE_PATH}/api/sessions/${session.id}/members`, { cache: "no-store" });
@@ -150,7 +170,7 @@ export function SessionScreen({
         <div><p className="eyebrow">{endedAt != null ? "Ended session" : "Live session"}</p><h1>{session.title}</h1><p>{session.objective || "No objective has been written yet."}</p></div>
         <div className="session-hero-actions">
           <div className="connection-state" data-state={connection}><span aria-hidden="true" />{connection === "connected" ? `${onlineCount} online` : connection}</div>
-          <Link className="button" data-variant="primary" data-size="lg" href={`/session/${session.id}/floor`}>Enter agent floor</Link>
+          <Link className="button" data-variant="primary" data-size="lg" href={`/session/${session.id}/floor`} onClick={enterAgentFloor} aria-haspopup={repositoryReady ? undefined : "dialog"}>Enter agent floor</Link>
         </div>
       </section>
 
@@ -201,13 +221,70 @@ export function SessionScreen({
           ) : (
             <section className="action-card"><p className="eyebrow">Membership</p><h2>Your membership</h2><p>Leaving removes this session from your home and ends your live connection.</p><button className="button danger-button" onClick={leave}>Leave session</button></section>
           )}
-          {endedAt == null && <RepositoryCard sessionId={session.id} sessionTitle={session.title} sessionObjective={session.objective} role={session.role} initialRepository={initialRepository} initialCandidate={initialCandidate} initialPreflight={initialPreflight} preflightEnabled={preflightEnabled} beginSetup={githubSetup} />}
+          {endedAt == null && (
+            <div ref={repositoryCardRef} className="repository-card-slot" data-highlighted={repositoryHighlighted}>
+              <RepositoryCard sessionId={session.id} sessionTitle={session.title} sessionObjective={session.objective} role={session.role} initialRepository={initialRepository} initialCandidate={initialCandidate} initialPreflight={initialPreflight} preflightEnabled={preflightEnabled} beginSetup={githubSetup} />
+            </div>
+          )}
           <section className="action-card quiet-card"><p className="eyebrow">Saved automatically</p><p>The session, its objective, members, and invite state are stored. Presence shows who is connected right now.</p></section>
           {notice && <p className="notice" role="status">{notice}</p>}
         </aside>
       </section>
       {ending && <EndSessionDialog sessionId={session.id} onClose={() => setEnding(false)} />}
+      {repoGateOpen && (
+        <RepositoryGateDialog
+          role={session.role}
+          repository={initialRepository}
+          candidate={initialCandidate}
+          onClose={() => setRepoGateOpen(false)}
+          onGoToSetup={goToRepositorySetup}
+        />
+      )}
     </main>
+  );
+}
+
+function RepositoryGateDialog({ role, repository, candidate, onClose, onGoToSetup }: {
+  role: SessionSummary["role"];
+  repository: RepositoryConnection | null;
+  candidate: RepositoryCandidate | null;
+  onClose: () => void;
+  onGoToSetup: () => void;
+}) {
+  const { dismiss, dialogProps } = useDialogDismiss(onClose);
+  const connected = repository != null && repository.status !== "disconnected" && repository.status !== "revoked" && repository.status !== "inaccessible";
+  const needsReconnect = repository != null && (repository.status === "revoked" || repository.status === "inaccessible" || repository.status === "disconnected");
+  const executionEnabled = candidate != null;
+
+  return (
+    <dialog className="dialog" {...dialogProps} aria-labelledby="repo-gate-title">
+      <div className="dialog-head">
+        <div className="dialog-title">
+          <h2 id="repo-gate-title">Connect a repository to enter the agent floor</h2>
+          <p>Agents need a GitHub repository connected and ready before they can work in this session.</p>
+        </div>
+      </div>
+      <div className="dialog-body">
+        <ol className="repo-gate-checklist">
+          <li data-done={connected}>
+            <span aria-hidden="true">{connected ? "✓" : "○"}</span>
+            <span>{needsReconnect ? `GitHub connection needs attention (${repository ? repository.status.replaceAll("_", " ") : ""})` : "Connect a GitHub repository"}</span>
+          </li>
+          <li data-done={executionEnabled}>
+            <span aria-hidden="true">{executionEnabled ? "✓" : "○"}</span>
+            <span>Enable execution (creates the candidate branch agents work from)</span>
+          </li>
+        </ol>
+        <p className="form-note">
+          Check commands are optional. If you configure them, agent changes must pass those commands before a run is marked ready; without them, changes still run but aren&apos;t verified automatically.
+        </p>
+        {role !== "owner" && <p className="form-note">Only the session owner can connect GitHub. Ask them to finish setup from this page.</p>}
+      </div>
+      <div className="dialog-foot">
+        <button type="button" className="button" data-variant="quiet" onClick={dismiss}>Not now</button>
+        {role === "owner" && <button type="button" className="button" data-variant="primary" onClick={onGoToSetup}>Go to repository setup</button>}
+      </div>
+    </dialog>
   );
 }
 

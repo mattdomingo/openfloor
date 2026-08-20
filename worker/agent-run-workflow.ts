@@ -300,7 +300,9 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
         return await this.complete(runId, finalStatus, summary);
       }
       finalStatus = "ready";
-      summary = `Codex changed ${files.length} file${files.length === 1 ? "" : "s"}; all required checks passed. Preparing the verified run branch.`;
+      summary = context.checks.length > 0
+        ? `Codex changed ${files.length} file${files.length === 1 ? "" : "s"}; all required checks passed. Preparing the verified run branch.`
+        : `Codex changed ${files.length} file${files.length === 1 ? "" : "s"}; no check commands were configured. Preparing the verified run branch.`;
       await this.complete(runId, finalStatus, summary);
 
       const bundle = await step.do("export run bundle", { retries: { limit: 1, delay: "5 seconds" }, timeout: "5 minutes" }, async () => {

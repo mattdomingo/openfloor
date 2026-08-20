@@ -273,7 +273,7 @@ export function RepositoryCard({
                 <ol>
                   <li>Connect GitHub opens github.com to install the openfloor App — you leave this page and return here when the install finishes.</li>
                   <li>During the install, choose which repositories the App may access. Some organizations require an admin to approve it first.</li>
-                  <li>Back here, pick the repository and base branch, then save. Check commands are optional now, but agents cannot execute until at least one is configured.</li>
+                  <li>Back here, pick the repository and base branch, then save. Check commands are optional — add them later if you want agent changes verified automatically before they&apos;re marked ready.</li>
                 </ol>
               </div>
               <button className="button" data-variant="primary" onClick={connect} disabled={busy}>Connect GitHub</button>
@@ -302,10 +302,10 @@ export function RepositoryCard({
             </div>
           )}
           <div className="repository-checks">
-            <span>Required checks</span>
+            <span>Check commands</span>
             {repository.checkCommands.length > 0
               ? <ol>{repository.checkCommands.map((item) => <li key={item.id}><code>{item.command}</code></li>)}</ol>
-              : <p>Not configured</p>}
+              : <><p>Not configured</p><p className="form-note">Optional. Without them, agent changes are not verified automatically before they&apos;re marked ready.</p></>}
           </div>
           {preflight && (
             <div className="repository-checks" aria-label="Runner verification">
@@ -378,7 +378,7 @@ export function RepositoryCard({
           <label>
             <span>Required check commands</span>
             <textarea aria-label="Required check commands" value={commands} onChange={(event) => setCommands(event.target.value)} rows={4} />
-            <small>Optional while connecting. One command per line; agent execution will require at least one check.</small>
+            <small>Optional. One command per line, e.g. <code>npm test</code> — each runs against the agent&apos;s changes and must pass before a run is marked ready. Leave this empty if you don&apos;t want automatic verification; agents can still run without it.</small>
           </label>
           <div className="button-row">
             <button className="button" data-variant="primary" onClick={save} disabled={busy || !selectedRepository || !baseBranch}>Save repository</button>

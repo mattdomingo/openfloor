@@ -130,7 +130,10 @@ async function runTestAgent(runId: string, encoded: string, bucket: R2BucketLike
     await finishRunCheck(runId, check.id, { status: shouldFail ? "failed" : "passed", exitCode: shouldFail ? 1 : 0, durationMs: 10, outputExcerpt: log, logKey });
     if (shouldFail) break;
   }
-  await finishAgentRun(runId, shouldFail ? "failed" : "ready", shouldFail ? "A required check failed." : "Codex changed 1 file; all required checks passed. Changes remain local to openfloor.");
+  const readySummary = context.checks.length > 0
+    ? "Codex changed 1 file; all required checks passed. Changes remain local to openfloor."
+    : "Codex changed 1 file; no check commands were configured. Changes remain local to openfloor.";
+  await finishAgentRun(runId, shouldFail ? "failed" : "ready", shouldFail ? "A required check failed." : readySummary);
   return shouldFail ? "failed" : "ready";
 }
 

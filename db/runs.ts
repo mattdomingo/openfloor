@@ -62,7 +62,6 @@ export async function createAgentRun(sessionId: string, queueItemId: string, use
   const commands = await database.prepare(
     "SELECT position, command FROM repository_check_commands WHERE connection_id = ? ORDER BY position",
   ).bind(context.connectionId).all<{ position: number; command: string }>();
-  if (commands.results.length === 0) throw new AgentRunNotReadyError("Configure at least one required check command before starting an agent run");
   const previous = await database.prepare("SELECT COALESCE(MAX(attempt), 0) AS attempt FROM agent_runs WHERE queue_item_id = ?")
     .bind(queueItemId).first<{ attempt: number }>();
   const attempt = Number(previous?.attempt ?? 0) + 1;

@@ -13,13 +13,14 @@ export default async function SessionPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ github?: string }>;
+  searchParams: Promise<{ github?: string; repo?: string }>;
 }) {
   const { id } = await params;
-  return <AuthenticatedSession id={id} githubSetup={(await searchParams).github === "setup"} />;
+  const query = await searchParams;
+  return <AuthenticatedSession id={id} githubSetup={query.github === "setup"} repoGateRequested={query.repo === "required"} />;
 }
 
-async function AuthenticatedSession({ id, githubSetup }: { id: string; githubSetup: boolean }) {
+async function AuthenticatedSession({ id, githubSetup, repoGateRequested }: { id: string; githubSetup: boolean; repoGateRequested: boolean }) {
   const user = await requireOnboardedUser(`/session/${encodeURIComponent(id)}`);
   const [session, members, repository, candidate, preflight] = await Promise.all([
     getSessionForMember(id, user.id),
@@ -30,5 +31,5 @@ async function AuthenticatedSession({ id, githubSetup }: { id: string; githubSet
   ]);
   if (!session || !members) notFound();
   const preflightEnabled = (env as unknown as { PREFLIGHT_ENABLED?: string }).PREFLIGHT_ENABLED === "true";
-  return <SessionScreen user={user} session={session} initialMembers={members} initialRepository={repository} initialCandidate={candidate} initialPreflight={preflight} preflightEnabled={preflightEnabled} githubSetup={githubSetup} />;
+  return <SessionScreen user={user} session={session} initialMembers={members} initialRepository={repository} initialCandidate={candidate} initialPreflight={preflight} preflightEnabled={preflightEnabled} githubSetup={githubSetup} repoGateRequested={repoGateRequested} />;
 }
