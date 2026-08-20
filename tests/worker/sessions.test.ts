@@ -84,6 +84,18 @@ describe("D1 session persistence", () => {
     expect(updated.email).toBe("new@example.com");
   });
 
+  it("falls back to matching by email when the login method changes the provider id", async () => {
+    const first = await upsertUser(identity("switcher", "Switcher"), env.DB);
+    const relinked = await upsertUser(
+      { ...identity("switcher", "Switcher"), providerUserId: "chatgpt-switcher-alt-method" },
+      env.DB,
+    );
+
+    expect(relinked.id).toBe(first.id);
+    expect(relinked.providerUserId).toBe("chatgpt-switcher-alt-method");
+    expect(relinked.email).toBe(first.email);
+  });
+
   it("creates and lists only the current user's sessions", async () => {
     const owner = await upsertUser(identity("owner", "Owner"), env.DB);
     const outsider = await upsertUser(identity("outsider", "Outsider"), env.DB);

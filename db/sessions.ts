@@ -35,24 +35,43 @@ const APP_USER_COLUMNS = `id, chatgpt_user_id AS providerUserId, email, display_
 
 export async function upsertUser(identity: AuthenticatedIdentity, database = getDb()): Promise<AppUser> {
   const now = Date.now();
-  const createdId = crypto.randomUUID();
+
   // Only email/updated_at refresh on repeat logins: display_name and the
   // profile fields are owned by onboarding/account-settings, not the IdP, so
   // this must never stomp what the user already set.
-  const user = await database
+  const byProvider = await database
+    .prepare(
+      `UPDATE users SET email = ?, updated_at = ? WHERE chatgpt_user_id = ? RETURNING ${APP_USER_COLUMNS}`,
+    )
+    .bind(identity.email, now, identity.providerUserId)
+    .first<AppUser>();
+  if (byProvider) return byProvider;
+
+  // Cloudflare Access issues a different `sub` per login method (Google vs.
+  // a one-time email code), so a returning user who signs in a different way
+  // than last time presents a provider id we've never seen. Fall back to
+  // matching by email so they land on their existing account (and its
+  // session memberships) instead of a fresh, empty one.
+  const byEmail = await database
+    .prepare(
+      `UPDATE users SET chatgpt_user_id = ?, updated_at = ? WHERE email = ? RETURNING ${APP_USER_COLUMNS}`,
+    )
+    .bind(identity.providerUserId, now, identity.email)
+    .first<AppUser>();
+  if (byEmail) return byEmail;
+
+  const createdId = crypto.randomUUID();
+  const created = await database
     .prepare(
       `INSERT INTO users (id, chatgpt_user_id, email, display_name, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?)
-       ON CONFLICT(chatgpt_user_id) DO UPDATE SET
-         email = excluded.email,
-         updated_at = excluded.updated_at
        RETURNING ${APP_USER_COLUMNS}`,
     )
     .bind(createdId, identity.providerUserId, identity.email, identity.displayName, now, now)
     .first<AppUser>();
 
-  if (!user) throw new Error("Unable to create or update the current user.");
-  return user;
+  if (!created) throw new Error("Unable to create or update the current user.");
+  return created;
 }
 
 export async function findUserByProviderId(
