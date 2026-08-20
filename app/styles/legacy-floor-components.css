@@ -2928,6 +2928,18 @@
   opacity: 0.5;
 }
 
+/* Integrated prompts are done — they sort to the bottom of the list (see
+   PromptQueue.tsx) and read as settled/inactive rather than needing attention. */
+.queue-item[data-done="true"] {
+  opacity: 0.6;
+  background: var(--surface-panel);
+  box-shadow: none;
+}
+
+.queue-item[data-done="true"]:hover {
+  opacity: 1;
+}
+
 /* Drops insert before the hovered card, so the target shows an insertion bar
    in the gap above it plus a soft accent wash. */
 .queue-item[data-drop-target="true"] {
@@ -3113,6 +3125,47 @@
   border-color: color-mix(in srgb, var(--accent) 45%, var(--line-soft));
   background: var(--accent-soft);
   color: var(--accent);
+}
+
+/* Run status chips borrow the shared status palette so a prompt's stage in
+   the pipeline is readable at a glance, not just from its label text. */
+.queue-chip[data-kind="status"] {
+  border-color: transparent;
+  background: var(--status-waiting-soft);
+  color: var(--status-waiting);
+}
+
+.queue-chip[data-kind="status"][data-status="provisioning"],
+.queue-chip[data-kind="status"][data-status="cancel_requested"] {
+  background: var(--status-attention-soft);
+  color: var(--status-attention);
+}
+
+.queue-chip[data-kind="status"][data-status="running"],
+.queue-chip[data-kind="status"][data-status="ready"] {
+  background: var(--status-running-soft);
+  color: var(--status-running);
+}
+
+.queue-chip[data-kind="status"][data-status="checking"],
+.queue-chip[data-kind="status"][data-status="publishing"],
+.queue-chip[data-kind="status"][data-status="published"],
+.queue-chip[data-kind="status"][data-status="integrating"] {
+  background: var(--status-review-soft);
+  color: var(--status-review);
+}
+
+.queue-chip[data-kind="status"][data-status="conflicted"],
+.queue-chip[data-kind="status"][data-status="failed"] {
+  background: var(--status-blocked-soft);
+  color: var(--status-blocked);
+}
+
+.queue-chip[data-kind="status"][data-status="integrated"],
+.queue-chip[data-kind="status"][data-status="cancelled"],
+.queue-chip[data-kind="status"][data-status="discarded"] {
+  background: var(--status-waiting-soft);
+  color: var(--status-waiting);
 }
 
 .queue-empty {
