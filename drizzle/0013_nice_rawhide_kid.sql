@@ -1,4 +1,4 @@
-PRAGMA foreign_keys=OFF;--> statement-breakpoint
+PRAGMA defer_foreign_keys = on;--> statement-breakpoint
 CREATE TABLE `__new_floor_queue_items` (
 	`id` text PRIMARY KEY NOT NULL,
 	`session_id` text NOT NULL,
@@ -17,6 +17,6 @@ CREATE TABLE `__new_floor_queue_items` (
 INSERT INTO `__new_floor_queue_items`("id", "session_id", "agent_id", "position", "status", "assigned_by", "assigned_reason", "created_at", "updated_at") SELECT "id", "session_id", "agent_id", "position", "status", "assigned_by", "assigned_reason", "created_at", "updated_at" FROM `floor_queue_items`;--> statement-breakpoint
 DROP TABLE `floor_queue_items`;--> statement-breakpoint
 ALTER TABLE `__new_floor_queue_items` RENAME TO `floor_queue_items`;--> statement-breakpoint
-PRAGMA foreign_keys=ON;--> statement-breakpoint
+PRAGMA defer_foreign_keys = off;--> statement-breakpoint
 CREATE INDEX `idx_floor_queue_session_position` ON `floor_queue_items` (`session_id`,`position`);--> statement-breakpoint
 CREATE INDEX `idx_floor_queue_agent` ON `floor_queue_items` (`agent_id`);
