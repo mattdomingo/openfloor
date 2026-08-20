@@ -72,6 +72,11 @@ export function usePersistentFloorData(sessionId: string, initialFloor: FloorSna
     reorderQueue: (itemIds: string[]) => request("/queue/order", "PATCH", { itemIds }),
     mergeQueue: (itemIds: string[]) => request("/queue/merge", "POST", { itemIds }),
     runQueueItem: (queueItemId: string) => request(`/queue/${encodeURIComponent(queueItemId)}/run`, "POST"),
+    editQueuePrompt: (queueItemId: string, promptId: string, text: string) =>
+      request(`/queue/${encodeURIComponent(queueItemId)}/prompts/${encodeURIComponent(promptId)}`, "PATCH", { text }),
+    setQueueItemPaused: (queueItemId: string, paused: boolean) =>
+      request(`/queue/${encodeURIComponent(queueItemId)}/pause`, "PATCH", { paused }),
+    deleteQueueItem: (queueItemId: string) => request(`/queue/${encodeURIComponent(queueItemId)}`, "DELETE"),
     setAutoDispatch: (autoDispatch: boolean) => request("/routing", "PATCH", { autoDispatch }),
     cancelRun: (runId: string) => request(`/runs/${encodeURIComponent(runId)}/cancel`, "POST"),
     discardRun: (runId: string) => request(`/runs/${encodeURIComponent(runId)}/discard`, "POST"),

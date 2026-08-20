@@ -419,7 +419,9 @@ describe("D1 session persistence", () => {
     await expect(requestAgentRunCancellation(created.session.id, retry.id, member.id, env.DB)).resolves.toBeNull();
     await expect(requestAgentRunCancellation(created.session.id, retry.id, owner.id, env.DB)).resolves.toBe(true);
     await finishAgentRun(retry.id, "cancelled", "Cancelled", env.DB);
-    expect((await getFloorSnapshot(created.session.id, owner.id, env.DB))?.queue[0].status).toBe("queued");
+    // Cancelled runs park their queue item in a matching terminal status instead of
+    // resetting it to "queued", so auto-dispatch does not immediately retry it.
+    expect((await getFloorSnapshot(created.session.id, owner.id, env.DB))?.queue[0].status).toBe("cancelled");
 
     await reconcileCandidateReview(created.session.id, candidateId, {
       number: 7, nodeId: "PR_7", url: "https://github.com/openfloor-test/run/pull/7", state: "open", draft: false,

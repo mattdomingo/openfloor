@@ -381,6 +381,97 @@ export async function mergeFloorQueue(
   return readFloorSnapshot(sessionId, userId, database);
 }
 
+/* Prompt-level write access: the session owner may act on any prompt, and any
+   other member may only act on a queue item whose prompts are entirely their
+   own (a merged item combining other authors' prompts is off-limits to them). */
+async function canManageQueueItem(sessionId: string, userId: string, itemId: string, database: D1DatabaseLike): Promise<boolean> {
+  const role = await getActiveMembershipRole(sessionId, userId, database);
+  if (!role) return false;
+  if (role === "owner") return true;
+  const authors = await database.prepare(
+    "SELECT DISTINCT author_user_id AS authorUserId FROM floor_queue_prompts WHERE queue_item_id = ?",
+  ).bind(itemId).all<{ authorUserId: string }>();
+  return authors.results.length > 0 && authors.results.every((row) => row.authorUserId === userId);
+}
+
+export async function updateFloorQueuePrompt(
+  sessionId: string,
+  userId: string,
+  itemId: string,
+  promptId: string,
+  text: string,
+  database = getDb(),
+): Promise<FloorSnapshot | null> {
+  if (!(await canManageQueueItem(sessionId, userId, itemId, database))) return null;
+  const now = Date.now();
+  const results = await database.batch([
+    database.prepare(
+      `UPDATE floor_queue_prompts SET text = ? WHERE id = ? AND queue_item_id = ?
+       AND EXISTS (SELECT 1 FROM floor_queue_items WHERE id = ? AND session_id = ? AND status IN ('queued', 'paused'))`,
+    ).bind(text, promptId, itemId, itemId, sessionId),
+    database.prepare(`UPDATE floor_queue_items SET updated_at = ? WHERE id = ?`).bind(now, itemId),
+    bumpFloorRevision(database, sessionId, now),
+  ]);
+  if (Number(results[0]?.meta?.changes ?? 0) === 0) {
+    if (!(await getActiveMembershipRole(sessionId, userId, database))) return null;
+    throw new FloorConflictError("This prompt can no longer be edited.");
+  }
+  return readFloorSnapshot(sessionId, userId, database);
+}
+
+export async function setFloorQueueItemPaused(
+  sessionId: string,
+  userId: string,
+  itemId: string,
+  paused: boolean,
+  database = getDb(),
+): Promise<FloorSnapshot | null> {
+  if (!(await canManageQueueItem(sessionId, userId, itemId, database))) return null;
+  const now = Date.now();
+  // Resuming also doubles as the recovery path off a failed/cancelled prompt,
+  // since neither of those is auto-retried anymore (see db/runs.ts finishAgentRun).
+  const fromStatuses = paused ? ["queued"] : ["paused", "failed", "cancelled"];
+  const results = await database.batch([
+    database.prepare(
+      `UPDATE floor_queue_items SET status = ?, updated_at = ? WHERE id = ? AND session_id = ?
+       AND status IN (${fromStatuses.map(() => "?").join(", ")})`,
+    ).bind(paused ? "paused" : "queued", now, itemId, sessionId, ...fromStatuses),
+    bumpFloorRevision(database, sessionId, now),
+  ]);
+  if (Number(results[0]?.meta?.changes ?? 0) === 0) {
+    if (!(await getActiveMembershipRole(sessionId, userId, database))) return null;
+    throw new FloorConflictError(paused ? "This prompt is not queued." : "This prompt is not paused, failed, or cancelled.");
+  }
+  return readFloorSnapshot(sessionId, userId, database);
+}
+
+export async function deleteFloorQueueItem(
+  sessionId: string,
+  userId: string,
+  itemId: string,
+  database = getDb(),
+): Promise<FloorSnapshot | null> {
+  if (!(await canManageQueueItem(sessionId, userId, itemId, database))) return null;
+  const item = await database.prepare("SELECT status FROM floor_queue_items WHERE id = ? AND session_id = ?")
+    .bind(itemId, sessionId).first<{ status: string }>();
+  if (!item) return null;
+  if (!["queued", "paused", "failed", "cancelled"].includes(item.status)) {
+    throw new FloorConflictError("This prompt can no longer be removed.");
+  }
+  const remaining = (await queueIds(sessionId, database)).filter((id) => id !== itemId);
+  const now = Date.now();
+  const results = await database.batch([
+    database.prepare("DELETE FROM floor_queue_items WHERE id = ? AND session_id = ?").bind(itemId, sessionId),
+    ...remaining.map((id, index) => database.prepare(
+      `UPDATE floor_queue_items SET position = ?, updated_at = ? WHERE id = ? AND session_id = ?
+       AND EXISTS (SELECT 1 FROM sessions WHERE id = ? AND ended_at IS NULL)`,
+    ).bind(index + 1, now, id, sessionId, sessionId)),
+    bumpFloorRevision(database, sessionId, now),
+  ]);
+  if (!(await activeBatchApplied(results, sessionId, userId, database))) return null;
+  return readFloorSnapshot(sessionId, userId, database);
+}
+
 function bumpFloorRevision(database: D1DatabaseLike, sessionId: string, now: number) {
   return database.prepare(
     "UPDATE sessions SET floor_revision = floor_revision + 1, updated_at = ? WHERE id = ? AND ended_at IS NULL",

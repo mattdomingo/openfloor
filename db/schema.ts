@@ -132,7 +132,7 @@ export const floorQueueItems = sqliteTable(
     sessionId: text("session_id").notNull().references(() => sessions.id, { onDelete: "cascade" }),
     agentId: text("agent_id").references(() => floorAgents.id, { onDelete: "set null" }),
     position: integer("position").notNull(),
-    status: text("status", { enum: ["queued", "running", "blocked", "completed"] }).notNull(),
+    status: text("status", { enum: ["queued", "running", "blocked", "completed", "paused", "failed", "cancelled"] }).notNull(),
     assignedBy: text("assigned_by", { enum: ["user", "router"] }),
     assignedReason: text("assigned_reason"),
     createdAt: integer("created_at").notNull(),
@@ -141,7 +141,7 @@ export const floorQueueItems = sqliteTable(
   (table) => [
     index("idx_floor_queue_session_position").on(table.sessionId, table.position),
     index("idx_floor_queue_agent").on(table.agentId),
-    check("floor_queue_status_check", sql`${table.status} in ('queued', 'running', 'blocked', 'completed')`),
+    check("floor_queue_status_check", sql`${table.status} in ('queued', 'running', 'blocked', 'completed', 'paused', 'failed', 'cancelled')`),
   ],
 );
 

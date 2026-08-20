@@ -8,6 +8,8 @@ export type QueuePromptInput = { prompt: string; agentId: string | null };
 export type AutoDispatchInput = { autoDispatch: boolean };
 export type QueueOrderInput = { itemIds: string[] };
 export type QueueMergeInput = { itemIds: string[] };
+export type QueuePromptTextInput = { text: string };
+export type QueueItemPauseInput = { paused: boolean };
 export type RepositoryConnectionInput = { repositoryId: string; baseBranch: string; checkCommands: string[] };
 export type RepositoryCandidateInput = { name: string; description: string };
 
@@ -101,6 +103,22 @@ export function parseQueueOrderInput(value: unknown): QueueOrderInput | null {
 
 export function parseQueueMergeInput(value: unknown): QueueMergeInput | null {
   return parseIdList(value, "itemIds", 2);
+}
+
+export function parseQueuePromptTextInput(value: unknown): QueuePromptTextInput | null {
+  if (!value || typeof value !== "object") return null;
+  const input = value as Record<string, unknown>;
+  if (typeof input.text !== "string") return null;
+  const text = input.text.trim();
+  if (!text || text.length > 4000) return null;
+  return { text };
+}
+
+export function parseQueueItemPauseInput(value: unknown): QueueItemPauseInput | null {
+  if (!value || typeof value !== "object") return null;
+  const input = value as Record<string, unknown>;
+  if (typeof input.paused !== "boolean") return null;
+  return { paused: input.paused };
 }
 
 export function parseRepositoryConnectionInput(value: unknown): RepositoryConnectionInput | null {

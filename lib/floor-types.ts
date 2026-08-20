@@ -57,7 +57,7 @@ export type FloorQueueItem = {
   agentId: string | null;
   agentName: string | null;
   position: number;
-  status: "queued" | "running" | "blocked" | "completed";
+  status: "queued" | "running" | "blocked" | "completed" | "paused" | "failed" | "cancelled";
   assignedBy: "user" | "router" | null;
   assignedReason: string | null;
   prompts: FloorQueuePrompt[];

@@ -2977,6 +2977,29 @@
   opacity: 1;
 }
 
+/* Failed runs are not auto-retried; flag the card so it stays visibly
+   distinct until the author or owner edits, resumes, or deletes it. */
+.queue-item[data-attention="true"] {
+  border-color: color-mix(in srgb, var(--status-blocked) 55%, var(--line-strong));
+  box-shadow: inset 3px 0 0 var(--status-blocked);
+}
+
+.queue-edit-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.queue-edit-textarea {
+  min-height: 4.5em;
+  font: inherit;
+}
+
+.queue-edit-actions {
+  display: flex;
+  gap: var(--space-2);
+}
+
 /* Drops insert before the hovered card, so the target shows an insertion bar
    in the gap above it plus a soft accent wash. */
 .queue-item[data-drop-target="true"] {

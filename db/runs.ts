@@ -380,7 +380,7 @@ export async function recordRunPublicationFailure(runId: string, summary: string
       .bind(nextStatus, summary.slice(0, 1_000), now, runId, run.status),
     database.prepare("UPDATE sessions SET floor_revision = floor_revision + 1, updated_at = ? WHERE id = ?").bind(now, run.sessionId),
   ];
-  if (run.status === "ready") statements.push(database.prepare("UPDATE floor_queue_items SET status = 'queued', updated_at = ? WHERE id = ?").bind(now, run.queueItemId));
+  if (run.status === "ready") statements.push(database.prepare("UPDATE floor_queue_items SET status = 'failed', updated_at = ? WHERE id = ?").bind(now, run.queueItemId));
   await database.batch(statements);
   await appendRunEvent(runId, "publication_failed", summary, database);
   const revision = await database.prepare("SELECT floor_revision AS revision FROM sessions WHERE id = ?").bind(run.sessionId).first<{ revision: number }>();
@@ -433,8 +433,11 @@ export async function finishAgentRun(runId: string, status: "ready" | "failed" |
       `UPDATE agent_runs SET status = ?, summary = ?, completed_at = ?, updated_at = ?
        WHERE id = ? AND status IN ('provisioning', 'running', 'checking', 'cancel_requested')`,
     ).bind(status, summary.slice(0, 1_000), now, now, runId),
+    // failed/cancelled runs park their queue item in a matching terminal status so
+    // auto-dispatch (which only ever dispatches status = 'queued' items) never retries
+    // them on its own; the user must explicitly re-run, edit, or delete the prompt.
     database.prepare("UPDATE floor_queue_items SET status = ?, updated_at = ? WHERE id = ?")
-      .bind(status === "ready" ? "blocked" : "queued", now, run.queueItemId),
+      .bind(status === "ready" ? "blocked" : status, now, run.queueItemId),
     database.prepare("UPDATE sessions SET floor_revision = floor_revision + 1, updated_at = ? WHERE id = ?").bind(now, run.sessionId),
   ]);
   await appendRunEvent(runId, status, summary, database);
