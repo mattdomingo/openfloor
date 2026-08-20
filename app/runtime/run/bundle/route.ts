@@ -1,4 +1,4 @@
-import { getRunExecutionContext } from "@/db/runs";
+import { getRunGatewayContext } from "@/db/runs";
 import { verifyRunGatewayToken } from "@/lib/runtime-token";
 import { env } from "cloudflare:workers";
 
@@ -15,7 +15,7 @@ export async function POST(request: Request) {
   if (!token || !bindings.RUNTIME_GATEWAY_SECRET || !bindings.PREFLIGHT_LOGS) return new Response("Not found", { status: 404 });
   const claims = await verifyRunGatewayToken(token, bindings.RUNTIME_GATEWAY_SECRET, "bundle_upload");
   if (!claims) return new Response("Not found", { status: 404 });
-  const context = await getRunExecutionContext(claims.runId);
+  const context = await getRunGatewayContext(claims.runId);
   if (!context || !matches(context, claims) || context.status !== "ready") return new Response("Not found", { status: 404 });
   const declared = Number(request.headers.get("content-length") ?? 0);
   if (declared > MAX_BUNDLE_BYTES) return new Response("Payload too large", { status: 413 });
@@ -32,7 +32,7 @@ export async function GET(request: Request) {
   if (!token || !bindings.RUNTIME_GATEWAY_SECRET || !bindings.PREFLIGHT_LOGS) return new Response("Not found", { status: 404 });
   const claims = await verifyRunGatewayToken(token, bindings.RUNTIME_GATEWAY_SECRET, "bundle_read");
   if (!claims) return new Response("Not found", { status: 404 });
-  const context = await getRunExecutionContext(claims.runId);
+  const context = await getRunGatewayContext(claims.runId);
   if (!context || !matches(context, claims) || context.status !== "publishing" || !context.bundleKey) return new Response("Not found", { status: 404 });
   const object = await bindings.PREFLIGHT_LOGS.get(context.bundleKey);
   if (!object || object.size > MAX_BUNDLE_BYTES) return new Response("Not found", { status: 404 });
@@ -45,6 +45,6 @@ function bearer(request: Request) {
   return request.headers.get("authorization")?.match(/^Bearer (.+)$/)?.[1] ?? null;
 }
 
-function matches(context: Awaited<ReturnType<typeof getRunExecutionContext>>, claims: { sessionId: string; repositoryId: string; candidateSha: string }) {
+function matches(context: Awaited<ReturnType<typeof getRunGatewayContext>>, claims: { sessionId: string; repositoryId: string; candidateSha: string }) {
   return Boolean(context && context.sessionId === claims.sessionId && context.repositoryId === claims.repositoryId && context.candidateSha === claims.candidateSha);
 }

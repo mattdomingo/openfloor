@@ -30,7 +30,10 @@ const baselineIdentity = {
 
 await rm(root, { recursive: true, force: true });
 await mkdir(root, { recursive: true });
-git(["-c", `http.extraHeader=${auth}`, "clone", "--no-checkout", "--single-branch", "--branch", candidateBranch, process.env.OPENFLOOR_REPOSITORY_URL, repository], root);
+// blob:none keeps the full commit graph (the ancestry check and tree reads
+// below need it — no --depth) while skipping every historical blob; the bundle
+// fetch supplies all new objects locally, so nothing here lazy-fetches.
+git(["-c", `http.extraHeader=${auth}`, "clone", "--filter=blob:none", "--no-checkout", "--single-branch", "--branch", candidateBranch, process.env.OPENFLOOR_REPOSITORY_URL, repository], root);
 const observedCandidate = git(["rev-parse", `refs/remotes/origin/${candidateBranch}`], repository).trim();
 try {
   git(["merge-base", "--is-ancestor", candidateSha, observedCandidate], repository);
@@ -63,9 +66,12 @@ if (observedPaths.some((path) => path === ".github/workflows" || path.startsWith
 
 const objectIds = git(["rev-list", "--objects", localCommit, `^${baseline}`], repository).split("\n").filter(Boolean).map((line) => line.split(" ", 1)[0]);
 if (objectIds.length > 5_000) throw new Error("Bundle contains too many Git objects");
+// One batch-check invocation instead of one git process per object.
+const sizeLines = git(["cat-file", "--batch-check=%(objectname) %(objectsize)"], repository, {}, objectIds.join("\n")).split("\n").filter(Boolean);
+if (sizeLines.length !== objectIds.length) throw new Error("Bundle object inventory is incomplete");
 let totalBytes = 0;
-for (const objectId of objectIds) {
-  const size = Number(git(["cat-file", "-s", objectId], repository).trim());
+for (const line of sizeLines) {
+  const size = Number(line.split(" ")[1]);
   if (!Number.isSafeInteger(size) || size > 5 * 1024 * 1024) throw new Error("Bundle contains an oversized Git object");
   totalBytes += size;
   if (totalBytes > 25 * 1024 * 1024) throw new Error("Bundle Git objects exceed the publication limit");

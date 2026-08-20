@@ -1,5 +1,5 @@
 import { getGitHubAppConfig } from "@/db";
-import { getRunExecutionContext } from "@/db/runs";
+import { getRunGatewayContext } from "@/db/runs";
 import { downloadRepositoryArchive } from "@/lib/github";
 import { verifyRunGatewayToken } from "@/lib/runtime-token";
 import type { GitHubRepositoryOption } from "@/lib/session-types";
@@ -11,7 +11,7 @@ export async function GET(request: Request) {
   if (!token || !secret) return new Response("Not found", { status: 404 });
   const claims = await verifyRunGatewayToken(token, secret, "source");
   if (!claims) return new Response("Not found", { status: 404 });
-  const context = await getRunExecutionContext(claims.runId);
+  const context = await getRunGatewayContext(claims.runId);
   if (
     !context || context.sessionId !== claims.sessionId || context.repositoryId !== claims.repositoryId
     || context.candidateSha !== claims.candidateSha

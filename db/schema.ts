@@ -490,3 +490,23 @@ export const repositoryCheckCommands = sqliteTable(
     uniqueIndex("idx_repository_check_commands_position").on(table.connectionId, table.position),
   ],
 );
+
+// Warm sandbox pool: run containers that outlive a single agent run so later
+// runs against the same repository skip the container cold start and reuse the
+// npm cache. Rows are claimed/released with guarded UPDATEs (same idempotency
+// style as routing); the eviction sweep destroys idle or abandoned entries.
+// Publisher sandboxes are never pooled — they handle GitHub credentials.
+export const sandboxPool = sqliteTable(
+  "sandbox_pool",
+  {
+    id: text("id").primaryKey(),
+    repositoryId: text("repository_id").notNull(),
+    state: text("state", { enum: ["idle", "claimed", "draining"] }).notNull(),
+    claimedByRunId: text("claimed_by_run_id"),
+    lastUsedAt: integer("last_used_at").notNull(),
+    createdAt: integer("created_at").notNull(),
+  },
+  (table) => [
+    index("idx_sandbox_pool_repository_state").on(table.repositoryId, table.state, table.lastUsedAt),
+  ],
+);

@@ -8,11 +8,13 @@
 		"nodejs_compat"
 	],
 	"main": "./worker/index.ts",
-	// Daily retention sweep: purge sessions ended more than 30 days ago
-	// (ENDED_SESSION_RETENTION_MS in db/sessions.ts).
+	// Daily retention sweep at 04:00: purge sessions ended more than 30 days
+	// ago (ENDED_SESSION_RETENTION_MS in db/sessions.ts). Every 10 minutes:
+	// destroy warm-pool sandboxes idle past their TTL (db/sandbox-pool.ts).
 	"triggers": {
 		"crons": [
-			"0 4 * * *"
+			"0 4 * * *",
+			"*/10 * * * *"
 		]
 	},
 	"durable_objects": {
@@ -55,8 +57,12 @@
 		{
 			"class_name": "Sandbox",
 			"image": "./Dockerfile.sandbox",
-			"instance_type": "lite",
-			"max_instances": 5
+			// standard-2 (1 vCPU, 6 GiB): tar extraction, git passes, npm ci, and
+			// user checks were CPU-starved at lite's 1/16 vCPU, and 256 MiB OOMs
+			// real builds. Each run needs two containers (run + publisher), so the
+			// cap covers 2 × GLOBAL_RUN_BUDGET plus cleanup-lag headroom.
+			"instance_type": "standard-2",
+			"max_instances": 12
 		}
 	],
 	"workflows": [

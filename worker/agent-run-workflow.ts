@@ -20,7 +20,9 @@ import {
   recordRunArtifact,
   replaceRunFiles,
   setRunProcessId,
+  setRunSandboxId,
 } from "../db/runs";
+import { claimPoolSandbox, releasePoolSandbox, retirePoolSandbox } from "../db/sandbox-pool";
 import { getGitHubAppConfig } from "../db";
 import { createDraftPullRequest, createInstallationToken, getRepositoryRefSha, GitHubApiError, mergeRepositoryBranch } from "../lib/github";
 import type { AgentRunFile } from "../lib/floor-types";
@@ -54,12 +56,9 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
       if (!value) throw new Error("Agent run no longer exists");
       return value;
     });
-    const sandbox = getSandbox(this.env.SANDBOX, context.sandboxId, {
-      keepAlive: true,
-      enableDefaultSession: false,
-      normalizeId: true,
-      labels: { sessionId: context.sessionId, runId },
-    });
+    // The run sandbox comes from the warm pool and is claimed only on the
+    // fresh-run path (resume paths never touch it); see the claim step below.
+    let pooled: { id: string; sandbox: ReturnType<typeof getSandbox<Sandbox>> } | null = null;
     const publisher = getSandbox(this.env.SANDBOX, `publisher-${PUBLISHER_SANDBOX_IMAGE_VERSION}-${event.instanceId}`, {
       keepAlive: true,
       enableDefaultSession: false,
@@ -85,6 +84,21 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
         summary = "Agent run cancelled before provisioning completed.";
         return await this.complete(runId, finalStatus, summary);
       }
+      // Claim a warm same-repository sandbox (or create a fresh pool entry) so
+      // repeat runs skip the container cold start and reuse the npm cache. The
+      // id is recorded on the run before any provisioning work.
+      const sandboxId = await step.do("claim warm sandbox", async () => {
+        const id = await claimPoolSandbox(context.repositoryId, runId, this.env.DB);
+        await setRunSandboxId(runId, id, this.env.DB);
+        return id;
+      });
+      const sandbox = getSandbox(this.env.SANDBOX, sandboxId, {
+        keepAlive: true,
+        enableDefaultSession: false,
+        normalizeId: true,
+        labels: { sessionId: context.sessionId, runId },
+      });
+      pooled = { id: sandboxId, sandbox };
       await step.do("prepare exact workspace", { retries: { limit: 2, delay: "5 seconds", backoff: "exponential" }, timeout: "5 minutes" }, async () => {
         const sourceToken = await signRunGatewayToken({
           runId, sessionId: context.sessionId, repositoryId: context.repositoryId,
@@ -150,12 +164,23 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
             await process.kill("SIGTERM");
             return { cancelled: true, exitCode: 130, stdout: "", stderr: "Agent run cancelled." };
           }
-          const status = await process.getStatus();
-          if (["completed", "failed", "killed", "error"].includes(status)) {
-            const logs = await process.getLogs();
-            return { cancelled: status === "killed", exitCode: process.exitCode ?? (status === "completed" ? 0 : 1), ...logs };
+          // Hold an exit-event stream instead of polling: one request per 15s
+          // window and no completion lag, versus a status round trip every 2s.
+          // The timeout bounds how long a cancellation request can go unnoticed.
+          let exitCode: number;
+          try {
+            ({ exitCode } = await process.waitForExit(15_000));
+          } catch {
+            // Timed out (loop to re-check cancellation), or the log stream ended
+            // without an exit event because the process was already gone — in
+            // that case fall back to a status probe for the real outcome.
+            const status = await process.getStatus();
+            if (!["completed", "failed", "killed", "error"].includes(status)) continue;
+            const finished = await sandbox.getProcess(processId);
+            exitCode = finished?.exitCode ?? (status === "completed" ? 0 : 1);
           }
-          await delay(2_000);
+          const [status, logs] = await Promise.all([process.getStatus(), process.getLogs()]);
+          return { cancelled: status === "killed", exitCode, ...logs };
         }
       });
       const codexLog = bounded(processResult.stdout, processResult.stderr, MAX_LOG_BYTES);
@@ -175,32 +200,53 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
 
       const files = await step.do("collect changed files", { retries: { limit: 0, delay: "1 second" }, timeout: "5 minutes" }, async () => {
         await sandbox.exec("git add -N .", { cwd: "/workspace/repository", timeout: 30_000 });
-        const names = await sandbox.exec("git diff --name-only -z HEAD", { cwd: "/workspace/repository", timeout: 30_000 });
-        if (!names.success) throw new Error("Unable to enumerate Codex changes");
-        const paths = names.stdout.split("\0").filter(Boolean);
+        // Three repo-wide commands instead of three execs per file: each exec is
+        // a Worker→DO→container round trip, so per-file fan-out cost O(N) waves.
+        // --no-renames keeps numstat, status, and the diff on one entry per path.
+        const [stats, statusResult, diff] = await Promise.all([
+          sandbox.exec("git diff --numstat --no-renames -z HEAD", { cwd: "/workspace/repository", timeout: 60_000 }),
+          sandbox.exec("git status --porcelain --no-renames -z", { cwd: "/workspace/repository", timeout: 60_000 }),
+          sandbox.exec("git diff --no-color --no-renames --unified=3 HEAD", { cwd: "/workspace/repository", timeout: 60_000 }),
+        ]);
+        if (!stats.success || !statusResult.success) throw new Error("Unable to enumerate Codex changes");
+        // numstat -z entries: "additions\tdeletions\tpath\0" ("-" for binary counts).
+        const numstats = stats.stdout.split("\0").filter(Boolean).map((entry) => {
+          const [additions, deletions, path] = entry.split("\t");
+          return { path, additions: Number(additions) || 0, deletions: Number(deletions) || 0 };
+        });
+        const paths = numstats.map((entry) => entry.path);
         if (paths.length === 0) throw new Error("Codex completed without changing any files");
         if (paths.length > MAX_FILES) throw new Error(`Codex changed more than ${MAX_FILES} files`);
         if (paths.some((path) => path === ".github/workflows" || path.startsWith(".github/workflows/"))) {
           throw new Error("Workflow-file changes are not allowed in this release");
         }
-        const collected: Array<Omit<AgentRunFile, "id">> = [];
-        for (const path of paths) {
-          const [statusResult, stats, diff] = await Promise.all([
-            sandbox.exec("git status --short -- \"$OPENFLOOR_FILE\"", { cwd: "/workspace/repository", timeout: 30_000, env: { OPENFLOOR_FILE: path } }),
-            sandbox.exec("git diff --numstat HEAD -- \"$OPENFLOOR_FILE\"", { cwd: "/workspace/repository", timeout: 30_000, env: { OPENFLOOR_FILE: path } }),
-            sandbox.exec("git diff --no-color --unified=3 HEAD -- \"$OPENFLOOR_FILE\"", { cwd: "/workspace/repository", timeout: 30_000, env: { OPENFLOOR_FILE: path } }),
-          ]);
-          const [additions, deletions] = stats.stdout.trim().split("\t").slice(0, 2).map((value) => Number(value) || 0);
-          const code = statusResult.stdout.slice(0, 2);
-          collected.push({
-            path,
-            changeKind: code.includes("D") ? "delete" : code.includes("?") || code.includes("A") ? "add" : "update",
-            additions,
-            deletions,
-            summary: null,
-            diffPreview: diff.stdout.slice(0, 20_000),
-          });
+        // porcelain -z entries: "XY path\0"; rename/copy entries carry a second
+        // NUL-terminated original path (defensive — --no-renames avoids them).
+        const statusByPath = new Map<string, string>();
+        const statusEntries = statusResult.stdout.split("\0").filter(Boolean);
+        for (let index = 0; index < statusEntries.length; index += 1) {
+          const entry = statusEntries[index];
+          const code = entry.slice(0, 2);
+          statusByPath.set(entry.slice(3), code);
+          if (code.includes("R") || code.includes("C")) index += 1;
         }
+        // The unified diff lists files in the same order as numstat; split it on
+        // file boundaries and zip by position. On a mismatch (e.g. a filename
+        // that defeats the boundary split), degrade to empty previews.
+        let previews = diff.stdout.split(/\ndiff --git a\//).map((chunk, index) => (index === 0 ? chunk : `diff --git a/${chunk}`));
+        if (previews[0]?.startsWith("diff --git a/") !== true) previews = previews.slice(1);
+        if (previews.length !== paths.length) previews = paths.map(() => "");
+        const collected: Array<Omit<AgentRunFile, "id">> = numstats.map((entry, index) => {
+          const code = statusByPath.get(entry.path) ?? "";
+          return {
+            path: entry.path,
+            changeKind: code.includes("D") ? "delete" : code.includes("?") || code.includes("A") ? "add" : "update",
+            additions: entry.additions,
+            deletions: entry.deletions,
+            summary: null,
+            diffPreview: previews[index].slice(0, 20_000),
+          };
+        });
         await replaceRunFiles(runId, collected, this.env.DB);
         const completeDiff = await sandbox.exec("git diff --no-color --binary HEAD", { cwd: "/workspace/repository", timeout: 60_000 });
         const boundedDiff = completeDiff.stdout.slice(0, MAX_DIFF_BYTES);
@@ -300,10 +346,37 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
       summary = finalStatus === "cancelled" ? "Agent run cancelled. No repository changes were published." : error instanceof Error ? error.message : "Agent run failed.";
       return await this.complete(runId, finalStatus, summary);
     } finally {
-      try {
-        await step.do("destroy run sandbox", { retries: { limit: 2, delay: "5 seconds" }, timeout: "2 minutes" }, async () => sandbox.destroy());
-      } catch {
-        // The run is already terminal; platform cleanup can retry independently.
+      const claimed = pooled;
+      if (claimed) {
+        try {
+          await step.do("release run sandbox", { retries: { limit: 2, delay: "5 seconds" }, timeout: "2 minutes" }, async () => {
+            // Re-fetch the stub with keepAlive off and a sleep backstop: if the
+            // eviction sweep ever stalls, the container still self-stops instead
+            // of billing forever. The pool sweep remains the primary reaper.
+            const parked = getSandbox(this.env.SANDBOX, claimed.id, {
+              keepAlive: false,
+              sleepAfter: "20m",
+              enableDefaultSession: false,
+              normalizeId: true,
+            });
+            await parked.killAllProcesses();
+            // Hard reset between runs: wipe the workspace, run scratch, and
+            // Codex state; only the npm cache survives for the next claim.
+            const reset = await parked.exec("rm -rf /workspace/repository /tmp/openfloor ~/.codex", { timeout: 60_000 });
+            if (!reset.success) throw new Error(`Sandbox reset failed with exit code ${reset.exitCode}`);
+            await releasePoolSandbox(claimed.id, this.env.DB);
+          });
+        } catch {
+          // A sandbox that cannot be verifiably reset must not be reused.
+          try {
+            await step.do("retire run sandbox", { retries: { limit: 2, delay: "5 seconds" }, timeout: "2 minutes" }, async () => {
+              await claimed.sandbox.destroy();
+              await retirePoolSandbox(claimed.id, this.env.DB);
+            });
+          } catch {
+            // Row stays claimed; the eviction sweep reaps abandoned claims.
+          }
+        }
       }
       try {
         await step.do("destroy publisher sandbox", { retries: { limit: 2, delay: "5 seconds" }, timeout: "2 minutes" }, async () => publisher.destroy());
@@ -464,8 +537,4 @@ function bounded(stdout: string, stderr: string, limit: number): string {
   if (combined.length <= limit) return combined;
   const half = Math.floor((limit - 80) / 2);
   return `${combined.slice(0, half)}\n\n[openfloor truncated output]\n\n${combined.slice(-half)}`;
-}
-
-function delay(ms: number) {
-  return new Promise<void>((resolve) => setTimeout(resolve, ms));
 }

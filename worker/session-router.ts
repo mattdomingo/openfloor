@@ -3,7 +3,7 @@ import { runRoutingTick, type RoutingTrigger } from "../db/routing";
 import { startQueueItemRun } from "../lib/agent-run-start";
 import { notifyFloorChanged } from "../lib/presence-server";
 
-const HELD_RETRY_BASE_MS = 30_000;
+const HELD_RETRY_BASE_MS = 10_000;
 const HELD_RETRY_MAX_MS = 600_000;
 const ERROR_RETRY_MS = 60_000;
 
@@ -43,10 +43,18 @@ export class SessionRouter extends DurableObject {
         await this.ctx.storage.setAlarm(Date.now() + Math.min(HELD_RETRY_BASE_MS * 2 ** (misses - 1), HELD_RETRY_MAX_MS));
       } else if (outcome.acted) {
         // A dispatched run may already be terminal (test adapter runs
-        // synchronously); one cheap follow-up tick picks up freed capacity.
+        // synchronously); one inline follow-up tick picks up freed capacity
+        // without waiting out an alarm hop. Anything it leaves behind falls
+        // back to the alarm path with the same semantics as before.
         await this.ctx.storage.delete("misses");
         await this.ctx.storage.put("trigger", "alarm");
-        await this.ctx.storage.setAlarm(Date.now() + 1_000);
+        const followUp = await runRoutingTick(sessionId, "alarm", { startRun: startQueueItemRun });
+        if (followUp.revision !== null) {
+          await notifyFloorChanged(sessionId, followUp.revision, ["queue", "runs"]);
+        }
+        if (followUp.held || followUp.acted) {
+          await this.ctx.storage.setAlarm(Date.now() + 1_000);
+        }
       } else {
         // Quiescent: no alarm scheduled; the next poke re-wakes us.
         await this.ctx.storage.delete("misses");

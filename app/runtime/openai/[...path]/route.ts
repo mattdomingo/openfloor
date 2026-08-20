@@ -1,4 +1,4 @@
-import { getRunExecutionContext } from "@/db/runs";
+import { getRunGatewayContext } from "@/db/runs";
 import { verifyRunGatewayToken } from "@/lib/runtime-token";
 import { env } from "cloudflare:workers";
 
@@ -10,7 +10,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ pat
   if (!token || !bindings.RUNTIME_GATEWAY_SECRET || !bindings.OPENAI_API_KEY) return new Response("Not found", { status: 404 });
   const claims = await verifyRunGatewayToken(token, bindings.RUNTIME_GATEWAY_SECRET, "openai");
   if (!claims) return new Response("Not found", { status: 404 });
-  const context = await getRunExecutionContext(claims.runId);
+  const context = await getRunGatewayContext(claims.runId);
   if (
     !context || context.sessionId !== claims.sessionId || context.repositoryId !== claims.repositoryId
     || context.candidateSha !== claims.candidateSha || !["running", "cancel_requested"].includes(context.status)

@@ -495,11 +495,23 @@ function mapRepository(repository: GitHubRepositoryRecord): GitHubRepositoryOpti
   };
 }
 
+// Installation tokens live for an hour; most helpers mint one per call, which
+// costs an RS256 sign plus a GitHub round trip each time. Cache per isolate,
+// dropping tokens ten minutes before expiry so a cached token always survives
+// the request it is handed to. Best-effort: isolates are ephemeral, and a
+// mid-hour permission revocation surfaces as a 401 exactly as it would today.
+const installationTokenCache = new Map<string, { token: string; expiresAt: number }>();
+const TOKEN_EXPIRY_MARGIN_MS = 10 * 60 * 1000;
+
 export async function createInstallationToken(
   config: GitHubAppConfig,
   installationId: string,
   repositoryId?: string,
 ): Promise<string> {
+  const cacheKey = `${config.appId}:${installationId}:${repositoryId ?? "*"}`;
+  const cached = installationTokenCache.get(cacheKey);
+  if (cached && Date.now() < cached.expiresAt - TOKEN_EXPIRY_MARGIN_MS) return cached.token;
+  installationTokenCache.delete(cacheKey);
   const now = Math.floor(Date.now() / 1000);
   let key: Awaited<ReturnType<typeof importPKCS8>>;
   try {
@@ -519,8 +531,10 @@ export async function createInstallationToken(
     body: JSON.stringify(repositoryId ? { repository_ids: [Number(repositoryId)] } : {}),
   });
   if (!response.ok) throw await githubError(response);
-  const body = await response.json() as { token?: string };
+  const body = await response.json() as { token?: string; expires_at?: string };
   if (!body.token) throw new GitHubApiError("GitHub did not return an installation token", 502);
+  const expiresAt = body.expires_at ? Date.parse(body.expires_at) : Number.NaN;
+  if (Number.isFinite(expiresAt)) installationTokenCache.set(cacheKey, { token: body.token, expiresAt });
   return body.token;
 }
 

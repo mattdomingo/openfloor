@@ -1,4 +1,4 @@
-import { countRunnerActivityEvents, getRunExecutionContext, insertRunActivityEvents, MAX_RUNNER_EVENTS_PER_RUN, RUNNER_SEQUENCE_BASE } from "@/db/runs";
+import { countRunnerActivityEvents, getRunGatewayContext, insertRunActivityEvents, MAX_RUNNER_EVENTS_PER_RUN, RUNNER_SEQUENCE_BASE } from "@/db/runs";
 import { notifyRunActivity } from "@/lib/presence-server";
 import { verifyRunGatewayToken } from "@/lib/runtime-token";
 import { env } from "cloudflare:workers";
@@ -15,7 +15,7 @@ export async function POST(request: Request) {
   if (!token || !bindings.RUNTIME_GATEWAY_SECRET) return new Response("Not found", { status: 404 });
   const claims = await verifyRunGatewayToken(token, bindings.RUNTIME_GATEWAY_SECRET, "events");
   if (!claims) return new Response("Not found", { status: 404 });
-  const context = await getRunExecutionContext(claims.runId);
+  const context = await getRunGatewayContext(claims.runId);
   if (!context || !matches(context, claims) || !["running", "cancel_requested"].includes(context.status)) {
     return new Response("Not found", { status: 404 });
   }
@@ -56,6 +56,6 @@ function bearer(request: Request) {
   return request.headers.get("authorization")?.match(/^Bearer (.+)$/)?.[1] ?? null;
 }
 
-function matches(context: Awaited<ReturnType<typeof getRunExecutionContext>>, claims: { sessionId: string; repositoryId: string; candidateSha: string }) {
+function matches(context: Awaited<ReturnType<typeof getRunGatewayContext>>, claims: { sessionId: string; repositoryId: string; candidateSha: string }) {
   return Boolean(context && context.sessionId === claims.sessionId && context.repositoryId === claims.repositoryId && context.candidateSha === claims.candidateSha);
 }

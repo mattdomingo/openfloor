@@ -154,6 +154,26 @@ export async function getRunExecutionContext(runId: string, database = getDb()) 
   };
 }
 
+// Slim variant for the runtime gateway routes, which sit on the critical path
+// of every Codex model turn and activity flush: one SELECT, no prompt, check,
+// or file loading. Use getRunExecutionContext when those collections matter.
+export async function getRunGatewayContext(runId: string, database = getDb()) {
+  return await database.prepare(
+    `SELECT r.id, r.session_id AS sessionId, r.agent_id AS agentId,
+            r.candidate_sha AS candidateSha, r.status, r.bundle_key AS bundleKey,
+            rc.installation_id AS installationId, rc.repository_id AS repositoryId,
+            rc.repository_owner AS repositoryOwner, rc.repository_name AS repositoryName,
+            rc.repository_full_name AS repositoryFullName
+     FROM agent_runs r
+     JOIN repository_candidates c ON c.id = r.candidate_id
+     JOIN repository_connections rc ON rc.id = c.connection_id
+     WHERE r.id = ?`,
+  ).bind(runId).first<{
+    id: string; sessionId: string; agentId: string; candidateSha: string; status: AgentRunStatus; bundleKey: string | null;
+    installationId: string; repositoryId: string; repositoryOwner: string; repositoryName: string; repositoryFullName: string;
+  }>();
+}
+
 export async function markRunRunning(runId: string, processId: string | null, database = getDb()): Promise<void> {
   const now = Date.now();
   await database.prepare(
@@ -161,6 +181,13 @@ export async function markRunRunning(runId: string, processId: string | null, da
             started_at = COALESCE(started_at, ?), updated_at = ? WHERE id = ? AND status IN ('provisioning', 'running')`,
   ).bind(processId, now, now, runId).run();
   await appendRunEvent(runId, "running", "Codex started in the isolated workspace.", database);
+}
+
+// The row is created with a placeholder sandbox id; the workflow assigns the
+// real (pool-claimed) sandbox here before provisioning starts.
+export async function setRunSandboxId(runId: string, sandboxId: string, database = getDb()): Promise<void> {
+  await database.prepare("UPDATE agent_runs SET sandbox_id = ?, updated_at = ? WHERE id = ?")
+    .bind(sandboxId, Date.now(), runId).run();
 }
 
 export async function setRunProcessId(runId: string, processId: string, database = getDb()): Promise<void> {

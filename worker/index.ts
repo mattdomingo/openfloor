@@ -7,7 +7,9 @@ import {
   requestWithTrustedIdentity,
   type IdentityEnvironment,
 } from "../lib/identity";
+import { getSandbox, type Sandbox } from "@cloudflare/sandbox";
 import { purgeExpiredSessions } from "../db/sessions";
+import { retirePoolSandbox, takeEvictablePoolSandboxes } from "../db/sandbox-pool";
 import { notifyMembersChanged } from "../lib/presence-server";
 import { handlePresenceRequest, SessionPresence } from "./presence";
 import { SessionRouter } from "./session-router";
@@ -26,6 +28,7 @@ type DurableObjectNamespaceLike = {
 interface Env extends IdentityEnvironment {
   ASSETS: { fetch(request: Request): Promise<Response> };
   DB: D1DatabaseLike;
+  SANDBOX: DurableObjectNamespace<Sandbox>;
   SESSION_PRESENCE: DurableObjectNamespaceLike;
   IMAGES: {
     input(stream: ReadableStream): {
@@ -79,14 +82,36 @@ const worker = {
     return handler.fetch(requestWithTrustedIdentity(request, identity), env, ctx);
   },
 
-  // Daily retention sweep (wrangler.jsonc triggers.crons). Thin by design:
-  // the logic lives in the testable db helper.
-  async scheduled(_controller: unknown, env: Env, ctx: ExecutionContext): Promise<void> {
+  // Cron entry points (wrangler.jsonc triggers.crons). Thin by design: the
+  // logic lives in the testable db helpers.
+  async scheduled(controller: unknown, env: Env, ctx: ExecutionContext): Promise<void> {
+    const cron = (controller as { cron?: string } | null)?.cron;
     ctx.waitUntil((async () => {
+      if (cron === POOL_SWEEP_CRON) {
+        await sweepSandboxPool(env);
+        return;
+      }
       const deletedSessionIds = await purgeExpiredSessions(env.DB);
       await Promise.all(deletedSessionIds.map((sessionId) => notifyMembersChanged(sessionId)));
     })());
   },
 };
+
+const POOL_SWEEP_CRON = "*/10 * * * *";
+
+// Destroys warm-pool sandboxes that sat idle past their TTL or whose claiming
+// workflow died without releasing them. Rows go idle/claimed → draining →
+// deleted, so a sweep that crashes mid-destroy retries on the next firing.
+async function sweepSandboxPool(env: Env): Promise<void> {
+  const ids = await takeEvictablePoolSandboxes(env.DB);
+  for (const id of ids) {
+    try {
+      await getSandbox(env.SANDBOX, id, { enableDefaultSession: false, normalizeId: true }).destroy();
+      await retirePoolSandbox(id, env.DB);
+    } catch {
+      // Row stays draining; the next sweep retries the destroy.
+    }
+  }
+}
 
 export default worker;
