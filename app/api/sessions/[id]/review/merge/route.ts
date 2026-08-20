@@ -19,6 +19,7 @@ import {
 import { notifyFloorChanged } from "@/lib/presence-server";
 import { isApiError, requireApiUser } from "@/lib/server-auth";
 import type { GitHubRepositoryOption } from "@/lib/session-types";
+import { activeOwnerErrorResponse, mutationErrorResponse } from "@/lib/floor-api";
 
 type CleanupTarget = { id: string | null; name: string; sha: string; candidate: boolean };
 
@@ -26,7 +27,14 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
   const user = await requireApiUser();
   if (isApiError(user)) return user;
   const sessionId = (await params).id;
-  const context = await getCandidateReviewMutationContext(sessionId, user.id);
+  const ownerError = await activeOwnerErrorResponse(sessionId, user.id);
+  if (ownerError) return ownerError;
+  let context;
+  try {
+    context = await getCandidateReviewMutationContext(sessionId, user.id);
+  } catch (error) {
+    return mutationErrorResponse(error);
+  }
   if (!context) return Response.json({ error: "Session not found" }, { status: 404 });
   if (context.candidateStatus !== "active" || context.connectionStatus !== "ready" || !context.candidateSha ||
       context.remoteCandidateSha !== context.candidateSha || !context.pullRequestNumber) {
@@ -67,6 +75,7 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
     await notifyFloorChanged(sessionId, revision, ["queue", "repository", "runs", "review"]);
     return Response.json({ floor });
   } catch (error) {
+    try { return mutationErrorResponse(error); } catch { /* continue with GitHub mapping */ }
     if (error instanceof GitHubApiError) {
       const status = [403, 405, 409, 422].includes(error.status) ? 409 : 502;
       return Response.json({ error: `GitHub rejected the squash merge: ${error.message}` }, { status });

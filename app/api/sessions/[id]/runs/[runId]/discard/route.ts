@@ -8,12 +8,20 @@ import { notifyFloorChanged } from "@/lib/presence-server";
 import { isApiError, requireApiUser } from "@/lib/server-auth";
 import type { GitHubRepositoryOption } from "@/lib/session-types";
 import { env } from "cloudflare:workers";
+import { activeOwnerErrorResponse, mutationErrorResponse } from "@/lib/floor-api";
 
 export async function POST(_request: Request, { params }: { params: Promise<{ id: string; runId: string }> }) {
   const user = await requireApiUser();
   if (isApiError(user)) return user;
   const { id: sessionId, runId } = await params;
-  const context = await getRunDiscardContext(sessionId, runId, user.id);
+  const ownerError = await activeOwnerErrorResponse(sessionId, user.id);
+  if (ownerError) return ownerError;
+  let context;
+  try {
+    context = await getRunDiscardContext(sessionId, runId, user.id);
+  } catch (error) {
+    return mutationErrorResponse(error);
+  }
   if (!context) return Response.json({ error: "Session not found" }, { status: 404 });
   if (context.discardedAt) return Response.json({ error: "This run branch was already discarded" }, { status: 409 });
   if (!context.runBranch?.startsWith("openfloor/") || !context.runCommitSha || context.runCommitSha !== context.remoteRunSha) {
@@ -69,6 +77,7 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
     await notifyFloorChanged(sessionId, revision, ["runs", "review"]);
     return Response.json({ floor });
   } catch (error) {
+    try { return mutationErrorResponse(error); } catch { /* continue with GitHub mapping */ }
     if (error instanceof GitHubApiError && error.status === 404) return Response.json({ error: "The recorded run branch no longer exists on GitHub" }, { status: 409 });
     return Response.json({ error: "The run branch could not be safely discarded" }, { status: 502 });
   }

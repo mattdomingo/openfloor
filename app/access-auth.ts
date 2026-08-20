@@ -26,6 +26,21 @@ export function accessSignInPath(returnTo: string): string {
   return appPath(safeRelativeReturnPath(returnTo));
 }
 
+// Validate browser-supplied return_to values with URL parsing. Browsers
+// normalize `/\\host` into `//host`, so prefix checks alone are unsafe.
+export function safeAppReturnPath(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  let url: URL;
+  try {
+    url = new URL(value, "https://app.local");
+  } catch {
+    return null;
+  }
+  if (url.origin !== "https://app.local") return null;
+  if (BASE_PATH && url.pathname !== BASE_PATH && !url.pathname.startsWith(`${BASE_PATH}/`)) return null;
+  return `${url.pathname}${url.search}${url.hash}`;
+}
+
 function accessRequiredPath(returnTo: string): string {
   const landing = appPath("/");
   return `${landing}?auth=required&return_to=${encodeURIComponent(appPath(safeRelativeReturnPath(returnTo)))}`;

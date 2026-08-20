@@ -9,12 +9,20 @@ import { getPullRequestReview, GitHubApiError, markPullRequestReadyForReview } f
 import { notifyFloorChanged } from "@/lib/presence-server";
 import { isApiError, requireApiUser } from "@/lib/server-auth";
 import type { GitHubRepositoryOption } from "@/lib/session-types";
+import { activeOwnerErrorResponse, mutationErrorResponse } from "@/lib/floor-api";
 
 export async function POST(_request: Request, { params }: { params: Promise<{ id: string }> }) {
   const user = await requireApiUser();
   if (isApiError(user)) return user;
   const sessionId = (await params).id;
-  const context = await getCandidateReviewMutationContext(sessionId, user.id);
+  const ownerError = await activeOwnerErrorResponse(sessionId, user.id);
+  if (ownerError) return ownerError;
+  let context;
+  try {
+    context = await getCandidateReviewMutationContext(sessionId, user.id);
+  } catch (error) {
+    return mutationErrorResponse(error);
+  }
   if (!context) return Response.json({ error: "Session not found" }, { status: 404 });
   if (context.candidateStatus !== "active" || context.connectionStatus !== "ready" || !context.candidateSha ||
       context.remoteCandidateSha !== context.candidateSha || !context.pullRequestNumber || !context.pullRequestNodeId) {
@@ -39,6 +47,7 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
     await notifyFloorChanged(sessionId, revision, ["repository", "review"]);
     return Response.json({ floor });
   } catch (error) {
+    try { return mutationErrorResponse(error); } catch { /* continue with GitHub mapping */ }
     if (error instanceof GitHubApiError) return Response.json({ error: `GitHub could not mark this pull request ready: ${error.message}` }, { status: error.status === 404 ? 409 : 502 });
     throw error;
   }

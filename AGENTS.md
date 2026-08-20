@@ -137,7 +137,7 @@ WebSocket events notify clients about presence or changed domains. D1 remains au
 - Internal user records keyed by the stable external provider subject.
 - Session creation, listing, objective editing, membership, roles, and leaving.
 - Owner-only session ending: `ended_at` marks the session read-only for everyone, revokes the active invite, and broadcasts `session.ended`; ended sessions stay readable and members can still leave.
-- Owner-only session deletion (immediate, cascading) and a daily cron that purges sessions ended more than 30 days ago. The home screen groups Active and Ended sessions.
+- Owner-only session deletion (immediate and cascading for repository-free sessions) and a daily cron that purges repository-free sessions ended more than 30 days ago. Sessions with repository state fail closed until durable external cleanup exists. The home screen groups Active and Ended sessions.
 - HMAC-signed, reusable owner invitations with rotation and revocation.
 - Session lobby with real roster and live online status.
 - Protected Agent Floor with real session title, objective, members, and presence.
@@ -211,7 +211,7 @@ Important behavior:
 - Non-members opening a session or floor get a 404-style not-found response rather than session details.
 - A member who leaves is disconnected from the room's presence object.
 - An owner receives a conflict response if they try to leave.
-- An owner can end the session instead. Ending is final in v1 (no un-end), idempotent, revokes the active invite in the same batch, and leaves all data readable. Mutations on an ended session return `409` with "This session has ended." — never `404`, which clients treat as "kicked from the session". Presence sockets stay open on ended sessions by design.
+- An owner can end the session instead. Ending is final in v1 (no un-end), idempotent, revokes the active invite in the same batch, and leaves all data readable. Collaboration, repository, preflight, run, and review mutations on an ended session return `409` with "This session has ended." — never `404`, which clients treat as "kicked from the session". Run cancellation remains available so already-running work can be stopped. Presence sockets stay open on ended sessions by design.
 - Repository details are visible to session members, but only the owner can connect, configure, disconnect, or reconnect.
 - The GitHub installation callback is protected by Access, signed, expires after 30 minutes, is bound to the initiating owner and session, and can be consumed once.
 - The webhook path must remain outside Cloudflare Access so GitHub can deliver events; signature verification is its authentication boundary.
@@ -350,7 +350,7 @@ Do not hand-edit Drizzle metadata. If a generated migration is wrong, correct th
 - `floor_revision` is a monotonically increasing integer for persisted floor reconciliation.
 - Session creation also creates owner membership and an active invite in one D1 batch.
 - Nullable `ended_at` is the lifecycle marker. Null means live; a timestamp means ended and read-only. Writes authorize through `getActiveMembershipRole` (throws `SessionEndedError` for members of ended sessions); reads keep using `getMembershipRole` so ended sessions stay viewable. `leaveSession`, `endSession`, `deleteSession`, and non-member concealment intentionally bypass the ended guard.
-- Retention: the Worker's `scheduled()` handler (daily cron in `wrangler.jsonc`) runs `purgeExpiredSessions`, deleting sessions with `ended_at` older than `ENDED_SESSION_RETENTION_MS` (30 days). Never-ended sessions are never purged automatically — silently deleting a live room is worse than list clutter; owners have End and Delete for manual cleanup.
+- Retention: the Worker's `scheduled()` handler (daily cron in `wrangler.jsonc`) runs `purgeExpiredSessions`, deleting repository-free sessions with `ended_at` older than `ENDED_SESSION_RETENTION_MS` (30 days), then broadcasts `members.changed` so connected tabs refetch. Never-ended sessions and sessions with any repository connection are never purged automatically. Manual deletion uses the same repository-state guard.
 
 #### `session_members`
 
@@ -568,7 +568,7 @@ All paths below are shown without the production `/app` prefix.
 | `POST /api/invites/[token]/accept` | Authenticated user | Idempotently add member and broadcast `members.changed`. |
 | `DELETE /api/sessions/[id]/membership` | Non-owner member | Leave, disconnect presence, and notify roster. |
 | `POST /api/sessions/[id]/end` | Owner | Idempotently set `ended_at`, revoke the active invite, and broadcast `session.ended`. |
-| `DELETE /api/sessions/[id]` | Owner | Hard-delete the session; children cascade. Broadcasts `members.changed` so open tabs refetch, hit the 404 concealment, and return to `/home`. |
+| `DELETE /api/sessions/[id]` | Owner | Hard-delete a repository-free session; children cascade. Returns `409` when repository state must be preserved. Broadcasts `members.changed` after deletion so open tabs refetch, hit the 404 concealment, and return to `/home`. |
 | `GET /api/sessions/[id]/floor` | Session member | Return the caller-specific authoritative `FloorSnapshot`. |
 | `POST /api/sessions/[id]/agents` | Session member | Create `{ name, role, task, ownerUserId }`. |
 | `PATCH /api/sessions/[id]/assignments/[memberId]` | Session member | Persist `{ task: string \| null }`. |
@@ -920,7 +920,7 @@ npx wrangler deploy --config dist/server/wrangler.json
 
 Migrations must land before code that requires them. The build generates `dist/server/wrangler.json`; deployment uses that built config.
 
-Pushes to `main` run this exact sequence automatically via `.github/workflows/deploy.yml` (GitHub secrets `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`); merging to `main` is the deploy authorization. The manual sequence above remains for emergencies and for changes GitHub Actions cannot see (secrets, Access policy).
+Pushes to `main` run this exact sequence automatically via `.github/workflows/deploy.yml` (GitHub secrets `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`); merging to `main` is the deploy authorization. Production Cloudflare credentials are step-scoped to migration and deployment and must never be exposed to dependency installation, tests, or builds. The manual sequence above remains for emergencies and for changes GitHub Actions cannot see (secrets, Access policy).
 
 ### Smoke test after deployment
 
@@ -1028,7 +1028,7 @@ Repository execution Phases 1–7 are implemented. Future milestones should focu
 
 **Rationale:** The runbook was four commands executed by hand, so production lagged merged work and depended on someone remembering the order (migrations before code). Encoding the same sequence in CI changes when it runs, not what runs. GitHub Actions over Cloudflare Workers Builds because the pipeline lives in the repo, is reviewable, and needs no dashboard state beyond two secrets.
 
-**Consequences:** Merging to `main` is deploying — the full test pipeline still gates it, but a red deploy job means production did not pick up the merge; check the Actions log. Migrations apply before build/deploy, same as the manual order. The e2e step installs Playwright chromium in CI; the sandbox container image builds on the Actions runner's Docker. Rotating the API token happens in GitHub repo secrets, not in code.
+**Consequences:** Merging to `main` is deploying — the full test pipeline still gates it, but a red deploy job means production did not pick up the merge; check the Actions log. Migrations apply before build/deploy, same as the manual order. The e2e step installs Playwright chromium in CI; the sandbox container image builds on the Actions runner's Docker. The job has read-only repository permission, and Cloudflare secrets exist only on the migration and deploy steps so install scripts, tests, and builds cannot read them. Rotating the API token happens in GitHub repo secrets, not in code.
 
 ### 2026-08-19 — Two themes from one token sheet
 
@@ -1040,19 +1040,19 @@ Repository execution Phases 1–7 are implemented. Future milestones should focu
 
 ### 2026-08-19 — Retention purges only ended sessions, on a daily cron
 
-**Decision:** A `triggers.crons` entry plus a thin Worker `scheduled()` export runs `purgeExpiredSessions` daily, hard-deleting sessions whose `ended_at` is older than 30 days (`ENDED_SESSION_RETENTION_MS`). Owners can also hard-delete any of their sessions immediately via `DELETE /api/sessions/[id]`. Never-ended sessions are not purged automatically.
+**Decision:** A `triggers.crons` entry plus a thin Worker `scheduled()` export runs `purgeExpiredSessions` daily, hard-deleting repository-free sessions whose `ended_at` is older than 30 days (`ENDED_SESSION_RETENTION_MS`) and notifying their presence objects. Owners can also hard-delete repository-free sessions immediately via `DELETE /api/sessions/[id]`. Never-ended sessions and sessions with repository state are not purged automatically.
 
 **Rationale:** "Automatic delete with an expiration timer" needs a background trigger, not a read-path side effect (a lazy sweep in `listSessionsForUser` deletes as a side effect of reads and never runs for idle users; a DO alarm is per-session machinery for a global batch job). Ended-only purging avoids silently destroying a live room someone may return to. Cascade foreign keys make deletion a single statement.
 
-**Consequences:** `wrangler.jsonc` owns the schedule; the logic stays in the testable db helper. Purging leaves orphaned bounded logs in the private R2 bucket — the cheap fix is an R2 lifecycle rule on `openfloor-preflight-logs`, not code. If sessions ever need purge-by-inactivity, it is one more constant and an `OR` clause in the same statement.
+**Consequences:** `wrangler.jsonc` owns the schedule; the logic stays in the testable db helper. Manual deletion and retention fail closed when a repository connection exists because D1 contains the expected-SHA leases and audit state required to clean GitHub branches, Workflows, and private R2 safely. A future durable deletion workflow may supersede this restriction; until then, do not bypass it with cascading SQL. If sessions ever need purge-by-inactivity, it is one more constant and an `OR` clause in the guarded statement.
 
 ### 2026-08-19 — Sessions end with a timestamp, not a status enum
 
-**Decision:** Session lifecycle is a nullable `sessions.ended_at` set by an owner-only idempotent `POST /api/sessions/[id]/end`. Ending revokes the active invite in the same batch, broadcasts `session.ended`, and makes every session-scoped mutation return `409` through one write guard (`getActiveMembershipRole` throwing `SessionEndedError`); reads, leaving, and presence connections keep working. There is no un-end in v1.
+**Decision:** Session lifecycle is a nullable `sessions.ended_at` set by an owner-only idempotent `POST /api/sessions/[id]/end`. Ending revokes the active invite in the same batch, broadcasts `session.ended`, and makes collaboration plus owner repository/preflight/run/review mutations return `409` through `getActiveMembershipRole`; route checks run before external calls and floor SQL rechecks `ended_at IS NULL` inside its mutation batch. Reads, leaving, cancellation, and presence connections keep working. There is no un-end in v1.
 
 **Rationale:** The purge/retention work needs the timestamp anyway (precedent: `revoked_at`, `disconnectedAt`); a single write-only guard at the membership choke point beats per-route checks; `409` instead of `404` because clients treat `404` as membership loss and kick to `/home`; keeping sockets open preserves read access and avoids a pointless reconnect loop since `authorizePresence` is membership-based.
 
-**Consequences:** New mutating db helpers must authorize with `getActiveMembershipRole`, not `getMembershipRole` (reads keep the latter). `db/repositories.ts` mutations are not yet guarded — the UI hides the repository card on ended sessions; swap its guards when the GitHub integration surface settles. Ended sessions remain fully readable until a future retention purge deletes them.
+**Consequences:** New user-triggered mutating db helpers must authorize with `getActiveMembershipRole`, not `getMembershipRole` (reads and explicit cancellation keep the latter). Mutations that can race ending must also include `ended_at IS NULL` in the same D1 batch or conditional statement; an earlier authorization read alone is insufficient. Ended sessions remain fully readable until an eligible repository-free retention purge deletes them.
 
 ### 2026-08-18 — Preserve the original prototype
 

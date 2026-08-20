@@ -203,14 +203,16 @@ export async function createFloorAgent(
   const id = crypto.randomUUID();
   const now = Date.now();
   try {
-    await database.batch([
+    const results = await database.batch([
       database.prepare(
         `INSERT INTO floor_agents
            (id, session_id, created_by, owner_user_id, name, name_key, role, task, state, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'created', ?, ?)`,
-      ).bind(id, sessionId, userId, input.ownerUserId, input.name, input.nameKey, input.role, input.task, now, now),
+         SELECT ?, ?, ?, ?, ?, ?, ?, ?, 'created', ?, ?
+         WHERE EXISTS (SELECT 1 FROM sessions WHERE id = ? AND ended_at IS NULL)`,
+      ).bind(id, sessionId, userId, input.ownerUserId, input.name, input.nameKey, input.role, input.task, now, now, sessionId),
       bumpFloorRevision(database, sessionId, now),
     ]);
+    if (!(await activeBatchApplied(results, sessionId, userId, database))) return null;
   } catch (error) {
     if (String(error).toLowerCase().includes("unique")) throw new FloorConflictError("An agent with that name already exists.");
     throw error;
@@ -228,15 +230,16 @@ export async function updateFloorAssignment(
   if (!(await getActiveMembershipRole(sessionId, userId, database))) return null;
   if (!(await isSessionMember(sessionId, memberId, database))) throw new FloorTargetError("Assignment owner must be a session member.");
   const now = Date.now();
-  await database.batch([
+  const results = await database.batch([
     database.prepare(
       `INSERT INTO floor_assignments (session_id, user_id, task, updated_by, updated_at)
-       VALUES (?, ?, ?, ?, ?)
+       SELECT ?, ?, ?, ?, ? FROM sessions WHERE id = ? AND ended_at IS NULL
        ON CONFLICT(session_id, user_id) DO UPDATE SET
          task = excluded.task, updated_by = excluded.updated_by, updated_at = excluded.updated_at`,
-    ).bind(sessionId, memberId, input.task, userId, now),
+    ).bind(sessionId, memberId, input.task, userId, now, sessionId),
     bumpFloorRevision(database, sessionId, now),
   ]);
+  if (!(await activeBatchApplied(results, sessionId, userId, database))) return null;
   return readFloorSnapshot(sessionId, userId, database);
 }
 
@@ -251,12 +254,14 @@ export async function createFloorMessage(
     throw new FloorTargetError("Message recipient must be a session member.");
   }
   const now = Date.now();
-  await database.batch([
+  const results = await database.batch([
     database.prepare(
-      "INSERT INTO floor_messages (id, session_id, author_user_id, recipient_user_id, text, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-    ).bind(crypto.randomUUID(), sessionId, userId, input.recipientUserId, input.text, now),
+      `INSERT INTO floor_messages (id, session_id, author_user_id, recipient_user_id, text, created_at)
+       SELECT ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM sessions WHERE id = ? AND ended_at IS NULL)`,
+    ).bind(crypto.randomUUID(), sessionId, userId, input.recipientUserId, input.text, now, sessionId),
     bumpFloorRevision(database, sessionId, now),
   ]);
+  if (!(await activeBatchApplied(results, sessionId, userId, database))) return null;
   return readFloorSnapshot(sessionId, userId, database);
 }
 
@@ -275,16 +280,18 @@ export async function createFloorQueueItem(
   ).bind(sessionId).first<{ position: number }>();
   const itemId = crypto.randomUUID();
   const now = Date.now();
-  await database.batch([
+  const results = await database.batch([
     database.prepare(
       `INSERT INTO floor_queue_items (id, session_id, agent_id, position, status, created_at, updated_at)
-       VALUES (?, ?, ?, ?, 'queued', ?, ?)`,
-    ).bind(itemId, sessionId, input.agentId, Number(last?.position ?? 0) + 1, now, now),
+       SELECT ?, ?, ?, ?, 'queued', ?, ? WHERE EXISTS (SELECT 1 FROM sessions WHERE id = ? AND ended_at IS NULL)`,
+    ).bind(itemId, sessionId, input.agentId, Number(last?.position ?? 0) + 1, now, now, sessionId),
     database.prepare(
-      "INSERT INTO floor_queue_prompts (id, queue_item_id, author_user_id, text, created_at) VALUES (?, ?, ?, ?, ?)",
-    ).bind(crypto.randomUUID(), itemId, userId, input.prompt, now),
+      `INSERT INTO floor_queue_prompts (id, queue_item_id, author_user_id, text, created_at)
+       SELECT ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM floor_queue_items WHERE id = ?)`,
+    ).bind(crypto.randomUUID(), itemId, userId, input.prompt, now, itemId),
     bumpFloorRevision(database, sessionId, now),
   ]);
+  if (!(await activeBatchApplied(results, sessionId, userId, database))) return null;
   return readFloorSnapshot(sessionId, userId, database);
 }
 
@@ -298,12 +305,14 @@ export async function reorderFloorQueue(
   const current = await queueIds(sessionId, database);
   if (!sameIds(current, itemIds)) throw new FloorConflictError("Queue order is stale. Refresh and try again.");
   const now = Date.now();
-  await database.batch([
+  const results = await database.batch([
     ...itemIds.map((id, index) => database.prepare(
-      "UPDATE floor_queue_items SET position = ?, updated_at = ? WHERE id = ? AND session_id = ?",
-    ).bind(index + 1, now, id, sessionId)),
+      `UPDATE floor_queue_items SET position = ?, updated_at = ? WHERE id = ? AND session_id = ?
+       AND EXISTS (SELECT 1 FROM sessions WHERE id = ? AND ended_at IS NULL)`,
+    ).bind(index + 1, now, id, sessionId, sessionId)),
     bumpFloorRevision(database, sessionId, now),
   ]);
+  if (!(await activeBatchApplied(results, sessionId, userId, database))) return null;
   return readFloorSnapshot(sessionId, userId, database);
 }
 
@@ -330,25 +339,34 @@ export async function mergeFloorQueue(
   const allIds = await queueIds(sessionId, database);
   const remaining = allIds.filter((id) => !removed.has(id));
   const now = Date.now();
-  await database.batch([
+  const results = await database.batch([
     ...selected.results.slice(1).map((item) => database.prepare(
-      "UPDATE floor_queue_prompts SET queue_item_id = ? WHERE queue_item_id = ?",
-    ).bind(survivor, item.id)),
+      `UPDATE floor_queue_prompts SET queue_item_id = ? WHERE queue_item_id = ?
+       AND EXISTS (SELECT 1 FROM sessions WHERE id = ? AND ended_at IS NULL)`,
+    ).bind(survivor, item.id, sessionId)),
     ...selected.results.slice(1).map((item) => database.prepare(
-      "DELETE FROM floor_queue_items WHERE id = ? AND session_id = ?",
-    ).bind(item.id, sessionId)),
+      `DELETE FROM floor_queue_items WHERE id = ? AND session_id = ?
+       AND EXISTS (SELECT 1 FROM sessions WHERE id = ? AND ended_at IS NULL)`,
+    ).bind(item.id, sessionId, sessionId)),
     ...remaining.map((id, index) => database.prepare(
-      "UPDATE floor_queue_items SET position = ?, updated_at = ? WHERE id = ? AND session_id = ?",
-    ).bind(index + 1, now, id, sessionId)),
+      `UPDATE floor_queue_items SET position = ?, updated_at = ? WHERE id = ? AND session_id = ?
+       AND EXISTS (SELECT 1 FROM sessions WHERE id = ? AND ended_at IS NULL)`,
+    ).bind(index + 1, now, id, sessionId, sessionId)),
     bumpFloorRevision(database, sessionId, now),
   ]);
+  if (!(await activeBatchApplied(results, sessionId, userId, database))) return null;
   return readFloorSnapshot(sessionId, userId, database);
 }
 
 function bumpFloorRevision(database: D1DatabaseLike, sessionId: string, now: number) {
   return database.prepare(
-    "UPDATE sessions SET floor_revision = floor_revision + 1, updated_at = ? WHERE id = ?",
+    "UPDATE sessions SET floor_revision = floor_revision + 1, updated_at = ? WHERE id = ? AND ended_at IS NULL",
   ).bind(now, sessionId);
+}
+
+async function activeBatchApplied(results: Array<{ meta?: { changes?: number } }>, sessionId: string, userId: string, database: D1DatabaseLike) {
+  if (Number(results.at(-1)?.meta?.changes ?? 0) === 1) return true;
+  return Boolean(await getActiveMembershipRole(sessionId, userId, database));
 }
 
 async function isSessionMember(sessionId: string, userId: string, database: D1DatabaseLike) {

@@ -35,6 +35,7 @@ export async function DELETE(_request: Request, { params }: { params: Promise<{ 
   const result = await deleteSession(sessionId, user.id);
   if (result === "missing") return Response.json({ error: "Session not found" }, { status: 404 });
   if (result === "forbidden") return Response.json({ error: "Only the owner can delete this session" }, { status: 403 });
+  if (result === "repository_state") return Response.json({ error: "This session has repository history and cannot be deleted until safe external cleanup is available" }, { status: 409 });
   // members.changed makes open tabs refetch, hit the 404, and leave for /home.
   await notifyMembersChanged(sessionId);
   return new Response(null, { status: 204 });

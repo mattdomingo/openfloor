@@ -44,6 +44,13 @@ describe("server rendering", () => {
     expect(plain).not.toContain("Sign in to open that page");
   });
 
+  it("rejects browser-normalized external return URLs", async () => {
+    const response = await fetchPath(`${BASE_PATH}?return_to=${encodeURIComponent("/\\evil.example/phish")}`);
+    const html = await response.text();
+    expect(html).toContain(`href="${BASE_PATH}/home"`);
+    expect(html).not.toMatch(/<a[^>]+href="\/\\evil\.example\/phish"/i);
+  });
+
   it("redirects every protected page to the public landing page", async () => {
     for (const path of ["/home", "/session/private-room", "/session/private-room/floor", "/join/not-a-token"]) {
       const response = await render(path);

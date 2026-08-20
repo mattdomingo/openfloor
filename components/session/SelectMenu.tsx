@@ -41,6 +41,7 @@ export function SelectMenu({
   }, [open]);
 
   function openMenu() {
+    if (options.length === 0) return;
     setActiveIndex(Math.max(0, options.findIndex((option) => option.value === value)));
     setOpen(true);
   }
@@ -57,6 +58,10 @@ export function SelectMenu({
         event.preventDefault();
         openMenu();
       }
+      return;
+    }
+    if (options.length === 0) {
+      setOpen(false);
       return;
     }
     if (event.key === "Escape") {
@@ -90,10 +95,10 @@ export function SelectMenu({
         aria-controls={open ? listId : undefined}
         aria-label={label}
         aria-activedescendant={open ? `${listId}-${activeIndex}` : undefined}
-        disabled={disabled}
+        disabled={disabled || options.length === 0}
         onClick={() => (open ? setOpen(false) : openMenu())}
       >
-        <span title={selected?.label || undefined}>{selected?.label ?? ""}</span>
+        <span title={selected?.label || undefined}>{selected?.label ?? (options.length === 0 ? "No options available" : "")}</span>
         <Icon name="chevronDown" size={10} />
       </button>
       {open && (

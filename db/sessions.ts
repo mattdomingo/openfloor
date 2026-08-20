@@ -149,10 +149,13 @@ export async function updateSessionObjective(
 ): Promise<SessionSummary | null> {
   if (!(await getActiveMembershipRole(sessionId, userId, database))) return null;
   const now = Date.now();
-  await database
-    .prepare("UPDATE sessions SET objective = ?, updated_at = ? WHERE id = ?")
+  const result = await database
+    .prepare("UPDATE sessions SET objective = ?, updated_at = ? WHERE id = ? AND ended_at IS NULL")
     .bind(objective, now, sessionId)
     .run();
+  if (Number(result.meta?.changes ?? 0) !== 1) {
+    if (!(await getActiveMembershipRole(sessionId, userId, database))) return null;
+  }
   return getSessionForMember(sessionId, userId, database);
 }
 
@@ -347,30 +350,40 @@ export async function leaveSession(
 
 export const ENDED_SESSION_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 
-export async function purgeExpiredSessions(database = getDb(), now = Date.now()): Promise<number> {
+export async function purgeExpiredSessions(database = getDb(), now = Date.now()): Promise<string[]> {
   // Every session-scoped child cascades on sessions.id, so one statement
-  // clears the whole graph. Only ended sessions expire: silently deleting a
-  // live room someone may return to is worse than list clutter.
+  // clears an eligible graph. Repository connections fail closed because
+  // their D1 records hold the leases needed for future external cleanup.
   // ponytail: unbatched DELETE — add a LIMIT loop only if row counts demand it.
   const result = await database
-    .prepare("DELETE FROM sessions WHERE ended_at IS NOT NULL AND ended_at < ?")
+    .prepare(
+      `DELETE FROM sessions
+       WHERE ended_at IS NOT NULL AND ended_at < ?
+         AND NOT EXISTS (SELECT 1 FROM repository_connections WHERE session_id = sessions.id)
+       RETURNING id`,
+    )
     .bind(now - ENDED_SESSION_RETENTION_MS)
-    .run();
-  // meta.changes includes cascade-deleted children; informational only.
-  return result.meta?.changes ?? 0;
+    .all<{ id: string }>();
+  return result.results.map((row) => row.id);
 }
 
 export async function deleteSession(
   sessionId: string,
   userId: string,
   database = getDb(),
-): Promise<"deleted" | "forbidden" | "missing"> {
+): Promise<"deleted" | "forbidden" | "missing" | "repository_state"> {
   // Plain guard on purpose: deleting must work on ended sessions too.
   const role = await getMembershipRole(sessionId, userId, database);
   if (!role) return "missing";
   if (role !== "owner") return "forbidden";
-  await database.prepare("DELETE FROM sessions WHERE id = ?").bind(sessionId).run();
-  return "deleted";
+  const result = await database.prepare(
+    `DELETE FROM sessions WHERE id = ?
+     AND NOT EXISTS (SELECT 1 FROM repository_connections WHERE session_id = sessions.id)`,
+  ).bind(sessionId).run();
+  if (Number(result.meta?.changes ?? 0) > 0) return "deleted";
+  const repository = await database.prepare("SELECT 1 AS present FROM repository_connections WHERE session_id = ?")
+    .bind(sessionId).first<{ present: number }>();
+  return repository ? "repository_state" : "missing";
 }
 
 export async function authorizePresence(

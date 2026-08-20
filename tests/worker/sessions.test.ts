@@ -187,6 +187,13 @@ describe("D1 session persistence", () => {
     await expect(rotateInvite(created.session.id, owner.id, env.DB)).rejects.toBeInstanceOf(SessionEndedError);
     await expect(createFloorMessage(created.session.id, member.id, { text: "hello", recipientUserId: null }, env.DB)).rejects.toBeInstanceOf(SessionEndedError);
     await expect(createFloorQueueItem(created.session.id, member.id, { prompt: "run it", agentId: null }, env.DB)).rejects.toBeInstanceOf(SessionEndedError);
+    await expect(createGitHubConnectionState(created.session.id, owner.id, env.DB)).rejects.toBeInstanceOf(SessionEndedError);
+    await expect(saveRepositoryConnection(created.session.id, owner.id, null, "ended-installation", {
+      id: "ended-repository", nodeId: "R_ended", owner: "openfloor-test", name: "ended",
+      fullName: "openfloor-test/ended", private: true, defaultBranch: "main",
+    }, "main", [], env.DB)).rejects.toBeInstanceOf(SessionEndedError);
+    await expect(createRepositoryPreflight(created.session.id, owner.id, env.DB)).rejects.toBeInstanceOf(SessionEndedError);
+    await expect(createAgentRun(created.session.id, "missing-queue-item", owner.id, env.DB)).rejects.toBeInstanceOf(SessionEndedError);
     // Outsiders keep getting concealment, not the ended error.
     await expect(updateSessionObjective(created.session.id, outsider.id, "Hidden", env.DB)).resolves.toBeNull();
 
@@ -206,8 +213,7 @@ describe("D1 session persistence", () => {
       .bind(Date.now() - ENDED_SESSION_RETENTION_MS - 1_000, stale.session.id)
       .run();
 
-    // meta.changes counts cascade-deleted children too, so assert on outcomes.
-    expect(await purgeExpiredSessions(env.DB)).toBeGreaterThanOrEqual(1);
+    expect(await purgeExpiredSessions(env.DB)).toEqual([stale.session.id]);
 
     const remaining = await listSessionsForUser(owner.id, env.DB);
     expect(remaining.map((session) => session.id).sort()).toEqual([active.session.id, fresh.session.id].sort());
@@ -227,6 +233,22 @@ describe("D1 session persistence", () => {
     await expect(deleteSession(created.session.id, owner.id, env.DB)).resolves.toBe("deleted");
     expect(await getSessionForMember(created.session.id, owner.id, env.DB)).toBeNull();
     await expect(deleteSession(created.session.id, owner.id, env.DB)).resolves.toBe("missing");
+  });
+
+  it("preserves sessions with repository state until external cleanup is available", async () => {
+    const owner = await upsertUser(identity("delete-repository-owner", "Owner"), env.DB);
+    const created = await createSession(owner.id, { title: "Repository audit", objective: null }, env.DB);
+    await saveRepositoryConnection(created.session.id, owner.id, null, "installation-delete", {
+      id: "repository-delete", nodeId: "R_delete", owner: "openfloor-test", name: "audit",
+      fullName: "openfloor-test/audit", private: true, defaultBranch: "main",
+    }, "main", [], env.DB);
+    await endSession(created.session.id, owner.id, env.DB);
+    await env.DB.prepare("UPDATE sessions SET ended_at = ? WHERE id = ?")
+      .bind(Date.now() - ENDED_SESSION_RETENTION_MS - 1_000, created.session.id).run();
+
+    await expect(deleteSession(created.session.id, owner.id, env.DB)).resolves.toBe("repository_state");
+    await expect(purgeExpiredSessions(env.DB)).resolves.not.toContain(created.session.id);
+    expect(await getSessionForMember(created.session.id, owner.id, env.DB)).not.toBeNull();
   });
 
   it("persists one owner-configured repository connection and ordered checks", async () => {

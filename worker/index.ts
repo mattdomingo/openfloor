@@ -8,6 +8,7 @@ import {
   type IdentityEnvironment,
 } from "../lib/identity";
 import { purgeExpiredSessions } from "../db/sessions";
+import { notifyMembersChanged } from "../lib/presence-server";
 import { handlePresenceRequest, SessionPresence } from "./presence";
 import { RepositoryPreflightWorkflow } from "./preflight-workflow";
 import { AgentRunWorkflow } from "./agent-run-workflow";
@@ -80,7 +81,10 @@ const worker = {
   // Daily retention sweep (wrangler.jsonc triggers.crons). Thin by design:
   // the logic lives in the testable db helper.
   async scheduled(_controller: unknown, env: Env, ctx: ExecutionContext): Promise<void> {
-    ctx.waitUntil(purgeExpiredSessions(env.DB));
+    ctx.waitUntil((async () => {
+      const deletedSessionIds = await purgeExpiredSessions(env.DB);
+      await Promise.all(deletedSessionIds.map((sessionId) => notifyMembersChanged(sessionId)));
+    })());
   },
 };
 

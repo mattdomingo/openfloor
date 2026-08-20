@@ -1,4 +1,4 @@
-import { accessSignInPath, getAccessUser } from "./access-auth";
+import { accessSignInPath, getAccessUser, safeAppReturnPath } from "./access-auth";
 import { BASE_PATH } from "@/components/basePath";
 import { Brand } from "@/components/product/Brand";
 
@@ -8,9 +8,7 @@ export default async function LandingPage({ searchParams }: { searchParams: Prom
   const user = await getAccessUser();
   const params = await searchParams;
   const authRequired = params.auth === "required" && !user;
-  const returnToParam = params.return_to;
-  // access-auth already app-prefixes and sanitizes return_to; re-check shape anyway.
-  const returnTo = typeof returnToParam === "string" && returnToParam.startsWith("/") && !returnToParam.startsWith("//") ? returnToParam : null;
+  const returnTo = safeAppReturnPath(params.return_to);
   const primaryHref = user ? `${BASE_PATH}/home` : returnTo ?? accessSignInPath("/home");
   return (
     <main className="landing-shell">

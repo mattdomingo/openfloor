@@ -325,6 +325,35 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await expect(owner.getByRole("heading", { name: "Release coordination" })).toBeVisible();
   await expect(owner.getByText("1 online")).toBeVisible();
 
+  const repositorySessionId = new URL(owner.url()).pathname.split("/").at(-1)!;
+  await owner.getByRole("button", { name: "End session", exact: true }).click();
+  await owner.getByRole("dialog").getByRole("button", { name: "End session", exact: true }).click();
+  await expect(owner.getByText("Ended session", { exact: true })).toBeVisible();
+  const endedMessage = await owner.request.post(`/app/api/sessions/${repositorySessionId}/messages`, { data: { text: "too late" } });
+  expect(endedMessage.status()).toBe(409);
+  const endedRun = await owner.request.post(`/app/api/sessions/${repositorySessionId}/queue/missing/run`);
+  expect(endedRun.status()).toBe(409);
+  const endedReview = await owner.request.post(`/app/api/sessions/${repositorySessionId}/review/ready`);
+  expect(endedReview.status()).toBe(409);
+
+  await owner.goto("/app/home");
+  const retainedCard = owner.locator(".session-card", { hasText: "Release coordination" });
+  await retainedCard.getByRole("button", { name: "Delete" }).click();
+  await owner.getByRole("dialog").getByRole("button", { name: "Delete session" }).click();
+  await expect(owner.getByRole("alert")).toContainText("cannot be deleted until safe external cleanup is available");
+  await owner.getByRole("dialog").getByRole("button", { name: "Cancel" }).click();
+
+  await owner.getByRole("button", { name: "New session" }).click();
+  await owner.getByLabel("Session title").fill("Disposable session");
+  await owner.getByRole("button", { name: "Create session" }).click();
+  await owner.getByRole("button", { name: "End session", exact: true }).click();
+  await owner.getByRole("dialog").getByRole("button", { name: "End session", exact: true }).click();
+  await owner.goto("/app/home");
+  const disposableCard = owner.locator(".session-card", { hasText: "Disposable session" });
+  await disposableCard.getByRole("button", { name: "Delete" }).click();
+  await owner.getByRole("dialog").getByRole("button", { name: "Delete session" }).click();
+  await expect(owner.getByText("Disposable session")).toHaveCount(0);
+
   await ownerContext.close();
   await memberContext.close();
 });
