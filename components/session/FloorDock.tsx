@@ -63,6 +63,9 @@ export function FloorDock({ onSubmit, agents, queueTarget, onQueueTargetChange, 
     if (!prompt || busy) return;
     if (await onSubmit(prompt)) {
       setValue("");
+      // Clear the DOM node itself, not just React state: a slow render can
+      // otherwise leave the stale value on screen for a beat after submit.
+      if (textareaRef.current) textareaRef.current.value = "";
       latestDraftRef.current = "";
       if (idleTimerRef.current) window.clearTimeout(idleTimerRef.current);
       onTypingUpdate("", false);
