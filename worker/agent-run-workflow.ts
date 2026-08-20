@@ -25,10 +25,12 @@ import {
   setRunSandboxId,
 } from "../db/runs";
 import { claimPoolSandbox, releasePoolSandbox, retirePoolSandbox } from "../db/sandbox-pool";
+import { getSessionContext, viewerFromRunContext } from "../db/session-context";
 import { getGitHubAppConfig } from "../db";
 import { createDraftPullRequest, createInstallationToken, getRepositoryRefSha, GitHubApiError, mergeRepositoryBranch } from "../lib/github";
 import type { AgentRunFile } from "../lib/floor-types";
 import type { GitHubRepositoryOption } from "../lib/session-types";
+import { renderSessionContext } from "../lib/session-context";
 import { notifyFloorChanged } from "../lib/presence-server";
 import { pokeSessionRouter } from "../lib/router-server";
 import { signRunGatewayToken } from "../lib/runtime-token";
@@ -49,6 +51,13 @@ const MAX_LOG_BYTES = 500_000;
 const MAX_DIFF_BYTES = 2_000_000;
 const MAX_FILES = 100;
 const PUBLISHER_SANDBOX_IMAGE_VERSION = "v2";
+// Pooled run sandboxes are keyed only by repository (see db/sandbox-pool.ts),
+// so a container built from a stale image would otherwise stay claimable for
+// up to POOL_IDLE_TTL_MS after a deploy that changed Dockerfile.sandbox.
+// Namespacing the pool key by image version makes old-image entries
+// unreachable immediately; the existing idle sweep reclaims them.
+// Bump this whenever Dockerfile.sandbox's run-sandbox contents change.
+const RUN_SANDBOX_IMAGE_VERSION = "v1";
 
 export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Params> {
   async run(event: Readonly<WorkflowEvent<Params>>, step: WorkflowStep): Promise<{ status: string }> {
@@ -90,7 +99,7 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
       // repeat runs skip the container cold start and reuse the npm cache. The
       // id is recorded on the run before any provisioning work.
       const sandboxId = await step.do("claim warm sandbox", async () => {
-        const id = await claimPoolSandbox(context.repositoryId, runId, this.env.DB);
+        const id = await claimPoolSandbox(`${RUN_SANDBOX_IMAGE_VERSION}:${context.repositoryId}`, runId, this.env.DB);
         await setRunSandboxId(runId, id, this.env.DB);
         return id;
       });
@@ -122,7 +131,13 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
           } },
         );
         if (!result.success) throw new Error(`Candidate workspace preparation failed with exit code ${result.exitCode}`);
-        await sandbox.writeFile("/tmp/openfloor/prompt.txt", buildRunPrompt(context));
+        const prompt = await buildRunPrompt(context, this.env.DB);
+        await sandbox.writeFile("/tmp/openfloor/prompt.txt", prompt);
+        // Persisted so members can see exactly what a run was told — the
+        // honest counterpart to injecting context they can't otherwise see.
+        const promptKey = `runs/${runId}/prompt.txt`;
+        await this.env.PREFLIGHT_LOGS.put(promptKey, prompt, { httpMetadata: { contentType: "text/plain; charset=utf-8" } });
+        await recordRunArtifact(runId, "prompt", promptKey, "text/plain; charset=utf-8", prompt.length, this.env.DB);
       });
 
       const processId = `codex-${runId}`;
@@ -137,6 +152,10 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
             runId, sessionId: context.sessionId, repositoryId: context.repositoryId,
             candidateSha: context.candidateSha, operation: "events",
           }, this.env.RUNTIME_GATEWAY_SECRET);
+          const contextToken = await signRunGatewayToken({
+            runId, sessionId: context.sessionId, repositoryId: context.repositoryId,
+            candidateSha: context.candidateSha, operation: "context",
+          }, this.env.RUNTIME_GATEWAY_SECRET);
           await sandbox.startProcess("node /opt/openfloor/codex-runner.mjs", {
             processId,
             autoCleanup: false,
@@ -150,6 +169,9 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
               OPENFLOOR_MODEL: context.model,
               OPENFLOOR_EVENTS_URL: `${this.env.OPENFLOOR_RUNTIME_ORIGIN}/runtime/run/events`,
               OPENFLOOR_EVENTS_TOKEN: eventsToken,
+              OPENFLOOR_CONTEXT_URL: `${this.env.OPENFLOOR_RUNTIME_ORIGIN}/runtime/run/context`,
+              OPENFLOOR_CONTEXT_TOKEN: contextToken,
+              OPENFLOOR_MCP_SERVER_PATH: "/opt/openfloor/openfloor-mcp.mjs",
             },
           });
         }
@@ -528,9 +550,15 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
   }
 }
 
-function buildRunPrompt(context: NonNullable<Awaited<ReturnType<typeof getRunExecutionContext>>>): string {
-  const prompts = context.prompts.map((prompt, index) => `${index + 1}. ${prompt.authorName}: ${prompt.text}`).join("\n");
-  return `You are ${context.agentName}, the ${context.agentRole} agent in the openfloor session "${context.sessionTitle}".\n\nSession objective:\n${context.objective ?? "No objective provided."}\n\nYour assigned responsibility:\n${context.agentTask}\n\nQueue request(s):\n${prompts}\n\nRepository: ${context.repositoryFullName}\nPinned candidate SHA: ${context.candidateSha}\n\nMake the requested code changes directly in the current workspace. Read and follow repository instructions such as AGENTS.md. Do not modify files under .github/workflows/. Do not commit, push, create branches, contact GitHub, or claim work that you did not perform. Keep the change focused and leave the workspace ready for the configured checks.`;
+// Renders the unified session brief: everything getSessionContext knows about
+// the floor right now, plus this run's own pinned identity (agent, attempt,
+// candidate SHA) as the viewer. See lib/session-context.ts for the rendered
+// template and the rationale for what is and isn't included (direct messages
+// never are).
+async function buildRunPrompt(context: NonNullable<Awaited<ReturnType<typeof getRunExecutionContext>>>, database: D1DatabaseLike): Promise<string> {
+  const snapshot = await getSessionContext(context.sessionId, { runId: context.id, queueItemId: context.queueItemId }, database);
+  if (!snapshot) throw new Error("Session context is unavailable for this run");
+  return renderSessionContext(snapshot, viewerFromRunContext(context));
 }
 
 function parseCodexResult(value: string): { ok: boolean; threadId: string | null; finalResponse: string | null; error: string | null } {

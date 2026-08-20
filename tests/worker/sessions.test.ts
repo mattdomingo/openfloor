@@ -153,7 +153,30 @@ describe("D1 session persistence", () => {
     const updated = await updateSessionObjective(created.session.id, member.id, "Second", env.DB);
     expect(updated).toEqual(expect.objectContaining({ objective: "Second", role: "member" }));
     expect(updated!.updatedAt).toBeGreaterThanOrEqual(created.session.updatedAt);
+    expect(updated!.objectiveUpdatedAt).toBeGreaterThanOrEqual(created.session.objectiveUpdatedAt);
     await expect(updateSessionObjective(created.session.id, outsider.id, "Hidden", env.DB)).resolves.toBeNull();
+  });
+
+  it("only advances objectiveUpdatedAt on an objective save, not on unrelated floor activity", async () => {
+    const owner = await upsertUser(identity("objective-isolation-owner", "Owner"), env.DB);
+    const created = await createSession(owner.id, { title: "Room", objective: "Original" }, env.DB);
+    const initial = created.session.objectiveUpdatedAt;
+    expect(initial).toBe(created.session.createdAt);
+
+    // Unrelated floor mutations bump updated_at (via bumpFloorRevision) but
+    // must never move objectiveUpdatedAt — otherwise the owner nudge
+    // (lib/floor-state.ts's countMessagesSinceObjective) could never fire.
+    const agentInput = parseAgentInput({ name: "Builder", role: "Engineer", task: "Ship things", ownerUserId: owner.id });
+    if (!agentInput) throw new Error("Invalid test agent");
+    await createFloorAgent(created.session.id, owner.id, agentInput, env.DB);
+    await createFloorMessage(created.session.id, owner.id, { text: "hello team", recipientUserId: null }, env.DB);
+
+    const afterActivity = await getSessionForMember(created.session.id, owner.id, env.DB);
+    expect(afterActivity!.objectiveUpdatedAt).toBe(initial);
+    expect(afterActivity!.updatedAt).toBeGreaterThanOrEqual(initial);
+
+    const afterSave = await updateSessionObjective(created.session.id, owner.id, "Revised", env.DB);
+    expect(afterSave!.objectiveUpdatedAt).toBeGreaterThanOrEqual(initial);
   });
 
   it("lets the owner end the session, kills the invite, and re-ends idempotently", async () => {

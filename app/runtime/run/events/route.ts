@@ -5,7 +5,7 @@ import { env } from "cloudflare:workers";
 
 const MAX_BODY_BYTES = 256 * 1024;
 const MAX_EVENTS_PER_POST = 50;
-const RUNNER_EVENT_KINDS = new Set(["reasoning", "command", "file_edit", "agent_message", "error", "truncated"]);
+const RUNNER_EVENT_KINDS = new Set(["reasoning", "command", "file_edit", "agent_message", "tool_call", "error", "truncated"]);
 
 type IncomingEvent = { sequence: number; kind: string; detail: string };
 

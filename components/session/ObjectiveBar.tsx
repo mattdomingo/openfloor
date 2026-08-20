@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { LocalDateTime } from "@/components/LocalDateTime";
+import { OBJECTIVE_NUDGE_THRESHOLD } from "@/lib/floor-state";
 import { Icon } from "./primitives";
 
 type SaveState = "idle" | "saving" | "saved" | "error";
@@ -9,10 +10,14 @@ type SaveState = "idle" | "saving" | "saved" | "error";
 export function ObjectiveBar({
   objective,
   updatedAt,
+  staleMessageCount = 0,
+  isOwner = false,
   onSave,
 }: {
   objective: string | null;
   updatedAt: number;
+  staleMessageCount?: number;
+  isOwner?: boolean;
   onSave: (objective: string | null) => Promise<boolean>;
 }) {
   const [editing, setEditing] = useState(false);
@@ -80,6 +85,12 @@ export function ObjectiveBar({
       </div>
       <div className="objective-meta">
         <span className="objective-fact"><Icon name="clock" />Updated <LocalDateTime timestamp={updatedAt} mode="time" /></span>
+        {isOwner && !editing && staleMessageCount >= OBJECTIVE_NUDGE_THRESHOLD && (
+          <span className="objective-nudge" role="status">
+            {staleMessageCount} team messages since the objective was last updated.
+            <button type="button" className="button" data-size="sm" onClick={beginEditing}>Update objective</button>
+          </span>
+        )}
       </div>
     </section>
   );

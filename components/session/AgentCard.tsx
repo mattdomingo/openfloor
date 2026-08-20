@@ -15,6 +15,7 @@ const KIND_GLYPHS: Record<string, string> = {
   command: "$",
   file_edit: "±",
   agent_message: "◆",
+  tool_call: "⟲",
   error: "!",
   truncated: "…",
 };
@@ -55,7 +56,7 @@ export function AgentSpotlight({ agent, sessionId, latestRun, activity, onHistor
         <span className="agent-state">{latestRun?.status.replace("_", " ") ?? "Created"}</span>
       </div>
       <div className="spotlight-row"><span className="label">Task</span><AgentTaskEditor key={`${agent.id}-${agent.updatedAt}`} agent={agent} onSave={onUpdateTask} /></div>
-      <div className="spotlight-row"><span className="label">Execution</span>{latestRun ? <div className="spotlight-execution"><ActivityTimeline run={latestRun} activity={activity} /><p className="review-empty">{latestRun.files.length} changed file{latestRun.files.length === 1 ? "" : "s"} · {latestRun.checks.filter((check) => check.status === "passed").length}/{latestRun.checks.length} checks passed</p>{latestRun.runBranch && <p className="review-empty"><code>{latestRun.runBranch}</code>{latestRun.discardedAt ? " · discarded" : ""}</p>}<RawLogToggle sessionId={sessionId} run={latestRun} /></div> : <p className="review-empty">No agent run has started.</p>}</div>
+      <div className="spotlight-row"><span className="label">Execution</span>{latestRun ? <div className="spotlight-execution"><ActivityTimeline run={latestRun} activity={activity} /><p className="review-empty">{latestRun.files.length} changed file{latestRun.files.length === 1 ? "" : "s"} · {latestRun.checks.filter((check) => check.status === "passed").length}/{latestRun.checks.length} checks passed</p>{latestRun.runBranch && <p className="review-empty"><code>{latestRun.runBranch}</code>{latestRun.discardedAt ? " · discarded" : ""}</p>}<ArtifactToggle sessionId={sessionId} run={latestRun} label="Open raw log" closeLabel="Hide raw log" emptyText="The raw log becomes available when the run finishes." /><ArtifactToggle sessionId={sessionId} run={latestRun} kind="prompt" label="Session brief sent to this agent" closeLabel="Hide session brief" emptyText="The session brief becomes available once the run starts." /></div> : <p className="review-empty">No agent run has started.</p>}</div>
       <div className="spotlight-foot"><span><LocalDateTime timestamp={agent.createdAt} /></span><button type="button" className="button agent-chat-button" data-size="sm" onClick={onHistory}><Icon name="message" size={12} />Prompt history</button></div>
     </article>
   );
@@ -95,21 +96,25 @@ function ActivityTimeline({ run, activity }: { run: AgentRun; activity: RunActiv
   );
 }
 
-function RawLogToggle({ sessionId, run }: { sessionId: string; run: AgentRun }) {
+/** Fetch-on-expand artifact viewer. Omit `kind` for the default (unfiltered) codex_log + diff view. */
+function ArtifactToggle({ sessionId, run, kind, label, closeLabel, emptyText }: {
+  sessionId: string; run: AgentRun; kind?: string; label: string; closeLabel: string; emptyText: string;
+}) {
   const [open, setOpen] = useState(false);
-  const [log, setLog] = useState<string | null>(null);
+  const [content, setContent] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
   async function toggle() {
     if (open) { setOpen(false); return; }
     setOpen(true);
-    if (log !== null || loading) return;
+    if (content !== null || loading) return;
     setLoading(true);
     try {
-      const response = await fetch(`${BASE_PATH}/api/sessions/${sessionId}/runs/${run.id}/artifacts`, { cache: "no-store" });
-      setLog(response.ok ? await response.text() : "");
+      const url = `${BASE_PATH}/api/sessions/${sessionId}/runs/${run.id}/artifacts${kind ? `?kind=${kind}` : ""}`;
+      const response = await fetch(url, { cache: "no-store" });
+      setContent(response.ok ? await response.text() : "");
     } catch {
-      setLog("");
+      setContent("");
     } finally {
       setLoading(false);
     }
@@ -117,12 +122,12 @@ function RawLogToggle({ sessionId, run }: { sessionId: string; run: AgentRun }) 
 
   return (
     <div className="agent-raw-log">
-      <button type="button" className="button" data-size="sm" onClick={() => void toggle()} aria-expanded={open}>{open ? "Hide raw log" : "Open raw log"}</button>
+      <button type="button" className="button" data-size="sm" onClick={() => void toggle()} aria-expanded={open}>{open ? closeLabel : label}</button>
       {open && (loading
-        ? <p className="review-empty">Loading raw log…</p>
-        : log
-          ? <pre className="agent-raw-log-output">{log}</pre>
-          : <p className="review-empty">The raw log becomes available when the run finishes.</p>)}
+        ? <p className="review-empty">Loading…</p>
+        : content
+          ? <pre className="agent-raw-log-output">{content}</pre>
+          : <p className="review-empty">{emptyText}</p>)}
     </div>
   );
 }

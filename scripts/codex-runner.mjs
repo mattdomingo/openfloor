@@ -9,6 +9,9 @@ const gatewayToken = process.env.OPENFLOOR_OPENAI_TOKEN;
 const model = process.env.OPENFLOOR_MODEL;
 const eventsUrl = process.env.OPENFLOOR_EVENTS_URL;
 const eventsToken = process.env.OPENFLOOR_EVENTS_TOKEN;
+const contextUrl = process.env.OPENFLOOR_CONTEXT_URL;
+const contextToken = process.env.OPENFLOOR_CONTEXT_TOKEN;
+const mcpServerPath = process.env.OPENFLOOR_MCP_SERVER_PATH;
 
 if (!promptPath || !resultPath || !workspace || !gatewayUrl || !gatewayToken || !model) {
   throw new Error("openfloor Codex runner configuration is incomplete");
@@ -106,13 +109,29 @@ function normalizeItem(item, phase) {
     if (paths.length > 0) emitActivity("file_edit", `edited ${paths.slice(0, 5).join(", ")}${paths.length > 5 ? ` (+${paths.length - 5} more)` : ""}`);
   } else if (item.type === "agent_message" && phase === "completed") {
     emitActivity("agent_message", item.text);
+  } else if (item.type === "mcp_tool_call" && phase === "started") {
+    emitActivity("tool_call", `called ${item.tool}`);
+  } else if (item.type === "mcp_tool_call" && phase === "completed") {
+    emitActivity("tool_call", item.status === "failed" ? `${item.tool} failed: ${firstLine(item.error?.message)}` : `${item.tool} completed`);
   } else if (item.type === "error") {
     emitActivity("error", firstLine(item.message));
   }
 }
 
 const prompt = await readFile(promptPath, "utf8");
-const codex = new Codex({ baseUrl: gatewayUrl, apiKey: gatewayToken });
+// The MCP child is spawned by the Codex CLI itself, outside this process's
+// network-disabled sandboxMode, so it's the one legitimate bridge back to
+// live openfloor state. env is passed explicitly rather than relied on to
+// inherit — the CLI's own MCP child-spawning behavior isn't something this
+// SDK's TypeScript surface documents, so explicit is the reliable choice.
+const mcpServers = contextUrl && contextToken && mcpServerPath ? {
+  openfloor: {
+    command: "node",
+    args: [mcpServerPath],
+    env: { OPENFLOOR_CONTEXT_URL: contextUrl, OPENFLOOR_CONTEXT_TOKEN: contextToken },
+  },
+} : undefined;
+const codex = new Codex({ baseUrl: gatewayUrl, apiKey: gatewayToken, ...(mcpServers ? { config: { mcp_servers: mcpServers } } : {}) });
 const thread = codex.startThread({
   model,
   workingDirectory: workspace,

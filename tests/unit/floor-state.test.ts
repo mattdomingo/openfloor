@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { floorParticipants } from "@/components/session/usePersistentFloorData";
-import { firstMergeableQueueGroup, resolvePersistedAgentMention, shouldRefreshFloor } from "@/lib/floor-state";
+import { countMessagesSinceObjective, firstMergeableQueueGroup, resolvePersistedAgentMention, shouldRefreshFloor } from "@/lib/floor-state";
 import type { AppUser, SessionMember } from "@/lib/session-types";
-import type { FloorAgent, FloorQueueItem } from "@/lib/floor-types";
+import type { FloorAgent, FloorMessage, FloorQueueItem } from "@/lib/floor-types";
 
 const user = { id: "owner", displayName: "Owner Example" } as AppUser;
 const members: SessionMember[] = [
@@ -34,5 +34,19 @@ describe("persistent floor state", () => {
   it("refreshes only for newer floor revisions", () => {
     expect(shouldRefreshFloor(2, { type: "floor.changed", revision: 3, domains: ["agents"] })).toBe(true);
     expect(shouldRefreshFloor(3, { type: "floor.changed", revision: 3, domains: ["agents"] })).toBe(false);
+  });
+
+  it("counts only public messages newer than the objective's last edit, never direct messages", () => {
+    const message = (id: string, createdAt: number, recipientUserId: string | null = null): FloorMessage =>
+      ({ id, authorUserId: "member", recipientUserId, text: `msg ${id}`, createdAt }) as FloorMessage;
+    const messages = [
+      message("before", 100),
+      message("after-1", 200),
+      message("after-2", 300),
+      message("dm-after", 400, "owner"),
+    ];
+    expect(countMessagesSinceObjective(messages, 150)).toBe(2);
+    expect(countMessagesSinceObjective(messages, 300)).toBe(0);
+    expect(countMessagesSinceObjective(messages, 0)).toBe(3);
   });
 });

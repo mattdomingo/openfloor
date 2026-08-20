@@ -231,7 +231,7 @@ export async function replaceRunFiles(runId: string, files: Array<Omit<AgentRunF
   ]);
 }
 
-export async function recordRunArtifact(runId: string, kind: "codex_log" | "diff", r2Key: string, contentType: string, sizeBytes: number, database = getDb()): Promise<void> {
+export async function recordRunArtifact(runId: string, kind: "codex_log" | "diff" | "prompt", r2Key: string, contentType: string, sizeBytes: number, database = getDb()): Promise<void> {
   await database.prepare(
     `INSERT INTO agent_run_artifacts (id, run_id, kind, r2_key, content_type, size_bytes, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?)

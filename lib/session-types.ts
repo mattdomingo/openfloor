@@ -8,6 +8,7 @@ export type SessionSummary = {
   memberCount: number;
   createdAt: number;
   updatedAt: number;
+  objectiveUpdatedAt: number;
   endedAt: number | null;
   endedReason: "owner" | "merged" | null;
   archivedAt: number | null;

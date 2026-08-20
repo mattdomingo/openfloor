@@ -161,6 +161,10 @@ WebSocket events notify clients about presence or changed domains. D1 remains au
 - Ordered required-check results in D1 with bounded command logs in private R2 and reload-safe provisioning, running, passed, failed, and timed-out UI states.
 - Owner-started and owner-cancelled queue execution through a durable `AgentRunWorkflow`, with one active run per queue item.
 - Server-side Codex SDK execution using `gpt-5.6-terra` in an isolated Sandbox at the exact candidate SHA, with workspace-write permission and no repository network access.
+- A unified session brief injected as every dispatched agent's prompt (`db/session-context.ts` + `lib/session-context.ts`, assembled at workflow dispatch): the agent's own request and prior attempts, every other agent and human assignment on the floor, already-integrated run summaries and files, other runs currently in flight with their live file edits, the rest of the queue, blocked/failed runs, and the last 30 public team-chat messages. The read is session-scoped with no `userId` parameter, so direct messages are structurally excluded rather than filtered — the query itself only ever selects `recipient_user_id IS NULL`. The brief is a snapshot at dispatch time, bounded to 24,000 characters with honest empty-section text and explicit truncation counts; it never fabricates floor state.
+- A live re-read of that same brief for long runs: the Sandbox exposes a read-only `openfloor_session_context` MCP tool (`scripts/openfloor-mcp.mjs`, wired into the Codex SDK's `config.mcp_servers`) backed by `GET /runtime/run/context`. Tool calls surface in the activity timeline as a `tool_call` event. Pooled run sandboxes are keyed by `RUN_SANDBOX_IMAGE_VERSION` (`worker/agent-run-workflow.ts`) so a stale pooled container from before an image change is never claimed by a live run.
+- The exact prompt a run received is persisted as an `agent_run_artifacts` row of kind `prompt` and visible to members through a second Agent-card expander, alongside the existing raw-log expander (whose own default output is unchanged).
+- An owner-only nudge when public team chat has moved past the objective: `sessions.objective_updated_at` (distinct from `updated_at`, which every floor mutation touches) tracks only objective saves; once `OBJECTIVE_NUDGE_THRESHOLD` public messages postdate it, `ObjectiveBar` shows a banner that opens the existing inline editor. No new mutation; purely derived from data already in `FloorSnapshot`.
 - Durable run, event, check, changed-file, and artifact metadata; bounded complete logs and diffs live in private R2.
 - Real run status and file/check data in Agent cards and Review. Each passing run is automatically preserved on its own verified `openfloor/<session-short>/run/<run-short>` GitHub branch; consecutive prompts retain separate branches and audit history.
 - Trusted incremental Git-bundle validation and non-force publication from a clean publisher Sandbox, followed by GitHub SHA reconciliation.
@@ -176,7 +180,7 @@ Known production follow-up: the owner discard action still reports failure in th
 ### Explicitly deferred
 
 - Agent model/provider selection and user-managed provider credentials; Phase 4 deliberately uses one server-configured Codex model and project credential.
-- Agent-authored chat messages and generic artifact download UI beyond the per-run raw-log expander. (Live run activity streaming is now real: the sandbox runner posts normalized Codex events to `/runtime/run/events`, they persist in `agent_run_events`, and sessions receive them as `run.activity` presence events.)
+- Agent-authored chat messages and generic artifact download UI beyond the per-run raw-log and session-brief expanders. (Live run activity streaming is now real: the sandbox runner posts normalized Codex events to `/runtime/run/events`, they persist in `agent_run_events`, and sessions receive them as `run.activity` presence events. An agent may also read live session state mid-run through the `openfloor_session_context` MCP tool — see `/runtime/run/context` in the API table — but it cannot write.)
 - Deployment automation after repository merge.
 - Agent edit, archive, deletion, or lifecycle states beyond `created`.
 - Queue completion, removal, consumption, or retry workflows.
@@ -349,6 +353,7 @@ Do not hand-edit Drizzle metadata. If a generated migration is wrong, correct th
 #### `sessions`
 
 - UUID, title, nullable objective, timestamps.
+- `updated_at` advances on every floor mutation (`bumpFloorRevision` touches it alongside `floor_revision`), so it cannot stand in for "the objective was last edited." `objective_updated_at` is the dedicated column, set only by `updateSessionObjective`; it drives the owner-only objective-nudge banner (`lib/floor-state.ts`'s `countMessagesSinceObjective`).
 - `floor_revision` is a monotonically increasing integer for persisted floor reconciliation.
 - Session creation also creates owner membership and an active invite in one D1 batch.
 - Nullable `ended_at` is the lifecycle marker. Null means live; a timestamp means ended and read-only. Writes authorize through `getActiveMembershipRole` (throws `SessionEndedError` for members of ended sessions); reads keep using `getMembershipRole` so ended sessions stay viewable. `leaveSession`, `endSession`, `deleteSession`, and non-member concealment intentionally bypass the ended guard.
@@ -390,7 +395,7 @@ Do not hand-edit Drizzle metadata. If a generated migration is wrong, correct th
 - A partial unique index permits only one `creating` or `active` candidate per session.
 - Candidate refs are generated only by the server as `openfloor/<session-short>/candidate/<safe-name>-<candidate-short>` and are created without force from the configured base ref. The owner supplies bounded display metadata, not an arbitrary ref; openfloor normalizes the name into a lowercase ASCII slug and retains the unique ID suffix.
 - A newer base SHA marks the candidate behind; an unexpected candidate head marks the connection externally modified. Neither condition rewrites GitHub.
-- Status is `creating`, `active`, `merged`, or `creation_failed`. Only creating/active rows participate in the one-live-candidate constraint, so merged history does not block the next cycle.
+- The `status` column itself only ever holds `creating`, `active`, or `creation_failed`; there is no `merged` value in the D1 CHECK. `merged` is a derived read-layer state — `db/repositories.ts` reports it whenever `merged_at IS NOT NULL`, regardless of the stored `status`. Only creating/active rows (with `merged_at IS NULL`) participate in the one-live-candidate constraint, so merged history does not block the next cycle.
 - The row stores the active PR identity/state plus GitHub mergeability, merge-requirement state, aggregate observed-check result, ready/merge audit timestamps, confirmed squash SHA, and cleanup outcome. The first draft PR uses the persisted candidate name as its title and description as its body.
 
 #### `repository_candidate_files` and `repository_candidate_checks`
@@ -423,6 +428,7 @@ Do not hand-edit Drizzle metadata. If a generated migration is wrong, correct th
 - The owner may start or cancel; members may read caller-visible run summaries but receive no mutation controls. Unassigned or nonqueued items cannot execute.
 - Run statuses are `provisioning`, `running`, `checking`, `ready`, `publishing`, `published`, `integrating`, `integrated`, `conflicted`, `failed`, `cancel_requested`, and `cancelled`; every listed status is now used by the Phase 6 lifecycle.
 - Each run snapshots ordered required checks. D1 stores bounded output excerpts, file metadata, and diff previews; complete bounded Codex logs, check logs, and diffs stay in private R2.
+- `agent_run_artifacts.kind` is `codex_log`, `diff`, or `prompt` (UPSERT-keyed on `(run_id, kind)`; no SQL CHECK, TS-enum only). `prompt` is the exact session brief written to the agent's workspace, persisted so members can see what a run was actually told (`components/session/AgentCard.tsx`'s second expander). `GET /api/sessions/[id]/runs/[runId]/artifacts` defaults to concatenating only `codex_log` + `diff` (unchanged from before `prompt` existed); an explicit `?kind=` returns exactly one artifact with no heading.
 - `ready` means checks passed locally. The Workflow immediately moves through `publishing`, `published`, and serialized `integrating`; success records `integrated` and completes the queue item, while a true GitHub merge conflict records `conflicted` and leaves the item blocked for owner retry.
 - Each new run stores a server-generated run branch, bundle key/size, local bundle commit, trusted published commit, observed remote SHA, publication time, and nullable discard audit fields. Older Phase 4 runs may have null publication fields.
 - The agent Sandbox uploads a bounded incremental bundle through an operation-scoped JWT. A separate clean publisher Sandbox reconstructs the deterministic archive baseline from the exact candidate tree, verifies one ref and one result commit, compares the recorded file set, enforces object/file limits, and performs a fixed non-force push with a repository-limited token. Git-over-HTTPS authenticates with `x-access-token` plus the installation token as the HTTP Basic password; REST-style Bearer authentication is not valid for this Git transport. Restarting a Workflow whose run is already `publishing` resumes from the stored bundle and file metadata without rerunning Codex or checks.
@@ -458,7 +464,7 @@ Do not hand-edit Drizzle metadata. If a generated migration is wrong, correct th
 
 - Ordered by integer `position` within a session.
 - Nullable agent target represents an unassigned prompt.
-- Status is `queued`, `running`, `blocked`, or `completed`. Only queued items can be merged or started.
+- Status is `queued`, `running`, `blocked`, `completed`, `paused`, `failed`, or `cancelled`. Only queued items can be merged or started.
 - Agent foreign key uses `ON DELETE SET NULL` for future lifecycle support, although deletion is not exposed today.
 
 #### `floor_queue_prompts`
@@ -600,10 +606,11 @@ All paths below are shown without the production `/app` prefix.
 | `POST /api/sessions/[id]/runs/[runId]/retry` | Owner | Retry a conflicted queue item as a new run attempt pinned to the latest candidate SHA. |
 | `POST /api/sessions/[id]/review/ready` | Owner | Reconcile the exact active PR and use GitHub's ready-for-review mutation; preserve 404 concealment. |
 | `POST /api/sessions/[id]/review/merge` | Owner | Reconcile head/base/files/checks/mergeability, request an exact-head squash merge, confirm it, and safely clean matching openfloor refs. |
-| `GET /api/sessions/[id]/runs/[runId]/artifacts` | Session member | Return caller-authorized bounded run artifacts from private R2. |
+| `GET /api/sessions/[id]/runs/[runId]/artifacts` | Session member | Return caller-authorized bounded run artifacts from private R2; unfiltered defaults to `codex_log` + `diff` (unchanged), `?kind=` returns exactly one artifact (e.g. `prompt`). |
 | `GET /api/sessions/[id]/runs/[runId]/events` | Session member | Return one run's persisted activity timeline incrementally via `?after=<sequence>`. |
 | `POST /runtime/run/events` | Short-lived run events JWT | Ingest bounded, runner-sequenced activity events for one active run and broadcast them as `run.activity`. |
 | `GET /runtime/run/source` | Short-lived run source JWT | Proxy the exact candidate archive for one run. |
+| `GET /runtime/run/context` | Short-lived run context JWT | Re-render the same session brief the run was dispatched with, from current D1 state; called by the `openfloor_session_context` MCP tool the sandbox exposes to Codex so a long run can re-read the floor mid-run. |
 | `POST/GET /runtime/run/bundle` | Short-lived operation JWT | Store an agent-exported bounded Git bundle and serve it only to the clean trusted publisher. |
 | `POST /runtime/openai/v1/responses` | Short-lived run OpenAI JWT | Forward one active run's Codex request while injecting the project credential outside the repository process. |
 | `POST /webhooks/github` | Valid GitHub HMAC | Deduplicate and process bounded installation, access, repository, push, PR, check, and status deliveries. |
@@ -648,7 +655,7 @@ Keep server validation in `lib/validation.ts` and cover it with unit tests.
 
 - `Workspace.tsx`: orchestration and local layout state.
 - `TopBar.tsx`: workspace/review navigation, real member presence, owner invite dialog, settings, sign-out.
-- `ObjectiveBar.tsx`: persistent member-editable objective.
+- `ObjectiveBar.tsx`: persistent member-editable objective; an owner-only nudge banner opens the same editor once public chat has outpaced the objective's last edit.
 - `BriefRail.tsx`: real members, assignments, team chat, and DMs.
 - `AgentFloor.tsx` and `AgentCard.tsx`: empty state, creation dialog, and persisted agent metadata only.
 - `PromptQueue.tsx`: real queue filtering, ordering, merging, targeting, and prompts.
@@ -706,10 +713,12 @@ db/
   repositories.ts            Owner-gated GitHub connection and check-command persistence
   preflights.ts              Durable preflight/check state and internal Workflow transitions
   runs.ts                    Durable agent-run lifecycle, checks, files, artifacts, and execution context
+  session-context.ts         Session-scoped, member-neutral floor read for the agent brief (D1)
 drizzle/                     Generated D1 migrations and metadata
 lib/
   floor-types.ts             Public persisted floor types
   session-types.ts           Session, identity, presence, and typing event types
+  session-context.ts         Pure session-brief renderer (no D1); shared by dispatch and live re-read
   validation.ts              Bounded input parsing and normalization
   identity.ts                Access verification and local identity isolation
   invites.ts                 HMAC signing and constant-time verification
@@ -718,7 +727,7 @@ lib/
   runtime-token.ts           Short-lived preflight/run operation-scoped gateway JWTs
   presence-server.ts         Internal application-to-Durable-Object notifications
   floor-api.ts               Shared floor route response helpers
-  floor-state.ts             Pure queue/mention/revision client helpers
+  floor-state.ts             Pure queue/mention/revision/objective-nudge client helpers
   typing-drafts.ts           Pure live-draft reducers and visibility selection
 worker/
   index.ts                   Cloudflare entry, identity boundary, assets, app dispatch
@@ -728,6 +737,7 @@ worker/
 Dockerfile.sandbox           Version-matched Cloudflare Sandbox runtime image
 .github/workflows/deploy.yml Push-to-main production deploy (test → migrate → build → deploy)
 scripts/codex-runner.mjs     Pinned server-side Codex SDK runner inside the Sandbox image
+scripts/openfloor-mcp.mjs    Read-only stdio MCP server exposing openfloor_session_context to Codex
 scripts/publish-bundle.mjs   Fixed trusted bundle/ref/ancestry/file/object validation and non-force publication
 tests/
   unit/                      Pure functions, validation, identity, signing, reducers
@@ -1275,6 +1285,30 @@ Repository execution Phases 1–7 are implemented. Future milestones should focu
 **Rationale:** Reviewers need candidate branches and pull requests to reflect the session's work instead of opaque IDs or generic repository text, while accepting a complete user-provided ref would weaken the existing branch-ownership boundary.
 
 **Consequences:** Candidate refs now have the form `openfloor/<session-short>/candidate/<safe-name>-<candidate-short>`. Names are NFKC-normalized and limited to 100 characters; descriptions are trimmed and limited to 2,000. Existing candidates are backfilled from their session title/objective. Members can read the metadata, only owners create candidates, and openfloor still controls the prefix, suffix, non-force creation, reconciliation, merge, and cleanup rules.
+
+### 2026-08-20 — Give every dispatched agent a unified session brief
+
+**Decision:** `AgentRunWorkflow` no longer prompts an agent with only its own queue request. `db/session-context.ts` reads a bounded, session-scoped snapshot of the whole floor — every agent and human assignment, already-integrated run summaries and files, other runs currently in flight with their live file-edit activity, the rest of the queue, blocked/failed runs, prior attempts on the same queue item, and the last 30 public team-chat messages — and `lib/session-context.ts` renders it into one prompt alongside the agent's own request and the existing safety rules. The read takes no `userId`; its chat query is hard-coded to `recipient_user_id IS NULL`, so direct messages are structurally unreachable rather than filtered out after the fact. The render is capped at 24,000 characters: each section truncates to a documented per-item limit with an explicit remaining count, and if the assembled brief is still over budget, whole lower-priority sections are dropped in a fixed order (team chat first, "who else is on this floor" last) with a one-line marker; the agent's own request and the header are never dropped.
+
+**Rationale:** openfloor's product premise is a shared floor, not isolated chat windows, but the agents were the one participant that could not see it — `SESSION_RUN_CAP = 2` routinely runs two agents against the same candidate with no awareness of each other, so the second one only discovers the collision as a GitHub 409 on integration. Every fact needed already existed in D1; this closes a rendering gap, not a data gap. A snapshot at dispatch keeps the Workflow step deterministic and replay-safe across retries, the same contract the pinned candidate SHA already has.
+
+**Consequences:** The rendered brief is unit-tested in isolation from D1 (`tests/unit/session-context.test.ts`) and the D1 read is covered by `tests/worker/session-context.test.ts`, including an explicit assertion that a direct message never reaches the snapshot. `runTestAgent` (`lib/agent-run-start.ts`) does not exercise this path — it never writes a prompt file — so the test-adapter run flow remains unchanged. The two follow-ups noted here at the time — a live mid-run re-read and persisting the brief as a visible artifact — are now built; see the next two entries.
+
+### 2026-08-20 — Let a long-running agent re-read the session brief mid-run
+
+**Decision:** The Sandbox exposes a read-only `openfloor_session_context` MCP tool (`scripts/openfloor-mcp.mjs`) to Codex via the SDK's `config.mcp_servers`, backed by a new `GET /runtime/run/context` gateway route and a new `"context"` `RunGatewayClaims` operation (60-minute TTL, same as `events`/`openai`). The route calls the same `db/session-context.ts` + `lib/session-context.ts` pipeline the dispatch-time prompt uses, so a re-read reflects genuinely current D1 state — not a cached copy. Tool calls appear in the activity timeline as a new `tool_call` event kind.
+
+**Rationale:** Codex's shell sandbox runs with `networkAccessEnabled: false`, but MCP child processes are spawned by the Codex CLI outside that sandbox and keep their network — the only legitimate bridge from a network-isolated agent back to live session state. Runs can last up to 60 minutes; the dispatch-time brief goes stale well before that.
+
+**Consequences:** The gateway token and its MCP-child env vars are passed explicitly (`OPENFLOOR_CONTEXT_URL`/`OPENFLOOR_CONTEXT_TOKEN`) rather than relied on to inherit from the runner process, since the Codex CLI's own env-inheritance behavior for MCP children isn't part of its documented TypeScript surface. Pooled run sandboxes are keyed only by `repository_id` (`db/sandbox-pool.ts`), so a container built from a stale image would otherwise stay claimable for up to `POOL_IDLE_TTL_MS` after a deploy; `RUN_SANDBOX_IMAGE_VERSION` in `worker/agent-run-workflow.ts` namespaces the pool key by image version and must be bumped whenever `Dockerfile.sandbox`'s run-sandbox contents change, the same discipline `PUBLISHER_SANDBOX_IMAGE_VERSION` already has for the publisher sandbox. `@modelcontextprotocol/sdk` is a new dependency, installed into both the sandbox image and the top-level `package.json` (matching how `@openai/codex-sdk` is tracked) though only the sandbox-image copy ever runs.
+
+### 2026-08-20 — Make the dispatched brief visible, and nudge the owner when the objective drifts
+
+**Decision:** The exact prompt a run received is persisted as an `agent_run_artifacts` row of kind `prompt` (UPSERT-keyed like the existing kinds; TS-enum only, no new SQL CHECK) and exposed through a second Agent-card expander, "Session brief sent to this agent," beside the existing raw-log expander. `GET /api/sessions/[id]/runs/[runId]/artifacts` keeps its default (unfiltered) output byte-for-byte unchanged — `codex_log` + `diff` only — and now accepts an explicit `?kind=` to return exactly one artifact with no heading. Separately, a new `sessions.objective_updated_at` column (set only by `updateSessionObjective`) tracks when the objective itself last changed; once `OBJECTIVE_NUDGE_THRESHOLD` (10) public team messages postdate it, `ObjectiveBar` shows an owner-only banner that opens the same inline editor. The count (`lib/floor-state.ts`'s `countMessagesSinceObjective`) excludes direct messages and is computed client-side from data already in `FloorSnapshot` — no new mutation or endpoint.
+
+**Rationale:** Injecting context an agent can act on, without any way for a human to see exactly what it was told, would work against the trust the rest of this system is built on. Separately, `sessions.updated_at` looked like a plausible staleness signal for the objective but isn't one: `bumpFloorRevision` advances it on every floor mutation, including the very chat messages a staleness check would want to count — using it would have made the nudge a permanent no-op, discovered while implementing this feature rather than by design.
+
+**Consequences:** Migration `0016` adds `objective_updated_at NOT NULL DEFAULT 0`, then backfills existing rows to their current `updated_at` (SQLite `ADD COLUMN` can't default to another column's value, so the backfill is a second statement in the same migration). `createSession` and `updateSessionObjective` are the only writers. `tests/worker/sessions.test.ts` asserts the isolation directly: creating an agent and sending a message must not move `objectiveUpdatedAt`, only an objective save can.
 
 ## How to record the next decision
 

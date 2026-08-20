@@ -1,7 +1,12 @@
 FROM docker.io/cloudflare/sandbox:0.12.7
 
-RUN npm install --prefix /opt/openfloor --omit=dev @openai/codex-sdk@0.148.0 && npm cache clean --force
+# RUN_SANDBOX_IMAGE_VERSION in worker/agent-run-workflow.ts must be bumped
+# whenever this image's contents change — pooled run sandboxes are keyed by
+# repository only, so a stale pooled container would otherwise be claimed by
+# a live run without the current scripts (see the pool-key comment there).
+RUN npm install --prefix /opt/openfloor --omit=dev @openai/codex-sdk@0.148.0 @modelcontextprotocol/sdk@1.30.0 && npm cache clean --force
 COPY --chmod=0444 scripts/codex-runner.mjs /opt/openfloor/codex-runner.mjs
+COPY --chmod=0444 scripts/openfloor-mcp.mjs /opt/openfloor/openfloor-mcp.mjs
 COPY --chmod=0444 scripts/publish-bundle.mjs /opt/openfloor/publish-bundle.mjs
 COPY --chmod=0444 scripts/github-git-auth.mjs /opt/openfloor/github-git-auth.mjs
 COPY --chmod=0444 scripts/cleanup-branches.mjs /opt/openfloor/cleanup-branches.mjs

@@ -25,6 +25,10 @@ export const sessions = sqliteTable("sessions", {
   objective: text("objective"),
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull(),
+  // Set only by updateSessionObjective, unlike updatedAt (which every floor
+  // mutation bumps via bumpFloorRevision) — this is the one timestamp that
+  // isolates "when the objective itself last changed" for the owner nudge.
+  objectiveUpdatedAt: integer("objective_updated_at").notNull(),
   endedAt: integer("ended_at"),
   endedReason: text("ended_reason", { enum: ["owner", "merged"] }),
   floorRevision: integer("floor_revision").notNull().default(0),
@@ -446,7 +450,7 @@ export const agentRunArtifacts = sqliteTable(
   {
     id: text("id").primaryKey(),
     runId: text("run_id").notNull().references(() => agentRuns.id, { onDelete: "cascade" }),
-    kind: text("kind", { enum: ["codex_log", "diff"] }).notNull(),
+    kind: text("kind", { enum: ["codex_log", "diff", "prompt"] }).notNull(),
     r2Key: text("r2_key").notNull(),
     contentType: text("content_type").notNull(),
     sizeBytes: integer("size_bytes").notNull(),

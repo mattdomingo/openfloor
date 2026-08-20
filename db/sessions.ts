@@ -10,6 +10,7 @@ type SessionRecord = {
   memberCount: number;
   createdAt: number;
   updatedAt: number;
+  objectiveUpdatedAt: number;
   endedAt: number | null;
   endedReason: "owner" | "merged" | null;
   archivedAt: number | null;
@@ -123,7 +124,8 @@ export async function listSessionsForUser(userId: string, database = getDb()): P
     .prepare(
       `SELECT s.id, s.title, s.objective, mine.role,
               COUNT(all_members.user_id) AS memberCount,
-              s.created_at AS createdAt, s.updated_at AS updatedAt, s.ended_at AS endedAt, s.ended_reason AS endedReason,
+              s.created_at AS createdAt, s.updated_at AS updatedAt, s.objective_updated_at AS objectiveUpdatedAt,
+              s.ended_at AS endedAt, s.ended_reason AS endedReason,
               mine.archived_at AS archivedAt
        FROM sessions s
        JOIN session_members mine ON mine.session_id = s.id AND mine.user_id = ?
@@ -147,8 +149,8 @@ export async function createSession(
 
   await database.batch([
     database
-      .prepare("INSERT INTO sessions (id, title, objective, created_at, updated_at) VALUES (?, ?, ?, ?, ?)")
-      .bind(sessionId, input.title, input.objective, now, now),
+      .prepare("INSERT INTO sessions (id, title, objective, created_at, updated_at, objective_updated_at) VALUES (?, ?, ?, ?, ?, ?)")
+      .bind(sessionId, input.title, input.objective, now, now, now),
     database
       .prepare("INSERT INTO session_members (session_id, user_id, role, joined_at) VALUES (?, ?, 'owner', ?)")
       .bind(sessionId, userId, now),
@@ -166,6 +168,7 @@ export async function createSession(
       memberCount: 1,
       createdAt: now,
       updatedAt: now,
+      objectiveUpdatedAt: now,
       endedAt: null,
       endedReason: null,
       archivedAt: null,
@@ -183,7 +186,8 @@ export async function getSessionForMember(
     .prepare(
       `SELECT s.id, s.title, s.objective, mine.role,
               COUNT(all_members.user_id) AS memberCount,
-              s.created_at AS createdAt, s.updated_at AS updatedAt, s.ended_at AS endedAt, s.ended_reason AS endedReason,
+              s.created_at AS createdAt, s.updated_at AS updatedAt, s.objective_updated_at AS objectiveUpdatedAt,
+              s.ended_at AS endedAt, s.ended_reason AS endedReason,
               mine.archived_at AS archivedAt
        FROM sessions s
        JOIN session_members mine ON mine.session_id = s.id AND mine.user_id = ?
@@ -229,8 +233,8 @@ export async function updateSessionObjective(
   if (!(await getActiveMembershipRole(sessionId, userId, database))) return null;
   const now = Date.now();
   const result = await database
-    .prepare("UPDATE sessions SET objective = ?, updated_at = ? WHERE id = ? AND ended_at IS NULL")
-    .bind(objective, now, sessionId)
+    .prepare("UPDATE sessions SET objective = ?, updated_at = ?, objective_updated_at = ? WHERE id = ? AND ended_at IS NULL")
+    .bind(objective, now, now, sessionId)
     .run();
   if (Number(result.meta?.changes ?? 0) !== 1) {
     if (!(await getActiveMembershipRole(sessionId, userId, database))) return null;
