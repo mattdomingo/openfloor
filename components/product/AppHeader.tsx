@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { Avatar } from "@/components/session/primitives";
 import type { AppUser } from "@/lib/session-types";
 import { Brand } from "./Brand";
 
@@ -13,7 +14,7 @@ export function AppHeader({ user, sessionTitle }: { user: AppUser; sessionTitle?
         </nav>
       )}
       <div className="account">
-        <span className="avatar" aria-hidden="true">{initials(user.displayName)}</span>
+        <Avatar userId={user.id} initials={initials(user.displayName)} tone="you" />
         <span className="account-name" title={user.displayName}>{user.displayName}</span>
         <ThemeToggle />
         <a className="button" data-variant="quiet" href="/cdn-cgi/access/logout">Sign out</a>

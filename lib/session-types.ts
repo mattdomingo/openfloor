@@ -9,6 +9,7 @@ export type SessionSummary = {
   createdAt: number;
   updatedAt: number;
   endedAt: number | null;
+  archivedAt: number | null;
 };
 
 export type SessionMember = {
@@ -48,6 +49,11 @@ export type AppUser = {
   providerUserId: string;
   email: string;
   displayName: string;
+  firstName: string | null;
+  lastName: string | null;
+  githubHandle: string | null;
+  avatarKey: string | null;
+  onboardedAt: number | null;
   createdAt: number;
   updatedAt: number;
 };

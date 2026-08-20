@@ -50,7 +50,7 @@ export function TopBar({
       <div className="topbar-actions">
         <div className="presence" aria-label={`${members.filter((member) => member.online).length} people online`}>
           {members.slice(0, 5).map((member, index) => (
-            <Avatar key={member.id} initials={initials(member.displayName)} tone={member.id === user.id ? "you" : `member-${index}`} online={member.online} />
+            <Avatar key={member.id} userId={member.id} initials={initials(member.displayName)} tone={member.id === user.id ? "you" : `member-${index}`} online={member.online} />
           ))}
         </div>
         {session.role === "owner" && (

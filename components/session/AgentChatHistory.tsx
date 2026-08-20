@@ -13,7 +13,7 @@ export function AgentChatHistory({ agent, queue, onClose }: { agent: FloorAgent;
       <div className="dialog-head"><div className="dialog-title"><h2>Prompt history</h2><p>{agent.name}</p></div><button type="button" className="dialog-close" onClick={dismiss} aria-label="Close"><Icon name="close" /></button></div>
       <div className="dialog-body">
         {prompts.length === 0 ? <p className="review-empty">No prompts have been sent to {agent.name}.</p> : (
-          <ol className="chat-thread">{prompts.map((prompt) => <li key={prompt.id} className="chat-message" data-role="prompt"><Avatar initials={initials(prompt.authorName)} tone="you" /><div className="chat-bubble"><div className="chat-bubble-head"><strong>{prompt.authorName}</strong><span><LocalDateTime timestamp={prompt.createdAt} /></span></div><p>{prompt.text}</p></div></li>)}</ol>
+          <ol className="chat-thread">{prompts.map((prompt) => <li key={prompt.id} className="chat-message" data-role="prompt"><Avatar userId={prompt.authorUserId} initials={initials(prompt.authorName)} tone="you" /><div className="chat-bubble"><div className="chat-bubble-head"><strong>{prompt.authorName}</strong><span><LocalDateTime timestamp={prompt.createdAt} /></span></div><p>{prompt.text}</p></div></li>)}</ol>
         )}
       </div>
     </dialog>

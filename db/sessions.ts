@@ -11,6 +11,7 @@ type SessionRecord = {
   createdAt: number;
   updatedAt: number;
   endedAt: number | null;
+  archivedAt: number | null;
 };
 
 export class SessionEndedError extends Error {
@@ -27,24 +28,25 @@ export type InvitePreview = {
   ownerName: string;
 };
 
+const APP_USER_COLUMNS = `id, chatgpt_user_id AS providerUserId, email, display_name AS displayName,
+              first_name AS firstName, last_name AS lastName, github_handle AS githubHandle,
+              avatar_key AS avatarKey, onboarded_at AS onboardedAt,
+              created_at AS createdAt, updated_at AS updatedAt`;
+
 export async function upsertUser(identity: AuthenticatedIdentity, database = getDb()): Promise<AppUser> {
   const now = Date.now();
   const createdId = crypto.randomUUID();
+  // Only email/updated_at refresh on repeat logins: display_name and the
+  // profile fields are owned by onboarding/account-settings, not the IdP, so
+  // this must never stomp what the user already set.
   const user = await database
     .prepare(
       `INSERT INTO users (id, chatgpt_user_id, email, display_name, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?)
        ON CONFLICT(chatgpt_user_id) DO UPDATE SET
          email = excluded.email,
-         display_name = excluded.display_name,
          updated_at = excluded.updated_at
-       RETURNING
-         id,
-         chatgpt_user_id AS providerUserId,
-         email,
-         display_name AS displayName,
-         created_at AS createdAt,
-         updated_at AS updatedAt`,
+       RETURNING ${APP_USER_COLUMNS}`,
     )
     .bind(createdId, identity.providerUserId, identity.email, identity.displayName, now, now)
     .first<AppUser>();
@@ -58,13 +60,42 @@ export async function findUserByProviderId(
   database = getDb(),
 ): Promise<AppUser | null> {
   return database
-    .prepare(
-      `SELECT id, chatgpt_user_id AS providerUserId, email, display_name AS displayName,
-              created_at AS createdAt, updated_at AS updatedAt
-       FROM users WHERE chatgpt_user_id = ?`,
-    )
+    .prepare(`SELECT ${APP_USER_COLUMNS} FROM users WHERE chatgpt_user_id = ?`)
     .bind(providerUserId)
     .first<AppUser>();
+}
+
+export async function findUserById(userId: string, database = getDb()): Promise<AppUser | null> {
+  return database
+    .prepare(`SELECT ${APP_USER_COLUMNS} FROM users WHERE id = ?`)
+    .bind(userId)
+    .first<AppUser>();
+}
+
+export async function completeOnboarding(
+  userId: string,
+  input: { firstName: string; lastName: string; githubHandle: string | null; avatarKey: string | null },
+  database = getDb(),
+): Promise<AppUser> {
+  const now = Date.now();
+  const displayName = `${input.firstName} ${input.lastName.charAt(0)}.`;
+  const user = await database
+    .prepare(
+      `UPDATE users SET
+         first_name = ?,
+         last_name = ?,
+         github_handle = ?,
+         avatar_key = COALESCE(?, avatar_key),
+         display_name = ?,
+         onboarded_at = ?,
+         updated_at = ?
+       WHERE id = ?
+       RETURNING ${APP_USER_COLUMNS}`,
+    )
+    .bind(input.firstName, input.lastName, input.githubHandle, input.avatarKey, displayName, now, now, userId)
+    .first<AppUser>();
+  if (!user) throw new Error("Unable to complete onboarding for the current user.");
+  return user;
 }
 
 export async function listSessionsForUser(userId: string, database = getDb()): Promise<SessionSummary[]> {
@@ -72,11 +103,12 @@ export async function listSessionsForUser(userId: string, database = getDb()): P
     .prepare(
       `SELECT s.id, s.title, s.objective, mine.role,
               COUNT(all_members.user_id) AS memberCount,
-              s.created_at AS createdAt, s.updated_at AS updatedAt, s.ended_at AS endedAt
+              s.created_at AS createdAt, s.updated_at AS updatedAt, s.ended_at AS endedAt,
+              mine.archived_at AS archivedAt
        FROM sessions s
        JOIN session_members mine ON mine.session_id = s.id AND mine.user_id = ?
        JOIN session_members all_members ON all_members.session_id = s.id
-       GROUP BY s.id, mine.role
+       GROUP BY s.id, mine.role, mine.archived_at
        ORDER BY s.updated_at DESC`,
     )
     .bind(userId)
@@ -115,6 +147,7 @@ export async function createSession(
       createdAt: now,
       updatedAt: now,
       endedAt: null,
+      archivedAt: null,
     },
     inviteId,
   };
@@ -129,16 +162,41 @@ export async function getSessionForMember(
     .prepare(
       `SELECT s.id, s.title, s.objective, mine.role,
               COUNT(all_members.user_id) AS memberCount,
-              s.created_at AS createdAt, s.updated_at AS updatedAt, s.ended_at AS endedAt
+              s.created_at AS createdAt, s.updated_at AS updatedAt, s.ended_at AS endedAt,
+              mine.archived_at AS archivedAt
        FROM sessions s
        JOIN session_members mine ON mine.session_id = s.id AND mine.user_id = ?
        JOIN session_members all_members ON all_members.session_id = s.id
        WHERE s.id = ?
-       GROUP BY s.id, mine.role`,
+       GROUP BY s.id, mine.role, mine.archived_at`,
     )
     .bind(userId, sessionId)
     .first<SessionRecord>();
   return record ? normalizeSession(record) : null;
+}
+
+export async function archiveSessionForMember(
+  sessionId: string,
+  userId: string,
+  database = getDb(),
+): Promise<"archived" | "missing"> {
+  const result = await database
+    .prepare("UPDATE session_members SET archived_at = ? WHERE session_id = ? AND user_id = ?")
+    .bind(Date.now(), sessionId, userId)
+    .run();
+  return Number(result.meta?.changes ?? 0) > 0 ? "archived" : "missing";
+}
+
+export async function unarchiveSessionForMember(
+  sessionId: string,
+  userId: string,
+  database = getDb(),
+): Promise<"unarchived" | "missing"> {
+  const result = await database
+    .prepare("UPDATE session_members SET archived_at = NULL WHERE session_id = ? AND user_id = ?")
+    .bind(sessionId, userId)
+    .run();
+  return Number(result.meta?.changes ?? 0) > 0 ? "unarchived" : "missing";
 }
 
 export async function updateSessionObjective(

@@ -60,6 +60,7 @@ input:focus-visible, textarea:focus-visible { box-shadow: 0 0 0 3px var(--accent
   width: 34px;
   height: 34px;
   flex: none;
+  overflow: hidden;
   border-radius: 50%;
   background: var(--who-ink);
   color: var(--text-inverse);

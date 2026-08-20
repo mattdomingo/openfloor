@@ -79,7 +79,7 @@ export function InviteDialog({
           <span className="label">Already in this session</span>
           <ul className="invite-members">
             {members.map((member, index) => (
-              <li key={member.id}><Avatar initials={initials(member.displayName)} tone={`member-${index}`} online={member.online} />{member.displayName}<span className="value">{member.role}</span></li>
+              <li key={member.id}><Avatar userId={member.id} initials={initials(member.displayName)} tone={`member-${index}`} online={member.online} />{member.displayName}<span className="value">{member.role}</span></li>
             ))}
           </ul>
         </div>

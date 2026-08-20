@@ -15,7 +15,12 @@ input, textarea { width: 100%; padding: 11px 12px; border: 1px solid var(--line-
 .form-error { color: var(--status-blocked); font-size: var(--text-sm); }
 .form-note { color: var(--status-attention); font-size: var(--text-sm); }
 
-.session-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-4); margin-top: var(--space-6); }
+.onboarding-avatar-picker { display: flex; align-items: center; gap: var(--space-4); }
+.onboarding-avatar-picker .avatar { width: 64px; height: 64px; font-size: var(--text-lg); overflow: hidden; }
+.onboarding-avatar-preview { width: 100%; height: 100%; object-fit: cover; }
+
+.page-body > .segmented { margin-top: var(--space-6); width: fit-content; }
+.session-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-4); margin-top: var(--space-4); }
 .session-card { display: grid; min-height: 190px; padding: var(--space-6); border: 1px solid var(--line-strong); border-radius: var(--radius-md); background: var(--surface-panel); color: inherit; text-decoration: none; box-shadow: var(--elevation-1); }
 .session-card:hover { border-color: var(--accent); transform: translateY(-2px); box-shadow: var(--elevation-2); }
 .session-card-head, .session-card-foot, .panel-heading { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }

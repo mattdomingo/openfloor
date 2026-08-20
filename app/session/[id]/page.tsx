@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
-import { requireAccessUser } from "@/app/access-auth";
-import { getSessionForMember, getSessionMembers, upsertUser } from "@/db/sessions";
+import { requireOnboardedUser } from "@/lib/server-auth";
+import { getSessionForMember, getSessionMembers } from "@/db/sessions";
 import { getActiveRepositoryCandidateForMember, getRepositoryConnectionForMember } from "@/db/repositories";
 import { getLatestRepositoryPreflightForMember } from "@/db/preflights";
 import { SessionScreen } from "@/components/product/SessionScreen";
@@ -20,8 +20,7 @@ export default async function SessionPage({
 }
 
 async function AuthenticatedSession({ id, githubSetup }: { id: string; githubSetup: boolean }) {
-  const identity = await requireAccessUser(`/session/${encodeURIComponent(id)}`);
-  const user = await upsertUser(identity);
+  const user = await requireOnboardedUser(`/session/${encodeURIComponent(id)}`);
   const [session, members, repository, candidate, preflight] = await Promise.all([
     getSessionForMember(id, user.id),
     getSessionMembers(id, user.id),

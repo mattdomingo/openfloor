@@ -1,6 +1,7 @@
 "use client";
 
-import { ReactNode, SyntheticEvent, useEffect, useRef } from "react";
+import { ReactNode, SyntheticEvent, useEffect, useRef, useState } from "react";
+import { BASE_PATH } from "@/components/basePath";
 
 /* Native <dialog> unmounts the instant its parent drops it, which cuts off any exit
    transition. This opens the dialog on mount and turns dismissals into a short
@@ -146,10 +147,27 @@ export function Icon({ name, size = 14, className }: { name: IconName; size?: nu
   );
 }
 
-export function Avatar({ initials, tone, online, typing }: { initials: string; tone: string; online?: boolean; typing?: boolean }) {
+export function Avatar({
+  initials,
+  tone,
+  online,
+  typing,
+  userId,
+}: {
+  initials: string;
+  tone: string;
+  online?: boolean;
+  typing?: boolean;
+  userId?: string;
+}) {
+  const [imageFailed, setImageFailed] = useState(false);
   return (
     <span className="avatar" data-tone={tone} data-online={online ? "true" : undefined} data-typing={typing ? "true" : undefined} aria-hidden="true">
-      {initials}
+      {userId && !imageFailed ? (
+        <img src={`${BASE_PATH}/api/account/avatar/${userId}`} alt="" className="onboarding-avatar-preview" onError={() => setImageFailed(true)} />
+      ) : (
+        initials
+      )}
     </span>
   );
 }

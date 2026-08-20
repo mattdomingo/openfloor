@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
-import { requireAccessUser } from "@/app/access-auth";
+import { requireOnboardedUser } from "@/lib/server-auth";
 import { getInviteSigningSecret } from "@/db";
-import { getInvitePreview, upsertUser } from "@/db/sessions";
+import { getInvitePreview } from "@/db/sessions";
 import { verifyInviteToken } from "@/lib/invites";
 import { JoinScreen } from "@/components/product/JoinScreen";
 
@@ -13,11 +13,10 @@ export default async function JoinPage({ params }: { params: Promise<{ token: st
 }
 
 async function AuthenticatedInvite({ token }: { token: string }) {
-  const identity = await requireAccessUser(`/join/${encodeURIComponent(token)}`);
-  await upsertUser(identity);
+  const user = await requireOnboardedUser(`/join/${encodeURIComponent(token)}`);
   const inviteId = await verifyInviteToken(token, getInviteSigningSecret());
   if (!inviteId) notFound();
   const preview = await getInvitePreview(inviteId);
   if (!preview) notFound();
-  return <JoinScreen token={token} preview={preview} displayName={identity.displayName} />;
+  return <JoinScreen token={token} preview={preview} displayName={user.displayName} />;
 }

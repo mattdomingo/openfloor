@@ -5,20 +5,34 @@ import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
 import { BASE_PATH } from "@/components/basePath";
 import { LocalDateTime } from "@/components/LocalDateTime";
-import { useDialogDismiss } from "@/components/session/primitives";
+import { SegmentedControl, useDialogDismiss } from "@/components/session/primitives";
 import type { AppUser, SessionSummary } from "@/lib/session-types";
 import { AppHeader } from "./AppHeader";
 
-export function HomeScreen({ user, sessions }: { user: AppUser; sessions: SessionSummary[] }) {
+type SessionTab = "active" | "archived" | "ended";
+
+export function HomeScreen({ user, sessions: initialSessions }: { user: AppUser; sessions: SessionSummary[] }) {
   const router = useRouter();
+  const [sessions, setSessions] = useState(initialSessions);
+  const [tab, setTab] = useState<SessionTab>("active");
   const [creating, setCreating] = useState(false);
   const [title, setTitle] = useState("");
   const [objective, setObjective] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<SessionSummary | null>(null);
-  const activeSessions = sessions.filter((session) => session.endedAt == null);
-  const endedSessions = sessions.filter((session) => session.endedAt != null);
+  const activeSessions = sessions.filter((session) => session.archivedAt == null && session.endedAt == null);
+  const archivedSessions = sessions.filter((session) => session.archivedAt != null);
+  const endedSessions = sessions.filter((session) => session.archivedAt == null && session.endedAt != null);
+  const tabSessions = tab === "active" ? activeSessions : tab === "archived" ? archivedSessions : endedSessions;
+
+  async function setArchived(session: SessionSummary, archived: boolean) {
+    const response = await fetch(`${BASE_PATH}/api/sessions/${session.id}/${archived ? "archive" : "unarchive"}`, { method: "POST" });
+    if (!response.ok) return;
+    setSessions((current) =>
+      current.map((entry) => (entry.id === session.id ? { ...entry, archivedAt: archived ? Date.now() : null } : entry)),
+    );
+  }
 
   async function create(event: FormEvent) {
     event.preventDefault();
@@ -62,17 +76,25 @@ export function HomeScreen({ user, sessions }: { user: AppUser; sessions: Sessio
           <div className="empty-state"><strong>No sessions yet</strong><p>Create a session, then invite the people working beside you.</p></div>
         ) : (
           <>
-            {activeSessions.length > 0 && (
-              <>
-                {endedSessions.length > 0 && <h2 className="session-group-heading">Active</h2>}
-                <SessionGrid sessions={activeSessions} onDelete={setPendingDelete} />
-              </>
-            )}
-            {endedSessions.length > 0 && (
-              <>
-                <h2 className="session-group-heading">Ended</h2>
-                <SessionGrid sessions={endedSessions} onDelete={setPendingDelete} />
-              </>
+            <SegmentedControl
+              label="Filter sessions"
+              value={tab}
+              onChange={setTab}
+              options={[
+                { value: "active", label: `Active (${activeSessions.length})` },
+                { value: "archived", label: `Archived (${archivedSessions.length})` },
+                { value: "ended", label: `Ended (${endedSessions.length})` },
+              ]}
+            />
+            {tabSessions.length === 0 ? (
+              <div className="empty-state">
+                <strong>Nothing here</strong>
+                <p>{tab === "active" && "Sessions you archive or end will move out of this tab."}
+                  {tab === "archived" && "Archive a session from Active or Ended to tuck it out of your own view."}
+                  {tab === "ended" && "Sessions the owner ends will show up here."}</p>
+              </div>
+            ) : (
+              <SessionGrid sessions={tabSessions} archived={tab === "archived"} onDelete={setPendingDelete} onSetArchived={setArchived} />
             )}
           </>
         )}
@@ -82,7 +104,17 @@ export function HomeScreen({ user, sessions }: { user: AppUser; sessions: Sessio
   );
 }
 
-function SessionGrid({ sessions, onDelete }: { sessions: SessionSummary[]; onDelete: (session: SessionSummary) => void }) {
+function SessionGrid({
+  sessions,
+  archived,
+  onDelete,
+  onSetArchived,
+}: {
+  sessions: SessionSummary[];
+  archived: boolean;
+  onDelete: (session: SessionSummary) => void;
+  onSetArchived: (session: SessionSummary, archived: boolean) => void;
+}) {
   return (
     <div className="session-grid">
       {sessions.map((session) => (
@@ -96,6 +128,7 @@ function SessionGrid({ sessions, onDelete }: { sessions: SessionSummary[]; onDel
           <div className="session-card-foot">
             <span>{session.memberCount} {session.memberCount === 1 ? "member" : "members"}</span>
             <span className="session-card-foot-end">
+              <button type="button" className="button" data-variant="quiet" data-size="sm" onClick={() => onSetArchived(session, !archived)}>{archived ? "Unarchive" : "Archive"}</button>
               {session.role === "owner" && <button type="button" className="button danger-button" data-size="sm" onClick={() => onDelete(session)}>Delete</button>}
               <time><LocalDateTime timestamp={session.updatedAt} mode="date" /></time>
             </span>

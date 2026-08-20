@@ -193,6 +193,7 @@ Production is mounted under `/app` on `opnflr.com`. Local `npm run dev` is mount
 | --- | --- | --- | --- |
 | `/app` | `/` | Public | Product landing and entry into Cloudflare Access. |
 | `/app/home` | `/home` | Protected | Sessions where the current user is a member; session creation. |
+| `/app/onboarding` | `/onboarding` | Protected | First-login account setup (profile picture, name, GitHub handle); gates `/home`, `/join/*`, and `/session/*` until complete. |
 | `/app/join/[token]` | `/join/[token]` | Protected | Valid invite preview followed by explicit acceptance. |
 | `/app/session/[id]` | `/session/[id]` | Protected/member-only | Session lobby, roster, invite controls, leave, and floor entry. |
 | `/app/session/[id]/floor` | `/session/[id]/floor` | Protected/member-only | Main collaborative Agent Floor. |
@@ -282,6 +283,7 @@ Per-session WebSocket
 Production identity is Cloudflare Access, not application-owned “Sign in with ChatGPT.” Google and One-time PIN are the intended Access identity providers. The Access application protects:
 
 - `opnflr.com/app/home`
+- `opnflr.com/app/onboarding`
 - `opnflr.com/app/session/*`
 - `opnflr.com/app/join/*`
 - `opnflr.com/app/api/*`

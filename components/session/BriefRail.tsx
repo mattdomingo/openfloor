@@ -79,7 +79,7 @@ function OwnerCard({ assignment, participant, agents, prompts, onSave }: {
   return (
     <div className="owner-card" data-expanded={expanded ? "true" : "false"}>
       <button type="button" className="owner-card-toggle" aria-expanded={expanded} onClick={() => setExpanded((value) => !value)}>
-        <Avatar initials={participant?.initials ?? "?"} tone={participant?.tone ?? "member"} online={participant?.online} />
+        <Avatar userId={participant?.id} initials={participant?.initials ?? "?"} tone={participant?.tone ?? "member"} online={participant?.online} />
         <span className="owner-head">
           <strong title={assignment.userName}>{assignment.userName}</strong>
           <span className="state-tag" data-tone={participant?.online ? "running" : "waiting"}>{participant?.online ? "Online" : "Offline"}</span>

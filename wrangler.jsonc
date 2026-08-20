@@ -70,6 +70,10 @@
 		{
 			"binding": "PREFLIGHT_LOGS",
 			"bucket_name": "openfloor-preflight-logs"
+		},
+		{
+			"binding": "USER_AVATARS",
+			"bucket_name": "openfloor-user-avatars"
 		}
 	],
 	// opnflr.com is a Cloudflare Pages project (the marketing site). A Workers
