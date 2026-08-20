@@ -10,11 +10,12 @@ import {
 import { purgeExpiredSessions } from "../db/sessions";
 import { notifyMembersChanged } from "../lib/presence-server";
 import { handlePresenceRequest, SessionPresence } from "./presence";
+import { SessionRouter } from "./session-router";
 import { RepositoryPreflightWorkflow } from "./preflight-workflow";
 import { AgentRunWorkflow } from "./agent-run-workflow";
 export { Sandbox, ContainerProxy } from "@cloudflare/sandbox";
 
-export { AgentRunWorkflow, RepositoryPreflightWorkflow, SessionPresence };
+export { AgentRunWorkflow, RepositoryPreflightWorkflow, SessionPresence, SessionRouter };
 
 type DurableObjectStubLike = { fetch(request: Request): Promise<Response> };
 type DurableObjectNamespaceLike = {

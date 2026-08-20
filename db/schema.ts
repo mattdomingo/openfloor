@@ -27,6 +27,7 @@ export const sessions = sqliteTable("sessions", {
   updatedAt: integer("updated_at").notNull(),
   endedAt: integer("ended_at"),
   floorRevision: integer("floor_revision").notNull().default(0),
+  autoDispatch: integer("auto_dispatch", { mode: "boolean" }).notNull().default(false),
 });
 
 export const sessionMembers = sqliteTable(
@@ -132,6 +133,8 @@ export const floorQueueItems = sqliteTable(
     agentId: text("agent_id").references(() => floorAgents.id, { onDelete: "set null" }),
     position: integer("position").notNull(),
     status: text("status", { enum: ["queued", "running", "blocked", "completed"] }).notNull(),
+    assignedBy: text("assigned_by", { enum: ["user", "router"] }),
+    assignedReason: text("assigned_reason"),
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
   },
@@ -449,6 +452,28 @@ export const agentRunArtifacts = sqliteTable(
     createdAt: integer("created_at").notNull(),
   },
   (table) => [uniqueIndex("idx_agent_run_artifacts_kind").on(table.runId, table.kind)],
+);
+
+export const routingDecisions = sqliteTable(
+  "routing_decisions",
+  {
+    id: text("id").primaryKey(),
+    sessionId: text("session_id").notNull().references(() => sessions.id, { onDelete: "cascade" }),
+    queueItemId: text("queue_item_id").references(() => floorQueueItems.id, { onDelete: "set null" }),
+    agentId: text("agent_id").references(() => floorAgents.id, { onDelete: "set null" }),
+    runId: text("run_id").references(() => agentRuns.id, { onDelete: "set null" }),
+    decision: text("decision", { enum: ["assigned", "dispatched", "held", "skipped"] }).notNull(),
+    reason: text("reason").notNull(),
+    candidates: text("candidates").notNull().default("[]"),
+    triggeredBy: text("triggered_by", { enum: ["enqueue", "run_completed", "toggle", "agent_changed", "alarm"] }).notNull(),
+    createdAt: integer("created_at").notNull(),
+  },
+  (table) => [
+    index("idx_routing_decisions_session_created").on(table.sessionId, table.createdAt),
+    index("idx_routing_decisions_item").on(table.queueItemId),
+    check("routing_decisions_decision_check", sql`${table.decision} in ('assigned', 'dispatched', 'held', 'skipped')`),
+    check("routing_decisions_trigger_check", sql`${table.triggeredBy} in ('enqueue', 'run_completed', 'toggle', 'agent_changed', 'alarm')`),
+  ],
 );
 
 export const repositoryCheckCommands = sqliteTable(

@@ -3095,6 +3095,13 @@
   color: var(--text-primary);
 }
 
+.queue-chip[data-kind="agent-auto"] {
+  border-style: dashed;
+  border-color: color-mix(in srgb, var(--agent-color) 50%, var(--line-soft));
+  background: color-mix(in srgb, var(--agent-color) 14%, var(--surface-raised));
+  color: var(--text-primary);
+}
+
 .queue-chip[data-kind="router"] {
   border-style: dashed;
   border-color: var(--line-strong);

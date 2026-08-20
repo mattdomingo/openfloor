@@ -58,6 +58,8 @@ export type FloorQueueItem = {
   agentName: string | null;
   position: number;
   status: "queued" | "running" | "blocked" | "completed";
+  assignedBy: "user" | "router" | null;
+  assignedReason: string | null;
   prompts: FloorQueuePrompt[];
   createdAt: number;
   updatedAt: number;
@@ -156,6 +158,7 @@ export type FloorReviewSnapshot = {
 
 export type FloorSnapshot = {
   revision: number;
+  autoDispatch: boolean;
   agents: FloorAgent[];
   assignments: FloorAssignment[];
   messages: FloorMessage[];

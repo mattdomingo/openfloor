@@ -39,7 +39,7 @@ export async function getFloorSnapshot(
 
 async function readFloorSnapshot(sessionId: string, userId: string, database: D1DatabaseLike): Promise<FloorSnapshot> {
   const [session, agents, assignments, messages, queue, prompts, repository, activeCandidate, reviewCandidate, latestPreflight, runs] = await Promise.all([
-    database.prepare("SELECT floor_revision AS revision FROM sessions WHERE id = ?").bind(sessionId).first<{ revision: number }>(),
+    database.prepare("SELECT floor_revision AS revision, auto_dispatch AS autoDispatch FROM sessions WHERE id = ?").bind(sessionId).first<{ revision: number; autoDispatch: number }>(),
     database.prepare(
       `SELECT a.id, a.name, a.role, a.task, a.owner_user_id AS ownerUserId,
               owner.display_name AS ownerName, a.created_by AS createdByUserId,
@@ -69,6 +69,7 @@ async function readFloorSnapshot(sessionId: string, userId: string, database: D1
     ).bind(sessionId, userId, userId).all<MessageRecord>(),
     database.prepare(
       `SELECT q.id, q.agent_id AS agentId, a.name AS agentName, q.position, q.status,
+              q.assigned_by AS assignedBy, q.assigned_reason AS assignedReason,
               q.created_at AS createdAt, q.updated_at AS updatedAt
        FROM floor_queue_items q
        LEFT JOIN floor_agents a ON a.id = q.agent_id
@@ -102,6 +103,7 @@ async function readFloorSnapshot(sessionId: string, userId: string, database: D1
   const candidateReview = reviewCandidate ? await getRepositoryCandidateReviewData(reviewCandidate.id, database) : null;
   return {
     revision: Number(session?.revision ?? 0),
+    autoDispatch: Boolean(session?.autoDispatch),
     agents: agents.results,
     assignments: assignments.results.map((assignment) => ({
       ...assignment,
@@ -282,9 +284,9 @@ export async function createFloorQueueItem(
   const now = Date.now();
   const results = await database.batch([
     database.prepare(
-      `INSERT INTO floor_queue_items (id, session_id, agent_id, position, status, created_at, updated_at)
-       SELECT ?, ?, ?, ?, 'queued', ?, ? WHERE EXISTS (SELECT 1 FROM sessions WHERE id = ? AND ended_at IS NULL)`,
-    ).bind(itemId, sessionId, input.agentId, Number(last?.position ?? 0) + 1, now, now, sessionId),
+      `INSERT INTO floor_queue_items (id, session_id, agent_id, position, status, assigned_by, created_at, updated_at)
+       SELECT ?, ?, ?, ?, 'queued', ?, ?, ? WHERE EXISTS (SELECT 1 FROM sessions WHERE id = ? AND ended_at IS NULL)`,
+    ).bind(itemId, sessionId, input.agentId, Number(last?.position ?? 0) + 1, input.agentId ? "user" : null, now, now, sessionId),
     database.prepare(
       `INSERT INTO floor_queue_prompts (id, queue_item_id, author_user_id, text, created_at)
        SELECT ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM floor_queue_items WHERE id = ?)`,

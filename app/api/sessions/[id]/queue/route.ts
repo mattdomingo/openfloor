@@ -1,5 +1,6 @@
 import { createFloorQueueItem } from "@/db/floor";
 import { floorMutationResponse, mutationErrorResponse, readJson } from "@/lib/floor-api";
+import { pokeSessionRouter } from "@/lib/router-server";
 import { isApiError, requireApiUser } from "@/lib/server-auth";
 import { parseQueuePromptInput } from "@/lib/validation";
 
@@ -11,9 +12,9 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   const { id } = await params;
   try {
     const floor = await createFloorQueueItem(id, user.id, input);
-    return floor
-      ? floorMutationResponse(id, floor, ["queue"], 201)
-      : Response.json({ error: "Session not found" }, { status: 404 });
+    if (!floor) return Response.json({ error: "Session not found" }, { status: 404 });
+    await pokeSessionRouter(id, "enqueue");
+    return floorMutationResponse(id, floor, ["queue"], 201);
   } catch (error) {
     return mutationErrorResponse(error);
   }

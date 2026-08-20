@@ -26,6 +26,7 @@ import { createDraftPullRequest, createInstallationToken, getRepositoryRefSha, G
 import type { AgentRunFile } from "../lib/floor-types";
 import type { GitHubRepositoryOption } from "../lib/session-types";
 import { notifyFloorChanged } from "../lib/presence-server";
+import { pokeSessionRouter } from "../lib/router-server";
 import { signRunGatewayToken } from "../lib/runtime-token";
 
 type R2BucketLike = { put(key: string, value: string, options?: unknown): Promise<unknown> };
@@ -349,11 +350,17 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
       });
       if (result.conflicted) {
         const update = await markRunIntegrationConflicted(runId, result.reason, this.env.DB);
-        if (update) await notifyFloorChanged(update.sessionId, update.revision, ["queue", "repository", "runs", "review"]);
+        if (update) {
+          await notifyFloorChanged(update.sessionId, update.revision, ["queue", "repository", "runs", "review"]);
+          await pokeSessionRouter(update.sessionId, "run_completed");
+        }
         return { status: "conflicted" };
       }
       const update = await finishRunIntegrated(runId, result.candidateSha, result.pullRequest, this.env.DB);
-      if (update) await notifyFloorChanged(update.sessionId, update.revision, ["queue", "repository", "runs", "review"]);
+      if (update) {
+        await notifyFloorChanged(update.sessionId, update.revision, ["queue", "repository", "runs", "review"]);
+        await pokeSessionRouter(update.sessionId, "run_completed");
+      }
       return { status: "integrated" };
     } catch (error) {
       const reason = error instanceof Error ? error.message : "Candidate integration failed";
@@ -418,7 +425,11 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
 
   private async complete(runId: string, status: "ready" | "failed" | "cancelled", summary: string) {
     const completion = await finishAgentRun(runId, status, summary, this.env.DB);
-    if (completion) await notifyFloorChanged(completion.sessionId, completion.revision, ["queue", "runs", "review"]);
+    if (completion) {
+      await notifyFloorChanged(completion.sessionId, completion.revision, ["queue", "runs", "review"]);
+      // The run left its active status; freed capacity may unblock the router.
+      await pokeSessionRouter(completion.sessionId, "run_completed");
+    }
     return { status };
   }
 }

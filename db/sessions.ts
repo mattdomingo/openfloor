@@ -390,6 +390,23 @@ export async function revokeInvite(
   return true;
 }
 
+export async function setSessionAutoDispatch(
+  sessionId: string,
+  ownerId: string,
+  enabled: boolean,
+  database = getDb(),
+): Promise<boolean> {
+  if ((await getActiveMembershipRole(sessionId, ownerId, database)) !== "owner") return false;
+  await database
+    .prepare(
+      `UPDATE sessions SET auto_dispatch = ?, floor_revision = floor_revision + 1, updated_at = ?
+       WHERE id = ? AND ended_at IS NULL`,
+    )
+    .bind(enabled ? 1 : 0, Date.now(), sessionId)
+    .run();
+  return true;
+}
+
 export async function leaveSession(
   sessionId: string,
   userId: string,

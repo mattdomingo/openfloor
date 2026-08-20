@@ -1,5 +1,6 @@
 import { createFloorAgent } from "@/db/floor";
 import { floorMutationResponse, mutationErrorResponse, readJson } from "@/lib/floor-api";
+import { pokeSessionRouter } from "@/lib/router-server";
 import { isApiError, requireApiUser } from "@/lib/server-auth";
 import { parseAgentInput } from "@/lib/validation";
 
@@ -11,9 +12,9 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   const { id } = await params;
   try {
     const floor = await createFloorAgent(id, user.id, input);
-    return floor
-      ? floorMutationResponse(id, floor, ["agents"], 201)
-      : Response.json({ error: "Session not found" }, { status: 404 });
+    if (!floor) return Response.json({ error: "Session not found" }, { status: 404 });
+    await pokeSessionRouter(id, "agent_changed");
+    return floorMutationResponse(id, floor, ["agents"], 201);
   } catch (error) {
     return mutationErrorResponse(error);
   }

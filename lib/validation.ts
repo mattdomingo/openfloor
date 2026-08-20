@@ -4,6 +4,7 @@ export type AgentInput = { name: string; nameKey: string; role: string; task: st
 export type AssignmentInput = { task: string | null };
 export type MessageInput = { text: string; recipientUserId: string | null };
 export type QueuePromptInput = { prompt: string; agentId: string | null };
+export type AutoDispatchInput = { autoDispatch: boolean };
 export type QueueOrderInput = { itemIds: string[] };
 export type QueueMergeInput = { itemIds: string[] };
 export type RepositoryConnectionInput = { repositoryId: string; baseBranch: string; checkCommands: string[] };
@@ -75,6 +76,13 @@ export function parseQueuePromptInput(value: unknown): QueuePromptInput | null {
   const agentId = typeof input.agentId === "string" ? input.agentId.trim() : null;
   if (!prompt || prompt.length > 4000 || (agentId !== null && (!agentId || agentId.length > 100))) return null;
   return { prompt, agentId };
+}
+
+export function parseAutoDispatchInput(value: unknown): AutoDispatchInput | null {
+  if (!value || typeof value !== "object") return null;
+  const input = value as Record<string, unknown>;
+  if (typeof input.autoDispatch !== "boolean") return null;
+  return { autoDispatch: input.autoDispatch };
 }
 
 export function parseQueueOrderInput(value: unknown): QueueOrderInput | null {

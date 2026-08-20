@@ -22,6 +22,10 @@
 				"class_name": "SessionPresence"
 			},
 			{
+				"name": "SESSION_ROUTER",
+				"class_name": "SessionRouter"
+			},
+			{
 				"name": "SANDBOX",
 				"class_name": "Sandbox"
 			}
@@ -38,6 +42,12 @@
 			"tag": "v2",
 			"new_sqlite_classes": [
 				"Sandbox"
+			]
+		},
+		{
+			"tag": "v3",
+			"new_sqlite_classes": [
+				"SessionRouter"
 			]
 		}
 	],
