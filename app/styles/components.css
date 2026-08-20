@@ -146,7 +146,6 @@ input, textarea { width: 100%; padding: 11px 12px; border: 1px solid var(--line-
 .objective-warning { color: var(--status-attention); }
 .objective-error { color: var(--status-blocked); }
 .app-shell .mention-field { min-height: 44px; }
-.app-shell .mention-input { position: static; min-height: 44px; color: var(--text-primary); }
 .invite-loading { padding: var(--space-3); border: 1px dashed var(--line-strong); color: var(--text-tertiary); font-size: var(--text-sm); }
 .invite-dialog .button-row { margin-top: var(--space-3); }
 .invite-members .value { margin-left: auto; text-transform: capitalize; }

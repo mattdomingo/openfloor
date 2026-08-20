@@ -13,8 +13,10 @@ function findMentionQuery(value: string, caret: number): { start: number; query:
 
 /* Renders the same text as the textarea beneath it, with @mentions recolored.
    The trailing zero-width space keeps a trailing newline from collapsing the
-   div's height relative to the textarea it mirrors. */
-function renderHighlight(value: string): ReactNode[] {
+   div's height relative to the textarea it mirrors. Only tokens matching a
+   real agent name are colored, so "@nonexistent" renders as plain text. */
+function renderHighlight(value: string, agents: FloorAgent[]): ReactNode[] {
+  const names = new Set(agents.map((agent) => agent.name.toLocaleLowerCase("en-US")));
   const nodes: ReactNode[] = [];
   const pattern = /(^|\s)(@[A-Za-z][\w-]*)/g;
   let lastIndex = 0;
@@ -23,7 +25,8 @@ function renderHighlight(value: string): ReactNode[] {
   while ((match = pattern.exec(value))) {
     const start = match.index + match[1].length;
     if (start > lastIndex) nodes.push(<span key={key++}>{value.slice(lastIndex, start)}</span>);
-    nodes.push(<span key={key++} className="mention-tag">{match[2]}</span>);
+    const isValidAgent = names.has(match[2].slice(1).toLocaleLowerCase("en-US"));
+    nodes.push(isValidAgent ? <span key={key++} className="mention-tag">{match[2]}</span> : <span key={key++}>{match[2]}</span>);
     lastIndex = start + match[2].length;
   }
   nodes.push(<span key={key++}>{value.slice(lastIndex)}</span>);
@@ -100,7 +103,7 @@ export function MentionComposer({
 
   return (
     <div className="mention-field" data-agent-count={agents.length}>
-      <div className="mention-highlight" aria-hidden="true">{renderHighlight(value)}</div>
+      <div className="mention-highlight" aria-hidden="true">{renderHighlight(value, agents)}</div>
       <textarea
         ref={textareaRef}
         className="mention-input"
@@ -119,7 +122,11 @@ export function MentionComposer({
           {suggestions.map((agent, index) => (
             <li key={agent.id} role="option" aria-selected={index === activeIndex}>
               <button type="button" data-active={index === activeIndex ? "true" : undefined} onMouseDown={(event) => { event.preventDefault(); pickSuggestion(agent); }}>
-                {agent.name}<span className="mention-suggestion-role">{agent.role}</span>
+                <span className="mention-suggestion-head">
+                  <span className="mention-suggestion-name">{agent.name}</span>
+                  <span className="mention-suggestion-role">{agent.role}</span>
+                </span>
+                <span className="mention-suggestion-task" title={agent.task}>{agent.task}</span>
               </button>
             </li>
           ))}
