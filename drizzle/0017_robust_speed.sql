@@ -1,0 +1,1 @@
+ALTER TABLE `users` ADD `do_not_disturb` integer DEFAULT false NOT NULL;

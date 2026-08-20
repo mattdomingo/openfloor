@@ -1,10 +1,10 @@
 "use client";
 
-import { CSSProperties, PointerEvent as ReactPointerEvent, useMemo, useRef, useState } from "react";
+import { CSSProperties, PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState } from "react";
 import { LocalDateTime } from "@/components/LocalDateTime";
 import type { AppUser, SessionMember, SessionSummary, TypingDraft } from "@/lib/session-types";
 import type { CreateFloorAgentInput } from "@/lib/floor-types";
-import { countMessagesSinceObjective, firstMergeableQueueGroup, resolvePersistedAgentMention } from "@/lib/floor-state";
+import { countMessagesSinceObjective, countUnreadTeamMessages, firstMergeableQueueGroup, latestTeamMessageAt, resolvePersistedAgentMention } from "@/lib/floor-state";
 import type { AgentLayout, ChatThread, PanelId, QueueMergeMode, QueueOrderMode, QueueScope, RailId, TeamPanelView, WorkspaceScreen } from "./data";
 import { floorParticipants, type PersistentFloorDataSource } from "./usePersistentFloorData";
 import type { RunActivitySource } from "./useRunActivity";
@@ -55,6 +55,28 @@ export function Workspace({ user, session, members, floorData, activity, typingD
   const [teamPanelView, setTeamPanelView] = useState<TeamPanelView>("goals");
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const selectedAgent = agents.find((agent) => agent.id === selectedAgentId) ?? agents[0] ?? null;
+
+  // Read state is a per-device, per-session mark (no server round trip): the
+  // Review screen always renders team chat inline too, so it counts as "read"
+  // the same as the Team panel's own Chat tab.
+  const teamChatVisible = screen === "review" || (screen === "workspace" && teamPanelView === "chat" && chatThread === "team");
+  const lastReadStorageKey = `openfloor:lastRead:team:${session.id}`;
+  const [lastReadAt, setLastReadAt] = useState(() => {
+    if (typeof window === "undefined") return latestTeamMessageAt(messages);
+    const stored = Number(window.localStorage.getItem(lastReadStorageKey));
+    return Number.isFinite(stored) && stored > 0 ? stored : latestTeamMessageAt(messages);
+  });
+  // Advance the read mark during render (React's documented pattern for
+  // deriving state from a changing condition) so the badge clears in the same
+  // render the chat becomes visible, rather than lagging a frame behind an Effect.
+  const latestTeamAt = latestTeamMessageAt(messages);
+  if (teamChatVisible && latestTeamAt > lastReadAt) setLastReadAt(latestTeamAt);
+  // Persisting to localStorage is the actual external-system side effect, so
+  // it stays in an Effect — it just never calls setState itself.
+  useEffect(() => {
+    window.localStorage.setItem(lastReadStorageKey, String(lastReadAt));
+  }, [lastReadAt, lastReadStorageKey]);
+  const unreadTeamCount = user.doNotDisturb ? 0 : countUnreadTeamMessages(messages, lastReadAt);
 
   async function createAgent(input: CreateFloorAgentInput) {
     const before = new Set(agents.map((agent) => agent.id));
@@ -126,13 +148,13 @@ export function Workspace({ user, session, members, floorData, activity, typingD
   function chromeFor(panel: PanelId, index: number): PanelChrome { return { id: panel, index, count: panelOrder.length, expanded: expandedPanel === panel, collapsible: panel !== "floor", collapsed: isCollapsed(panel), onMove: (direction) => movePanel(panel, direction), onExpand: () => setExpandedPanel(expandedPanel === panel ? null : panel), onCollapse: () => { if (panel !== "floor") setCollapsedRails((current) => ({ ...current, [panel]: !current[panel] })); }, onDragStart: () => setDraggedPanel(panel), onDragEnd: () => { setDraggedPanel(null); setDragOverPanel(null); } }; }
 
   function renderPanel(panel: PanelId, chrome: PanelChrome) {
-    if (panel === "brief") return <BriefRail chrome={chrome} assignments={assignments} agents={agents} queue={queue} onAssignmentChange={async (id, task) => Boolean(await floorData.updateAssignment(id, task))} view={teamPanelView} onViewChange={setTeamPanelView} messages={messages} onSendMessage={async (text, recipient) => Boolean(await floorData.sendMessage(text, recipient))} chatThread={chatThread} onChatThreadChange={setChatThread} participants={participants} currentUserId={user.id} />;
+    if (panel === "brief") return <BriefRail chrome={chrome} assignments={assignments} agents={agents} queue={queue} onAssignmentChange={async (id, task) => Boolean(await floorData.updateAssignment(id, task))} view={teamPanelView} onViewChange={setTeamPanelView} messages={messages} onSendMessage={async (text, recipient) => Boolean(await floorData.sendMessage(text, recipient))} chatThread={chatThread} onChatThreadChange={setChatThread} participants={participants} currentUserId={user.id} unreadTeamCount={unreadTeamCount} />;
     if (panel === "queue") return <PromptQueue chrome={chrome} items={queue} runs={runs} owner={session.role === "owner"} runEnabled={agentRunEnabled} busy={floorData.busy} autoDispatch={floorData.floor.autoDispatch} onAutoDispatch={async (enabled) => { const result = await floorData.setAutoDispatch(enabled); if (result) setNotice(enabled ? "Auto-dispatch enabled" : "Auto-dispatch disabled"); }} onRun={async (id) => { const result = await floorData.runQueueItem(id); if (result) setNotice("Agent run started"); }} onCancel={async (id) => { const result = await floorData.cancelRun(id); if (result) setNotice("Cancellation requested"); }} onDiscard={async (id) => { const result = await floorData.discardRun(id); if (result) setNotice("Verified run branch discarded"); }} onRetry={async (id) => { const result = await floorData.retryRun(id); if (result) setNotice("Retry started against the latest candidate"); }} onEditPrompt={async (queueItemId, promptId, text) => { const result = await floorData.editQueuePrompt(queueItemId, promptId, text); if (result) setNotice("Prompt updated"); return Boolean(result); }} onPause={async (queueItemId, paused) => { const result = await floorData.setQueueItemPaused(queueItemId, paused); if (result) setNotice(paused ? "Prompt paused" : "Prompt resumed"); }} onDelete={async (queueItemId) => { const result = await floorData.deleteQueueItem(queueItemId); if (result) setNotice("Prompt removed"); }} currentUserId={user.id} scope={queueScope} onScope={setQueueScope} orderMode={queueOrderMode} onOrderMode={setQueueOrderMode} mergeMode={queueMergeMode} onMergeMode={setQueueMergeMode} onMergeNow={() => void mergeQueueNow()} draggedItemId={draggedQueueItem} onItemDragStart={setDraggedQueueItem} onItemDragEnd={() => setDraggedQueueItem(null)} onItemDrop={(id) => void dropQueueItem(id)} onFocusAgent={(agentId) => { setSelectedAgentId(agentId); setAgentLayout("focus"); }} />;
     return <AgentFloor chrome={chrome} sessionId={session.id} agents={agents} runs={runs} activity={activity} selected={selectedAgent} onSelect={setSelectedAgentId} agentLayout={agentLayout} onAgentLayout={setAgentLayout} onCreateAgent={createAgent} onUpdateTask={async (agentId, task) => Boolean(await floorData.updateAgentTask(agentId, task))} queue={queue} participants={participants} currentUserId={user.id} />;
   }
 
   return <main className="app-shell" data-screen={screen}>
-    <TopBar screen={screen} onScreen={setScreen} onNotice={setNotice} session={session} user={user} members={members} />
+    <TopBar screen={screen} onScreen={setScreen} onNotice={setNotice} session={session} user={user} members={members} unreadTeamCount={unreadTeamCount} />
     {session.endedAt != null && (
       /* Banner only: the server-side write guard is the enforcement, so a
          stale control just surfaces its 409 through the dock status line. */

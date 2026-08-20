@@ -1,15 +1,16 @@
 "use client";
 
 import { useId } from "react";
+import { DoNotDisturbToggle } from "@/components/DoNotDisturbToggle";
+import type { AppUser } from "@/lib/session-types";
 import { Icon, useDialogDismiss } from "./primitives";
 
-const CATEGORIES = [
+const INERT_CATEGORIES = [
   { name: "Profile", detail: "Name, avatar, and how you appear to others" },
-  { name: "Notifications", detail: "Email and in-app alerts for session activity" },
   { name: "Appearance", detail: "Theme and layout preferences" },
 ];
 
-export function SettingsDialog({ onClose }: { onClose: () => void }) {
+export function SettingsDialog({ user, onClose }: { user: AppUser; onClose: () => void }) {
   const titleId = useId();
   const { dismiss, dialogProps } = useDialogDismiss(onClose);
 
@@ -21,7 +22,12 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
       </div>
       <div className="dialog-body">
         <ul className="settings-category-list">
-          {CATEGORIES.map((category) => (
+          <li className="settings-category-row">
+            <span className="settings-category-name">Notifications</span>
+            <span className="settings-category-detail">Do Not Disturb mutes the team chat unread badge everywhere, on every device.</span>
+            <DoNotDisturbToggle initialValue={user.doNotDisturb} />
+          </li>
+          {INERT_CATEGORIES.map((category) => (
             <li key={category.name} className="settings-category-row" aria-disabled="true">
               <span className="settings-category-name">{category.name}</span>
               <span className="settings-category-detail">{category.detail}</span>

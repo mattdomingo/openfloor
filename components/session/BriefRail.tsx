@@ -21,15 +21,19 @@ type BriefRailProps = {
   onChatThreadChange: (thread: ChatThread) => void;
   participants: FloorParticipant[];
   currentUserId: string;
+  unreadTeamCount: number;
 };
 
 export function BriefRail(props: BriefRailProps) {
+  const chatLabel = props.unreadTeamCount > 0
+    ? <>Chat<span className="unread-badge">{props.unreadTeamCount}</span></>
+    : "Chat";
   const controls = (
     <SegmentedControl
       label="Team panel view"
       value={props.view}
       onChange={props.onViewChange}
-      options={[{ value: "goals", label: "Goals" }, { value: "chat", label: "Chat" }]}
+      options={[{ value: "goals", label: "Goals" }, { value: "chat", label: chatLabel }]}
     />
   );
 

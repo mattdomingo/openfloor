@@ -19,6 +19,7 @@ export function TopBar({
   session,
   user,
   members,
+  unreadTeamCount,
 }: {
   screen: WorkspaceScreen;
   onScreen: (screen: WorkspaceScreen) => void;
@@ -26,6 +27,7 @@ export function TopBar({
   session: SessionSummary;
   user: AppUser;
   members: SessionMember[];
+  unreadTeamCount: number;
 }) {
   const router = useRouter();
   const [inviting, setInviting] = useState(false);
@@ -57,7 +59,9 @@ export function TopBar({
       </div>
 
       <nav className="screen-nav" aria-label="Workspace screens">
-        <button type="button" aria-pressed={screen === "workspace"} onClick={() => onScreen("workspace")}>Workspace</button>
+        <button type="button" aria-pressed={screen === "workspace"} onClick={() => onScreen("workspace")}>
+          Workspace{unreadTeamCount > 0 && <span className="nav-unread-dot" aria-label={`${unreadTeamCount} unread team messages`} />}
+        </button>
         <button type="button" aria-pressed={screen === "review"} onClick={() => onScreen("review")}>Review</button>
       </nav>
 
@@ -85,7 +89,7 @@ export function TopBar({
       </div>
 
       {inviting && <InviteDialog session={session} members={members} onNotice={onNotice} onClose={closeInvite} />}
-      {settingsOpen && <SettingsDialog onClose={closeSettings} />}
+      {settingsOpen && <SettingsDialog user={user} onClose={closeSettings} />}
     </header>
   );
 }

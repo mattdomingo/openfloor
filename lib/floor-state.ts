@@ -12,6 +12,14 @@ export function countMessagesSinceObjective(messages: FloorMessage[], objectiveU
   return messages.filter((message) => message.recipientUserId === null && message.createdAt > objectiveUpdatedAt).length;
 }
 
+export function latestTeamMessageAt(messages: FloorMessage[]): number {
+  return messages.reduce((max, message) => (message.recipientUserId === null ? Math.max(max, message.createdAt) : max), 0);
+}
+
+export function countUnreadTeamMessages(messages: FloorMessage[], lastReadAt: number): number {
+  return messages.filter((message) => message.recipientUserId === null && message.createdAt > lastReadAt).length;
+}
+
 export function resolvePersistedAgentMention(text: string, agents: FloorAgent[]): FloorAgent | null {
   const match = text.match(/@([A-Za-z][\w-]*)/);
   if (!match) return null;

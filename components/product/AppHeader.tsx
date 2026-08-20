@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { DoNotDisturbToggle } from "@/components/DoNotDisturbToggle";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { Avatar } from "@/components/session/primitives";
 import type { AppUser } from "@/lib/session-types";
@@ -16,6 +17,7 @@ export function AppHeader({ user, sessionTitle }: { user: AppUser; sessionTitle?
       <div className="account">
         <Avatar userId={user.id} initials={initials(user.displayName)} tone="you" />
         <span className="account-name" title={user.displayName}>{user.displayName}</span>
+        <DoNotDisturbToggle initialValue={user.doNotDisturb} />
         <ThemeToggle />
         <a className="button" data-variant="quiet" href="/cdn-cgi/access/logout">Sign out</a>
       </div>

@@ -57,6 +57,7 @@ export type AppUser = {
   githubHandle: string | null;
   avatarKey: string | null;
   onboardedAt: number | null;
+  doNotDisturb: boolean;
   createdAt: number;
   updatedAt: number;
 };

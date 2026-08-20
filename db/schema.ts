@@ -13,6 +13,7 @@ export const users = sqliteTable(
     githubHandle: text("github_handle"),
     avatarKey: text("avatar_key"),
     onboardedAt: integer("onboarded_at"),
+    doNotDisturb: integer("do_not_disturb", { mode: "boolean" }).notNull().default(false),
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
   },

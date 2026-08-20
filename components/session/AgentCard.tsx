@@ -47,7 +47,10 @@ export function AgentCard({ agent, latestRun, activityEvents, selected, onFocus,
   );
 }
 
-export function AgentSpotlight({ agent, sessionId, latestRun, activity, onHistory, onUpdateTask }: { agent: FloorAgent; sessionId: string; latestRun: AgentRun | null; activity: RunActivitySource; onHistory: () => void; onUpdateTask: (agentId: string, task: string) => Promise<boolean> }) {
+export function AgentSpotlight({ agent, agents, sessionId, latestRun, activity, onHistory, onSelect, onUpdateTask }: { agent: FloorAgent; agents: FloorAgent[]; sessionId: string; latestRun: AgentRun | null; activity: RunActivitySource; onHistory: () => void; onSelect: (agentId: string) => void; onUpdateTask: (agentId: string, task: string) => Promise<boolean> }) {
+  const index = agents.findIndex((item) => item.id === agent.id);
+  const prevAgent = agents.length > 1 && index >= 0 ? agents[(index - 1 + agents.length) % agents.length] : null;
+  const nextAgent = agents.length > 1 && index >= 0 ? agents[(index + 1) % agents.length] : null;
   return (
     <article className="spotlight" data-status={latestRun?.status ?? "idle"} data-tone={agentTone(agent.id)}>
       <div className="spotlight-head">
@@ -55,6 +58,31 @@ export function AgentSpotlight({ agent, sessionId, latestRun, activity, onHistor
         <div className="agent-identity"><h3>{agent.name}</h3><span>{agent.role} · owned by {agent.ownerName}</span></div>
         <span className="agent-state">{latestRun?.status.replace("_", " ") ?? "Created"}</span>
       </div>
+      {agents.length > 1 && (
+        <div className="spotlight-switcher" role="tablist" aria-label="Switch agent">
+          <button type="button" className="icon-button" aria-label={`Previous agent: ${prevAgent?.name}`} title="Previous agent" onClick={() => prevAgent && onSelect(prevAgent.id)}>
+            <Icon name="chevronLeft" size={12} />
+          </button>
+          <div className="spotlight-switcher-chips">
+            {agents.map((other) => (
+              <button
+                key={other.id}
+                type="button"
+                role="tab"
+                className="spotlight-chip"
+                aria-selected={other.id === agent.id}
+                aria-current={other.id === agent.id}
+                onClick={() => onSelect(other.id)}
+              >
+                {other.name}
+              </button>
+            ))}
+          </div>
+          <button type="button" className="icon-button" aria-label={`Next agent: ${nextAgent?.name}`} title="Next agent" onClick={() => nextAgent && onSelect(nextAgent.id)}>
+            <Icon name="chevronRight" size={12} />
+          </button>
+        </div>
+      )}
       <div className="spotlight-row"><span className="label">Task</span><AgentTaskEditor key={`${agent.id}-${agent.updatedAt}`} agent={agent} onSave={onUpdateTask} /></div>
       <div className="spotlight-row"><span className="label">Execution</span>{latestRun ? <div className="spotlight-execution"><ActivityTimeline run={latestRun} activity={activity} /><p className="review-empty">{latestRun.files.length} changed file{latestRun.files.length === 1 ? "" : "s"} · {latestRun.checks.filter((check) => check.status === "passed").length}/{latestRun.checks.length} checks passed</p>{latestRun.runBranch && <p className="review-empty"><code>{latestRun.runBranch}</code>{latestRun.discardedAt ? " · discarded" : ""}</p>}<ArtifactToggle sessionId={sessionId} run={latestRun} label="Open raw log" closeLabel="Hide raw log" emptyText="The raw log becomes available when the run finishes." /><ArtifactToggle sessionId={sessionId} run={latestRun} kind="prompt" label="Session brief sent to this agent" closeLabel="Hide session brief" emptyText="The session brief becomes available once the run starts." /></div> : <p className="review-empty">No agent run has started.</p>}</div>
       <div className="spotlight-foot"><span><LocalDateTime timestamp={agent.createdAt} /></span><button type="button" className="button agent-chat-button" data-size="sm" onClick={onHistory}><Icon name="message" size={12} />Prompt history</button></div>

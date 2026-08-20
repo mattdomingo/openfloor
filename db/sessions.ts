@@ -32,8 +32,15 @@ export type InvitePreview = {
 
 const APP_USER_COLUMNS = `id, chatgpt_user_id AS providerUserId, email, display_name AS displayName,
               first_name AS firstName, last_name AS lastName, github_handle AS githubHandle,
-              avatar_key AS avatarKey, onboarded_at AS onboardedAt,
+              avatar_key AS avatarKey, onboarded_at AS onboardedAt, do_not_disturb AS doNotDisturb,
               created_at AS createdAt, updated_at AS updatedAt`;
+
+// D1 has no native boolean type, so RETURNING/SELECT come back with
+// doNotDisturb as 0/1 — normalize to a real boolean before handing out AppUser.
+type AppUserRow = Omit<AppUser, "doNotDisturb"> & { doNotDisturb: number };
+function normalizeAppUser(row: AppUserRow): AppUser {
+  return { ...row, doNotDisturb: Boolean(row.doNotDisturb) };
+}
 
 export async function upsertUser(identity: AuthenticatedIdentity, database = getDb()): Promise<AppUser> {
   const now = Date.now();
@@ -46,8 +53,8 @@ export async function upsertUser(identity: AuthenticatedIdentity, database = get
       `UPDATE users SET email = ?, updated_at = ? WHERE chatgpt_user_id = ? RETURNING ${APP_USER_COLUMNS}`,
     )
     .bind(identity.email, now, identity.providerUserId)
-    .first<AppUser>();
-  if (byProvider) return byProvider;
+    .first<AppUserRow>();
+  if (byProvider) return normalizeAppUser(byProvider);
 
   // Cloudflare Access issues a different `sub` per login method (Google vs.
   // a one-time email code), so a returning user who signs in a different way
@@ -59,8 +66,8 @@ export async function upsertUser(identity: AuthenticatedIdentity, database = get
       `UPDATE users SET chatgpt_user_id = ?, updated_at = ? WHERE email = ? RETURNING ${APP_USER_COLUMNS}`,
     )
     .bind(identity.providerUserId, now, identity.email)
-    .first<AppUser>();
-  if (byEmail) return byEmail;
+    .first<AppUserRow>();
+  if (byEmail) return normalizeAppUser(byEmail);
 
   const createdId = crypto.randomUUID();
   const created = await database
@@ -70,27 +77,29 @@ export async function upsertUser(identity: AuthenticatedIdentity, database = get
        RETURNING ${APP_USER_COLUMNS}`,
     )
     .bind(createdId, identity.providerUserId, identity.email, identity.displayName, now, now)
-    .first<AppUser>();
+    .first<AppUserRow>();
 
   if (!created) throw new Error("Unable to create or update the current user.");
-  return created;
+  return normalizeAppUser(created);
 }
 
 export async function findUserByProviderId(
   providerUserId: string,
   database = getDb(),
 ): Promise<AppUser | null> {
-  return database
+  const row = await database
     .prepare(`SELECT ${APP_USER_COLUMNS} FROM users WHERE chatgpt_user_id = ?`)
     .bind(providerUserId)
-    .first<AppUser>();
+    .first<AppUserRow>();
+  return row ? normalizeAppUser(row) : null;
 }
 
 export async function findUserById(userId: string, database = getDb()): Promise<AppUser | null> {
-  return database
+  const row = await database
     .prepare(`SELECT ${APP_USER_COLUMNS} FROM users WHERE id = ?`)
     .bind(userId)
-    .first<AppUser>();
+    .first<AppUserRow>();
+  return row ? normalizeAppUser(row) : null;
 }
 
 export async function completeOnboarding(
@@ -114,9 +123,19 @@ export async function completeOnboarding(
        RETURNING ${APP_USER_COLUMNS}`,
     )
     .bind(input.firstName, input.lastName, input.githubHandle, input.avatarKey, displayName, now, now, userId)
-    .first<AppUser>();
+    .first<AppUserRow>();
   if (!user) throw new Error("Unable to complete onboarding for the current user.");
-  return user;
+  return normalizeAppUser(user);
+}
+
+export async function setDoNotDisturb(userId: string, value: boolean, database = getDb()): Promise<AppUser> {
+  const now = Date.now();
+  const user = await database
+    .prepare(`UPDATE users SET do_not_disturb = ?, updated_at = ? WHERE id = ? RETURNING ${APP_USER_COLUMNS}`)
+    .bind(value ? 1 : 0, now, userId)
+    .first<AppUserRow>();
+  if (!user) throw new Error("Unable to update the current user.");
+  return normalizeAppUser(user);
 }
 
 export async function listSessionsForUser(userId: string, database = getDb()): Promise<SessionSummary[]> {
