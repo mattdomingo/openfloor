@@ -1,6 +1,7 @@
 export type SessionInput = { title: string; objective: string | null };
 export type ObjectiveInput = { objective: string | null };
 export type AgentInput = { name: string; nameKey: string; role: string; task: string; ownerUserId: string };
+export type AgentTaskInput = { task: string };
 export type AssignmentInput = { task: string | null };
 export type MessageInput = { text: string; recipientUserId: string | null };
 export type QueuePromptInput = { prompt: string; agentId: string | null };
@@ -45,6 +46,15 @@ export function parseAgentInput(value: unknown): AgentInput | null {
   const ownerUserId = input.ownerUserId.trim();
   if (!name || name.length > 24 || !role || role.length > 80 || !task || task.length > 1000 || !ownerUserId || ownerUserId.length > 100) return null;
   return { name, nameKey: normalizeAgentName(name), role, task, ownerUserId };
+}
+
+export function parseAgentTaskInput(value: unknown): AgentTaskInput | null {
+  if (!value || typeof value !== "object") return null;
+  const taskValue = (value as Record<string, unknown>).task;
+  if (typeof taskValue !== "string") return null;
+  const task = taskValue.trim();
+  if (!task || task.length > 1000) return null;
+  return { task };
 }
 
 export function parseAssignmentInput(value: unknown): AssignmentInput | null {

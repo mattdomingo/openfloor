@@ -7,7 +7,7 @@ import type {
   FloorReviewSnapshot,
   FloorSnapshot,
 } from "@/lib/floor-types";
-import type { AgentInput, AssignmentInput, MessageInput, QueuePromptInput } from "@/lib/validation";
+import type { AgentInput, AgentTaskInput, AssignmentInput, MessageInput, QueuePromptInput } from "@/lib/validation";
 import { getDb, type D1DatabaseLike } from "./index";
 import {
   getActiveRepositoryCandidate,
@@ -219,6 +219,27 @@ export async function createFloorAgent(
     if (String(error).toLowerCase().includes("unique")) throw new FloorConflictError("An agent with that name already exists.");
     throw error;
   }
+  return readFloorSnapshot(sessionId, userId, database);
+}
+
+export async function updateFloorAgentTask(
+  sessionId: string,
+  userId: string,
+  agentId: string,
+  input: AgentTaskInput,
+  database = getDb(),
+): Promise<FloorSnapshot | null> {
+  if (!(await getActiveMembershipRole(sessionId, userId, database))) return null;
+  const now = Date.now();
+  const results = await database.batch([
+    database.prepare(
+      `UPDATE floor_agents SET task = ?, updated_at = ?
+       WHERE id = ? AND session_id = ?
+         AND EXISTS (SELECT 1 FROM sessions WHERE id = ? AND ended_at IS NULL)`,
+    ).bind(input.task, now, agentId, sessionId, sessionId),
+    bumpFloorRevision(database, sessionId, now),
+  ]);
+  if (!(await activeBatchApplied(results, sessionId, userId, database))) return null;
   return readFloorSnapshot(sessionId, userId, database);
 }
 

@@ -423,8 +423,13 @@
   gap: var(--space-2);
   min-width: 0;
   margin-left: auto;
-  color: var(--text-secondary);
+  padding: 3px var(--space-3) 3px var(--space-2);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-pill);
+  background: var(--status-running-soft);
+  color: var(--text-primary);
   font-size: var(--text-xs);
+  font-weight: 600;
   transition: opacity var(--dur-float) var(--ease-out), transform var(--dur-float) var(--ease-out);
 }
 
@@ -439,9 +444,57 @@
   color: var(--status-running);
 }
 
+.status-line[data-tone="error"] {
+  background: var(--status-blocked-soft);
+}
+
+.status-line[data-tone="error"] .icon {
+  color: var(--status-blocked);
+}
+
 .status-line[data-visible="false"] {
   opacity: 0;
   transform: translateY(3px);
+}
+
+/* A fresh notice gets one brief pop to catch the eye without looping into
+   something distracting: a quick scale-and-settle, not a persistent pulse. */
+@media (prefers-reduced-motion: no-preference) {
+  .status-line[data-visible="true"] {
+    animation: status-line-in var(--dur-base) var(--ease-out);
+  }
+
+  @keyframes status-line-in {
+    0% {
+      transform: scale(0.96);
+      box-shadow: 0 0 0 0 color-mix(in srgb, var(--status-running) 45%, transparent);
+    }
+    60% {
+      transform: scale(1.02);
+    }
+    100% {
+      transform: scale(1);
+      box-shadow: 0 0 0 5px color-mix(in srgb, var(--status-running) 0%, transparent);
+    }
+  }
+
+  .status-line[data-tone="error"][data-visible="true"] {
+    animation-name: status-line-in-error;
+  }
+
+  @keyframes status-line-in-error {
+    0% {
+      transform: scale(0.96);
+      box-shadow: 0 0 0 0 color-mix(in srgb, var(--status-blocked) 45%, transparent);
+    }
+    60% {
+      transform: scale(1.02);
+    }
+    100% {
+      transform: scale(1);
+      box-shadow: 0 0 0 5px color-mix(in srgb, var(--status-blocked) 0%, transparent);
+    }
+  }
 }
 
 /* Responsive ------------------------------------------------------------ */

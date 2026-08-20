@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import type { AgentRun, FloorAgent } from "@/lib/floor-types";
 import { LocalDateTime } from "@/components/LocalDateTime";
 import { Icon } from "./primitives";
@@ -21,7 +22,7 @@ export function AgentCard({ agent, latestRun, selected, onFocus, onHistory }: { 
   );
 }
 
-export function AgentSpotlight({ agent, latestRun, onHistory }: { agent: FloorAgent; latestRun: AgentRun | null; onHistory: () => void }) {
+export function AgentSpotlight({ agent, latestRun, onHistory, onUpdateTask }: { agent: FloorAgent; latestRun: AgentRun | null; onHistory: () => void; onUpdateTask: (agentId: string, task: string) => Promise<boolean> }) {
   return (
     <article className="spotlight" data-status={latestRun?.status ?? "idle"} data-tone={agentTone(agent.id)}>
       <div className="spotlight-head">
@@ -29,9 +30,27 @@ export function AgentSpotlight({ agent, latestRun, onHistory }: { agent: FloorAg
         <div className="agent-identity"><h3>{agent.name}</h3><span>{agent.role} · owned by {agent.ownerName}</span></div>
         <span className="agent-state">{latestRun?.status.replace("_", " ") ?? "Created"}</span>
       </div>
-      <div className="spotlight-row"><span className="label">Task</span><p className="agent-detail-line">{agent.task}</p></div>
+      <div className="spotlight-row"><span className="label">Task</span><AgentTaskEditor key={`${agent.id}-${agent.updatedAt}`} agent={agent} onSave={onUpdateTask} /></div>
       <div className="spotlight-row"><span className="label">Execution</span>{latestRun ? <div><p>{latestRun.summary ?? `Run is ${latestRun.status.replace("_", " ")}.`}</p><p className="review-empty">{latestRun.files.length} changed file{latestRun.files.length === 1 ? "" : "s"} · {latestRun.checks.filter((check) => check.status === "passed").length}/{latestRun.checks.length} checks passed</p>{latestRun.runBranch && <p className="review-empty"><code>{latestRun.runBranch}</code>{latestRun.discardedAt ? " · discarded" : ""}</p>}</div> : <p className="review-empty">No agent run has started.</p>}</div>
       <div className="spotlight-foot"><span><LocalDateTime timestamp={agent.createdAt} /></span><button type="button" className="button agent-chat-button" data-size="sm" onClick={onHistory}><Icon name="message" size={12} />Prompt history</button></div>
     </article>
+  );
+}
+
+function AgentTaskEditor({ agent, onSave }: { agent: FloorAgent; onSave: (agentId: string, task: string) => Promise<boolean> }) {
+  const [value, setValue] = useState(agent.task);
+  return (
+    <textarea
+      className="agent-detail-line agent-task-editor"
+      value={value}
+      aria-label={`Task for ${agent.name}`}
+      maxLength={1000}
+      onChange={(event) => setValue(event.target.value)}
+      onBlur={() => {
+        const normalized = value.trim();
+        if (normalized && normalized !== agent.task) void onSave(agent.id, normalized);
+        else if (!normalized) setValue(agent.task);
+      }}
+    />
   );
 }

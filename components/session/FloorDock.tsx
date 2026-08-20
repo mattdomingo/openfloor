@@ -32,6 +32,7 @@ export function FloorDock({ onSubmit, agents, queueTarget, onQueueTargetChange, 
 }) {
   const target = agents.find((agent) => agent.id === queueTarget) ?? null;
   const [draftVisibility, setDraftVisibility] = useState<DraftVisibility>("typing");
+  const [value, setValue] = useState("");
   const idleTimerRef = useRef<number | null>(null);
   const latestDraftRef = useRef("");
   const teammates = useMemo(() => participants.filter((participant) => !participant.isCurrentUser), [participants]);
@@ -46,6 +47,7 @@ export function FloorDock({ onSubmit, agents, queueTarget, onQueueTargetChange, 
   }, [onTypingUpdate]);
 
   function updateDraft(text: string) {
+    setValue(text);
     latestDraftRef.current = text;
     if (idleTimerRef.current) window.clearTimeout(idleTimerRef.current);
     onTypingUpdate(text, Boolean(text));
@@ -57,10 +59,10 @@ export function FloorDock({ onSubmit, agents, queueTarget, onQueueTargetChange, 
   }
 
   async function submitPrompt() {
-    const prompt = textareaRef.current?.value.trim() ?? "";
+    const prompt = value.trim();
     if (!prompt || busy) return;
     if (await onSubmit(prompt)) {
-      if (textareaRef.current) textareaRef.current.value = "";
+      setValue("");
       latestDraftRef.current = "";
       if (idleTimerRef.current) window.clearTimeout(idleTimerRef.current);
       onTypingUpdate("", false);
@@ -68,10 +70,10 @@ export function FloorDock({ onSubmit, agents, queueTarget, onQueueTargetChange, 
   }
 
   return <section className="dock" aria-label="Open floor" data-mode={draftVisibility}>
-    {(notice || error) && <div className="dock-rail"><StatusLine notice={error ?? notice ?? ""} visible /></div>}
+    {(notice || error) && <div className="dock-rail"><StatusLine notice={error ?? notice ?? ""} visible tone={error ? "error" : "notice"} /></div>}
     <div className="dock-inner"><form className="composer" onSubmit={(event) => { event.preventDefault(); void submitPrompt(); }}>
       <div className="composer-head"><Avatar userId={user.id} initials={initials(user.displayName)} tone="you" online /><div className="composer-who"><strong>{user.displayName}</strong><AgentTargetMenu value={queueTarget} onChange={onQueueTargetChange} agents={agents} /><span>{target ? `Queue for ${target.name}` : "Queue without an agent"}</span></div>{teammates.length > 0 && <div className="floor-presence"><span>Live drafts</span><div className="presence">{teammates.map((person) => <Avatar key={person.id} userId={person.id} initials={person.initials} tone={person.tone} online={person.online} typing={typingDrafts.get(person.id)?.typing} />)}</div></div>}</div>
-      <MentionComposer textareaRef={textareaRef} agents={agents} ariaLabel="Prompt to add to the queue" onValueChange={updateDraft} />
+      <MentionComposer textareaRef={textareaRef} agents={agents} ariaLabel="Prompt to add to the queue" value={value} onValueChange={updateDraft} />
       <div className="composer-foot"><span className="value">Select an agent, use an exact @mention, or leave the prompt unassigned.</span><SegmentedControl label="Teammate drafts" value={draftVisibility} options={draftVisibilityOptions} onChange={setDraftVisibility} /><button type="submit" className="send" aria-label="Add to queue" title="Add to queue" disabled={busy}><span className="button-label send-label">{busy ? "Saving…" : "Add to queue"}</span><Icon name="send" /></button></div>
     </form>{visibleDrafts.length > 0 && <div className="dock-lanes">{visibleDrafts.map((person) => <div className="lane" key={person.id} data-typing={person.draft?.typing ? "true" : "false"} aria-label={`${person.name}'s draft`}><div className="lane-head"><Avatar userId={person.id} initials={person.initials} tone={person.tone} online={person.online} typing={person.draft?.typing} /><strong>{person.name}</strong><em><Icon name="circle" size={6} />{person.draft?.typing ? "typing" : "idle"}</em></div>{person.draft?.text ? <p>{person.draft.text}</p> : <p />}</div>)}</div>}</div>
   </section>;

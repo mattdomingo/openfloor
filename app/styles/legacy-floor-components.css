@@ -1212,6 +1212,29 @@
   line-height: 1.5;
 }
 
+.agent-task-editor {
+  width: 100%;
+  min-height: 44px;
+  padding: var(--space-2);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: none;
+  outline: none;
+  resize: vertical;
+  font-family: inherit;
+}
+
+.agent-task-editor:hover {
+  border-color: var(--line-soft);
+  background: var(--surface-panel);
+}
+
+.agent-task-editor:focus {
+  border-color: var(--line-strong);
+  background: var(--surface-panel);
+  color: var(--text-primary);
+}
+
 .agent-scope {
   display: flex;
   align-items: center;
@@ -2373,7 +2396,9 @@
   background: none;
   outline: none;
   resize: none;
-  color: var(--text-primary);
+  /* Text is transparent so the colored .mention-highlight sitting beneath it
+     (same font metrics, same content) shows through; only the caret paints. */
+  color: transparent;
   caret-color: var(--text-primary);
 }
 
@@ -2421,6 +2446,18 @@
 .mention-suggestions button[data-active="true"] {
   background: var(--accent-soft);
   color: var(--accent);
+}
+
+.mention-suggestion-role {
+  margin-left: var(--space-2);
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+}
+
+.mention-suggestions button:hover .mention-suggestion-role,
+.mention-suggestions button[data-active="true"] .mention-suggestion-role {
+  color: inherit;
+  opacity: 0.75;
 }
 
 .composer-foot {

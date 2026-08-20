@@ -9,7 +9,7 @@ import { AgentCard, AgentSpotlight } from "./AgentCard";
 import { AgentChatHistory } from "./AgentChatHistory";
 import { CreateAgentDialog } from "./CreateAgentDialog";
 
-export function AgentFloor({ chrome, agents, runs, selected, onSelect, agentLayout, onAgentLayout, onCreateAgent, queue, participants, currentUserId }: {
+export function AgentFloor({ chrome, agents, runs, selected, onSelect, agentLayout, onAgentLayout, onCreateAgent, onUpdateTask, queue, participants, currentUserId }: {
   chrome: PanelChrome;
   agents: FloorAgent[];
   runs: AgentRun[];
@@ -18,6 +18,7 @@ export function AgentFloor({ chrome, agents, runs, selected, onSelect, agentLayo
   agentLayout: AgentLayout;
   onAgentLayout: (layout: AgentLayout) => void;
   onCreateAgent: (input: CreateFloorAgentInput) => Promise<boolean>;
+  onUpdateTask: (agentId: string, task: string) => Promise<boolean>;
   queue: FloorQueueItem[];
   participants: FloorParticipant[];
   currentUserId: string;
@@ -35,7 +36,7 @@ export function AgentFloor({ chrome, agents, runs, selected, onSelect, agentLayo
         <div className="floor-empty"><strong>No agents yet</strong><p>Create an agent when the session has work to assign.</p><button type="button" className="button" data-variant="primary" onClick={() => setCreating(true)}>Create agent</button></div>
       ) : agentLayout === "all" ? (
         <div className="agent-grid">{agents.map((agent) => <AgentCard key={agent.id} agent={agent} latestRun={runs.find((run) => run.agentId === agent.id) ?? null} selected={selected?.id === agent.id} onFocus={() => { onSelect(agent.id); onAgentLayout("focus"); }} onHistory={() => setHistoryAgentId(agent.id)} />)}</div>
-      ) : selected ? <AgentSpotlight agent={selected} latestRun={runs.find((run) => run.agentId === selected.id) ?? null} onHistory={() => setHistoryAgentId(selected.id)} /> : null}
+      ) : selected ? <AgentSpotlight agent={selected} latestRun={runs.find((run) => run.agentId === selected.id) ?? null} onHistory={() => setHistoryAgentId(selected.id)} onUpdateTask={onUpdateTask} /> : null}
     </Panel>
     {creating && <CreateAgentDialog participants={participants} currentUserId={currentUserId} onClose={() => { setCreating(false); createButtonRef.current?.focus(); }} onCreate={onCreateAgent} />}
     {historyAgent && <AgentChatHistory agent={historyAgent} queue={queue} onClose={() => setHistoryAgentId(null)} />}

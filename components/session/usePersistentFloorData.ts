@@ -65,6 +65,7 @@ export function usePersistentFloorData(sessionId: string, initialFloor: FloorSna
     clearError: () => setError(null),
     refresh,
     createAgent: (input: CreateFloorAgentInput) => request("/agents", "POST", input),
+    updateAgentTask: (agentId: string, task: string) => request(`/agents/${encodeURIComponent(agentId)}`, "PATCH", { task }),
     updateAssignment: (memberId: string, task: string | null) => request(`/assignments/${encodeURIComponent(memberId)}`, "PATCH", { task }),
     sendMessage: (text: string, recipientUserId: string | null) => request("/messages", "POST", { text, recipientUserId }),
     addQueueItem: (prompt: string, agentId: string | null) => request("/queue", "POST", { prompt, agentId }),
