@@ -6,10 +6,14 @@ The following capabilities require a separate trusted agent-runtime and reposito
 
 - Model/provider discovery, user-managed credentials, and agent-authored chat messages.
 - Deployment and generic support for merge queues or non-squash merge methods.
-- Live terminal streaming and generic artifact download UI.
+- Generic artifact download UI beyond the per-run raw-log expander.
 - Agent editing, archival/deletion, ownership transfer, and queue completion/removal.
 
 Repository connection, active candidate/PR identity, bounded latest-preflight data, and the latest 20 caller-visible run summaries are included in `FloorSnapshot`; full logs and bundles remain excluded. Run branches, publication/integration SHAs, conflicts, and independent attribution stay visible.
+
+## Live run activity streaming
+
+Runs stream a bounded activity feed while Codex executes. The in-sandbox runner (`scripts/codex-runner.mjs`) normalizes Codex thread events (reasoning, commands, file edits, agent messages, errors) and POSTs batches to `POST /runtime/run/events`, authenticated by a run-scoped gateway token with the `events` operation and gated on run status `running`/`cancel_requested`. Events persist in `agent_run_events` with runner sequences starting at 1,000,000; coarse workflow-stage events keep the per-run `MAX+1` scheme, so the merged timeline stays chronological under `ORDER BY sequence`. Accepted events broadcast to session members as a `run.activity` presence event without bumping `floor_revision`; members catch up or paint initial state via `GET /api/sessions/:id/runs/:runId/events?after=<sequence>`. Bounds: detail ≤ 2,000 chars, ≤ 50 events and 256 KB per POST, ≤ 2,000 runner events per run with a `truncated` sentinel; telemetry failures never fail the run.
 
 ## Deployment order
 

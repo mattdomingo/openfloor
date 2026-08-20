@@ -117,6 +117,10 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
             runId, sessionId: context.sessionId, repositoryId: context.repositoryId,
             candidateSha: context.candidateSha, operation: "openai",
           }, this.env.RUNTIME_GATEWAY_SECRET);
+          const eventsToken = await signRunGatewayToken({
+            runId, sessionId: context.sessionId, repositoryId: context.repositoryId,
+            candidateSha: context.candidateSha, operation: "events",
+          }, this.env.RUNTIME_GATEWAY_SECRET);
           await sandbox.startProcess("node /opt/openfloor/codex-runner.mjs", {
             processId,
             autoCleanup: false,
@@ -128,6 +132,8 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
               OPENFLOOR_OPENAI_BASE_URL: `${this.env.OPENFLOOR_RUNTIME_ORIGIN}/runtime/openai/v1`,
               OPENFLOOR_OPENAI_TOKEN: openaiToken,
               OPENFLOOR_MODEL: context.model,
+              OPENFLOOR_EVENTS_URL: `${this.env.OPENFLOOR_RUNTIME_ORIGIN}/runtime/run/events`,
+              OPENFLOOR_EVENTS_TOKEN: eventsToken,
             },
           });
         }

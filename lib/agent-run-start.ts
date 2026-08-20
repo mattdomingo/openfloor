@@ -8,6 +8,7 @@ import {
   finishRunPublished,
   finishRunIntegrated,
   getRunExecutionContext,
+  insertRunActivityEvents,
   markRunChecking,
   markRunCheckRunning,
   markRunRunning,
@@ -15,6 +16,7 @@ import {
   markRunIntegrationConflicted,
   recordRunArtifact,
   replaceRunFiles,
+  RUNNER_SEQUENCE_BASE,
 } from "@/db/runs";
 import { getGitHubAppConfig } from "@/db";
 import {
@@ -27,6 +29,7 @@ import {
 import { getMembershipRole, getSessionForMember } from "@/db/sessions";
 import { createDraftPullRequest, createRepositoryBranch, getInstallationRepository, getRepositoryRefSha, GitHubApiError, mergeRepositoryBranch, setTestRepositoryMergeConflict } from "@/lib/github";
 import { openFloorBranchName } from "@/lib/repository-refs";
+import { notifyRunActivity } from "@/lib/presence-server";
 import { env } from "cloudflare:workers";
 
 type WorkflowBinding = { create(options: { id: string; params: { runId: string } }): Promise<unknown> };
@@ -92,7 +95,7 @@ async function ensureNextCandidateCycle(sessionId: string, userId: string): Prom
 }
 
 async function runTestAgent(runId: string, encoded: string, bucket: R2BucketLike): Promise<"hold" | "failed" | "ready"> {
-  const data = JSON.parse(encoded) as { holdPrompts?: string[]; failPrompts?: string[]; changedPath?: string; pathByPrompt?: Record<string, string>; diff?: string };
+  const data = JSON.parse(encoded) as { holdPrompts?: string[]; failPrompts?: string[]; changedPath?: string; pathByPrompt?: Record<string, string>; diff?: string; activityEvents?: Array<{ kind: string; detail: string }> };
   const context = await getRunExecutionContext(runId);
   if (!context) throw new Error("Test run context is missing");
   await markRunRunning(runId, `test-${runId}`);
@@ -100,6 +103,16 @@ async function runTestAgent(runId: string, encoded: string, bucket: R2BucketLike
   const shouldFail = data.failPrompts?.some((value) => context.prompts.some((prompt) => prompt.text.includes(value))) ?? false;
   const matchedPath = Object.entries(data.pathByPrompt ?? {}).find(([prompt]) => context.prompts.some((item) => item.text.includes(prompt)))?.[1];
   const path = matchedPath ?? data.changedPath ?? "src/agent-change.ts";
+  const activitySource = data.activityEvents ?? [
+    { kind: "reasoning", detail: "Reviewing the requested change before editing." },
+    { kind: "command", detail: "$ git status --short" },
+    { kind: "file_edit", detail: `edited ${path}` },
+    { kind: "agent_message", detail: "Implemented the requested focused change." },
+  ];
+  const inserted = await insertRunActivityEvents(runId, activitySource.map((event, index) => ({
+    sequence: RUNNER_SEQUENCE_BASE + index + 1, kind: event.kind, detail: event.detail,
+  })));
+  if (inserted.length > 0) await notifyRunActivity(context.sessionId, { runId, agentId: context.agentId, events: inserted });
   const diff = data.diff ?? `diff --git a/${path} b/${path}\nnew file mode 100644\n--- /dev/null\n+++ b/${path}\n@@ -0,0 +1 @@\n+export const implemented = true;\n`;
   const codexLogKey = `runs/${runId}/codex.log`;
   await bucket.put(codexLogKey, "Codex test adapter completed a real deterministic run contract.\n");

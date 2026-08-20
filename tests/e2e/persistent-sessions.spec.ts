@@ -218,6 +218,12 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await owner.getByRole("button", { name: "Run", exact: true }).click();
   await expect(owner.getByText("integrated", { exact: true }).first()).toBeVisible();
   await expect(agentFloor.getByText("1 changed file", { exact: false })).toBeVisible();
+  await expect(agentFloor.getByText("Reviewing the requested change before editing.")).toBeVisible();
+  await expect(agentFloor.getByText("$ git status --short")).toBeVisible();
+  await expect(agentFloor.getByText("edited src/agent-change.ts")).toBeVisible();
+  await agentFloor.getByRole("button", { name: "Open raw log" }).click();
+  await expect(agentFloor.getByText("Codex test adapter completed a real deterministic run contract.")).toBeVisible();
+  await agentFloor.getByRole("button", { name: "Hide raw log" }).click();
   await owner.reload();
   await expect(owner.getByText("integrated", { exact: true }).first()).toBeVisible();
   await owner.getByRole("button", { name: "Review" }).click();

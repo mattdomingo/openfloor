@@ -22,6 +22,7 @@ export default defineConfig({
           GITHUB_STATE_SECRET: "worker-test-github-state-secret",
           GITHUB_WEBHOOK_SECRET: "worker-test-github-webhook-secret",
           OPENFLOOR_TEST_ALLOW_IDENTITY_HEADERS: "true",
+          RUNTIME_GATEWAY_SECRET: "worker-test-runtime-gateway-secret",
           TEST_MIGRATIONS: JSON.stringify(migrations),
         },
       },

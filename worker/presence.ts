@@ -7,7 +7,7 @@ import {
   type IdentityEnvironment,
 } from "../lib/identity";
 import type { PresenceEvent, TypingDraft, TypingUpdate } from "../lib/session-types";
-import type { FloorDomain } from "../lib/floor-types";
+import type { FloorDomain, RunActivityEvent } from "../lib/floor-types";
 
 type DurableObjectStubLike = { fetch(request: Request): Promise<Response> };
 type DurableObjectNamespaceLike = {
@@ -66,6 +66,23 @@ export class SessionPresence extends DurableObject {
         return new Response("Invalid floor change", { status: 400 });
       }
       this.broadcast({ type: "floor.changed", revision: body.revision, domains: body.domains as FloorDomain[] });
+      return new Response(null, { status: 204 });
+    }
+    if (url.pathname === "/run-activity" && request.method === "POST") {
+      const body = (await request.json()) as { runId?: unknown; agentId?: unknown; events?: unknown };
+      const validEvent = (event: unknown): event is RunActivityEvent => {
+        if (!event || typeof event !== "object") return false;
+        const candidate = event as Record<string, unknown>;
+        return typeof candidate.id === "string" && typeof candidate.runId === "string"
+          && typeof candidate.sequence === "number" && typeof candidate.kind === "string"
+          && typeof candidate.detail === "string" && candidate.detail.length <= 2_000
+          && typeof candidate.createdAt === "number";
+      };
+      if (typeof body.runId !== "string" || typeof body.agentId !== "string"
+        || !Array.isArray(body.events) || body.events.length > 50 || !body.events.every(validEvent)) {
+        return new Response("Invalid run activity", { status: 400 });
+      }
+      this.broadcast({ type: "run.activity", runId: body.runId, agentId: body.agentId, events: body.events });
       return new Response(null, { status: 204 });
     }
     if (url.pathname === "/disconnect-user" && request.method === "POST") {

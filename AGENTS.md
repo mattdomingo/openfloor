@@ -176,7 +176,7 @@ Known production follow-up: the owner discard action still reports failure in th
 ### Explicitly deferred
 
 - Agent model/provider selection and user-managed provider credentials; Phase 4 deliberately uses one server-configured Codex model and project credential.
-- Agent-authored chat messages, live terminal streaming, and generic artifact download UI.
+- Agent-authored chat messages and generic artifact download UI beyond the per-run raw-log expander. (Live run activity streaming is now real: the sandbox runner posts normalized Codex events to `/runtime/run/events`, they persist in `agent_run_events`, and sessions receive them as `run.activity` presence events.)
 - Deployment automation after repository merge.
 - Agent edit, archive, deletion, or lifecycle states beyond `created`.
 - Queue completion, removal, consumption, or retry workflows.
@@ -525,6 +525,7 @@ There is one `SessionPresence` Durable Object instance per session ID, obtained 
 - `session.changed`
 - `session.ended`
 - `floor.changed`
+- `run.activity`
 - `error`
 
 Event behavior:
@@ -533,6 +534,7 @@ Event behavior:
 - `session.changed` carries the objective and timestamp; clients use last-write-wins by timestamp.
 - `session.ended` carries `endedAt`; clients switch to the read-only presentation without closing their sockets.
 - `floor.changed` carries revision and changed domains; clients refetch if the event revision is newer.
+- `run.activity` carries `{ runId, agentId, events }` batches of persisted run activity; it never bumps `floor_revision`, and clients merge by sequence, catching up through `GET /api/sessions/:id/runs/:runId/events?after=<sequence>`.
 - Membership removal explicitly closes that user's sockets with a membership-ended code.
 
 ### Live teammate drafts
@@ -599,6 +601,8 @@ All paths below are shown without the production `/app` prefix.
 | `POST /api/sessions/[id]/review/ready` | Owner | Reconcile the exact active PR and use GitHub's ready-for-review mutation; preserve 404 concealment. |
 | `POST /api/sessions/[id]/review/merge` | Owner | Reconcile head/base/files/checks/mergeability, request an exact-head squash merge, confirm it, and safely clean matching OpenFloor refs. |
 | `GET /api/sessions/[id]/runs/[runId]/artifacts` | Session member | Return caller-authorized bounded run artifacts from private R2. |
+| `GET /api/sessions/[id]/runs/[runId]/events` | Session member | Return one run's persisted activity timeline incrementally via `?after=<sequence>`. |
+| `POST /runtime/run/events` | Short-lived run events JWT | Ingest bounded, runner-sequenced activity events for one active run and broadcast them as `run.activity`. |
 | `GET /runtime/run/source` | Short-lived run source JWT | Proxy the exact candidate archive for one run. |
 | `POST/GET /runtime/run/bundle` | Short-lived operation JWT | Store an agent-exported bounded Git bundle and serve it only to the clean trusted publisher. |
 | `POST /runtime/openai/v1/responses` | Short-lived run OpenAI JWT | Forward one active run's Codex request while injecting the project credential outside the repository process. |

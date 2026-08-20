@@ -67,6 +67,17 @@ export type FloorQueueItem = {
 
 export type AgentRunStatus = "provisioning" | "running" | "checking" | "ready" | "publishing" | "published" | "integrating" | "integrated" | "conflicted" | "failed" | "cancel_requested" | "cancelled";
 
+export type RunActivityKind = "reasoning" | "command" | "file_edit" | "agent_message" | "error" | "truncated";
+
+export type RunActivityEvent = {
+  id: string;
+  runId: string;
+  sequence: number;
+  kind: string;
+  detail: string;
+  createdAt: number;
+};
+
 export type AgentRunCheck = {
   id: string;
   position: number;

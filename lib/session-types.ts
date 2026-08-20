@@ -42,6 +42,7 @@ export type PresenceEvent =
   | { type: "session.changed"; objective: string | null; updatedAt: number }
   | { type: "session.ended"; endedAt: number }
   | { type: "floor.changed"; revision: number; domains: import("./floor-types").FloorDomain[] }
+  | { type: "run.activity"; runId: string; agentId: string; events: import("./floor-types").RunActivityEvent[] }
   | { type: "error"; code: string };
 
 export type AppUser = {

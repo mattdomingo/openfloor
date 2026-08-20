@@ -8,16 +8,16 @@ import { Brand } from "./Brand";
 const MAX_AVATAR_BYTES = 5 * 1024 * 1024;
 const ACCEPTED_AVATAR_TYPES = ["image/png", "image/jpeg", "image/webp"];
 
-function splitName(displayName: string): { firstName: string; lastName: string } {
-  const parts = displayName.trim().split(/\s+/).filter(Boolean);
+function splitName(fullName: string | null): { firstName: string; lastName: string } {
+  const parts = (fullName ?? "").trim().split(/\s+/).filter(Boolean);
   if (parts.length === 0) return { firstName: "", lastName: "" };
   if (parts.length === 1) return { firstName: parts[0], lastName: "" };
   return { firstName: parts.slice(0, -1).join(" "), lastName: parts[parts.length - 1] };
 }
 
-export function OnboardingScreen({ displayName, returnTo }: { displayName: string; returnTo: string }) {
+export function OnboardingScreen({ fullName, returnTo }: { fullName: string | null; returnTo: string }) {
   const router = useRouter();
-  const initial = splitName(displayName);
+  const initial = splitName(fullName);
   const [firstName, setFirstName] = useState(initial.firstName);
   const [lastName, setLastName] = useState(initial.lastName);
   const [githubHandle, setGithubHandle] = useState("");

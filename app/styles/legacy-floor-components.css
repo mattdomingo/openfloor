@@ -1272,6 +1272,119 @@
   font-size: var(--text-xs);
 }
 
+/* Run activity feed ---------------------------------------------------- */
+
+.agent-activity-line {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+}
+
+.agent-activity-glyph {
+  flex: none;
+  width: 1.1em;
+  text-align: center;
+  font-family: var(--font-mono);
+  color: var(--status-running);
+}
+
+.agent-activity-line[data-kind="error"] .agent-activity-glyph,
+.spotlight-activity-row[data-kind="error"] .agent-activity-glyph {
+  color: var(--status-blocked);
+}
+
+.agent-activity-line[data-kind="command"] .agent-activity-detail,
+.agent-activity-line[data-kind="file_edit"] .agent-activity-detail {
+  font-family: var(--font-mono);
+}
+
+.agent-activity-detail {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .agent-card[data-status="running"] .agent-activity-glyph,
+  .spotlight-activity[data-live="true"] .spotlight-activity-row:last-child .agent-activity-glyph {
+    animation: activity-pulse 1.6s ease-in-out infinite;
+  }
+}
+
+@keyframes activity-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+.spotlight-execution {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.spotlight-activity {
+  display: grid;
+  gap: var(--space-1);
+  max-height: 220px;
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  overflow-y: auto;
+  list-style: none;
+}
+
+.spotlight-activity-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+}
+
+.spotlight-activity-row .agent-activity-detail {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.spotlight-activity-row code.agent-activity-detail {
+  font-family: var(--font-mono);
+}
+
+.spotlight-activity-row[data-kind="agent_message"] .agent-activity-detail {
+  color: var(--text-primary);
+}
+
+.agent-raw-log {
+  display: grid;
+  gap: var(--space-2);
+  justify-items: start;
+}
+
+.agent-raw-log-output {
+  width: 100%;
+  max-height: 260px;
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 /* Chat history --------------------------------------------------------- */
 
 .chat-thread {
@@ -3159,6 +3272,16 @@
 .queue-chip[data-kind="author"][data-tone="ali"] {
   background: color-mix(in srgb, var(--who-3) 28%, var(--surface-raised));
   color: var(--text-primary);
+}
+
+.queue-chip-button {
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.queue-chip-button:hover,
+.queue-chip-button:focus-visible {
+  border-color: var(--agent-color);
 }
 
 .queue-chip[data-kind="agent"] {

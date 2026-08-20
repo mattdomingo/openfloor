@@ -1,4 +1,4 @@
-import type { AgentRun, AgentRunCheck, AgentRunFile, AgentRunStatus } from "@/lib/floor-types";
+import type { AgentRun, AgentRunCheck, AgentRunFile, AgentRunStatus, RunActivityEvent } from "@/lib/floor-types";
 import { getDb, type D1DatabaseLike } from "./index";
 import { getActiveMembershipRole, getMembershipRole } from "./sessions";
 
@@ -485,6 +485,55 @@ export async function getRunArtifactKeysForMember(sessionId: string, runId: stri
      FROM agent_run_artifacts a JOIN agent_runs r ON r.id = a.run_id WHERE r.id = ? AND r.session_id = ? ORDER BY a.kind`,
   ).bind(runId, sessionId).all<{ kind: string; r2Key: string; contentType: string }>();
   return rows.results;
+}
+
+// Runner-emitted activity events own the sequence space at and above this base;
+// workflow-stage events keep the MAX+1 scheme below it until runner events exist,
+// after which MAX+1 lands above the base and the merged timeline stays chronological.
+export const RUNNER_SEQUENCE_BASE = 1_000_000;
+export const MAX_RUNNER_EVENTS_PER_RUN = 2_000;
+
+export async function insertRunActivityEvents(
+  runId: string,
+  events: Array<{ sequence: number; kind: string; detail: string }>,
+  database = getDb(),
+): Promise<RunActivityEvent[]> {
+  if (events.length === 0) return [];
+  const now = Date.now();
+  const prepared: RunActivityEvent[] = events.map((event) => ({
+    id: crypto.randomUUID(),
+    runId,
+    sequence: event.sequence,
+    kind: event.kind,
+    detail: event.detail.slice(0, 2_000),
+    createdAt: now,
+  }));
+  const results = await database.batch(prepared.map((event) => database.prepare(
+    "INSERT OR IGNORE INTO agent_run_events (id, run_id, sequence, kind, detail, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+  ).bind(event.id, event.runId, event.sequence, event.kind, event.detail, event.createdAt)));
+  return prepared.filter((_, index) => Boolean(results[index]?.meta?.changes));
+}
+
+export async function getRunEventsForMember(
+  sessionId: string,
+  runId: string,
+  userId: string,
+  after: number,
+  database = getDb(),
+): Promise<RunActivityEvent[] | null> {
+  if (!(await getMembershipRole(sessionId, userId, database))) return null;
+  const rows = await database.prepare(
+    `SELECT e.id, e.run_id AS runId, e.sequence, e.kind, e.detail, e.created_at AS createdAt
+     FROM agent_run_events e JOIN agent_runs r ON r.id = e.run_id
+     WHERE r.id = ? AND r.session_id = ? AND e.sequence > ? ORDER BY e.sequence LIMIT 500`,
+  ).bind(runId, sessionId, after).all<RunActivityEvent>();
+  return rows.results.map((event) => ({ ...event, sequence: Number(event.sequence), createdAt: Number(event.createdAt) }));
+}
+
+export async function countRunnerActivityEvents(runId: string, database = getDb()): Promise<number> {
+  const row = await database.prepare("SELECT COUNT(*) AS count FROM agent_run_events WHERE run_id = ? AND sequence >= ?")
+    .bind(runId, RUNNER_SEQUENCE_BASE).first<{ count: number }>();
+  return Number(row?.count ?? 0);
 }
 
 async function appendRunEvent(runId: string, kind: string, detail: string, database: D1DatabaseLike): Promise<void> {

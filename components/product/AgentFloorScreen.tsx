@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { BASE_PATH } from "@/components/basePath";
 import { Workspace } from "@/components/session/Workspace";
 import { usePersistentFloorData } from "@/components/session/usePersistentFloorData";
+import { useRunActivity } from "@/components/session/useRunActivity";
 import { reducePresence } from "@/lib/presence";
 import type { FloorSnapshot } from "@/lib/floor-types";
 import { shouldRefreshFloor } from "@/lib/floor-state";
@@ -36,10 +37,18 @@ export function AgentFloorScreen({
   const onMissing = useCallback(() => router.replace("/home"), [router]);
   const floorData = usePersistentFloorData(session.id, initialFloor, onMissing);
   const refreshFloor = floorData.refresh;
+  const activity = useRunActivity(session.id);
+  // Only these two stable callbacks feed the socket effect; depending on the
+  // whole `activity` object would reconnect the socket on every event batch.
+  const { ingest: ingestActivity, catchUp: catchUpActivity } = activity;
+  const activeRunIdsRef = useRef<string[]>([]);
 
   useEffect(() => {
     revisionRef.current = floorData.floor.revision;
-  }, [floorData.floor.revision]);
+    activeRunIdsRef.current = floorData.floor.runs
+      .filter((run) => ["provisioning", "running", "checking", "cancel_requested"].includes(run.status))
+      .map((run) => run.id);
+  }, [floorData.floor.revision, floorData.floor.runs]);
 
   const refreshMembers = useCallback(async () => {
     const response = await fetch(`${BASE_PATH}/api/sessions/${session.id}/members`, { cache: "no-store" });
@@ -66,6 +75,7 @@ export function AgentFloorScreen({
         retryRef.current = 0;
         if (latestTypingUpdateRef.current.text) socket?.send(JSON.stringify(latestTypingUpdateRef.current));
         void refreshFloor();
+        catchUpActivity(activeRunIdsRef.current);
       });
       socket.addEventListener("message", (message) => {
         let event: PresenceEvent;
@@ -90,6 +100,8 @@ export function AgentFloorScreen({
         if (event.type === "session.ended") {
           setSession((current) => ({ ...current, endedAt: event.endedAt }));
         }
+        if (event.type === "run.activity") ingestActivity(event);
+        if (event.type === "floor.changed" && event.domains.includes("runs")) catchUpActivity(activeRunIdsRef.current);
         if (shouldRefreshFloor(revisionRef.current, event)) void refreshFloor();
       });
       socket.addEventListener("close", () => {
@@ -110,7 +122,7 @@ export function AgentFloorScreen({
       }
       socket?.close(1000, "Agent floor closed");
     };
-  }, [refreshFloor, refreshMembers, session.id]);
+  }, [catchUpActivity, ingestActivity, refreshFloor, refreshMembers, session.id]);
 
   const visibleMembers = useMemo(
     () => members.map((member) => ({ ...member, online: onlineIds.has(member.id) })),
@@ -135,5 +147,5 @@ export function AgentFloorScreen({
     if (socketRef.current?.readyState === WebSocket.OPEN) socketRef.current.send(JSON.stringify(update));
   }, []);
 
-  return <Workspace user={user} session={session} members={visibleMembers} floorData={floorData} typingDrafts={typingDrafts} onTypingUpdate={sendTypingUpdate} onSaveObjective={saveObjective} agentRunEnabled={agentRunEnabled} />;
+  return <Workspace user={user} session={session} members={visibleMembers} floorData={floorData} activity={activity} typingDrafts={typingDrafts} onTypingUpdate={sendTypingUpdate} onSaveObjective={saveObjective} agentRunEnabled={agentRunEnabled} />;
 }

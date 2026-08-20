@@ -10,7 +10,7 @@ import { QueueOrderMenu } from "./QueueOrderMenu";
 
 const scopeOptions: { value: QueueScope; label: string }[] = [{ value: "mine", label: "You" }, { value: "team", label: "Team" }];
 
-export function PromptQueue({ chrome, items, runs, owner, runEnabled, busy, autoDispatch, onAutoDispatch, onRun, onCancel, onDiscard, onRetry, onEditPrompt, onPause, onDelete, currentUserId, scope, onScope, orderMode, onOrderMode, mergeMode, onMergeMode, onMergeNow, draggedItemId, onItemDragStart, onItemDragEnd, onItemDrop }: {
+export function PromptQueue({ chrome, items, runs, owner, runEnabled, busy, autoDispatch, onAutoDispatch, onRun, onCancel, onDiscard, onRetry, onEditPrompt, onPause, onDelete, currentUserId, scope, onScope, orderMode, onOrderMode, mergeMode, onMergeMode, onMergeNow, draggedItemId, onItemDragStart, onItemDragEnd, onItemDrop, onFocusAgent }: {
   chrome: PanelChrome;
   items: FloorQueueItem[];
   runs: AgentRun[];
@@ -38,6 +38,7 @@ export function PromptQueue({ chrome, items, runs, owner, runEnabled, busy, auto
   onItemDragStart: (id: string) => void;
   onItemDragEnd: () => void;
   onItemDrop: (targetId: string) => void;
+  onFocusAgent: (agentId: string) => void;
 }) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [dragOverId, setDragOverId] = useState<string | null>(null);
@@ -79,7 +80,7 @@ export function PromptQueue({ chrome, items, runs, owner, runEnabled, busy, auto
         onDragOver={manual ? (event) => { event.preventDefault(); if (draggedItemId && draggedItemId !== item.id) setDragOverId(item.id); } : undefined}
         onDragLeave={manual ? (event: DragEvent<HTMLLIElement>) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragOverId((current) => current === item.id ? null : current); } : undefined}
         onDrop={manual ? () => { setDragOverId(null); onItemDrop(item.id); } : undefined}>
-        <div className="queue-item-head"><span className="queue-identity">{manual && <span className="queue-grip" title="Drag to reorder" aria-hidden="true"><Icon name="grip" /></span>}<span className="queue-position" aria-label={`Queue position ${item.position}`}>#{item.position}</span><span className="queue-chip" data-kind="author">{item.prompts.length > 1 ? `${item.prompts.length} prompts` : first?.authorName}</span><span className="queue-chip" data-kind={item.assignedBy === "router" ? "agent-auto" : "agent"} title={item.assignedBy === "router" ? item.assignedReason ?? "Assigned automatically" : undefined}>{item.agentName ?? "Unassigned"}{item.assignedBy === "router" && " · auto"}</span></span>{first && <span className="queue-time"><LocalDateTime timestamp={first.createdAt} /></span>}</div>
+        <div className="queue-item-head"><span className="queue-identity">{manual && <span className="queue-grip" title="Drag to reorder" aria-hidden="true"><Icon name="grip" /></span>}<span className="queue-position" aria-label={`Queue position ${item.position}`}>#{item.position}</span><span className="queue-chip" data-kind="author">{item.prompts.length > 1 ? `${item.prompts.length} prompts` : first?.authorName}</span>{item.agentId ? <button type="button" className="queue-chip queue-chip-button" data-kind={item.assignedBy === "router" ? "agent-auto" : "agent"} title={item.assignedBy === "router" ? item.assignedReason ?? "Assigned automatically" : "Open this agent"} onClick={() => onFocusAgent(item.agentId!)}>{item.agentName ?? "Unassigned"}{item.assignedBy === "router" && " · auto"}</button> : <span className="queue-chip" data-kind="agent">Unassigned</span>}</span>{first && <span className="queue-time"><LocalDateTime timestamp={first.createdAt} /></span>}</div>
         {editing ? <form className="queue-edit-form" onSubmit={(event) => { event.preventDefault(); const text = draftText.trim(); if (!text || !first) return; void onEditPrompt(item.id, first.id, text).then((ok) => { if (ok) setEditingId(null); }); }}>
           <textarea className="queue-edit-textarea" value={draftText} onChange={(event) => setDraftText(event.target.value)} maxLength={4000} autoFocus />
           <div className="queue-edit-actions">

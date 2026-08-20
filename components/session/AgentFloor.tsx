@@ -6,13 +6,16 @@ import type { AgentLayout } from "./data";
 import { Icon, SegmentedControl } from "./primitives";
 import { Panel, type PanelChrome } from "./Rail";
 import { AgentCard, AgentSpotlight } from "./AgentCard";
+import type { RunActivitySource } from "./useRunActivity";
 import { AgentChatHistory } from "./AgentChatHistory";
 import { CreateAgentDialog } from "./CreateAgentDialog";
 
-export function AgentFloor({ chrome, agents, runs, selected, onSelect, agentLayout, onAgentLayout, onCreateAgent, onUpdateTask, queue, participants, currentUserId }: {
+export function AgentFloor({ chrome, sessionId, agents, runs, activity, selected, onSelect, agentLayout, onAgentLayout, onCreateAgent, onUpdateTask, queue, participants, currentUserId }: {
   chrome: PanelChrome;
+  sessionId: string;
   agents: FloorAgent[];
   runs: AgentRun[];
+  activity: RunActivitySource;
   selected: FloorAgent | null;
   onSelect: (id: string) => void;
   agentLayout: AgentLayout;
@@ -35,8 +38,8 @@ export function AgentFloor({ chrome, agents, runs, selected, onSelect, agentLayo
       {agents.length === 0 ? (
         <div className="floor-empty"><strong>No agents yet</strong><p>Create an agent when the session has work to assign.</p><button type="button" className="button" data-variant="primary" onClick={() => setCreating(true)}>Create agent</button></div>
       ) : agentLayout === "all" ? (
-        <div className="agent-grid">{agents.map((agent) => <AgentCard key={agent.id} agent={agent} latestRun={runs.find((run) => run.agentId === agent.id) ?? null} selected={selected?.id === agent.id} onFocus={() => { onSelect(agent.id); onAgentLayout("focus"); }} onHistory={() => setHistoryAgentId(agent.id)} />)}</div>
-      ) : selected ? <AgentSpotlight agent={selected} latestRun={runs.find((run) => run.agentId === selected.id) ?? null} onHistory={() => setHistoryAgentId(selected.id)} onUpdateTask={onUpdateTask} /> : null}
+        <div className="agent-grid">{agents.map((agent) => { const latestRun = runs.find((run) => run.agentId === agent.id) ?? null; return <AgentCard key={agent.id} agent={agent} latestRun={latestRun} activityEvents={latestRun ? activity.eventsFor(latestRun.id) : []} selected={selected?.id === agent.id} onFocus={() => { onSelect(agent.id); onAgentLayout("focus"); }} onHistory={() => setHistoryAgentId(agent.id)} />; })}</div>
+      ) : selected ? <AgentSpotlight agent={selected} sessionId={sessionId} latestRun={runs.find((run) => run.agentId === selected.id) ?? null} activity={activity} onHistory={() => setHistoryAgentId(selected.id)} onUpdateTask={onUpdateTask} /> : null}
     </Panel>
     {creating && <CreateAgentDialog participants={participants} currentUserId={currentUserId} onClose={() => { setCreating(false); createButtonRef.current?.focus(); }} onCreate={onCreateAgent} />}
     {historyAgent && <AgentChatHistory agent={historyAgent} queue={queue} onClose={() => setHistoryAgentId(null)} />}

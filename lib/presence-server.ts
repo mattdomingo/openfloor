@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import type { FloorDomain } from "./floor-types";
+import type { FloorDomain, RunActivityEvent } from "./floor-types";
 
 type DurableObjectStubLike = { fetch(request: Request | string, init?: RequestInit): Promise<Response> };
 type DurableObjectNamespaceLike = {
@@ -33,6 +33,17 @@ export async function notifyFloorChanged(sessionId: string, revision: number, do
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ revision, domains }),
+  });
+}
+
+export async function notifyRunActivity(
+  sessionId: string,
+  payload: { runId: string; agentId: string; events: RunActivityEvent[] },
+): Promise<void> {
+  await presenceStub(sessionId)?.fetch("https://presence.internal/run-activity", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(payload),
   });
 }
 

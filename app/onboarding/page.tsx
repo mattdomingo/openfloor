@@ -16,5 +16,5 @@ export default async function OnboardingPage({
   const identity = await requireAccessUser("/onboarding");
   const user = await upsertUser(identity);
   if (user.onboardedAt != null) redirect(returnTo);
-  return <OnboardingScreen displayName={identity.displayName} returnTo={returnTo} />;
+  return <OnboardingScreen fullName={identity.fullName} returnTo={returnTo} />;
 }

@@ -7,6 +7,7 @@ import type { CreateFloorAgentInput } from "@/lib/floor-types";
 import { firstMergeableQueueGroup, resolvePersistedAgentMention } from "@/lib/floor-state";
 import type { AgentLayout, ChatThread, PanelId, QueueMergeMode, QueueOrderMode, QueueScope, RailId, TeamPanelView, WorkspaceScreen } from "./data";
 import { floorParticipants, type PersistentFloorDataSource } from "./usePersistentFloorData";
+import type { RunActivitySource } from "./useRunActivity";
 import { type PanelChrome } from "./Rail";
 import { TopBar } from "./TopBar";
 import { ObjectiveBar } from "./ObjectiveBar";
@@ -21,11 +22,12 @@ const RAIL_COLLAPSED_WIDTH = 40;
 const RAIL_MIN_WIDTH = 250;
 const RAIL_MAX_WIDTH = 520;
 
-export function Workspace({ user, session, members, floorData, typingDrafts, onTypingUpdate, onSaveObjective, agentRunEnabled }: {
+export function Workspace({ user, session, members, floorData, activity, typingDrafts, onTypingUpdate, onSaveObjective, agentRunEnabled }: {
   user: AppUser;
   session: SessionSummary;
   members: SessionMember[];
   floorData: PersistentFloorDataSource;
+  activity: RunActivitySource;
   typingDrafts: ReadonlyMap<string, TypingDraft>;
   onTypingUpdate: (text: string, typing: boolean) => void;
   onSaveObjective: (objective: string | null) => Promise<boolean>;
@@ -125,8 +127,8 @@ export function Workspace({ user, session, members, floorData, typingDrafts, onT
 
   function renderPanel(panel: PanelId, chrome: PanelChrome) {
     if (panel === "brief") return <BriefRail chrome={chrome} assignments={assignments} agents={agents} queue={queue} onAssignmentChange={async (id, task) => Boolean(await floorData.updateAssignment(id, task))} view={teamPanelView} onViewChange={setTeamPanelView} messages={messages} onSendMessage={async (text, recipient) => Boolean(await floorData.sendMessage(text, recipient))} chatThread={chatThread} onChatThreadChange={setChatThread} participants={participants} currentUserId={user.id} />;
-    if (panel === "queue") return <PromptQueue chrome={chrome} items={queue} runs={runs} owner={session.role === "owner"} runEnabled={agentRunEnabled} busy={floorData.busy} autoDispatch={floorData.floor.autoDispatch} onAutoDispatch={async (enabled) => { const result = await floorData.setAutoDispatch(enabled); if (result) setNotice(enabled ? "Auto-dispatch enabled" : "Auto-dispatch disabled"); }} onRun={async (id) => { const result = await floorData.runQueueItem(id); if (result) setNotice("Agent run started"); }} onCancel={async (id) => { const result = await floorData.cancelRun(id); if (result) setNotice("Cancellation requested"); }} onDiscard={async (id) => { const result = await floorData.discardRun(id); if (result) setNotice("Verified run branch discarded"); }} onRetry={async (id) => { const result = await floorData.retryRun(id); if (result) setNotice("Retry started against the latest candidate"); }} onEditPrompt={async (queueItemId, promptId, text) => { const result = await floorData.editQueuePrompt(queueItemId, promptId, text); if (result) setNotice("Prompt updated"); return Boolean(result); }} onPause={async (queueItemId, paused) => { const result = await floorData.setQueueItemPaused(queueItemId, paused); if (result) setNotice(paused ? "Prompt paused" : "Prompt resumed"); }} onDelete={async (queueItemId) => { const result = await floorData.deleteQueueItem(queueItemId); if (result) setNotice("Prompt removed"); }} currentUserId={user.id} scope={queueScope} onScope={setQueueScope} orderMode={queueOrderMode} onOrderMode={setQueueOrderMode} mergeMode={queueMergeMode} onMergeMode={setQueueMergeMode} onMergeNow={() => void mergeQueueNow()} draggedItemId={draggedQueueItem} onItemDragStart={setDraggedQueueItem} onItemDragEnd={() => setDraggedQueueItem(null)} onItemDrop={(id) => void dropQueueItem(id)} />;
-    return <AgentFloor chrome={chrome} agents={agents} runs={runs} selected={selectedAgent} onSelect={setSelectedAgentId} agentLayout={agentLayout} onAgentLayout={setAgentLayout} onCreateAgent={createAgent} onUpdateTask={async (agentId, task) => Boolean(await floorData.updateAgentTask(agentId, task))} queue={queue} participants={participants} currentUserId={user.id} />;
+    if (panel === "queue") return <PromptQueue chrome={chrome} items={queue} runs={runs} owner={session.role === "owner"} runEnabled={agentRunEnabled} busy={floorData.busy} autoDispatch={floorData.floor.autoDispatch} onAutoDispatch={async (enabled) => { const result = await floorData.setAutoDispatch(enabled); if (result) setNotice(enabled ? "Auto-dispatch enabled" : "Auto-dispatch disabled"); }} onRun={async (id) => { const result = await floorData.runQueueItem(id); if (result) setNotice("Agent run started"); }} onCancel={async (id) => { const result = await floorData.cancelRun(id); if (result) setNotice("Cancellation requested"); }} onDiscard={async (id) => { const result = await floorData.discardRun(id); if (result) setNotice("Verified run branch discarded"); }} onRetry={async (id) => { const result = await floorData.retryRun(id); if (result) setNotice("Retry started against the latest candidate"); }} onEditPrompt={async (queueItemId, promptId, text) => { const result = await floorData.editQueuePrompt(queueItemId, promptId, text); if (result) setNotice("Prompt updated"); return Boolean(result); }} onPause={async (queueItemId, paused) => { const result = await floorData.setQueueItemPaused(queueItemId, paused); if (result) setNotice(paused ? "Prompt paused" : "Prompt resumed"); }} onDelete={async (queueItemId) => { const result = await floorData.deleteQueueItem(queueItemId); if (result) setNotice("Prompt removed"); }} currentUserId={user.id} scope={queueScope} onScope={setQueueScope} orderMode={queueOrderMode} onOrderMode={setQueueOrderMode} mergeMode={queueMergeMode} onMergeMode={setQueueMergeMode} onMergeNow={() => void mergeQueueNow()} draggedItemId={draggedQueueItem} onItemDragStart={setDraggedQueueItem} onItemDragEnd={() => setDraggedQueueItem(null)} onItemDrop={(id) => void dropQueueItem(id)} onFocusAgent={(agentId) => { setSelectedAgentId(agentId); setAgentLayout("focus"); }} />;
+    return <AgentFloor chrome={chrome} sessionId={session.id} agents={agents} runs={runs} activity={activity} selected={selectedAgent} onSelect={setSelectedAgentId} agentLayout={agentLayout} onAgentLayout={setAgentLayout} onCreateAgent={createAgent} onUpdateTask={async (agentId, task) => Boolean(await floorData.updateAgentTask(agentId, task))} queue={queue} participants={participants} currentUserId={user.id} />;
   }
 
   return <main className="app-shell" data-screen={screen}>
