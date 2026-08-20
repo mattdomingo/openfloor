@@ -73,6 +73,12 @@
   text-decoration: underline;
 }
 
+.history-nav {
+  display: flex;
+  gap: var(--space-1);
+  flex: none;
+}
+
 .screen-nav {
   display: flex;
   gap: 2px;
