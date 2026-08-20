@@ -1,5 +1,3 @@
-import { getSandbox, type Sandbox } from "@cloudflare/sandbox";
-import { env } from "cloudflare:workers";
 import { getGitHubAppConfig } from "@/db";
 import { getFloorSnapshot } from "@/db/floor";
 import {
@@ -8,27 +6,27 @@ import {
   markCandidateMerged,
   reconcileCandidateReview,
 } from "@/db/repositories";
-import {
-  createInstallationToken,
-  deleteTestRepositoryBranchIfMatches,
-  getPullRequestReview,
-  getRepositoryRefSha,
-  GitHubApiError,
-  squashMergePullRequest,
-} from "@/lib/github";
-import { notifyFloorChanged } from "@/lib/presence-server";
+import { endSession } from "@/db/sessions";
+import { getPullRequestReview, GitHubApiError, squashMergePullRequest } from "@/lib/github";
+import { notifyFloorChanged, notifySessionEnded } from "@/lib/presence-server";
+import { deleteVerifiedBranches, type CleanupTarget } from "@/lib/repository-cleanup";
 import { isApiError, requireApiUser } from "@/lib/server-auth";
 import type { GitHubRepositoryOption } from "@/lib/session-types";
 import { activeOwnerErrorResponse, mutationErrorResponse } from "@/lib/floor-api";
 
-type CleanupTarget = { id: string | null; name: string; sha: string; candidate: boolean };
-
-export async function POST(_request: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const user = await requireApiUser();
   if (isApiError(user)) return user;
   const sessionId = (await params).id;
   const ownerError = await activeOwnerErrorResponse(sessionId, user.id);
   if (ownerError) return ownerError;
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    body = {};
+  }
+  const deleteCandidateBranch = Boolean((body as { deleteCandidateBranch?: unknown } | null)?.deleteCandidateBranch);
   let context;
   try {
     context = await getCandidateReviewMutationContext(sessionId, user.id);
@@ -36,6 +34,9 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
     return mutationErrorResponse(error);
   }
   if (!context) return Response.json({ error: "Session not found" }, { status: 404 });
+  if (context.integrationRunId) {
+    return Response.json({ error: "A run is still integrating into this candidate", runId: context.integrationRunId }, { status: 409 });
+  }
   if (context.candidateStatus !== "active" || context.connectionStatus !== "ready" || !context.candidateSha ||
       context.remoteCandidateSha !== context.candidateSha || !context.pullRequestNumber) {
     return Response.json({ error: "The active pull request is not ready to merge" }, { status: 409 });
@@ -62,7 +63,11 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
       return Response.json({ error: "GitHub did not confirm the squash merge" }, { status: 502 });
     }
     await markCandidateMerged(sessionId, context.candidateId, user.id, mergeCommitSha);
-    const cleanup = await cleanupBranches(config, context, repository);
+    const targets: CleanupTarget[] = [
+      ...context.runs.filter((run) => !run.branchDeletedAt && run.expectedSha).map((run) => ({ id: run.id, name: run.branchName, sha: run.expectedSha, candidate: false })),
+      ...(deleteCandidateBranch ? [{ id: null, name: context.candidateBranch, sha: context.candidateSha!, candidate: true }] : []),
+    ];
+    const cleanup = await deleteVerifiedBranches(config, context.installationId, repository, targets, context.candidateId);
     const revision = await finishCandidateCleanup(
       sessionId,
       context.candidateId,
@@ -70,6 +75,16 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
       cleanup.candidateDeleted,
       cleanup.complete,
     );
+    // A session results in one candidate branch, ever — the merge is the end
+    // of the session's lifecycle regardless of whether the branch was kept.
+    const ended = await endSession(sessionId, user.id, "merged");
+    if (ended === "missing" || ended === "forbidden") {
+      return Response.json({ error: "The merge succeeded but the session could not be ended" }, { status: 500 });
+    }
+    if ("blocked" in ended) {
+      return Response.json({ error: "A run is still integrating into this candidate", runId: ended.runId }, { status: 409 });
+    }
+    await notifySessionEnded(sessionId, ended.endedAt, ended.reason);
     const floor = await getFloorSnapshot(sessionId, user.id);
     if (!floor) return Response.json({ error: "Session not found" }, { status: 404 });
     await notifyFloorChanged(sessionId, revision, ["queue", "repository", "runs", "review"]);
@@ -82,61 +97,6 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
     }
     return Response.json({ error: "The pull request could not be merged safely" }, { status: 502 });
   }
-}
-
-async function cleanupBranches(
-  config: ReturnType<typeof getGitHubAppConfig>,
-  context: NonNullable<Awaited<ReturnType<typeof getCandidateReviewMutationContext>>>,
-  repository: GitHubRepositoryOption,
-) {
-  const targets: CleanupTarget[] = [
-    ...context.runs.filter((run) => !run.branchDeletedAt && run.expectedSha).map((run) => ({ id: run.id, name: run.branchName, sha: run.expectedSha, candidate: false })),
-    { id: null, name: context.candidateBranch, sha: context.candidateSha!, candidate: true },
-  ];
-  const safe: CleanupTarget[] = [];
-  const alreadyMissing: CleanupTarget[] = [];
-  for (const target of targets) {
-    try {
-      const observed = await getRepositoryRefSha(config, context.installationId, repository, target.name);
-      if (observed === target.sha) safe.push(target);
-    } catch (error) {
-      if (error instanceof GitHubApiError && error.status === 404) alreadyMissing.push(target);
-      else throw error;
-    }
-  }
-  let deleted: CleanupTarget[] = [];
-  if (config.testData) {
-    for (const target of safe) {
-      if (await deleteTestRepositoryBranchIfMatches(config, context.installationId, repository, target.name, target.sha)) deleted.push(target);
-    }
-  } else if (safe.length > 0) {
-    const bindings = env as unknown as { SANDBOX?: DurableObjectNamespace<Sandbox> };
-    if (!bindings.SANDBOX) throw new GitHubApiError("Safe branch cleanup is unavailable", 503);
-    const sandbox = getSandbox(bindings.SANDBOX, `cleanup-v1-${context.candidateId}-${crypto.randomUUID()}`, { keepAlive: false, enableDefaultSession: false, normalizeId: true });
-    try {
-      const token = await createInstallationToken(config, context.installationId, context.repositoryId);
-      const result = await sandbox.exec("node /opt/openfloor/cleanup-branches.mjs", {
-        timeout: 5 * 60 * 1000,
-        env: {
-          OPENFLOOR_CLEANUP_ROOT: `/workspace/cleanup-${context.candidateId}`,
-          OPENFLOOR_REPOSITORY_URL: `https://github.com/${context.repositoryOwner}/${context.repositoryName}.git`,
-          OPENFLOOR_GITHUB_TOKEN: token,
-          OPENFLOOR_BRANCHES: JSON.stringify(safe.map((target) => ({ name: target.name, sha: target.sha }))),
-        },
-      });
-      if (!result.success) throw new GitHubApiError("Trusted branch cleanup failed", 502);
-      const output = JSON.parse(result.stdout.trim()) as { deleted?: string[] };
-      deleted = safe.filter((target) => output.deleted?.includes(target.name));
-    } finally {
-      await sandbox.destroy().catch(() => undefined);
-    }
-  }
-  const cleared = [...alreadyMissing, ...deleted];
-  return {
-    deletedRunIds: cleared.flatMap((target) => target.id ? [target.id] : []),
-    candidateDeleted: cleared.some((target) => target.candidate),
-    complete: cleared.length === targets.length,
-  };
 }
 
 function repositoryFrom(context: NonNullable<Awaited<ReturnType<typeof getCandidateReviewMutationContext>>>): GitHubRepositoryOption {

@@ -88,10 +88,10 @@ describe("SessionPresence Durable Object", () => {
     const response = await stub.fetch("https://presence.internal/session-ended", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ endedAt: 99 }),
+      body: JSON.stringify({ endedAt: 99, reason: "owner" }),
     });
     expect(response.status).toBe(204);
-    await expect(notification).resolves.toEqual({ type: "session.ended", endedAt: 99 });
+    await expect(notification).resolves.toEqual({ type: "session.ended", endedAt: 99, reason: "owner" });
     expect(first.socket.readyState).toBe(WebSocket.OPEN);
     const invalid = await stub.fetch("https://presence.internal/session-ended", {
       method: "POST",

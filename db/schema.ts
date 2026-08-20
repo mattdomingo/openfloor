@@ -26,6 +26,7 @@ export const sessions = sqliteTable("sessions", {
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull(),
   endedAt: integer("ended_at"),
+  endedReason: text("ended_reason", { enum: ["owner", "merged"] }),
   floorRevision: integer("floor_revision").notNull().default(0),
   autoDispatch: integer("auto_dispatch", { mode: "boolean" }).notNull().default(false),
 });

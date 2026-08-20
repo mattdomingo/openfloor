@@ -152,19 +152,61 @@ function DeleteSessionDialog({ session, onClose }: { session: SessionSummary; on
   const { dismiss, dialogProps } = useDialogDismiss(onClose);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [warning, setWarning] = useState<string | null>(null);
+  const [blockingRunId, setBlockingRunId] = useState<string | null>(null);
 
   async function remove() {
     setBusy(true);
     setError(null);
     const response = await fetch(`${BASE_PATH}/api/sessions/${session.id}`, { method: "DELETE" });
     if (!response.ok) {
-      const body = (await response.json().catch(() => null)) as { error?: string } | null;
+      const body = (await response.json().catch(() => null)) as { error?: string; runId?: string } | null;
       setError(body?.error ?? "Unable to delete the session");
+      setBlockingRunId(body?.runId ?? null);
       setBusy(false);
+      return;
+    }
+    const body = (await response.json().catch(() => null)) as { warning?: string } | null;
+    if (body?.warning) {
+      setWarning(body.warning);
+      setBusy(false);
+      router.refresh();
       return;
     }
     dismiss();
     router.refresh();
+  }
+
+  async function cancelAndRetry() {
+    if (!blockingRunId) return;
+    setBusy(true);
+    setError(null);
+    await fetch(`${BASE_PATH}/api/sessions/${session.id}/runs/${encodeURIComponent(blockingRunId)}/cancel`, { method: "POST" });
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      await new Promise((resolve) => window.setTimeout(resolve, 2000));
+      const response = await fetch(`${BASE_PATH}/api/sessions/${session.id}`, { method: "DELETE" });
+      if (response.ok) {
+        setBlockingRunId(null);
+        const body = (await response.json().catch(() => null)) as { warning?: string } | null;
+        if (body?.warning) {
+          setWarning(body.warning);
+          setBusy(false);
+        } else {
+          dismiss();
+        }
+        router.refresh();
+        return;
+      }
+      const body = (await response.json().catch(() => null)) as { error?: string; runId?: string } | null;
+      if (!body?.runId) {
+        setError(body?.error ?? "Unable to delete the session");
+        setBlockingRunId(null);
+        setBusy(false);
+        return;
+      }
+    }
+    setError("The run is taking longer than expected to cancel. Try again in a moment.");
+    setBusy(false);
   }
 
   return (
@@ -173,9 +215,20 @@ function DeleteSessionDialog({ session, onClose }: { session: SessionSummary; on
         <div className="dialog-title"><h2 id="delete-session-title">Delete “{session.title}”?</h2><p>This permanently removes the session for every member: floor, queue, messages, and repository connection. It cannot be undone.</p></div>
       </div>
       {error && <div className="dialog-body"><p className="form-error" role="alert">{error}</p></div>}
+      {warning && <div className="dialog-body"><p role="status">Session deleted. {warning}</p></div>}
       <div className="dialog-foot">
-        <button type="button" className="button" data-variant="quiet" onClick={dismiss} disabled={busy}>Cancel</button>
-        <button type="button" className="button danger-button" onClick={remove} disabled={busy}>Delete session</button>
+        {warning ? (
+          <button type="button" className="button" onClick={dismiss}>Close</button>
+        ) : (
+          <>
+            <button type="button" className="button" data-variant="quiet" onClick={dismiss} disabled={busy}>Cancel</button>
+            {blockingRunId ? (
+              <button type="button" className="button danger-button" onClick={cancelAndRetry} disabled={busy}>Cancel that run &amp; delete session</button>
+            ) : (
+              <button type="button" className="button danger-button" onClick={remove} disabled={busy}>Delete session</button>
+            )}
+          </>
+        )}
       </div>
     </dialog>
   );

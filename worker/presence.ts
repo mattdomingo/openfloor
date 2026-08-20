@@ -52,11 +52,13 @@ export class SessionPresence extends DurableObject {
       return new Response(null, { status: 204 });
     }
     if (url.pathname === "/session-ended" && request.method === "POST") {
-      const body = (await request.json()) as { endedAt?: unknown };
-      if (typeof body.endedAt !== "number") return new Response("Invalid session end", { status: 400 });
+      const body = (await request.json()) as { endedAt?: unknown; reason?: unknown };
+      if (typeof body.endedAt !== "number" || (body.reason !== "owner" && body.reason !== "merged")) {
+        return new Response("Invalid session end", { status: 400 });
+      }
       // Sockets stay open on purpose: ended sessions remain readable, and the
       // server-side write guard is the enforcement.
-      this.broadcast({ type: "session.ended", endedAt: body.endedAt });
+      this.broadcast({ type: "session.ended", endedAt: body.endedAt, reason: body.reason });
       return new Response(null, { status: 204 });
     }
     if (url.pathname === "/floor-changed" && request.method === "POST") {

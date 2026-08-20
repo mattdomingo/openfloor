@@ -6,16 +6,18 @@ import type { CreateFloorAgentInput, FloorParticipant, FloorSnapshot } from "@/l
 import type { AppUser, SessionMember } from "@/lib/session-types";
 import { initials } from "./data";
 
-type MutationResult = { floor?: FloorSnapshot; error?: string };
+type MutationResult = { floor?: FloorSnapshot; error?: string; runId?: string };
 
 export function usePersistentFloorData(sessionId: string, initialFloor: FloorSnapshot, onMissing: () => void) {
   const [floor, setFloor] = useState(initialFloor);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [blockingRunId, setBlockingRunId] = useState<string | null>(null);
 
   const request = useCallback(async (path: string, method: string, body?: unknown) => {
     setBusy(true);
     setError(null);
+    setBlockingRunId(null);
     try {
       const response = await fetch(`${BASE_PATH}/api/sessions/${sessionId}${path}`, {
         method,
@@ -30,6 +32,7 @@ export function usePersistentFloorData(sessionId: string, initialFloor: FloorSna
       const result = (await response.json()) as MutationResult;
       if (!response.ok || !result.floor) {
         setError(result.error ?? "The floor could not be updated.");
+        setBlockingRunId(result.runId ?? null);
         return null;
       }
       setFloor(result.floor);
@@ -62,6 +65,7 @@ export function usePersistentFloorData(sessionId: string, initialFloor: FloorSna
     floor,
     busy,
     error,
+    blockingRunId,
     clearError: () => setError(null),
     refresh,
     createAgent: (input: CreateFloorAgentInput) => request("/agents", "POST", input),
@@ -82,7 +86,8 @@ export function usePersistentFloorData(sessionId: string, initialFloor: FloorSna
     discardRun: (runId: string) => request(`/runs/${encodeURIComponent(runId)}/discard`, "POST"),
     retryRun: (runId: string) => request(`/runs/${encodeURIComponent(runId)}/retry`, "POST"),
     readyReview: () => request("/review/ready", "POST"),
-    squashMergeReview: () => request("/review/merge", "POST"),
+    squashMergeReview: (deleteCandidateBranch: boolean) => request("/review/merge", "POST", { deleteCandidateBranch }),
+    deleteReviewBranch: () => request("/review/branch", "DELETE"),
   };
 }
 

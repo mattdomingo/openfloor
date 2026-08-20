@@ -1,9 +1,11 @@
 import { getSandbox, type Sandbox } from "@cloudflare/sandbox";
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
+import { NonRetryableError } from "cloudflare:workflows";
 import type { D1DatabaseLike } from "../db";
 import {
   bumpAgentRunRevision,
   beginRunIntegration,
+  cancelRunIntegration,
   finishAgentRun,
   finishRunCheck,
   finishRunPublished,
@@ -394,6 +396,9 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
   private async integrate(runId: string, step: WorkflowStep): Promise<{ status: string }> {
     try {
       const result = await step.do("serialize and integrate run", { retries: { limit: 20, delay: "5 seconds", backoff: "exponential" }, timeout: "20 minutes" }, async () => {
+        // Checked on every attempt (not just once) so a cancellation requested
+        // between retries is honored instead of waiting out the full backoff.
+        if (await isRunCancellationRequested(runId, this.env.DB)) throw new NonRetryableError("Integration cancelled");
         const context = await beginRunIntegration(runId, this.env.DB);
         const config = getGitHubAppConfig();
         const repository: GitHubRepositoryOption = {
@@ -442,6 +447,14 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
       }
       return { status: "integrated" };
     } catch (error) {
+      if (await isRunCancellationRequested(runId, this.env.DB)) {
+        const cancelled = await cancelRunIntegration(runId, this.env.DB);
+        if (cancelled) {
+          await notifyFloorChanged(cancelled.sessionId, cancelled.revision, ["queue", "repository", "runs", "review"]);
+          await pokeSessionRouter(cancelled.sessionId, "run_completed");
+        }
+        return { status: "cancelled" };
+      }
       const reason = error instanceof Error ? error.message : "Candidate integration failed";
       const update = await releaseRunIntegration(runId, reason, this.env.DB);
       if (update) await notifyFloorChanged(update.sessionId, update.revision, ["queue", "repository", "runs", "review"]);

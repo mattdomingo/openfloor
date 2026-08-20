@@ -488,6 +488,7 @@ export async function getCandidateReviewMutationContext(
   const candidate = await database.prepare(
     `SELECT c.id AS candidateId, c.branch_name AS candidateBranch, c.base_branch AS baseBranch,
             c.candidate_sha AS candidateSha, c.remote_candidate_sha AS remoteCandidateSha,
+            c.integration_run_id AS integrationRunId,
             c.pull_request_number AS pullRequestNumber, c.pull_request_node_id AS pullRequestNodeId,
             c.pull_request_draft AS pullRequestDraft, CASE WHEN c.merged_at IS NOT NULL THEN 'merged' ELSE c.status END AS candidateStatus,
             rc.status AS connectionStatus, rc.installation_id AS installationId,
@@ -498,6 +499,7 @@ export async function getCandidateReviewMutationContext(
      WHERE c.session_id = ? AND c.status = 'active' ORDER BY c.created_at DESC LIMIT 1`,
   ).bind(sessionId).first<{
     candidateId: string; candidateBranch: string; baseBranch: string; candidateSha: string | null; remoteCandidateSha: string | null;
+    integrationRunId: string | null;
     pullRequestNumber: number | null; pullRequestNodeId: string | null; pullRequestDraft: number | boolean | null;
     candidateStatus: "active" | "merged"; connectionStatus: RepositoryConnectionStatus; installationId: string;
     repositoryId: string; repositoryOwner: string; repositoryName: string; repositoryFullName: string;
@@ -512,6 +514,35 @@ export async function getCandidateReviewMutationContext(
      ORDER BY created_at`,
   ).bind(candidate.candidateId).all<{ id: string; branchName: string; expectedSha: string; remoteSha: string | null; branchDeletedAt: number | null }>();
   return { ...candidate, repositoryPrivate: Boolean(candidate.repositoryPrivate), runs: runs.results };
+}
+
+/* For the deferred "delete candidate branch" action, reachable from the
+   review page after the session has already auto-ended on merge. Deliberately
+   getMembershipRole, not the active guard: this must keep working post-end,
+   the same way endSession/deleteSession do. */
+export async function getCandidateBranchDeleteContext(
+  sessionId: string,
+  userId: string,
+  database = getDb(),
+) {
+  if ((await getMembershipRole(sessionId, userId, database)) !== "owner") return null;
+  const candidate = await database.prepare(
+    `SELECT c.id AS candidateId, c.branch_name AS candidateBranch, c.candidate_sha AS candidateSha,
+            c.merged_at AS mergedAt, c.branch_deleted_at AS branchDeletedAt, c.integration_run_id AS integrationRunId,
+            rc.installation_id AS installationId, rc.repository_id AS repositoryId,
+            rc.repository_owner AS repositoryOwner, rc.repository_name AS repositoryName,
+            rc.repository_full_name AS repositoryFullName, rc.repository_private AS repositoryPrivate,
+            rc.default_branch AS defaultBranch
+     FROM repository_candidates c JOIN repository_connections rc ON rc.id = c.connection_id
+     WHERE c.session_id = ? ORDER BY c.created_at DESC LIMIT 1`,
+  ).bind(sessionId).first<{
+    candidateId: string; candidateBranch: string; candidateSha: string | null;
+    mergedAt: number | null; branchDeletedAt: number | null; integrationRunId: string | null;
+    installationId: string; repositoryId: string; repositoryOwner: string; repositoryName: string;
+    repositoryFullName: string; repositoryPrivate: number | boolean; defaultBranch: string;
+  }>();
+  if (!candidate) return null;
+  return { ...candidate, repositoryPrivate: Boolean(candidate.repositoryPrivate) };
 }
 
 export async function reconcileCandidateReview(

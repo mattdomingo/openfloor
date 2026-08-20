@@ -11,6 +11,7 @@ type SessionRecord = {
   createdAt: number;
   updatedAt: number;
   endedAt: number | null;
+  endedReason: "owner" | "merged" | null;
   archivedAt: number | null;
 };
 
@@ -122,7 +123,7 @@ export async function listSessionsForUser(userId: string, database = getDb()): P
     .prepare(
       `SELECT s.id, s.title, s.objective, mine.role,
               COUNT(all_members.user_id) AS memberCount,
-              s.created_at AS createdAt, s.updated_at AS updatedAt, s.ended_at AS endedAt,
+              s.created_at AS createdAt, s.updated_at AS updatedAt, s.ended_at AS endedAt, s.ended_reason AS endedReason,
               mine.archived_at AS archivedAt
        FROM sessions s
        JOIN session_members mine ON mine.session_id = s.id AND mine.user_id = ?
@@ -166,6 +167,7 @@ export async function createSession(
       createdAt: now,
       updatedAt: now,
       endedAt: null,
+      endedReason: null,
       archivedAt: null,
     },
     inviteId,
@@ -181,7 +183,7 @@ export async function getSessionForMember(
     .prepare(
       `SELECT s.id, s.title, s.objective, mine.role,
               COUNT(all_members.user_id) AS memberCount,
-              s.created_at AS createdAt, s.updated_at AS updatedAt, s.ended_at AS endedAt,
+              s.created_at AS createdAt, s.updated_at AS updatedAt, s.ended_at AS endedAt, s.ended_reason AS endedReason,
               mine.archived_at AS archivedAt
        FROM sessions s
        JOIN session_members mine ON mine.session_id = s.id AND mine.user_id = ?
@@ -294,27 +296,41 @@ export async function getActiveMembershipRole(
 export async function endSession(
   sessionId: string,
   userId: string,
+  reason: "owner" | "merged" = "owner",
   database = getDb(),
-): Promise<"missing" | "forbidden" | { endedAt: number }> {
+): Promise<"missing" | "forbidden" | { blocked: "integration_in_progress"; runId: string } | { endedAt: number; reason: "owner" | "merged" }> {
   // Deliberately getMembershipRole, not the active guard: ending must work
   // regardless of (and idempotently after) the ended state.
   const role = await getMembershipRole(sessionId, userId, database);
   if (!role) return "missing";
   if (role !== "owner") return "forbidden";
+  const blocking = await getBlockingIntegrationRunId(sessionId, database);
+  if (blocking) return { blocked: "integration_in_progress", runId: blocking };
   const now = Date.now();
   await database.batch([
     database
-      .prepare("UPDATE sessions SET ended_at = ?, updated_at = ? WHERE id = ? AND ended_at IS NULL")
-      .bind(now, now, sessionId),
+      .prepare("UPDATE sessions SET ended_at = ?, ended_reason = ?, updated_at = ? WHERE id = ? AND ended_at IS NULL")
+      .bind(now, reason, now, sessionId),
     database
       .prepare("UPDATE session_invites SET revoked_at = ? WHERE session_id = ? AND revoked_at IS NULL")
       .bind(now, sessionId),
   ]);
   const row = await database
-    .prepare("SELECT ended_at AS endedAt FROM sessions WHERE id = ?")
+    .prepare("SELECT ended_at AS endedAt, ended_reason AS endedReason FROM sessions WHERE id = ?")
     .bind(sessionId)
-    .first<{ endedAt: number }>();
-  return { endedAt: row?.endedAt ?? now };
+    .first<{ endedAt: number; endedReason: "owner" | "merged" | null }>();
+  return { endedAt: row?.endedAt ?? now, reason: row?.endedReason ?? reason };
+}
+
+/* A candidate mid-integration is actively pushing/merging into its branch —
+   merge, end, and delete all refuse to run concurrently with that and instead
+   surface the blocking run so the owner can cancel it and retry. */
+async function getBlockingIntegrationRunId(sessionId: string, database: D1DatabaseLike): Promise<string | null> {
+  const row = await database
+    .prepare("SELECT integration_run_id AS integrationRunId FROM repository_candidates WHERE session_id = ? AND integration_run_id IS NOT NULL")
+    .bind(sessionId)
+    .first<{ integrationRunId: string }>();
+  return row?.integrationRunId ?? null;
 }
 
 export async function getInvitePreview(inviteId: string, database = getDb()): Promise<InvitePreview | null> {
@@ -465,19 +481,28 @@ export async function deleteSession(
   sessionId: string,
   userId: string,
   database = getDb(),
-): Promise<"deleted" | "forbidden" | "missing" | "repository_state"> {
+): Promise<"forbidden" | "missing" | "repository_state" | { blocked: "integration_in_progress"; runId: string } | { deleted: true; candidateBranchAlive: boolean }> {
   // Plain guard on purpose: deleting must work on ended sessions too.
   const role = await getMembershipRole(sessionId, userId, database);
   if (!role) return "missing";
   if (role !== "owner") return "forbidden";
-  const result = await database.prepare(
-    `DELETE FROM sessions WHERE id = ?
-     AND NOT EXISTS (SELECT 1 FROM repository_connections WHERE session_id = sessions.id)`,
-  ).bind(sessionId).run();
-  if (Number(result.meta?.changes ?? 0) > 0) return "deleted";
-  const repository = await database.prepare("SELECT 1 AS present FROM repository_connections WHERE session_id = ?")
-    .bind(sessionId).first<{ present: number }>();
-  return repository ? "repository_state" : "missing";
+  const blocking = await getBlockingIntegrationRunId(sessionId, database);
+  if (blocking) return { blocked: "integration_in_progress", runId: blocking };
+  // A session results in at most one candidate branch; only an unmerged one
+  // (still creating/active) represents live work that would be lost. A
+  // merged candidate — its branch deleted or not — never blocks deletion.
+  const liveCandidate = await database
+    .prepare("SELECT 1 AS present FROM repository_candidates WHERE session_id = ? AND status IN ('creating', 'active') AND merged_at IS NULL")
+    .bind(sessionId)
+    .first<{ present: number }>();
+  if (liveCandidate) return "repository_state";
+  const survivingBranch = await database
+    .prepare("SELECT 1 AS present FROM repository_candidates WHERE session_id = ? AND merged_at IS NOT NULL AND branch_deleted_at IS NULL")
+    .bind(sessionId)
+    .first<{ present: number }>();
+  const result = await database.prepare("DELETE FROM sessions WHERE id = ?").bind(sessionId).run();
+  if (Number(result.meta?.changes ?? 0) === 0) return "missing";
+  return { deleted: true, candidateBranchAlive: Boolean(survivingBranch) };
 }
 
 export async function authorizePresence(

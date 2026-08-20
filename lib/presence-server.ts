@@ -47,11 +47,11 @@ export async function notifyRunActivity(
   });
 }
 
-export async function notifySessionEnded(sessionId: string, endedAt: number): Promise<void> {
+export async function notifySessionEnded(sessionId: string, endedAt: number, reason: "owner" | "merged"): Promise<void> {
   await presenceStub(sessionId)?.fetch("https://presence.internal/session-ended", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ endedAt }),
+    body: JSON.stringify({ endedAt, reason }),
   });
 }
 

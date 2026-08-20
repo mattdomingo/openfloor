@@ -173,7 +173,11 @@ export function SessionScreen({
           {endedAt != null && (
             <section className="action-card quiet-card">
               <p className="eyebrow">Session ended</p>
-              <p>This session ended <LocalDateTime timestamp={endedAt} mode="date" />. The floor is read-only and the invite link is revoked.</p>
+              <p>
+                {session.endedReason === "merged"
+                  ? <>This session ended <LocalDateTime timestamp={endedAt} mode="date" /> because the candidate branch was merged.</>
+                  : <>This session ended <LocalDateTime timestamp={endedAt} mode="date" />.</>} The floor is read-only and the invite link is revoked.
+              </p>
             </section>
           )}
           {session.role === "owner" ? (
@@ -212,19 +216,49 @@ function EndSessionDialog({ sessionId, onClose }: { sessionId: string; onClose: 
   const { dismiss, dialogProps } = useDialogDismiss(onClose);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [blockingRunId, setBlockingRunId] = useState<string | null>(null);
 
   async function end() {
     setBusy(true);
     setError(null);
     const response = await fetch(`${BASE_PATH}/api/sessions/${sessionId}/end`, { method: "POST" });
     if (!response.ok) {
-      const body = (await response.json().catch(() => null)) as { error?: string } | null;
+      const body = (await response.json().catch(() => null)) as { error?: string; runId?: string } | null;
       setError(body?.error ?? "Unable to end the session");
+      setBlockingRunId(body?.runId ?? null);
       setBusy(false);
       return;
     }
     dismiss();
     router.refresh();
+  }
+
+  async function cancelAndRetry() {
+    if (!blockingRunId) return;
+    setBusy(true);
+    setError(null);
+    await fetch(`${BASE_PATH}/api/sessions/${sessionId}/runs/${encodeURIComponent(blockingRunId)}/cancel`, { method: "POST" });
+    // The workflow only notices cancellation between retry attempts, so give
+    // it a few chances to actually release the candidate before giving up.
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      await new Promise((resolve) => window.setTimeout(resolve, 2000));
+      const response = await fetch(`${BASE_PATH}/api/sessions/${sessionId}/end`, { method: "POST" });
+      if (response.ok) {
+        setBlockingRunId(null);
+        dismiss();
+        router.refresh();
+        return;
+      }
+      const body = (await response.json().catch(() => null)) as { error?: string; runId?: string } | null;
+      if (!body?.runId) {
+        setError(body?.error ?? "Unable to end the session");
+        setBlockingRunId(null);
+        setBusy(false);
+        return;
+      }
+    }
+    setError("The run is taking longer than expected to cancel. Try again in a moment.");
+    setBusy(false);
   }
 
   return (
@@ -235,7 +269,11 @@ function EndSessionDialog({ sessionId, onClose }: { sessionId: string; onClose: 
       {error && <div className="dialog-body"><p className="form-error" role="alert">{error}</p></div>}
       <div className="dialog-foot">
         <button type="button" className="button" data-variant="quiet" onClick={dismiss} disabled={busy}>Cancel</button>
-        <button type="button" className="button danger-button" onClick={end} disabled={busy}>End session</button>
+        {blockingRunId ? (
+          <button type="button" className="button danger-button" onClick={cancelAndRetry} disabled={busy}>Cancel that run &amp; end session</button>
+        ) : (
+          <button type="button" className="button danger-button" onClick={end} disabled={busy}>End session</button>
+        )}
       </div>
     </dialog>
   );

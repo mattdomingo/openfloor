@@ -156,6 +156,8 @@ export type FloorReviewSnapshot = {
   updatedAt: number;
   githubChecksPassing: boolean | null;
   cleanupStatus: "pending" | "complete" | "partial" | null;
+  branchDeletedAt: number | null;
+  integrationRunId: string | null;
   pullRequest: {
     number: number;
     url: string;

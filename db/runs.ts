@@ -387,6 +387,27 @@ export async function releaseRunIntegration(runId: string, reason: string, datab
   return { sessionId: run.sessionId, revision: Number(revision?.revision ?? 0) };
 }
 
+/* Honors a cancellation requested mid-integration (requestAgentRunCancellation
+   flips status to 'cancel_requested' without touching the candidate's
+   integration_run_id claim — the workflow calls this between retry attempts
+   to actually release the claim and land the run in a terminal state). */
+export async function cancelRunIntegration(runId: string, database = getDb()) {
+  const run = await database.prepare("SELECT session_id AS sessionId, queue_item_id AS queueItemId, candidate_id AS candidateId FROM agent_runs WHERE id = ? AND status = 'cancel_requested'")
+    .bind(runId).first<{ sessionId: string; queueItemId: string; candidateId: string }>();
+  if (!run) return null;
+  const now = Date.now();
+  await database.batch([
+    database.prepare("UPDATE repository_candidates SET integration_run_id = NULL, updated_at = ? WHERE id = ? AND integration_run_id = ?").bind(now, run.candidateId, runId),
+    database.prepare("UPDATE agent_runs SET status = 'cancelled', summary = ?, completed_at = ?, updated_at = ? WHERE id = ? AND status = 'cancel_requested'")
+      .bind("Integration cancelled by the session owner.", now, now, runId),
+    database.prepare("UPDATE floor_queue_items SET status = 'cancelled', updated_at = ? WHERE id = ?").bind(now, run.queueItemId),
+    database.prepare("UPDATE sessions SET floor_revision = floor_revision + 1, updated_at = ? WHERE id = ?").bind(now, run.sessionId),
+  ]);
+  await appendRunEvent(runId, "cancelled", "Integration cancelled by the session owner.", database);
+  const revision = await database.prepare("SELECT floor_revision AS revision FROM sessions WHERE id = ?").bind(run.sessionId).first<{ revision: number }>();
+  return { sessionId: run.sessionId, revision: Number(revision?.revision ?? 0) };
+}
+
 export async function prepareConflictedRunRetry(sessionId: string, runId: string, userId: string, database = getDb()): Promise<string | null> {
   if ((await getActiveMembershipRole(sessionId, userId, database)) !== "owner") return null;
   const run = await database.prepare("SELECT queue_item_id AS queueItemId FROM agent_runs WHERE id = ? AND session_id = ? AND status = 'conflicted'")
@@ -477,7 +498,7 @@ export async function requestAgentRunCancellation(sessionId: string, runId: stri
   const now = Date.now();
   const result = await database.prepare(
     `UPDATE agent_runs SET status = 'cancel_requested', cancel_requested_at = ?, updated_at = ?
-     WHERE id = ? AND session_id = ? AND status IN ('provisioning', 'running', 'checking')`,
+     WHERE id = ? AND session_id = ? AND status IN ('provisioning', 'running', 'checking', 'integrating')`,
   ).bind(now, now, runId, sessionId).run();
   if (!result.meta?.changes) return false;
   await database.batch([

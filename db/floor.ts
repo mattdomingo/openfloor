@@ -162,6 +162,7 @@ function buildRunReview(
   if (candidate.behindBase && candidate.status === "active") warnings.push({ id: `${candidate.id}-behind`, title: "Base branch advanced", detail: "Synchronize and resolve the candidate before merging.", severity: "warning" });
   if (candidate.githubChecksPassing === false) warnings.push({ id: `${candidate.id}-checks`, title: "GitHub checks are not passing", detail: "All reported GitHub checks must pass before squash merge.", severity: "warning" });
   if (candidate.cleanupStatus === "partial") warnings.push({ id: `${candidate.id}-cleanup`, title: "Branch cleanup incomplete", detail: "At least one openfloor branch changed externally and was preserved.", severity: "warning" });
+  if (candidate.integrationRunId) warnings.push({ id: `${candidate.id}-integrating`, title: "Integration in progress", detail: "A run is still integrating into this candidate. Merging, ending, and deleting are blocked until it finishes or is cancelled.", severity: "warning" });
   return {
     id: candidate.id,
     status: candidate.status === "merged" ? "merged" : candidate.pullRequestDraft === false ? "ready" : "draft",
@@ -174,6 +175,8 @@ function buildRunReview(
     updatedAt: Math.max(candidate.updatedAt, ...candidateRuns.map((run) => run.updatedAt), 0),
     githubChecksPassing: candidate.githubChecksPassing,
     cleanupStatus: candidate.cleanupStatus,
+    branchDeletedAt: candidate.branchDeletedAt,
+    integrationRunId: candidate.integrationRunId,
     pullRequest: candidate.pullRequestNumber && candidate.pullRequestUrl && candidate.pullRequestState ? {
       number: candidate.pullRequestNumber,
       url: candidate.pullRequestUrl,

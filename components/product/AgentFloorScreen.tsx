@@ -98,7 +98,7 @@ export function AgentFloorScreen({
           setSession((current) => event.updatedAt >= current.updatedAt ? { ...current, objective: event.objective, updatedAt: event.updatedAt } : current);
         }
         if (event.type === "session.ended") {
-          setSession((current) => ({ ...current, endedAt: event.endedAt }));
+          setSession((current) => ({ ...current, endedAt: event.endedAt, endedReason: event.reason }));
         }
         if (event.type === "run.activity") ingestActivity(event);
         if (event.type === "floor.changed" && event.domains.includes("runs")) catchUpActivity(activeRunIdsRef.current);

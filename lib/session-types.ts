@@ -9,6 +9,7 @@ export type SessionSummary = {
   createdAt: number;
   updatedAt: number;
   endedAt: number | null;
+  endedReason: "owner" | "merged" | null;
   archivedAt: number | null;
 };
 
@@ -40,7 +41,7 @@ export type PresenceEvent =
   | { type: "typing.changed"; draft: TypingDraft }
   | { type: "members.changed" }
   | { type: "session.changed"; objective: string | null; updatedAt: number }
-  | { type: "session.ended"; endedAt: number }
+  | { type: "session.ended"; endedAt: number; reason: "owner" | "merged" }
   | { type: "floor.changed"; revision: number; domains: import("./floor-types").FloorDomain[] }
   | { type: "run.activity"; runId: string; agentId: string; events: import("./floor-types").RunActivityEvent[] }
   | { type: "error"; code: string };
