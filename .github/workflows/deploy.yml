@@ -24,6 +24,10 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      # The npm bundled with the setup-node node-22 image mis-validates optional
+      # peerDependencies against package-lock.json (reports them "missing" even
+      # though npm install leaves the lockfile untouched). npm 11 fixes this.
+      - run: npm install -g npm@11
       - run: npm ci
       - run: npx playwright install --with-deps chromium
       - run: npm test
