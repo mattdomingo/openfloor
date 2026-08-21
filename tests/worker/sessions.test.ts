@@ -11,6 +11,8 @@ import {
   endSession,
   getActiveInviteId,
   getInvitePreview,
+  getMembershipRole,
+  getRemovedSessionMembers,
   getSessionForMember,
   getSessionMembers,
   getUsageForUser,
@@ -19,10 +21,13 @@ import {
   listSessionsForUser,
   PLAN_LIMITS,
   purgeExpiredSessions,
+  removeMember,
+  restoreMember,
   revokeInvite,
   rotateInvite,
   SessionEndedError,
   setSessionAutoDispatch,
+  setSessionLocked,
   updateProfile,
   updateSessionObjective,
   upsertUser,
@@ -237,6 +242,133 @@ describe("D1 session persistence", () => {
     await expect(leaveSession(created.session.id, owner.id, env.DB)).resolves.toBe("owner");
     await expect(leaveSession(created.session.id, member.id, env.DB)).resolves.toBe("left");
     await expect(leaveSession(created.session.id, member.id, env.DB)).resolves.toBe("missing");
+  });
+
+  it("reassigns a leaving member's agents to the owner instead of stranding them", async () => {
+    const owner = await upsertUser(identity("leave-agent-owner", "Owner"), env.DB);
+    const member = await upsertUser(identity("leave-agent-member", "Member"), env.DB);
+    const created = await createSession(owner.id, { title: "Room", objective: null }, env.DB);
+    await acceptInvite(created.inviteId, member.id, env.DB);
+    const agentInput = parseAgentInput({ name: "Scout", role: "Researcher", task: "Look into things", ownerUserId: member.id });
+    if (!agentInput) throw new Error("Invalid test agent");
+    await createFloorAgent(created.session.id, member.id, agentInput, env.DB);
+
+    await leaveSession(created.session.id, member.id, env.DB);
+
+    const floor = await getFloorSnapshot(created.session.id, owner.id, env.DB);
+    expect(floor!.agents[0].ownerUserId).toBe(owner.id);
+  });
+
+  it("lets the owner remove a member: frees their seat, blocks re-accepting the link, and reassigns their agents", async () => {
+    const owner = await upsertUser(identity("remove-owner", "Owner"), env.DB);
+    const member = await upsertUser(identity("remove-member", "Member"), env.DB);
+    const created = await createSession(owner.id, { title: "Room", objective: null }, env.DB);
+    await acceptInvite(created.inviteId, member.id, env.DB);
+    const agentInput = parseAgentInput({ name: "Scout", role: "Researcher", task: "Look into things", ownerUserId: member.id });
+    if (!agentInput) throw new Error("Invalid test agent");
+    await createFloorAgent(created.session.id, member.id, agentInput, env.DB);
+
+    const result = await removeMember(created.session.id, owner.id, member.id, env.DB);
+    expect(result).toEqual({ removedAt: expect.any(Number), revision: expect.any(Number) });
+
+    // The removed member reads as a non-member everywhere the write and read
+    // guards are checked, and their floor read is refused.
+    expect(await getMembershipRole(created.session.id, member.id, env.DB)).toBeNull();
+    expect(await getFloorSnapshot(created.session.id, member.id, env.DB)).toBeNull();
+    expect(await getSessionMembers(created.session.id, owner.id, env.DB)).toHaveLength(1);
+
+    // Their agent transferred to the owner rather than being stranded on a
+    // non-member (the same invariant leaveSession now also preserves).
+    const floor = await getFloorSnapshot(created.session.id, owner.id, env.DB);
+    expect(floor!.agents[0].ownerUserId).toBe(owner.id);
+
+    // Re-accepting the still-valid invite is refused, not silently successful
+    // — the seat stays freed rather than being reclaimed by the same person.
+    await expect(acceptInvite(created.inviteId, member.id, env.DB)).resolves.toBe("removed");
+    expect(await getSessionMembers(created.session.id, owner.id, env.DB)).toHaveLength(1);
+
+    // The audit trail is visible to the owner.
+    expect(await getRemovedSessionMembers(created.session.id, owner.id, env.DB)).toEqual([
+      expect.objectContaining({ id: member.id, removedAt: expect.any(Number) }),
+    ]);
+  });
+
+  it("confines removal to the owner, and refuses removing self or another owner", async () => {
+    const owner = await upsertUser(identity("remove-guard-owner", "Owner"), env.DB);
+    const member = await upsertUser(identity("remove-guard-member", "Member"), env.DB);
+    const outsider = await upsertUser(identity("remove-guard-outsider", "Outsider"), env.DB);
+    const nonMember = await upsertUser(identity("remove-guard-nonmember", "NonMember"), env.DB);
+    const created = await createSession(owner.id, { title: "Room", objective: null }, env.DB);
+    await acceptInvite(created.inviteId, member.id, env.DB);
+
+    await expect(removeMember(created.session.id, member.id, owner.id, env.DB)).resolves.toBe("forbidden");
+    await expect(removeMember(created.session.id, outsider.id, member.id, env.DB)).resolves.toBe("missing");
+    await expect(removeMember(created.session.id, owner.id, owner.id, env.DB)).resolves.toBe("self");
+    await expect(removeMember(created.session.id, owner.id, nonMember.id, env.DB)).resolves.toBe("missing");
+
+    // owner_target: the schema permits a second 'owner' row even though the
+    // product never creates one — refuse it defensively too.
+    await env.DB.prepare("INSERT INTO session_members (session_id, user_id, role, joined_at) VALUES (?, ?, 'owner', ?)")
+      .bind(created.session.id, nonMember.id, Date.now()).run();
+    await expect(removeMember(created.session.id, owner.id, nonMember.id, env.DB)).resolves.toBe("owner_target");
+  });
+
+  it("refuses removal and locking on an ended session", async () => {
+    const owner = await upsertUser(identity("remove-ended-owner", "Owner"), env.DB);
+    const member = await upsertUser(identity("remove-ended-member", "Member"), env.DB);
+    const created = await createSession(owner.id, { title: "Room", objective: null }, env.DB);
+    await acceptInvite(created.inviteId, member.id, env.DB);
+    await endSession(created.session.id, owner.id, "owner", env.DB);
+
+    await expect(removeMember(created.session.id, owner.id, member.id, env.DB)).rejects.toBeInstanceOf(SessionEndedError);
+    await expect(setSessionLocked(created.session.id, owner.id, true, env.DB)).rejects.toBeInstanceOf(SessionEndedError);
+  });
+
+  it("lets the owner restore a removed member when there's room, but refuses at the seat cap", async () => {
+    const owner = await upsertUser(identity("restore-owner", "Owner"), env.DB);
+    const memberA = await upsertUser(identity("restore-member-a", "MemberA"), env.DB);
+    const memberB = await upsertUser(identity("restore-member-b", "MemberB"), env.DB);
+    const created = await createSession(owner.id, { title: "Room", objective: null }, env.DB);
+    await acceptInvite(created.inviteId, memberA.id, env.DB);
+
+    // Room to spare (owner + memberA = 2, free-tier cap is 3): restore succeeds.
+    await removeMember(created.session.id, owner.id, memberA.id, env.DB);
+    await expect(restoreMember(created.session.id, owner.id, memberA.id, env.DB)).resolves.toEqual({ restoredAt: expect.any(Number) });
+    expect(await getSessionMembers(created.session.id, owner.id, env.DB)).toHaveLength(2);
+    expect(await getRemovedSessionMembers(created.session.id, owner.id, env.DB)).toEqual([]);
+
+    // Fill to the cap (owner + memberA + memberB), then remove memberA again
+    // and backfill their freed seat with a third joiner before restoring —
+    // restoring now would exceed the cap and must be refused.
+    await acceptInvite(created.inviteId, memberB.id, env.DB);
+    await removeMember(created.session.id, owner.id, memberA.id, env.DB);
+    const memberC = await upsertUser(identity("restore-member-c", "MemberC"), env.DB);
+    await acceptInvite(created.inviteId, memberC.id, env.DB);
+    expect(await getSessionMembers(created.session.id, owner.id, env.DB)).toHaveLength(3);
+
+    await expect(restoreMember(created.session.id, owner.id, memberA.id, env.DB)).resolves.toBe("full");
+    // Still removed, and the invite link remains blocked for them too.
+    await expect(acceptInvite(created.inviteId, memberA.id, env.DB)).resolves.toBe("removed");
+  });
+
+  it("lets the owner lock and unlock a session: new joins refused, existing members and re-accepts unaffected", async () => {
+    const owner = await upsertUser(identity("lock-owner", "Owner"), env.DB);
+    const member = await upsertUser(identity("lock-member", "Member"), env.DB);
+    const created = await createSession(owner.id, { title: "Room", objective: null }, env.DB);
+    await acceptInvite(created.inviteId, member.id, env.DB);
+
+    await expect(setSessionLocked(created.session.id, member.id, true, env.DB)).resolves.toBe(false);
+    await expect(setSessionLocked(created.session.id, owner.id, true, env.DB)).resolves.toEqual({ lockedAt: expect.any(Number) });
+
+    // A brand-new joiner is refused...
+    const outsider = await upsertUser(identity("lock-outsider", "Outsider"), env.DB);
+    await expect(acceptInvite(created.inviteId, outsider.id, env.DB)).resolves.toBe("locked");
+    // ...but an existing member's idempotent re-accept still works.
+    await expect(acceptInvite(created.inviteId, member.id, env.DB)).resolves.toBe(created.session.id);
+
+    await expect(setSessionLocked(created.session.id, owner.id, false, env.DB)).resolves.toEqual({ lockedAt: null });
+    // The same invite ID works again — nothing was rotated or revoked.
+    await expect(acceptInvite(created.inviteId, outsider.id, env.DB)).resolves.toBe(created.session.id);
   });
 
   it("allows members to update the objective and conceals the session from outsiders", async () => {
@@ -732,7 +864,7 @@ describe("plan limits", () => {
     expect(relogged.planStatus).toBe("active");
   });
 
-  it("the wind-down set (end, leave, revoke, auto-dispatch off, pause, archive, delete) still works at quota", async () => {
+  it("the wind-down set (end, leave, remove, lock, revoke, auto-dispatch off, pause, archive, delete) still works at quota", async () => {
     // The quota gate only sits in front of the operations that spend money —
     // startQueueItemRun and the repository preflight/sync routes — never in
     // front of getActiveMembershipRole itself. Everything here must keep
@@ -742,6 +874,11 @@ describe("plan limits", () => {
     const member = await upsertUser(identity("winddown-member", "Member"), env.DB);
     const created = await createSession(owner.id, { title: "Wind down", objective: null }, env.DB);
     await acceptInvite(created.inviteId, member.id, env.DB);
+    // Accept before the invite is revoked below — removeMember/setSessionLocked
+    // themselves don't touch the invite, but this session's only invite gets
+    // revoked a few lines down and a revoked invite can no longer be accepted.
+    const removable = await upsertUser(identity("winddown-removable", "Removable"), env.DB);
+    await expect(acceptInvite(created.inviteId, removable.id, env.DB)).resolves.toBe(created.session.id);
     await env.DB.prepare("INSERT INTO usage_months (owner_user_id, month, seconds) VALUES (?, ?, ?)")
       .bind(owner.id, currentMonth(), 2 * 3600)
       .run();
@@ -749,6 +886,12 @@ describe("plan limits", () => {
 
     await expect(revokeInvite(created.session.id, owner.id, env.DB)).resolves.toBe(true);
     await expect(setSessionAutoDispatch(created.session.id, owner.id, false, env.DB)).resolves.toBe(true);
+
+    await expect(removeMember(created.session.id, owner.id, removable.id, env.DB)).resolves.toEqual(
+      expect.objectContaining({ removedAt: expect.any(Number) }),
+    );
+    await expect(setSessionLocked(created.session.id, owner.id, true, env.DB)).resolves.toEqual({ lockedAt: expect.any(Number) });
+    await expect(setSessionLocked(created.session.id, owner.id, false, env.DB)).resolves.toEqual({ lockedAt: null });
 
     const floor = await createFloorQueueItem(created.session.id, owner.id, { prompt: "Pause me", agentId: null }, env.DB);
     const queueItemId = floor!.queue[0].id;

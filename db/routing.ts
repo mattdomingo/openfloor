@@ -67,7 +67,7 @@ export async function runRoutingTick(
     return { acted: false, held: false, revision: null };
   }
   const owner = await database.prepare(
-    "SELECT user_id AS userId FROM session_members WHERE session_id = ? AND role = 'owner' ORDER BY joined_at, user_id LIMIT 1",
+    "SELECT user_id AS userId FROM session_members WHERE session_id = ? AND role = 'owner' AND removed_at IS NULL ORDER BY joined_at, user_id LIMIT 1",
   ).bind(sessionId).first<{ userId: string }>();
   if (!owner) return { acted: false, held: false, revision: null };
 

@@ -78,6 +78,7 @@ export function TopBar({
       <nav className="session-path" aria-label="Session location">
         <Link href="/home">Sessions</Link><span aria-hidden="true">/</span><Link href={`/session/${session.id}`}><strong title={session.title}>{session.title}</strong></Link>
         <span className="live-pill"><Icon name="circle" size={7} />LIVE</span>
+        {session.lockedAt != null && <span className="state-tag" data-tone="waiting" title="No new members can join">Locked</span>}
         <SessionTimer base={session.activeSeconds} running={presenceConnected && session.endedAt == null} />
       </nav>
 

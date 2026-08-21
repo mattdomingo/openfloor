@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 import { requireOnboardedUser } from "@/lib/server-auth";
-import { getSessionForMember, getSessionMembers } from "@/db/sessions";
+import { getRemovedSessionMembers, getSessionForMember, getSessionMembers } from "@/db/sessions";
 import { getActiveRepositoryCandidateForMember, getRepositoryConnectionForMember } from "@/db/repositories";
 import { getLatestRepositoryPreflightForMember } from "@/db/preflights";
 import { SessionScreen } from "@/components/product/SessionScreen";
@@ -22,14 +22,15 @@ export default async function SessionPage({
 
 async function AuthenticatedSession({ id, githubSetup, repoGateRequested }: { id: string; githubSetup: boolean; repoGateRequested: boolean }) {
   const user = await requireOnboardedUser(`/session/${encodeURIComponent(id)}`);
-  const [session, members, repository, candidate, preflight] = await Promise.all([
+  const [session, members, removedMembers, repository, candidate, preflight] = await Promise.all([
     getSessionForMember(id, user.id),
     getSessionMembers(id, user.id),
+    getRemovedSessionMembers(id, user.id),
     getRepositoryConnectionForMember(id, user.id),
     getActiveRepositoryCandidateForMember(id, user.id),
     getLatestRepositoryPreflightForMember(id, user.id),
   ]);
   if (!session || !members) notFound();
   const preflightEnabled = (env as unknown as { PREFLIGHT_ENABLED?: string }).PREFLIGHT_ENABLED === "true";
-  return <SessionScreen user={user} session={session} initialMembers={members} initialRepository={repository} initialCandidate={candidate} initialPreflight={preflight} preflightEnabled={preflightEnabled} githubSetup={githubSetup} repoGateRequested={repoGateRequested} />;
+  return <SessionScreen user={user} session={session} initialMembers={members} initialRemovedMembers={removedMembers ?? []} initialRepository={repository} initialCandidate={candidate} initialPreflight={preflight} preflightEnabled={preflightEnabled} githubSetup={githubSetup} repoGateRequested={repoGateRequested} />;
 }

@@ -65,6 +65,11 @@ export const sessions = sqliteTable("sessions", {
   // participant. The billing ledger is usage_months; this one cascades away
   // with the session and that is fine.
   activeSeconds: integer("active_seconds").notNull().default(0),
+  // Reversible door-seal: null means new joins are accepted. Set only by
+  // setSessionLocked. Distinct from endedAt, which is terminal and makes the
+  // floor read-only for everyone — locking leaves existing members and the
+  // floor fully writable, and only gates acceptInvite.
+  lockedAt: integer("locked_at"),
 });
 
 // Monthly active-presence seconds per session owner, the hour-quota ledger.
@@ -91,6 +96,16 @@ export const sessionMembers = sqliteTable(
     role: text("role", { enum: ["owner", "member"] }).notNull(),
     joinedAt: integer("joined_at").notNull(),
     archivedAt: integer("archived_at"),
+    // Soft delete for owner-initiated removal: the row is kept (not
+    // DELETEd) so acceptInvite can refuse the same person on a still-valid
+    // invite link, and the owner has an audit trail (getRemovedSessionMembers)
+    // to restore from. Null means active membership; every membership read
+    // and write guard filters on this.
+    removedAt: integer("removed_at"),
+    // The removing owner's user id. No FK on purpose — same reasoning as
+    // usage_months.ownerUserId: this audit field must not block or cascade
+    // on a future user deletion.
+    removedBy: text("removed_by"),
   },
   (table) => [
     primaryKey({ columns: [table.sessionId, table.userId] }),

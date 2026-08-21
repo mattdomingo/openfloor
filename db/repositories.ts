@@ -44,7 +44,7 @@ export async function consumeGitHubConnectionState(
          AND EXISTS (
            SELECT 1 FROM session_members sm JOIN sessions s ON s.id = sm.session_id
            WHERE sm.session_id = github_connection_states.session_id
-             AND sm.user_id = ? AND sm.role = 'owner' AND s.ended_at IS NULL
+             AND sm.user_id = ? AND sm.role = 'owner' AND sm.removed_at IS NULL AND s.ended_at IS NULL
          )`,
     )
     .bind(installationId, now, stateId, userId, now, userId)

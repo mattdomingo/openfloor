@@ -129,6 +129,9 @@ export function AgentFloorScreen({
         if (event.type === "session.ended") {
           setSession((current) => ({ ...current, endedAt: event.endedAt, endedReason: event.reason }));
         }
+        if (event.type === "session.locked") {
+          setSession((current) => ({ ...current, lockedAt: event.lockedAt }));
+        }
         if (event.type === "run.activity") ingestActivity(event);
         if (event.type === "floor.changed" && event.domains.includes("runs")) catchUpActivity(activeRunIdsRef.current);
         if (shouldRefreshFloor(revisionRef.current, event)) void refreshFloor();
@@ -149,6 +152,14 @@ export function AgentFloorScreen({
           // branch below, reconnected, got a bare 404 on the upgrade (opaque
           // as code 1006 to the browser), and looped forever at one attempt
           // per 10s.
+          router.replace("/home");
+          return;
+        }
+        if (event.code === 4005) {
+          // Owner-initiated removal: distinct from 4001 so /home can say
+          // what actually happened. sessionStorage is the only way to carry
+          // the reason across this client-side navigation.
+          sessionStorage.setItem("openfloor:removed-notice", event.reason || "The owner removed you from this session.");
           router.replace("/home");
           return;
         }

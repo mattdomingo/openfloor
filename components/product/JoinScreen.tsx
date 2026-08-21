@@ -21,6 +21,9 @@ export function JoinScreen({ token, preview, displayName, alreadyMember }: {
   // between this render and the click. A returning member's re-accept is
   // idempotent past the cap, so this never applies to them.
   const full = !alreadyMember && preview.memberCount >= preview.seatLimit;
+  // Same idempotency carve-out as full: locking only gates new joins, so an
+  // existing member reloading this link must not see it as blocked.
+  const locked = !alreadyMember && preview.locked;
 
   async function join() {
     setJoining(true);
@@ -43,9 +46,10 @@ export function JoinScreen({ token, preview, displayName, alreadyMember }: {
         <h1>{preview.title}</h1>
         <p className="join-objective">{preview.objective || "No objective has been written yet."}</p>
         <dl><div><dt>Host</dt><dd>{preview.ownerName}</dd></div><div><dt>Joining as</dt><dd>{displayName}</dd></div></dl>
-        {full && !error && <p className="form-error" role="alert">This session is full ({preview.memberCount} of {preview.seatLimit} seats).</p>}
+        {locked && !error && <p className="form-error" role="alert">This session is locked. Ask the owner to unlock it.</p>}
+        {full && !locked && !error && <p className="form-error" role="alert">This session is full ({preview.memberCount} of {preview.seatLimit} seats).</p>}
         {error && <p className="form-error" role="alert">{error}</p>}
-        <button className="button" data-variant="primary" data-size="lg" disabled={joining || full} onClick={join}>{joining ? "Joining…" : full ? "Session full" : "Join session"}</button>
+        <button className="button" data-variant="primary" data-size="lg" disabled={joining || full || locked} onClick={join}>{joining ? "Joining…" : locked ? "Session locked" : full ? "Session full" : "Join session"}</button>
         <Link href="/home">Back to your sessions</Link>
       </section>
     </main>

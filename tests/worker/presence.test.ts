@@ -1,7 +1,7 @@
 import { env } from "cloudflare:workers";
 import { evictDurableObject, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { describe, expect, it, vi } from "vitest";
-import { acceptInvite, createSession, currentMonth, endSession, upsertUser } from "@/db/sessions";
+import { acceptInvite, createSession, currentMonth, endSession, removeMember, upsertUser } from "@/db/sessions";
 import worker from "./entry";
 import type { PresenceEvent } from "@/lib/session-types";
 import type { SessionPresence } from "@/worker/presence";
@@ -177,6 +177,60 @@ describe("SessionPresence Durable Object", () => {
     first.socket.close(1000, "done");
   });
 
+  it("broadcasts a session lock without closing sockets", async () => {
+    const stub = env.SESSION_PRESENCE.get(env.SESSION_PRESENCE.idFromName("room-session-locked"));
+    const first = await connect(stub, "user-one", "One");
+    const notification = nextMessage(first.socket);
+    const response = await stub.fetch("https://presence.internal/session-locked", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ lockedAt: 55 }),
+    });
+    expect(response.status).toBe(204);
+    await expect(notification).resolves.toEqual({ type: "session.locked", lockedAt: 55 });
+    expect(first.socket.readyState).toBe(WebSocket.OPEN);
+
+    const unlockNotification = nextMessage(first.socket);
+    await stub.fetch("https://presence.internal/session-locked", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ lockedAt: null }),
+    });
+    await expect(unlockNotification).resolves.toEqual({ type: "session.locked", lockedAt: null });
+
+    const invalid = await stub.fetch("https://presence.internal/session-locked", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ lockedAt: "soon" }),
+    });
+    expect(invalid.status).toBe(400);
+    first.socket.close(1000, "done");
+  });
+
+  it("closes a member's sockets with the matching code for a plain vs. owner-initiated disconnect", async () => {
+    const stub = env.SESSION_PRESENCE.get(env.SESSION_PRESENCE.idFromName("room-disconnect"));
+    const plain = await connect(stub, "user-plain", "Plain");
+    const removed = await connect(stub, "user-removed", "Removed");
+
+    const plainClose = nextClose(plain.socket);
+    await stub.fetch("https://presence.internal/disconnect-user", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ userId: "user-plain" }),
+    });
+    expect((await plainClose).code).toBe(4001);
+
+    const removedClose = nextClose(removed.socket);
+    // Distinct from the plain 4001 above so the client can tell the removed
+    // person what actually happened instead of silently bouncing them home.
+    await stub.fetch("https://presence.internal/disconnect-user", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ userId: "user-removed", reason: "removed" }),
+    });
+    expect((await removedClose).code).toBe(4005);
+  });
+
   it("broadcasts floor revisions and changed domains", async () => {
     const stub = env.SESSION_PRESENCE.get(env.SESSION_PRESENCE.idFromName("room-floor-change"));
     const first = await connect(stub, "user-one", "One");
@@ -267,6 +321,32 @@ describe("authenticated presence upgrade", () => {
     expect(accepted.status).toBe(101);
     accepted.webSocket?.accept();
     accepted.webSocket?.close(1000, "done");
+  });
+
+  it("refuses the presence upgrade for a removed member, same as a non-member", async () => {
+    const owner = await upsertUser({
+      providerUserId: "chatgpt-remove-presence-owner",
+      email: "remove-presence-owner@example.com",
+      displayName: "Owner",
+      fullName: "Owner",
+    }, env.DB);
+    const member = await upsertUser({
+      providerUserId: "chatgpt-remove-presence-member",
+      email: "remove-presence-member@example.com",
+      displayName: "Member",
+      fullName: "Member",
+    }, env.DB);
+    const created = await createSession(owner.id, { title: "Removable", objective: null }, env.DB);
+    await acceptInvite(created.inviteId, member.id, env.DB);
+    await removeMember(created.session.id, owner.id, member.id, env.DB);
+
+    const response = await worker.fetch(new Request(`http://localhost/app/api/sessions/${created.session.id}/presence`, { headers: {
+      host: "localhost",
+      upgrade: "websocket",
+      "x-openfloor-dev-user-id": "chatgpt-remove-presence-member",
+      "x-openfloor-dev-user-email": "remove-presence-member@example.com",
+    } }), env);
+    expect(response.status).toBe(404);
   });
 
   it("rejects the upgrade with close code 4003 once owner hours are exhausted", async () => {

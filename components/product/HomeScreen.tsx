@@ -40,6 +40,17 @@ export function HomeScreen({
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<SessionSummary | null>(null);
+  // The removal close code (4005) fires while the removed member is still on
+  // the session or floor page, which navigates here before this component
+  // mounts — sessionStorage is the only way to carry the reason across that
+  // navigation. A lazy initializer (not an effect) reads and clears it
+  // exactly once so a later reload never resurfaces a stale notice.
+  const [removedNotice, setRemovedNotice] = useState<string | null>(() => {
+    if (typeof window === "undefined") return null;
+    const stored = sessionStorage.getItem("openfloor:removed-notice");
+    if (stored) sessionStorage.removeItem("openfloor:removed-notice");
+    return stored;
+  });
   const activeSessions = sessions.filter((session) => session.archivedAt == null && session.endedAt == null);
   const archivedSessions = sessions.filter((session) => session.archivedAt != null);
   const endedSessions = sessions.filter((session) => session.archivedAt == null && session.endedAt != null);
@@ -93,6 +104,11 @@ export function HomeScreen({
           <div>
             <p className="eyebrow">Sessions</p><h1>Your sessions</h1><p>Durable sessions for the people doing the work.</p>
             <p className="usage-line">{usageLine}</p>
+            {removedNotice && (
+              <p className="notice" data-tone="attention" role="status">
+                {removedNotice} <button type="button" className="button" data-variant="quiet" data-size="sm" onClick={() => setRemovedNotice(null)}>Dismiss</button>
+              </p>
+            )}
             {quotaExhausted && (
               /* Advisory only, same as the ended-session banner in
                  Workspace.tsx: the 403s on create/dispatch are the

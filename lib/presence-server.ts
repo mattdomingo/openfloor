@@ -55,10 +55,18 @@ export async function notifySessionEnded(sessionId: string, endedAt: number, rea
   });
 }
 
-export async function disconnectPresenceUser(sessionId: string, userId: string): Promise<void> {
+export async function disconnectPresenceUser(sessionId: string, userId: string, reason?: "removed"): Promise<void> {
   await presenceStub(sessionId)?.fetch("https://presence.internal/disconnect-user", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ userId }),
+    body: JSON.stringify({ userId, reason }),
+  });
+}
+
+export async function notifySessionLocked(sessionId: string, lockedAt: number | null): Promise<void> {
+  await presenceStub(sessionId)?.fetch("https://presence.internal/session-locked", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ lockedAt }),
   });
 }
