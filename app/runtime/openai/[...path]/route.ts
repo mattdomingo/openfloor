@@ -1,13 +1,16 @@
+import { getSessionOwnerCredential } from "@/db/provider-credentials";
 import { getRunGatewayContext } from "@/db/runs";
+import { decryptCredential } from "@/lib/credential-crypto";
+import { resolveRunCredentialSource } from "@/lib/provider-credentials";
 import { verifyRunGatewayToken } from "@/lib/runtime-token";
 import { env } from "cloudflare:workers";
 
 const MAX_REQUEST_BYTES = 10 * 1024 * 1024;
 
 export async function POST(request: Request, { params }: { params: Promise<{ path: string[] }> }) {
-  const bindings = env as unknown as { RUNTIME_GATEWAY_SECRET?: string; OPENAI_API_KEY?: string };
+  const bindings = env as unknown as { RUNTIME_GATEWAY_SECRET?: string; OPENAI_API_KEY?: string; CREDENTIAL_ENCRYPTION_KEY?: string };
   const token = request.headers.get("authorization")?.match(/^Bearer (.+)$/)?.[1];
-  if (!token || !bindings.RUNTIME_GATEWAY_SECRET || !bindings.OPENAI_API_KEY) return new Response("Not found", { status: 404 });
+  if (!token || !bindings.RUNTIME_GATEWAY_SECRET) return new Response("Not found", { status: 404 });
   const claims = await verifyRunGatewayToken(token, bindings.RUNTIME_GATEWAY_SECRET, "openai");
   if (!claims) return new Response("Not found", { status: 404 });
   const context = await getRunGatewayContext(claims.runId);
@@ -22,8 +25,30 @@ export async function POST(request: Request, { params }: { params: Promise<{ pat
   const parts = (await params).path;
   const normalized = parts[0] === "v1" ? parts.slice(1) : parts;
   if (normalized.length !== 1 || normalized[0] !== "responses") return new Response("Not found", { status: 404 });
+  // Resolution order lives in resolveRunCredentialSource: the session owner's
+  // connected key, else the server key, else refuse. A present-but-unreadable
+  // owner credential refuses rather than silently billing the server key.
+  const ownerCredential = await getSessionOwnerCredential(claims.sessionId, "openai");
+  const resolution = resolveRunCredentialSource({
+    ownerCredentialPresent: Boolean(ownerCredential),
+    serverKeyPresent: Boolean(bindings.OPENAI_API_KEY),
+  });
+  let apiKey: string;
+  if (resolution.source === "owner") {
+    const decrypted = ownerCredential && bindings.CREDENTIAL_ENCRYPTION_KEY
+      ? await decryptCredential(ownerCredential.ciphertext, bindings.CREDENTIAL_ENCRYPTION_KEY, `${ownerCredential.ownerUserId}:openai`)
+      : null;
+    if (!decrypted) {
+      return new Response("The session owner's connected OpenAI key could not be read. Reconnect it in Settings.", { status: 503 });
+    }
+    apiKey = decrypted;
+  } else if (resolution.source === "server" && bindings.OPENAI_API_KEY) {
+    apiKey = bindings.OPENAI_API_KEY;
+  } else {
+    return new Response("No OpenAI credential is available for this run.", { status: 503 });
+  }
   const headers = new Headers();
-  headers.set("authorization", `Bearer ${bindings.OPENAI_API_KEY}`);
+  headers.set("authorization", `Bearer ${apiKey}`);
   headers.set("content-type", request.headers.get("content-type") ?? "application/json");
   headers.set("accept", request.headers.get("accept") ?? "application/json");
   const beta = request.headers.get("openai-beta");

@@ -10,11 +10,13 @@ export function CreateAgentDialog({
   onClose,
   participants,
   currentUserId,
+  claudeRunEnabled,
 }: {
   onCreate: (input: CreateFloorAgentInput) => Promise<boolean>;
   onClose: () => void;
   participants: FloorParticipant[];
   currentUserId: string;
+  claudeRunEnabled: boolean;
 }) {
   const titleId = useId();
   const { dismiss, dialogProps } = useDialogDismiss(onClose);
@@ -23,6 +25,7 @@ export function CreateAgentDialog({
   const [role, setRole] = useState("");
   const [task, setTask] = useState("");
   const [ownerUserId, setOwnerUserId] = useState(currentUserId);
+  const [provider, setProvider] = useState<"anthropic" | "openai">("openai");
   const [submitting, setSubmitting] = useState(false);
   const ready = name.trim().length > 0 && role.trim().length > 0 && task.trim().length > 0 && ownerUserId.length > 0;
 
@@ -32,7 +35,7 @@ export function CreateAgentDialog({
     event.preventDefault();
     if (!ready || submitting) return;
     setSubmitting(true);
-    const created = await onCreate({ name, role, task, ownerUserId });
+    const created = await onCreate({ name, role, task, ownerUserId, provider });
     setSubmitting(false);
     if (created) dismiss();
   }
@@ -60,6 +63,20 @@ export function CreateAgentDialog({
               options={participants.map((person) => ({ value: person.id, label: `${person.name}${person.isCurrentUser ? " (You)" : ""}` }))}
             />
           </div>
+          {claudeRunEnabled && (
+            <div className="field">
+              <span className="label">Provider</span>
+              <SelectMenu
+                label="Agent provider"
+                value={provider}
+                onChange={(value) => setProvider(value === "anthropic" ? "anthropic" : "openai")}
+                options={[
+                  { value: "openai", label: "Codex (OpenAI)" },
+                  { value: "anthropic", label: "Claude (Anthropic)" },
+                ]}
+              />
+            </div>
+          )}
         </div>
         <div className="dialog-foot">
           <button type="button" className="button" data-variant="quiet" onClick={dismiss}>Cancel</button>

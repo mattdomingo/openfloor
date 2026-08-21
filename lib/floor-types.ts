@@ -23,6 +23,11 @@ export type FloorAgent = {
   ownerName: string;
   createdByUserId: string;
   state: FloorAgentState;
+  // Which agent provider runs for this agent execute on, and an optional
+  // model override (null = the provider's default). Creation currently
+  // always writes provider "openai" — selection UI is a later milestone.
+  provider: "anthropic" | "openai";
+  model: string | null;
   createdAt: number;
   updatedAt: number;
 };
@@ -193,4 +198,7 @@ export type CreateFloorAgentInput = {
   role: string;
   task: string;
   ownerUserId: string;
+  // Omitted means "openai" (the historical behavior); the dialog only offers
+  // a choice while the Claude rollout gate is on.
+  provider?: "anthropic" | "openai";
 };
