@@ -128,6 +128,22 @@ try {
   skillNames = [];
 }
 
+// Owner-configured remote MCP servers, serialized by the workflow into the
+// SDK's mcpServers shape (headers already decrypted). "openfloor" is a
+// reserved name — stripped defensively here even though the write path
+// rejects it — because the openfloor session-context server below is always
+// present and never user-replaceable.
+let userMcpServers = {};
+try {
+  const parsed = JSON.parse(process.env.OPENFLOOR_MCP_SERVERS ?? "{}");
+  if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+    userMcpServers = Object.fromEntries(Object.entries(parsed).filter(([name]) => name !== "openfloor"));
+  }
+} catch {
+  userMcpServers = {};
+}
+const userMcpServerNames = Object.keys(userMcpServers);
+
 const prompt = await readFile(promptPath, "utf8");
 // The MCP child is spawned by the CLI outside the Bash sandbox (same shape as
 // the Codex runner's MCP bridge); its env is passed explicitly.
@@ -137,7 +153,8 @@ const mcpServers = contextUrl && contextToken && mcpServerPath ? {
     args: [mcpServerPath],
     env: { OPENFLOOR_CONTEXT_URL: contextUrl, OPENFLOOR_CONTEXT_TOKEN: contextToken },
   },
-} : undefined;
+  ...userMcpServers,
+} : (userMcpServerNames.length > 0 ? userMcpServers : undefined);
 
 const response = query({
   prompt,
@@ -162,6 +179,11 @@ const response = query({
     allowedTools: [
       "Bash", "Read", "Write", "Edit", "MultiEdit", "NotebookEdit", "Glob", "Grep", "TodoWrite",
       ...(mcpServers ? ["mcp__openfloor__openfloor_session_context"] : []),
+      // Tools are enabled explicitly per configured server (the server-level
+      // mcp__<name> spec) — never via a blanket permission mode. Which
+      // servers exist at all is owner-configured; this makes their tools
+      // usable in dontAsk mode, where per-tool defaults vary.
+      ...userMcpServerNames.map((name) => `mcp__${name}`),
     ],
     disallowedTools: ["WebFetch", "WebSearch"],
     skills: skillNames,

@@ -175,6 +175,7 @@ WebSocket events notify clients about presence or changed domains. D1 remains au
 - Verified post-merge cleanup of matching server-generated run/candidate refs using Git leases; mismatched refs are preserved and recorded as partial cleanup.
 - Merged candidate audit history remains durable, while the next owner-started run creates a fresh candidate cycle from the latest base SHA.
 - Per-user provider credentials (`user_provider_credentials`, providers `anthropic`/`openai`): connected in `/settings` → Connections, validated against the provider's models endpoint on connect, AES-256-GCM-encrypted at rest under `CREDENTIAL_ENCRYPTION_KEY`, and write-only from the client (routes return only a last-four fingerprint). Per run, both runtime gateways use the **session owner's** connected key when present, else the server key, else refuse with a clear `503`; a present-but-unreadable owner key refuses rather than silently falling back.
+- Session-configured remote MCP servers (`session_mcp_servers`, v1 `http`/`sse` only, `stdio` deferred): the owner adds up to 10 per session in the lobby (name, transport, https URL, optional headers, enabled flag); members read summaries. Header values follow the credential at-rest rules — encrypted, write-only, reads expose header names only. `openfloor` is a reserved name, and the built-in `openfloor_session_context` server is always present and not user-removable. Enabled servers reach Claude runs in the SDK's `mcpServers` shape with their tools allow-listed per server (`mcp__<name>`), never via a blanket permission mode. Connections go directly from the run container to the configured host.
 - Session-scoped imported Claude skills (`session_skills`): the owner pastes a validated `SKILL.md` in the session lobby (members read the list), bounded to 32,000 characters and 20 per session, with the name constrained to a filesystem-safe slug. Claude runs materialize them into the container user's `~/.claude/skills/` (never the git worktree) and enable exactly the imported names via the SDK's `skills` option; a skill's `allowed-tools` frontmatter cannot widen the run's toolset. The target repository's own `CLAUDE.md` is appended to the run prompt as bounded text (first 8,000 characters) rather than loaded as a settings source. claude.ai skill sync is not implemented.
 - A Claude agent runner (`scripts/claude-runner.mjs`, Claude Agent SDK, default model `claude-opus-5`) structurally parallel to the Codex runner, gated behind `CLAUDE_RUN_ENABLED=false` until its prerequisites are live. `floor_agents.provider` (default `openai`) and nullable `model` choose the runner per run; `AgentRunWorkflow` branches at dispatch. Claude runs execute as the non-root `openfloor-agent` user under the SDK's kernel sandbox (bubblewrap + proxy-enforced domain allowlist), with the pinned posture in `lib/claude-sandbox-settings.ts` and model traffic through `POST /runtime/anthropic/*` — see the 2026-08-21 Claude-runner decision-log entry for the verified isolation semantics.
 
@@ -401,6 +402,13 @@ Deliberately left alone: `usage_months` rows survive (see that table's own no-FK
 - Composite primary key `(owner_user_id, month)`, `month` a UTC `"YYYY-MM"` string (`lib/plans.ts`'s `currentMonth()`). One row per owner per calendar month; `seconds` accumulates presence time across every session that owner owns, live and ended alike.
 - **Deliberately has no foreign keys.** The ledger must outlive both `purgeExpiredSessions` (a session's `active_seconds` cascades away with it; the owner's `usage_months` total must not) and, if it is ever added, account deletion. Do not add a `references()` here without re-deriving this from scratch.
 - Written only by `SessionPresence.flushUsage` (`worker/presence.ts`), via `INSERT ... ON CONFLICT DO UPDATE SET seconds = seconds + excluded.seconds`. Never written from an HTTP route.
+
+#### `session_mcp_servers`
+
+- Session-configured remote MCP servers for agent runs, unique per `(session_id, name)`; cascades away with the session. v1 is `http`/`sse` over HTTPS only — `stdio` and any openfloor-controlled egress proxy are deferred.
+- `name` is a lowercase slug; `openfloor` is reserved (rejected at validation, stripped again at serialization and in the runner). Bounds (`lib/mcp-config.ts`): URL ≤ 2,048 characters, ≤ 16 headers (token names ≤ 128, values ≤ 2,048, no control characters), 10 servers per session.
+- Header values may carry credentials, so they follow `user_provider_credentials`' at-rest contract: AES-256-GCM under `CREDENTIAL_ENCRYPTION_KEY` with AAD `mcp:<row id>`, write-only from the client — reads return the plaintext `header_names` list only. Updates treat omitted headers as "keep" and `null` as "clear" (the `updateProfile` avatar convention).
+- Run dispatch decrypts enabled servers' headers in the workflow; an undecryptable row (e.g. after key rotation) fails the run with a clear message — never a server silently dropped or connected without auth.
 
 #### `session_skills`
 
@@ -640,6 +648,10 @@ All paths below are shown without the production `/app` prefix.
 | `GET /api/sessions/[id]/skills` | Session member | List imported Claude-skill summaries (name, description, size, updated); never content. |
 | `POST /api/sessions/[id]/skills` | Owner | Import `{ content }` as a validated `SKILL.md`; upserts by frontmatter name. `400` malformed, `409` at the 20-skill cap or on an ended session. |
 | `DELETE /api/sessions/[id]/skills/[skillId]` | Owner | Remove one imported skill; returns the updated list. |
+| `GET /api/sessions/[id]/mcp-servers` | Session member | List configured MCP-server summaries (name, transport, url, header names, enabled); never header values. |
+| `POST /api/sessions/[id]/mcp-servers` | Owner | Add `{ name, transport, url, headers?, enabled? }`. `400` invalid or reserved name, `409` duplicate name, at the 10-server cap, or on an ended session. |
+| `PATCH /api/sessions/[id]/mcp-servers/[serverId]` | Owner | Update any of `{ transport, url, headers, enabled }`; omitted headers keep, `null` clears. |
+| `DELETE /api/sessions/[id]/mcp-servers/[serverId]` | Owner | Remove one server; returns the updated list. |
 | `GET /api/sessions/[id]/presence` with Upgrade | Session member | Authenticated WebSocket handoff to the per-session Durable Object. |
 | `POST /api/sessions/[id]/repository/connect` | Owner | Create a short-lived signed GitHub installation state and return the installation URL. |
 | `GET /api/github/callback` | Authenticated initiating owner | Consume the signed installation callback once and return to repository setup. |
@@ -700,6 +712,7 @@ Keep server validation in `lib/validation.ts` and cover it with unit tests.
 - Candidate name: required, NFKC-normalized, whitespace-collapsed, maximum 100 characters; it is slugged server-side and never accepted as a complete ref. Candidate description: trimmed, maximum 2,000 characters and may be empty.
 - Provider API key (`parseCredentialConnectInput`): required, trimmed, a single opaque token (no whitespace or control characters), maximum 512 characters.
 - Imported skill (`parseSkillContent`, `lib/skill-validation.ts`): frontmatter `name` a lowercase slug (`[a-z0-9][a-z0-9-]{0,63}`), `description` required at most 500 characters, nonempty body, whole document at most 32,000 characters; 20 skills per session.
+- MCP server (`parseMcpServerCreateInput`/`parseMcpServerUpdateInput`, `lib/mcp-config.ts`): lowercase-slug name with `openfloor` reserved, transport `http`/`sse`, https URL ≤ 2,048, ≤ 16 bounded headers; 10 servers per session.
 
 ## Plan limits and metering
 
@@ -814,6 +827,7 @@ db/
   sessions.ts                Prepared D1 user/session/member/invite queries
   provider-credentials.ts    Encrypted per-user provider credential rows and owner resolution
   skills.ts                  Owner-gated session skill imports and run materialization reads
+  mcp-servers.ts             Owner-gated MCP server config with encrypted headers and run reads
   floor.ts                   Prepared D1 floor snapshot and mutation queries
   repositories.ts            Owner-gated GitHub connection and check-command persistence
   preflights.ts              Durable preflight/check state and internal Workflow transitions
@@ -832,6 +846,7 @@ lib/
   provider-validation.ts     Connect-time key validation against provider models endpoints
   claude-sandbox-settings.ts Pinned Claude-runner sandbox posture serializer
   skill-validation.ts        Bounded SKILL.md frontmatter parsing and slug rules
+  mcp-config.ts              Provider-neutral MCP server types, bounds, and per-provider serialization
   github.ts                  GitHub App JWT, installation-token, repository, and branch reads
   github-state.ts            Signed callback state and webhook HMAC verification
   runtime-token.ts           Short-lived preflight/run operation-scoped gateway JWTs
@@ -1456,6 +1471,14 @@ An owner cannot remove a member from a session today — `leaveSession` is self-
 **Rationale:** Encryption key from a Worker secret rather than a KMS binding because no KMS binding exists in this stack and Worker secrets are the established channel for exactly this class of material (`INVITE_SIGNING_SECRET`, `GITHUB_STATE_SECRET`); AES-GCM via WebCrypto needs no new dependency. Owner-else-server rather than initiator-else-server because the owner is who the plan quota already bills — the two "who pays" ledgers should not diverge. Refusal instead of silent server-key fallback whenever an owner credential exists but fails, because a run that silently switches payer mid-stream is a billing surprise and masks a broken key the owner believes is active. Open TS-only enums follow the `agent_run_artifacts.kind` precedent and the `users`-recreate invariant's lesson: a CHECK-constrained column change on a live table is a table recreate away from cascade data loss.
 
 **Consequences:** `CREDENTIAL_ENCRYPTION_KEY` joins the required secrets (README, `docs/github-production.md`, `.env.example`, both vitest configs); rotating it invalidates every stored credential and users must reconnect — there is no re-encryption path. `users` now has four inbound `ON DELETE CASCADE` FKs (the never-recreate invariant tightens), and `deleteAccount` deletes credential rows explicitly because the scrub never fires the cascade. The OpenAI gateway no longer requires `OPENAI_API_KEY` to exist before verifying the token — resolution happens after authentication, and its rejection paths are covered by `tests/worker/credentials.test.ts` (registered in the `test:worker` script list, which enumerates files explicitly). Connect-time validation uses the `OPENFLOOR_TEST_PROVIDER_KEYS` deterministic adapter in tests, following `OPENFLOOR_TEST_GITHUB_DATA`. The Claude runner (next milestone piece) consumes the same store through an equivalent Anthropic gateway; provider/model selection per agent remains deferred until that runner exists.
+
+### 2026-08-21 — Owner-configured remote MCP servers, connecting directly from the run container
+
+**Decision:** Session owners configure up to 10 remote MCP servers per session (`session_mcp_servers`: lowercase-slug name with `openfloor` reserved, transport `http`/`sse`, https URL, optional bounded headers, enabled flag). Header values are encrypted at rest under `CREDENTIAL_ENCRYPTION_KEY` (AAD `mcp:<row id>`) and are write-only — every read returns header names, not values. The internal runtime type (`lib/mcp-config.ts`) is provider-neutral; `serializeMcpServersForClaude` emits the Agent SDK's `{type, url, headers}` shape, and enabled servers reach the Claude runner with their tools allow-listed per server (`mcp__<name>` in `allowedTools`) — required because `dontAsk`'s per-tool defaults vary (the §2 empirical finding), so MCP tool availability is explicit configuration, never a permission-mode default. The always-present `openfloor_session_context` server is not user-removable, and the reserved name is enforced at validation, at serialization, and again in the runner. v1 defers `stdio` transports and builds no openfloor-controlled egress proxy. The Codex serializer intentionally does not exist yet: the Codex SDK's `config` is an untyped TOML passthrough, so its remote-server field names get verified against the Codex CLI's actual contract when parity work happens, not written from memory — the provider-neutral internal type is the piece that makes that nearly free.
+
+**Rationale — what this changes, stated honestly.** The control here is owner-gating plus the reserved-name list — *not* a claim that container egress was already unrestricted. Until now the agent process itself performed no model-directed network calls: Codex runs at network-off, the Claude sandbox allowlist keeps repository-controlled Bash at effectively no-network, and the only MCP bridge was openfloor's own read-only context tool. A configured MCP server is a direct, single-call channel for session content — prompts, code, the session brief — to reach a host the owner chose. That is a real expansion of what the agent can do, and it is an acceptable one precisely because a session owner explicitly configures each server, members can see the configuration, and the tools are enabled per server. MCP connections are made by the CLI process, outside the Bash sandbox proxy, so the sandbox domain allowlist neither constrains nor needs to include them. If container-level connectivity controls ever land, reopen the egress-proxy question then.
+
+**Consequences:** Undecryptable headers (key rotation) fail the affected run loudly; owners re-enter them. `AgentRunWorkflowEnv` gains `CREDENTIAL_ENCRYPTION_KEY` for dispatch-time decryption; decrypted headers travel only workflow → runner process env → SDK options, never into D1, R2, artifacts, or API responses. The lobby card renders only while `CLAUDE_RUN_ENABLED` is on. Codex runs ignore this table entirely until the parity work lands. `https` is required so header credentials never cross plaintext.
 
 ### 2026-08-21 — Session-scoped imported Claude skills, materialized into user scope
 

@@ -613,6 +613,31 @@ export const sessionSkills = sqliteTable(
   (table) => [uniqueIndex("idx_session_skills_session_name").on(table.sessionId, table.name)],
 );
 
+// Session-configured remote MCP servers for agent runs (v1: http/sse only,
+// stdio deferred). `name` is a lowercase slug; "openfloor" is reserved for
+// the always-present session-context server. Header values may carry
+// credentials, so they follow the user_provider_credentials at-rest rules:
+// AES-256-GCM ciphertext under CREDENTIAL_ENCRYPTION_KEY (AAD "mcp:<row id>"),
+// write-only from the client — reads expose header NAMES (plaintext JSON
+// array) only. transport is a TS-only open enum (no SQL CHECK).
+export const sessionMcpServers = sqliteTable(
+  "session_mcp_servers",
+  {
+    id: text("id").primaryKey(),
+    sessionId: text("session_id").notNull().references(() => sessions.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    transport: text("transport", { enum: ["http", "sse"] }).notNull(),
+    url: text("url").notNull(),
+    headersCiphertext: text("headers_ciphertext"),
+    headerNames: text("header_names"),
+    enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+    createdBy: text("created_by").notNull().references(() => users.id),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [uniqueIndex("idx_session_mcp_servers_session_name").on(table.sessionId, table.name)],
+);
+
 // Per-user agent-provider credentials, encrypted at rest (AES-256-GCM via
 // lib/credential-crypto.ts; key from the CREDENTIAL_ENCRYPTION_KEY Worker
 // secret). `ciphertext` never leaves the server — routes return only the

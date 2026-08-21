@@ -3,6 +3,7 @@ import { requireOnboardedUser } from "@/lib/server-auth";
 import { getRemovedSessionMembers, getSessionForMember, getSessionMembers } from "@/db/sessions";
 import { getActiveRepositoryCandidateForMember, getRepositoryConnectionForMember } from "@/db/repositories";
 import { getLatestRepositoryPreflightForMember } from "@/db/preflights";
+import { listSessionMcpServersForMember } from "@/db/mcp-servers";
 import { listSessionSkillsForMember } from "@/db/skills";
 import { SessionScreen } from "@/components/product/SessionScreen";
 import { env } from "cloudflare:workers";
@@ -23,7 +24,7 @@ export default async function SessionPage({
 
 async function AuthenticatedSession({ id, githubSetup, repoGateRequested }: { id: string; githubSetup: boolean; repoGateRequested: boolean }) {
   const user = await requireOnboardedUser(`/session/${encodeURIComponent(id)}`);
-  const [session, members, removedMembers, repository, candidate, preflight, skills] = await Promise.all([
+  const [session, members, removedMembers, repository, candidate, preflight, skills, mcpServers] = await Promise.all([
     getSessionForMember(id, user.id),
     getSessionMembers(id, user.id),
     getRemovedSessionMembers(id, user.id),
@@ -31,9 +32,10 @@ async function AuthenticatedSession({ id, githubSetup, repoGateRequested }: { id
     getActiveRepositoryCandidateForMember(id, user.id),
     getLatestRepositoryPreflightForMember(id, user.id),
     listSessionSkillsForMember(id, user.id),
+    listSessionMcpServersForMember(id, user.id),
   ]);
   if (!session || !members) notFound();
   const preflightEnabled = (env as unknown as { PREFLIGHT_ENABLED?: string }).PREFLIGHT_ENABLED === "true";
   const claudeRunEnabled = (env as unknown as { CLAUDE_RUN_ENABLED?: string }).CLAUDE_RUN_ENABLED === "true";
-  return <SessionScreen user={user} session={session} initialMembers={members} initialRemovedMembers={removedMembers ?? []} initialRepository={repository} initialCandidate={candidate} initialPreflight={preflight} preflightEnabled={preflightEnabled} claudeRunEnabled={claudeRunEnabled} initialSkills={skills ?? []} githubSetup={githubSetup} repoGateRequested={repoGateRequested} />;
+  return <SessionScreen user={user} session={session} initialMembers={members} initialRemovedMembers={removedMembers ?? []} initialRepository={repository} initialCandidate={candidate} initialPreflight={preflight} preflightEnabled={preflightEnabled} claudeRunEnabled={claudeRunEnabled} initialSkills={skills ?? []} initialMcpServers={mcpServers ?? []} githubSetup={githubSetup} repoGateRequested={repoGateRequested} />;
 }

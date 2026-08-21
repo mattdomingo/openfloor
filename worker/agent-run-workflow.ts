@@ -31,7 +31,9 @@ import { createDraftPullRequest, createInstallationToken, getRepositoryRefSha, G
 import type { AgentRunFile } from "../lib/floor-types";
 import type { GitHubRepositoryOption } from "../lib/session-types";
 import { renderSessionContext } from "../lib/session-context";
+import { getEnabledMcpServersForRun } from "../db/mcp-servers";
 import { getSessionSkillsForRun } from "../db/skills";
+import { serializeMcpServersForClaude } from "../lib/mcp-config";
 import { buildClaudeSandboxSettings } from "../lib/claude-sandbox-settings";
 import { notifyFloorChanged } from "../lib/presence-server";
 import { pokeSessionRouter } from "../lib/router-server";
@@ -45,6 +47,8 @@ export interface AgentRunWorkflowEnv {
   PREFLIGHT_LOGS: R2BucketLike;
   RUNTIME_GATEWAY_SECRET: string;
   OPENFLOOR_RUNTIME_ORIGIN: string;
+  // Decrypts session-configured MCP server headers at Claude-run dispatch.
+  CREDENTIAL_ENCRYPTION_KEY?: string;
 }
 
 type Params = { runId: string };
@@ -220,6 +224,13 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
                 OPENFLOOR_SKILLS: JSON.stringify(
                   (await getSessionSkillsForRun(context.sessionId, this.env.DB)).map((skill) => skill.name),
                 ),
+                // Owner-configured remote MCP servers, already in the Claude
+                // SDK's mcpServers shape with decrypted headers. Undecryptable
+                // headers throw here and fail the run loudly — never a server
+                // silently dropped or connected without auth.
+                OPENFLOOR_MCP_SERVERS: JSON.stringify(serializeMcpServersForClaude(
+                  await getEnabledMcpServersForRun(context.sessionId, this.env.CREDENTIAL_ENCRYPTION_KEY ?? "", this.env.DB),
+                )),
               }
             : {
                 OPENFLOOR_OPENAI_BASE_URL: `${this.env.OPENFLOOR_RUNTIME_ORIGIN}/runtime/openai/v1`,
