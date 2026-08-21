@@ -1,4 +1,5 @@
 import type {
+  AgentRun,
   FloorAgent,
   FloorAssignment,
   FloorMessage,
@@ -6,6 +7,7 @@ import type {
   FloorQueuePrompt,
   FloorReviewSnapshot,
   FloorSnapshot,
+  ReviewContributor,
 } from "@/lib/floor-types";
 import type { AgentInput, AgentTaskInput, AssignmentInput, MessageInput, QueuePromptInput } from "@/lib/validation";
 import { getDb, type D1DatabaseLike } from "./index";
@@ -117,33 +119,63 @@ async function readFloorSnapshot(sessionId: string, userId: string, database: D1
     activeCandidate,
     latestPreflight,
     runs,
-    review: buildRunReview(runs, reviewCandidate, candidateReview),
+    review: buildRunReview(runs, reviewCandidate, candidateReview, promptsByItem, assignments.results),
   };
+}
+
+/** Newest-run-first list of who touched each file: which agent, and which engineer(s) asked for it. */
+function contributorsByPath(
+  reviewRuns: AgentRun[],
+  promptsByItem: Map<string, FloorQueuePrompt[]>,
+  memberNames: Map<string, string>,
+): Map<string, ReviewContributor[]> {
+  const byPath = new Map<string, ReviewContributor[]>();
+  for (const run of reviewRuns) {
+    const prompts = promptsByItem.get(run.queueItemId) ?? [];
+    const requestedBy = prompts.length > 0
+      ? [...new Map(prompts.map((prompt) => [prompt.authorUserId, { userId: prompt.authorUserId, userName: prompt.authorName }])).values()]
+      : [{ userId: run.createdBy, userName: memberNames.get(run.createdBy) ?? "Unknown" }];
+    for (const file of run.files) {
+      const contributors = byPath.get(file.path) ?? [];
+      const existing = contributors.find((contributor) => contributor.agentId === run.agentId);
+      if (existing) {
+        for (const requester of requestedBy) {
+          if (!existing.requestedBy.some((current) => current.userId === requester.userId)) existing.requestedBy.push(requester);
+        }
+      } else {
+        contributors.push({ agentId: run.agentId, agentName: run.agentName, requestedBy });
+      }
+      byPath.set(file.path, contributors);
+    }
+  }
+  return byPath;
 }
 
 function buildRunReview(
   runs: Awaited<ReturnType<typeof getAgentRuns>>,
   candidate: Awaited<ReturnType<typeof getLatestRepositoryReviewCandidate>>,
   githubReview: Awaited<ReturnType<typeof getRepositoryCandidateReviewData>> | null,
+  promptsByItem: Map<string, FloorQueuePrompt[]>,
+  members: Array<{ userId: string; userName: string }>,
 ): FloorReviewSnapshot | null {
   if (!candidate) return null;
   const candidateRuns = runs.filter((item) => item.candidateId === candidate.id && item.files.length > 0);
   if (candidateRuns.length === 0 && !candidate.pullRequestNumber) return null;
   const reviewRuns = candidate.pullRequestNumber ? candidateRuns.filter((run) => run.status === "integrated") : candidateRuns;
+  const memberNames = new Map(members.map((member) => [member.userId, member.userName]));
+  const contributors = contributorsByPath(reviewRuns, promptsByItem, memberNames);
   const files = githubReview?.files.length ? githubReview.files.map((file) => ({
     id: file.id,
     path: file.path,
-    agentId: null,
-    agentName: null,
+    contributors: contributors.get(file.path) ?? [],
     additions: Number(file.additions),
     deletions: Number(file.deletions),
     summary: "GitHub pull request diff",
     diff: diffLines(file.patchPreview),
-  })) : [...new Map([...reviewRuns].reverse().flatMap((run) => run.files.map((file) => [file.path, { run, file }] as const))).values()].map(({ run, file }) => ({
+  })) : [...new Map([...reviewRuns].reverse().flatMap((run) => run.files.map((file) => [file.path, file] as const))).values()].map((file) => ({
     id: file.id,
     path: file.path,
-    agentId: run.agentId,
-    agentName: run.agentName,
+    contributors: contributors.get(file.path) ?? [],
     additions: file.additions,
     deletions: file.deletions,
     summary: file.summary,

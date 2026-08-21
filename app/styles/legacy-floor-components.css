@@ -3724,6 +3724,63 @@
   box-shadow: inset 3px 0 0 var(--accent);
 }
 
+.review-pane-head {
+  flex-wrap: wrap;
+}
+
+.review-attribution {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.review-file .review-attribution,
+.review-diff .review-attribution {
+  margin-top: 4px;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+}
+
+.review-attribution.is-empty {
+  font-style: italic;
+}
+
+.review-attribution .queue-chip {
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.review-attribution-who,
+.review-attribution-more {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.review-attribution-more {
+  font-weight: 650;
+}
+
+.review-attribution[data-expanded="true"] {
+  display: grid;
+  gap: 2px;
+  flex-basis: 100%;
+  margin-top: var(--space-2);
+  margin-left: 0;
+}
+
+.review-attribution-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
 .review-summary {
   padding: var(--space-3) var(--space-4) 0;
   color: var(--text-secondary);

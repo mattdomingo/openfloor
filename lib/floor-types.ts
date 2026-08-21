@@ -135,6 +135,12 @@ export type AgentRun = {
   files: AgentRunFile[];
 };
 
+export type ReviewContributor = {
+  agentId: string;
+  agentName: string;
+  requestedBy: Array<{ userId: string; userName: string }>;
+};
+
 export type FloorReviewSnapshot = {
   id: string;
   status: "draft" | "ready" | "merged";
@@ -144,8 +150,7 @@ export type FloorReviewSnapshot = {
   files: Array<{
     id: string;
     path: string;
-    agentId: string | null;
-    agentName: string | null;
+    contributors: ReviewContributor[];
     additions: number;
     deletions: number;
     summary: string | null;
