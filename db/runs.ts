@@ -1,7 +1,8 @@
 import type { AgentRun, AgentRunCheck, AgentRunFile, AgentRunStatus, RunActivityEvent } from "@/lib/floor-types";
-import { resolveRunModel, type CredentialProvider } from "@/lib/provider-credentials";
 import { getDb, type D1DatabaseLike } from "./index";
 import { getActiveMembershipRole, getMembershipRole } from "./sessions";
+
+export const AGENT_RUN_MODEL = "gpt-5.6-terra";
 export class AgentRunConflictError extends Error {}
 export class AgentRunNotReadyError extends Error {}
 export class AgentRunIntegrationBusyError extends Error {}
@@ -38,32 +39,18 @@ export async function getAgentRuns(sessionId: string, database = getDb()): Promi
   })));
 }
 
-// The provider a run for this queue item would use, for the rollout gate in
-// lib/agent-run-start.ts. Null when the item or its agent doesn't resolve —
-// createAgentRun produces the precise error for those shapes.
-export async function getQueueItemProvider(sessionId: string, queueItemId: string, database = getDb()): Promise<CredentialProvider | null> {
-  const row = await database.prepare(
-    `SELECT a.provider AS provider FROM floor_queue_items q JOIN floor_agents a ON a.id = q.agent_id
-     WHERE q.session_id = ? AND q.id = ?`,
-  ).bind(sessionId, queueItemId).first<{ provider: CredentialProvider }>();
-  return row?.provider ?? null;
-}
-
 export async function createAgentRun(sessionId: string, queueItemId: string, userId: string, database = getDb()): Promise<AgentRun> {
   if ((await getActiveMembershipRole(sessionId, userId, database)) !== "owner") throw new AgentRunNotReadyError("Session not found");
   const context = await database.prepare(
     `SELECT q.id AS queueItemId, q.status AS queueStatus, q.agent_id AS agentId,
-            a.provider AS agentProvider, a.model AS agentModel,
             rc.id AS connectionId, rc.status AS connectionStatus,
             c.id AS candidateId, c.candidate_sha AS candidateSha, c.remote_candidate_sha AS remoteCandidateSha
      FROM floor_queue_items q
-     LEFT JOIN floor_agents a ON a.id = q.agent_id
      LEFT JOIN repository_connections rc ON rc.session_id = q.session_id
      LEFT JOIN repository_candidates c ON c.session_id = q.session_id AND c.status = 'active' AND c.merged_at IS NULL
      WHERE q.session_id = ? AND q.id = ?`,
   ).bind(sessionId, queueItemId).first<{
-    queueItemId: string; queueStatus: string; agentId: string | null; agentProvider: CredentialProvider | null;
-    agentModel: string | null; connectionId: string | null;
+    queueItemId: string; queueStatus: string; agentId: string | null; connectionId: string | null;
     connectionStatus: string | null; candidateId: string | null; candidateSha: string | null; remoteCandidateSha: string | null;
   }>();
   if (!context) throw new AgentRunNotReadyError("Queue item not found");
@@ -89,7 +76,7 @@ export async function createAgentRun(sessionId: string, queueItemId: string, use
           workflow_instance_id, sandbox_id, created_by, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'provisioning', ?, ?, ?, ?, ?, ?)`,
       ).bind(id, sessionId, queueItemId, context.agentId, context.candidateId, context.candidateSha, runBranch, attempt,
-        resolveRunModel(context.agentProvider ?? "openai", context.agentModel), id, `run-${id}`, userId, now, now),
+        AGENT_RUN_MODEL, id, `run-${id}`, userId, now, now),
       ...commands.results.map((check) => database.prepare(
         `INSERT INTO agent_run_checks (id, run_id, position, command, status, updated_at)
          VALUES (?, ?, ?, ?, 'pending', ?)`,
@@ -134,7 +121,6 @@ export async function getRunExecutionContext(runId: string, database = getDb()) 
             r.sandbox_process_id AS sandboxProcessId, r.model,
             r.created_at AS createdAt,
             s.title AS sessionTitle, s.objective, a.name AS agentName, a.role AS agentRole, a.task AS agentTask,
-            a.provider AS provider,
             rc.installation_id AS installationId, rc.repository_id AS repositoryId,
             rc.repository_owner AS repositoryOwner, rc.repository_name AS repositoryName,
             rc.repository_full_name AS repositoryFullName,
@@ -149,7 +135,7 @@ export async function getRunExecutionContext(runId: string, database = getDb()) 
     id: string; sessionId: string; queueItemId: string; agentId: string; candidateSha: string; attempt: number; status: AgentRunStatus;
     runBranch: string; bundleKey: string | null; bundleSizeBytes: number | null; localCommitSha: string | null; createdAt: number;
     sandboxId: string; sandboxProcessId: string | null; model: string; sessionTitle: string; objective: string | null;
-    agentName: string; agentRole: string; agentTask: string; provider: CredentialProvider; installationId: string; repositoryId: string;
+    agentName: string; agentRole: string; agentTask: string; installationId: string; repositoryId: string;
     repositoryOwner: string; repositoryName: string; repositoryFullName: string; candidateBranch: string;
   }>();
   if (!run) return null;
@@ -193,7 +179,7 @@ export async function markRunRunning(runId: string, processId: string | null, da
     `UPDATE agent_runs SET status = 'running', sandbox_process_id = COALESCE(?, sandbox_process_id),
             started_at = COALESCE(started_at, ?), updated_at = ? WHERE id = ? AND status IN ('provisioning', 'running')`,
   ).bind(processId, now, now, runId).run();
-  await appendRunEvent(runId, "running", "The agent started in the isolated workspace.", database);
+  await appendRunEvent(runId, "running", "Codex started in the isolated workspace.", database);
 }
 
 // The row is created with a placeholder sandbox id; the workflow assigns the

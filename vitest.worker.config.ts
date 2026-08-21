@@ -30,7 +30,6 @@ export default defineConfig({
           GITHUB_WEBHOOK_SECRET: "worker-test-github-webhook-secret",
           OPENFLOOR_TEST_ALLOW_IDENTITY_HEADERS: "true",
           RUNTIME_GATEWAY_SECRET: "worker-test-runtime-gateway-secret",
-          CREDENTIAL_ENCRYPTION_KEY: "worker-test-credential-encryption-key",
           TEST_MIGRATIONS: JSON.stringify(migrations),
           ACCOUNT_EMAIL_MERGE_QUERIES: JSON.stringify(accountEmailMergeMigration.queries),
         },

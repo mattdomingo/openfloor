@@ -3,7 +3,6 @@ import {
   normalizeAgentName,
   parseAgentInput,
   parseAssignmentInput,
-  parseCredentialConnectInput,
   parseMessageInput,
   parseObjectiveInput,
   parseProfileInput,
@@ -86,16 +85,8 @@ describe("floor input validation", () => {
       role: "Researcher",
       task: "Map APIs",
       ownerUserId: "owner",
-      provider: "openai",
     });
     expect(normalizeAgentName("  LUMEN   Agent ")).toBe("lumen agent");
-  });
-
-  it("accepts a known provider and rejects unknown ones", () => {
-    expect(parseAgentInput({ name: "A", role: "R", task: "T", ownerUserId: "o", provider: "anthropic" })?.provider).toBe("anthropic");
-    expect(parseAgentInput({ name: "A", role: "R", task: "T", ownerUserId: "o", provider: "openai" })?.provider).toBe("openai");
-    expect(parseAgentInput({ name: "A", role: "R", task: "T", ownerUserId: "o", provider: "gemini" })).toBeNull();
-    expect(parseAgentInput({ name: "A", role: "R", task: "T", ownerUserId: "o", provider: 7 })).toBeNull();
   });
 
   it("validates assignments, messages, prompts, ordering, and merge lists", () => {
@@ -148,21 +139,5 @@ describe("objective input validation", () => {
     expect(parseObjectiveInput({})).toBeNull();
     expect(parseObjectiveInput({ objective: 42 })).toBeNull();
     expect(parseObjectiveInput({ objective: "x".repeat(2001) })).toBeNull();
-  });
-});
-
-describe("credential connect input validation", () => {
-  it("trims and accepts a single opaque token", () => {
-    expect(parseCredentialConnectInput({ apiKey: "  sk-ant-api03-abcd  " })).toEqual({ apiKey: "sk-ant-api03-abcd" });
-  });
-
-  it("rejects missing, empty, oversized, and multi-token values", () => {
-    expect(parseCredentialConnectInput(null)).toBeNull();
-    expect(parseCredentialConnectInput({})).toBeNull();
-    expect(parseCredentialConnectInput({ apiKey: 42 })).toBeNull();
-    expect(parseCredentialConnectInput({ apiKey: "   " })).toBeNull();
-    expect(parseCredentialConnectInput({ apiKey: `sk-${"x".repeat(512)}` })).toBeNull();
-    expect(parseCredentialConnectInput({ apiKey: "sk-abc def" })).toBeNull();
-    expect(parseCredentialConnectInput({ apiKey: "sk-abc\ndef" })).toBeNull();
   });
 });

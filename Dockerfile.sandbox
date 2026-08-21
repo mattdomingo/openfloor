@@ -4,15 +4,8 @@ FROM docker.io/cloudflare/sandbox:0.12.7
 # whenever this image's contents change — pooled run sandboxes are keyed by
 # repository only, so a stale pooled container would otherwise be claimed by
 # a live run without the current scripts (see the pool-key comment there).
-RUN npm install --prefix /opt/openfloor --omit=dev @openai/codex-sdk@0.148.0 @modelcontextprotocol/sdk@1.30.0 @anthropic-ai/claude-agent-sdk@0.3.239 && npm cache clean --force
-# The Claude runner's kernel sandbox: bubblewrap + socat are what
-# @anthropic-ai/sandbox-runtime needs on Linux, ripgrep is its hard binary
-# dependency, and the sandbox refuses to initialize as root — Claude runs
-# execute as openfloor-agent (worker/agent-run-workflow.ts drops privileges
-# with runuser; the Codex path is unchanged and stays root).
-RUN apt-get update -qq && apt-get install -y -qq bubblewrap socat ripgrep && rm -rf /var/lib/apt/lists/* && useradd -m openfloor-agent
+RUN npm install --prefix /opt/openfloor --omit=dev @openai/codex-sdk@0.148.0 @modelcontextprotocol/sdk@1.30.0 && npm cache clean --force
 COPY --chmod=0444 scripts/codex-runner.mjs /opt/openfloor/codex-runner.mjs
-COPY --chmod=0444 scripts/claude-runner.mjs /opt/openfloor/claude-runner.mjs
 COPY --chmod=0444 scripts/openfloor-mcp.mjs /opt/openfloor/openfloor-mcp.mjs
 COPY --chmod=0444 scripts/publish-bundle.mjs /opt/openfloor/publish-bundle.mjs
 COPY --chmod=0444 scripts/github-git-auth.mjs /opt/openfloor/github-git-auth.mjs

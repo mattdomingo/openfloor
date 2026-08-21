@@ -11,24 +11,14 @@ import { ACCEPTED_AVATAR_TYPE_LIST, ACCEPTED_AVATAR_TYPES, MAX_AVATAR_BYTES } fr
 import { formatDuration } from "@/lib/date-format";
 import { initialsFromParts } from "@/lib/display-name";
 import { planLabel, planLimitsSummary, UPGRADE_URL, type Plan, type PlanStatus } from "@/lib/plans";
-import {
-  CREDENTIAL_PROVIDERS,
-  providerLabel,
-  type CredentialProvider,
-  type ProviderCredentialSummary,
-} from "@/lib/provider-credentials";
 import type { AppUser } from "@/lib/session-types";
 import { AppHeader } from "./AppHeader";
 
-type SettingsSection = "profile" | "plan" | "connections" | "preferences" | "danger";
+type SettingsSection = "profile" | "plan" | "preferences" | "danger";
 type Usage = { plan: Plan; planStatus: PlanStatus; effectivePlan: Plan; seconds: number; limitHours: number; limitSeats: number };
 type BlockedSession = { id: string; title: string; reason: "repository_state" | "integration_in_progress" };
 
-export function SettingsScreen({ user: initialUser, usage, credentials }: {
-  user: AppUser;
-  usage: Usage;
-  credentials: ProviderCredentialSummary[];
-}) {
+export function SettingsScreen({ user: initialUser, usage }: { user: AppUser; usage: Usage }) {
   const [user, setUser] = useState(initialUser);
   // Same render-time resync idiom as HomeScreen: router.refresh() re-renders
   // this Server Component prop without remounting SettingsScreen.
@@ -58,7 +48,6 @@ export function SettingsScreen({ user: initialUser, usage, credentials }: {
           options={[
             { value: "profile", label: "Profile" },
             { value: "plan", label: "Plan & usage" },
-            { value: "connections", label: "Connections" },
             { value: "preferences", label: "Preferences" },
             { value: "danger", label: "Danger zone" },
           ]}
@@ -66,7 +55,6 @@ export function SettingsScreen({ user: initialUser, usage, credentials }: {
 
         {section === "profile" && <ProfileSection user={user} onSaved={setUser} />}
         {section === "plan" && <PlanSection usage={usage} />}
-        {section === "connections" && <ConnectionsSection initialCredentials={credentials} />}
         {section === "preferences" && <PreferencesSection user={user} />}
         {section === "danger" && <DangerZoneSection />}
       </section>
@@ -234,112 +222,6 @@ function PlanSection({ usage }: { usage: Usage }) {
         </li>
       )}
     </ul>
-  );
-}
-
-function ConnectionsSection({ initialCredentials }: { initialCredentials: ProviderCredentialSummary[] }) {
-  const [credentials, setCredentials] = useState(initialCredentials);
-  return (
-    <>
-      <p className="settings-category-detail">
-        Connect your own API keys. Runs in sessions you own use your key for that provider instead of openfloor&rsquo;s.
-        Keys are encrypted, shown only by their last four characters, and never sent back to the browser.
-      </p>
-      <ul className="settings-category-list">
-        {CREDENTIAL_PROVIDERS.map((provider) => (
-          <ProviderCredentialRow
-            key={provider}
-            provider={provider}
-            credential={credentials.find((credential) => credential.provider === provider) ?? null}
-            onChanged={(next) => setCredentials((current) => {
-              const others = current.filter((credential) => credential.provider !== provider);
-              return next ? [...others, next] : others;
-            })}
-          />
-        ))}
-      </ul>
-    </>
-  );
-}
-
-function ProviderCredentialRow({ provider, credential, onChanged }: {
-  provider: CredentialProvider;
-  credential: ProviderCredentialSummary | null;
-  onChanged: (credential: ProviderCredentialSummary | null) => void;
-}) {
-  const [apiKey, setApiKey] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  async function connect(event: FormEvent) {
-    event.preventDefault();
-    if (!apiKey.trim() || busy) return;
-    setBusy(true);
-    setError(null);
-    const response = await fetch(`${BASE_PATH}/api/account/credentials/${provider}`, {
-      method: "PUT",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ apiKey: apiKey.trim() }),
-    });
-    const body = (await response.json().catch(() => null)) as { credential?: ProviderCredentialSummary; error?: string } | null;
-    if (!response.ok || !body?.credential) {
-      setError(body?.error ?? "Unable to verify that key. Try again.");
-      setBusy(false);
-      return;
-    }
-    setApiKey("");
-    setBusy(false);
-    onChanged(body.credential);
-  }
-
-  async function disconnect() {
-    if (busy) return;
-    setBusy(true);
-    setError(null);
-    const response = await fetch(`${BASE_PATH}/api/account/credentials/${provider}`, { method: "DELETE" });
-    if (!response.ok) {
-      setError("Unable to disconnect. Try again.");
-      setBusy(false);
-      return;
-    }
-    setBusy(false);
-    onChanged(null);
-  }
-
-  return (
-    <li className="settings-category-row">
-      <span className="settings-category-name">{providerLabel(provider)}</span>
-      {credential ? (
-        <>
-          <span className="settings-category-detail">
-            <strong>Connected</strong> — API key ending in ····{credential.fingerprint}.
-          </span>
-          <button type="button" className="button" data-variant="quiet" data-size="sm" onClick={disconnect} disabled={busy}>
-            {busy ? "Disconnecting…" : "Disconnect"}
-          </button>
-        </>
-      ) : (
-        <form className="settings-category-detail" onSubmit={connect}>
-          <label className="field">
-            <span className="label">API key</span>
-            <input
-              type="password"
-              value={apiKey}
-              onChange={(event) => setApiKey(event.target.value)}
-              maxLength={512}
-              autoComplete="off"
-              spellCheck={false}
-            />
-          </label>
-          <div className="form-actions">
-            <button className="button" data-variant="primary" data-size="sm" disabled={!apiKey.trim() || busy}>
-              {busy ? "Verifying…" : "Connect"}
-            </button>
-          </div>
-        </form>
-      )}
-      {error && <p className="form-error" role="alert">{error}</p>}
-    </li>
   );
 }
 

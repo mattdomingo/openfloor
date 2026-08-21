@@ -12,10 +12,6 @@ import { isRepositoryReadyForFloor } from "@/lib/repository-gate";
 import type { AppUser, PresenceEvent, RemovedSessionMember, RepositoryCandidate, RepositoryConnection, RepositoryPreflight, SessionMember, SessionSummary } from "@/lib/session-types";
 import { AppHeader } from "./AppHeader";
 import { RepositoryCard } from "./RepositoryCard";
-import { SkillsCard } from "./SkillsCard";
-import { McpServersCard } from "./McpServersCard";
-import type { SessionMcpServerSummary } from "@/db/mcp-servers";
-import type { SessionSkillSummary } from "@/db/skills";
 
 type ConnectionState = "connecting" | "connected" | "reconnecting";
 
@@ -28,9 +24,6 @@ export function SessionScreen({
   initialCandidate,
   initialPreflight,
   preflightEnabled,
-  claudeRunEnabled,
-  initialSkills,
-  initialMcpServers,
   githubSetup,
   repoGateRequested,
 }: {
@@ -42,9 +35,6 @@ export function SessionScreen({
   initialCandidate: RepositoryCandidate | null;
   initialPreflight: RepositoryPreflight | null;
   preflightEnabled: boolean;
-  claudeRunEnabled: boolean;
-  initialSkills: SessionSkillSummary[];
-  initialMcpServers: SessionMcpServerSummary[];
   githubSetup: boolean;
   repoGateRequested: boolean;
 }) {
@@ -305,8 +295,6 @@ export function SessionScreen({
           {endedAt == null && (
             <div ref={repositoryCardRef} className="repository-card-slot" data-highlighted={repositoryHighlighted}>
               <RepositoryCard sessionId={session.id} sessionTitle={session.title} sessionObjective={session.objective} role={session.role} initialRepository={initialRepository} initialCandidate={initialCandidate} initialPreflight={initialPreflight} preflightEnabled={preflightEnabled} beginSetup={githubSetup} />
-              {claudeRunEnabled && <SkillsCard sessionId={session.id} role={session.role} initialSkills={initialSkills} />}
-              {claudeRunEnabled && <McpServersCard sessionId={session.id} role={session.role} initialServers={initialMcpServers} />}
             </div>
           )}
           <section className="action-card quiet-card"><p className="eyebrow">Saved automatically</p><p>The session, its objective, members, and invite state are stored. Presence shows who is connected right now.</p></section>

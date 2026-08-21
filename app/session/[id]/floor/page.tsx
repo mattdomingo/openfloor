@@ -24,6 +24,5 @@ export default async function AgentFloorPage({ params }: { params: Promise<{ id:
     redirect(`/session/${encodeURIComponent(id)}?repo=required`);
   }
   const agentRunEnabled = (env as unknown as { AGENT_RUN_ENABLED?: string }).AGENT_RUN_ENABLED === "true";
-  const claudeRunEnabled = (env as unknown as { CLAUDE_RUN_ENABLED?: string }).CLAUDE_RUN_ENABLED === "true";
-  return <AgentFloorScreen user={user} session={session} initialMembers={members} initialFloor={floor} agentRunEnabled={agentRunEnabled} claudeRunEnabled={claudeRunEnabled} />;
+  return <AgentFloorScreen user={user} session={session} initialMembers={members} initialFloor={floor} agentRunEnabled={agentRunEnabled} />;
 }

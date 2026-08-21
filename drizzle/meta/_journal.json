@@ -162,13 +162,6 @@
       "when": 1787340000000,
       "tag": "0022_account_email_merge",
       "breakpoints": true
-    },
-    {
-      "idx": 23,
-      "version": "6",
-      "when": 1787346263724,
-      "tag": "0023_public_the_phantom",
-      "breakpoints": true
     }
   ]
 }

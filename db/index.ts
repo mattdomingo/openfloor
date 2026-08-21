@@ -28,27 +28,6 @@ export function getInviteSigningSecret(): string {
   return secret;
 }
 
-export function getCredentialEncryptionSecret(): string {
-  const secret = (env as unknown as { CREDENTIAL_ENCRYPTION_KEY?: string }).CREDENTIAL_ENCRYPTION_KEY;
-  if (!secret) throw new Error("`CREDENTIAL_ENCRYPTION_KEY` is unavailable.");
-  return secret;
-}
-
-// Deterministic connect-time key validation for tests (same convention as
-// OPENFLOOR_TEST_GITHUB_DATA): JSON of provider -> accepted keys, honored only
-// when the test flag is on. Production always validates against the provider.
-export function getTestProviderKeys(): Partial<Record<import("@/lib/provider-credentials").CredentialProvider, string[]>> | null {
-  const bindings = env as unknown as Record<string, string | undefined>;
-  if (bindings.OPENFLOOR_TEST_ALLOW_IDENTITY_HEADERS !== "true") return null;
-  const value = bindings.OPENFLOOR_TEST_PROVIDER_KEYS;
-  if (!value) return null;
-  try {
-    return JSON.parse(value) as Partial<Record<import("@/lib/provider-credentials").CredentialProvider, string[]>>;
-  } catch {
-    throw new Error("`OPENFLOOR_TEST_PROVIDER_KEYS` is invalid JSON.");
-  }
-}
-
 export function getGitHubAppConfig(): import("@/lib/github").GitHubAppConfig {
   const bindings = env as unknown as Record<string, string | undefined>;
   const testEnabled = bindings.OPENFLOOR_TEST_ALLOW_IDENTITY_HEADERS === "true";

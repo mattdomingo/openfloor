@@ -51,21 +51,11 @@ describe("D1 persistent floor", () => {
   it("persists uniquely named agents with real member ownership", async () => {
     const room = await floorRoom("agents");
     const floor = await createFloorAgent(room.sessionId, room.member.id, agentInput(room.owner.id), env.DB);
-    expect(floor?.agents).toEqual([expect.objectContaining({ name: "Lumen", ownerUserId: room.owner.id, state: "created", provider: "openai", model: null })]);
+    expect(floor?.agents).toEqual([expect.objectContaining({ name: "Lumen", ownerUserId: room.owner.id, state: "created" })]);
     expect(floor?.revision).toBe(1);
     await expect(createFloorAgent(room.sessionId, room.owner.id, agentInput(room.owner.id, "LUMEN"), env.DB)).rejects.toBeInstanceOf(FloorConflictError);
     await expect(createFloorAgent(room.sessionId, room.owner.id, agentInput(room.outsider.id, "Other"), env.DB)).rejects.toBeInstanceOf(FloorTargetError);
     await expect(createFloorAgent(room.sessionId, room.outsider.id, agentInput(room.owner.id, "Hidden"), env.DB)).resolves.toBeNull();
-  });
-
-  it("persists a chosen provider and defaults the rest to openai", async () => {
-    const room = await floorRoom("providers");
-    const claudeInput = parseAgentInput({ name: "Claude", role: "Researcher", task: "Research", ownerUserId: room.owner.id, provider: "anthropic" });
-    if (!claudeInput) throw new Error("Invalid test agent");
-    const floor = await createFloorAgent(room.sessionId, room.owner.id, claudeInput, env.DB);
-    expect(floor?.agents.find((agent) => agent.name === "Claude")?.provider).toBe("anthropic");
-    const second = await createFloorAgent(room.sessionId, room.owner.id, agentInput(room.owner.id, "Codex"), env.DB);
-    expect(second?.agents.find((agent) => agent.name === "Codex")?.provider).toBe("openai");
   });
 
   it("persists unassigned and targeted prompts, ordering, and merge authorship", async () => {

@@ -826,9 +826,6 @@ export async function deleteAccount(
     // FK action, same reason leaveSession deletes it explicitly.
     database.prepare("DELETE FROM floor_assignments WHERE user_id = ?").bind(userId),
     database.prepare("DELETE FROM session_members WHERE user_id = ?").bind(userId),
-    // Encrypted provider credentials: the users row is scrubbed below, not
-    // deleted, so the FK cascade never fires — delete them explicitly.
-    database.prepare("DELETE FROM user_provider_credentials WHERE user_id = ?").bind(userId),
     database
       .prepare(
         `UPDATE users SET

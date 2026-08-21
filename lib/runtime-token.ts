@@ -48,7 +48,7 @@ export type RunGatewayClaims = {
   sessionId: string;
   repositoryId: string;
   candidateSha: string;
-  operation: "source" | "openai" | "anthropic" | "bundle_upload" | "bundle_read" | "events" | "context";
+  operation: "source" | "openai" | "bundle_upload" | "bundle_read" | "events" | "context";
 };
 
 export async function signRunGatewayToken(claims: RunGatewayClaims, secret: string): Promise<string> {
@@ -58,7 +58,7 @@ export async function signRunGatewayToken(claims: RunGatewayClaims, secret: stri
     .setIssuer("openfloor")
     .setAudience("openfloor-runtime-gateway")
     .setIssuedAt(now)
-    .setExpirationTime(now + (["openai", "anthropic", "events", "context"].includes(claims.operation) ? 60 * 60 : 10 * 60))
+    .setExpirationTime(now + (claims.operation === "openai" || claims.operation === "events" || claims.operation === "context" ? 60 * 60 : 10 * 60))
     .sign(new TextEncoder().encode(secret));
 }
 

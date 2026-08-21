@@ -31,10 +31,6 @@ import { createDraftPullRequest, createInstallationToken, getRepositoryRefSha, G
 import type { AgentRunFile } from "../lib/floor-types";
 import type { GitHubRepositoryOption } from "../lib/session-types";
 import { renderSessionContext } from "../lib/session-context";
-import { getEnabledMcpServersForRun } from "../db/mcp-servers";
-import { getSessionSkillsForRun } from "../db/skills";
-import { serializeMcpServersForClaude } from "../lib/mcp-config";
-import { buildClaudeSandboxSettings } from "../lib/claude-sandbox-settings";
 import { notifyFloorChanged } from "../lib/presence-server";
 import { pokeSessionRouter } from "../lib/router-server";
 import { signRunGatewayToken } from "../lib/runtime-token";
@@ -47,8 +43,6 @@ export interface AgentRunWorkflowEnv {
   PREFLIGHT_LOGS: R2BucketLike;
   RUNTIME_GATEWAY_SECRET: string;
   OPENFLOOR_RUNTIME_ORIGIN: string;
-  // Decrypts session-configured MCP server headers at Claude-run dispatch.
-  CREDENTIAL_ENCRYPTION_KEY?: string;
 }
 
 type Params = { runId: string };
@@ -63,13 +57,7 @@ const PUBLISHER_SANDBOX_IMAGE_VERSION = "v2";
 // Namespacing the pool key by image version makes old-image entries
 // unreachable immediately; the existing idle sweep reclaims them.
 // Bump this whenever Dockerfile.sandbox's run-sandbox contents change.
-const RUN_SANDBOX_IMAGE_VERSION = "v2";
-// Claude runs get a fresh HOME per run, inside the per-run scratch tree that
-// prepare wipes and the release reset removes. Pool sandboxes outlive
-// sessions, so everything the CLI persists under its home — transcripts,
-// todos, ~/.claude.json, whatever the next SDK version adds — must die with
-// the run by construction, not by enumerating state paths.
-const CLAUDE_AGENT_HOME = "/tmp/openfloor/agent-home";
+const RUN_SANDBOX_IMAGE_VERSION = "v1";
 
 export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Params> {
   async run(event: Readonly<WorkflowEvent<Params>>, step: WorkflowStep): Promise<{ status: string }> {
@@ -89,7 +77,7 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
       labels: { sessionId: context.sessionId, runId, purpose: "trusted-publisher" },
     });
     let finalStatus: "ready" | "failed" | "cancelled" = "failed";
-    let summary = "Agent run failed before the agent completed.";
+    let summary = "Agent run failed before Codex completed.";
     try {
       if (context.status === "published") return await this.integrate(runId, step);
       if (["integrated", "conflicted"].includes(context.status)) return { status: context.status };
@@ -122,17 +110,13 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
         labels: { sessionId: context.sessionId, runId },
       });
       pooled = { id: sandboxId, sandbox };
-      // Returns the names of the skills it materialized so the start step's
-      // OPENFLOOR_SKILLS is the same snapshot — a second D1 read there could
-      // observe a skill imported mid-provisioning and enable a name whose
-      // SKILL.md was never written.
-      const skillNames = await step.do("prepare exact workspace", { retries: { limit: 2, delay: "5 seconds", backoff: "exponential" }, timeout: "5 minutes" }, async () => {
+      await step.do("prepare exact workspace", { retries: { limit: 2, delay: "5 seconds", backoff: "exponential" }, timeout: "5 minutes" }, async () => {
         const sourceToken = await signRunGatewayToken({
           runId, sessionId: context.sessionId, repositoryId: context.repositoryId,
           candidateSha: context.candidateSha, operation: "source",
         }, this.env.RUNTIME_GATEWAY_SECRET);
         const result = await sandbox.exec(
-          `rm -rf /tmp/openfloor && mkdir -p /workspace/repository /tmp/openfloor && find /workspace/repository -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + &&
+          `mkdir -p /workspace/repository /tmp/openfloor && find /workspace/repository -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + &&
            curl --fail --silent --show-error --location --max-filesize 104857600 -H "Authorization: Bearer $OPENFLOOR_SOURCE_TOKEN" "$OPENFLOOR_SOURCE_URL" |
              tar -xz --strip-components=1 -C /workspace/repository &&
            git -C /workspace/repository init -q && git -C /workspace/repository config user.name openfloor &&
@@ -147,71 +131,22 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
           } },
         );
         if (!result.success) throw new Error(`Candidate workspace preparation failed with exit code ${result.exitCode}`);
-        let prompt = await buildRunPrompt(context, this.env.DB);
-        if (context.provider === "anthropic") {
-          // The target repository's CLAUDE.md is useful context, but it is
-          // deliberately NOT loaded as a settings source — user-scope keeps
-          // the repo's .claude/ out of the session — so read it as text into
-          // the prompt, bounded like every other brief section.
-          const claudeMd = await sandbox.exec(
-            "head -c 8000 /workspace/repository/CLAUDE.md 2>/dev/null || true",
-            { timeout: 30_000 },
-          );
-          if (claudeMd.success && claudeMd.stdout.trim()) {
-            // head -c counts bytes; a multi-byte character split at the
-            // boundary decodes as a trailing U+FFFD, dropped here.
-            prompt += `\n\n## Repository CLAUDE.md (first 8,000 bytes)\n\n${claudeMd.stdout.replace(/�$/, "")}`;
-          }
-        }
-        const materializedSkills: string[] = [];
+        const prompt = await buildRunPrompt(context, this.env.DB);
         await sandbox.writeFile("/tmp/openfloor/prompt.txt", prompt);
         // Persisted so members can see exactly what a run was told — the
         // honest counterpart to injecting context they can't otherwise see.
         const promptKey = `runs/${runId}/prompt.txt`;
         await this.env.PREFLIGHT_LOGS.put(promptKey, prompt, { httpMetadata: { contentType: "text/plain; charset=utf-8" } });
         await recordRunArtifact(runId, "prompt", promptKey, "text/plain; charset=utf-8", prompt.length, this.env.DB);
-        if (context.provider === "anthropic") {
-          // Claude runs execute as a dedicated non-root user: the SDK's
-          // kernel sandbox (bubblewrap via sandbox-runtime) cannot initialize
-          // as root, and it is what keeps the two-layer isolation posture
-          // real. Root keeps the pipeline (git reads, bundle export); the
-          // workspace and result paths become agent-owned, and root's git
-          // needs safe.directory once ownership differs.
-          await sandbox.exec(
-            `id -u openfloor-agent >/dev/null 2>&1 || useradd -m openfloor-agent; mkdir -p ${CLAUDE_AGENT_HOME}/.claude`,
-            { timeout: 30_000 },
-          );
-          await sandbox.writeFile(
-            `${CLAUDE_AGENT_HOME}/.claude/settings.json`,
-            buildClaudeSandboxSettings({ gatewayHost: new URL(this.env.OPENFLOOR_RUNTIME_ORIGIN).host }),
-          );
-          // Imported session skills materialize into the agent user's home
-          // (user scope — never the git worktree, which would make them
-          // changed paths the publisher then rejects). Names are validated
-          // slugs at the write path; the re-check here keeps the exec safe
-          // even against a hand-edited row.
-          for (const skill of await getSessionSkillsForRun(context.sessionId, this.env.DB)) {
-            if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(skill.name)) continue;
-            await sandbox.exec(`mkdir -p ${CLAUDE_AGENT_HOME}/.claude/skills/${skill.name}`, { timeout: 30_000 });
-            await sandbox.writeFile(`${CLAUDE_AGENT_HOME}/.claude/skills/${skill.name}/SKILL.md`, skill.content);
-            materializedSkills.push(skill.name);
-          }
-          const prepared = await sandbox.exec(
-            "chown -R openfloor-agent:openfloor-agent /workspace/repository /tmp/openfloor && git config --global --add safe.directory /workspace/repository",
-            { timeout: 60_000 },
-          );
-          if (!prepared.success) throw new Error(`Claude runtime preparation failed with exit code ${prepared.exitCode}`);
-        }
-        return materializedSkills;
       });
 
       const processId = `codex-${runId}`;
       await step.do("start Codex", { retries: { limit: 1, delay: "5 seconds" }, timeout: "2 minutes" }, async () => {
         const existing = await sandbox.getProcess(processId);
         if (!existing) {
-          const providerToken = await signRunGatewayToken({
+          const openaiToken = await signRunGatewayToken({
             runId, sessionId: context.sessionId, repositoryId: context.repositoryId,
-            candidateSha: context.candidateSha, operation: context.provider === "anthropic" ? "anthropic" : "openai",
+            candidateSha: context.candidateSha, operation: "openai",
           }, this.env.RUNTIME_GATEWAY_SECRET);
           const eventsToken = await signRunGatewayToken({
             runId, sessionId: context.sessionId, repositoryId: context.repositoryId,
@@ -221,36 +156,7 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
             runId, sessionId: context.sessionId, repositoryId: context.repositoryId,
             candidateSha: context.candidateSha, operation: "context",
           }, this.env.RUNTIME_GATEWAY_SECRET);
-          // runuser -p preserves the startProcess env (including the HOME set
-          // below, which is where the pinned sandbox settings live) while
-          // dropping to the non-root user the Claude sandbox requires.
-          const command = context.provider === "anthropic"
-            ? "runuser -p -u openfloor-agent -- node /opt/openfloor/claude-runner.mjs"
-            : "node /opt/openfloor/codex-runner.mjs";
-          const providerEnv = context.provider === "anthropic"
-            ? {
-                OPENFLOOR_ANTHROPIC_BASE_URL: `${this.env.OPENFLOOR_RUNTIME_ORIGIN}/runtime/anthropic`,
-                OPENFLOOR_ANTHROPIC_TOKEN: providerToken,
-                HOME: CLAUDE_AGENT_HOME,
-                // Names of the materialized skills; the runner passes them as
-                // the SDK's explicit `skills` list ([] disables CLI skill
-                // defaults — omitted is NOT off). The prepare step's snapshot,
-                // so names and on-disk SKILL.md files always match; a skill
-                // imported after prepare is simply absent from this run.
-                OPENFLOOR_SKILLS: JSON.stringify(skillNames),
-                // Owner-configured remote MCP servers, already in the Claude
-                // SDK's mcpServers shape with decrypted headers. Undecryptable
-                // headers throw here and fail the run loudly — never a server
-                // silently dropped or connected without auth.
-                OPENFLOOR_MCP_SERVERS: JSON.stringify(serializeMcpServersForClaude(
-                  await getEnabledMcpServersForRun(context.sessionId, this.env.CREDENTIAL_ENCRYPTION_KEY ?? "", this.env.DB),
-                )),
-              }
-            : {
-                OPENFLOOR_OPENAI_BASE_URL: `${this.env.OPENFLOOR_RUNTIME_ORIGIN}/runtime/openai/v1`,
-                OPENFLOOR_OPENAI_TOKEN: providerToken,
-              };
-          await sandbox.startProcess(command, {
+          await sandbox.startProcess("node /opt/openfloor/codex-runner.mjs", {
             processId,
             autoCleanup: false,
             cwd: "/workspace/repository",
@@ -258,13 +164,14 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
               OPENFLOOR_PROMPT_PATH: "/tmp/openfloor/prompt.txt",
               OPENFLOOR_RESULT_PATH: "/tmp/openfloor/result.json",
               OPENFLOOR_WORKSPACE: "/workspace/repository",
+              OPENFLOOR_OPENAI_BASE_URL: `${this.env.OPENFLOOR_RUNTIME_ORIGIN}/runtime/openai/v1`,
+              OPENFLOOR_OPENAI_TOKEN: openaiToken,
               OPENFLOOR_MODEL: context.model,
               OPENFLOOR_EVENTS_URL: `${this.env.OPENFLOOR_RUNTIME_ORIGIN}/runtime/run/events`,
               OPENFLOOR_EVENTS_TOKEN: eventsToken,
               OPENFLOOR_CONTEXT_URL: `${this.env.OPENFLOOR_RUNTIME_ORIGIN}/runtime/run/context`,
               OPENFLOOR_CONTEXT_TOKEN: contextToken,
               OPENFLOOR_MCP_SERVER_PATH: "/opt/openfloor/openfloor-mcp.mjs",
-              ...providerEnv,
             },
           });
         }
@@ -275,7 +182,7 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
 
       const processResult = await step.do("wait for Codex", { retries: { limit: 1, delay: "10 seconds" }, timeout: "60 minutes" }, async () => {
         const process = await sandbox.getProcess(processId);
-        if (!process) throw new Error("The agent process could not be recovered");
+        if (!process) throw new Error("Codex process could not be recovered");
         for (;;) {
           if (await isRunCancellationRequested(runId, this.env.DB)) {
             await process.kill("SIGTERM");
@@ -311,7 +218,7 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
       }
       const resultFile = await sandbox.exec("cat /tmp/openfloor/result.json", { timeout: 10_000 });
       const codexResult = parseCodexResult(resultFile.stdout);
-      if (processResult.exitCode !== 0 || !codexResult.ok) throw new Error(codexResult.error || `The agent process exited with code ${processResult.exitCode}`);
+      if (processResult.exitCode !== 0 || !codexResult.ok) throw new Error(codexResult.error || `Codex exited with code ${processResult.exitCode}`);
       await markRunChecking(runId, codexResult.threadId, codexResult.finalResponse, this.env.DB);
       await this.notify(runId);
 
@@ -325,15 +232,15 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
           sandbox.exec("git status --porcelain --no-renames -z", { cwd: "/workspace/repository", timeout: 60_000 }),
           sandbox.exec("git diff --no-color --no-renames --unified=3 HEAD", { cwd: "/workspace/repository", timeout: 60_000 }),
         ]);
-        if (!stats.success || !statusResult.success) throw new Error("Unable to enumerate the agent's changes");
+        if (!stats.success || !statusResult.success) throw new Error("Unable to enumerate Codex changes");
         // numstat -z entries: "additions\tdeletions\tpath\0" ("-" for binary counts).
         const numstats = stats.stdout.split("\0").filter(Boolean).map((entry) => {
           const [additions, deletions, path] = entry.split("\t");
           return { path, additions: Number(additions) || 0, deletions: Number(deletions) || 0 };
         });
         const paths = numstats.map((entry) => entry.path);
-        if (paths.length === 0) throw new Error("The agent completed without changing any files");
-        if (paths.length > MAX_FILES) throw new Error(`The agent changed more than ${MAX_FILES} files`);
+        if (paths.length === 0) throw new Error("Codex completed without changing any files");
+        if (paths.length > MAX_FILES) throw new Error(`Codex changed more than ${MAX_FILES} files`);
         if (paths.some((path) => path === ".github/workflows" || path.startsWith(".github/workflows/"))) {
           throw new Error("Workflow-file changes are not allowed in this release");
         }
@@ -416,8 +323,8 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
       }
       finalStatus = "ready";
       summary = context.checks.length > 0
-        ? `The agent changed ${files.length} file${files.length === 1 ? "" : "s"}; all required checks passed. Preparing the verified run branch.`
-        : `The agent changed ${files.length} file${files.length === 1 ? "" : "s"}; no check commands were configured. Preparing the verified run branch.`;
+        ? `Codex changed ${files.length} file${files.length === 1 ? "" : "s"}; all required checks passed. Preparing the verified run branch.`
+        : `Codex changed ${files.length} file${files.length === 1 ? "" : "s"}; no check commands were configured. Preparing the verified run branch.`;
       await this.complete(runId, finalStatus, summary);
 
       const bundle = await step.do("export run bundle", { retries: { limit: 1, delay: "5 seconds" }, timeout: "5 minutes" }, async () => {
@@ -479,16 +386,9 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
               normalizeId: true,
             });
             await parked.killAllProcesses();
-            // Hard reset between runs: wipe the workspace, run scratch (which
-            // contains the per-run Claude HOME), and Codex state; only the
-            // npm cache survives for the next claim. The /home/openfloor-agent
-            // paths are belt-and-braces — nothing should write there now that
-            // HOME points into the scratch tree, but a process that lost HOME
-            // would fall back to the passwd entry.
-            const reset = await parked.exec(
-              "rm -rf /workspace/repository /tmp/openfloor ~/.codex /home/openfloor-agent/.claude /home/openfloor-agent/.claude.json /home/openfloor-agent/.claude.json.backup",
-              { timeout: 60_000 },
-            );
+            // Hard reset between runs: wipe the workspace, run scratch, and
+            // Codex state; only the npm cache survives for the next claim.
+            const reset = await parked.exec("rm -rf /workspace/repository /tmp/openfloor ~/.codex", { timeout: 60_000 });
             if (!reset.success) throw new Error(`Sandbox reset failed with exit code ${reset.exitCode}`);
             await releasePoolSandbox(claimed.id, this.env.DB);
           });
@@ -671,7 +571,7 @@ function parseCodexResult(value: string): { ok: boolean; threadId: string | null
       error: typeof parsed.error === "string" ? parsed.error.slice(0, 1_000) : null,
     };
   } catch {
-    return { ok: false, threadId: null, finalResponse: null, error: "The agent did not produce a valid result" };
+    return { ok: false, threadId: null, finalResponse: null, error: "Codex did not produce a valid result" };
   }
 }
 

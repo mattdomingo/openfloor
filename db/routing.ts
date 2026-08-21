@@ -12,13 +12,6 @@ export type TickOutcome = { acted: boolean; held: boolean; revision: number | nu
 
 export type RoutingDeps = {
   startRun: (sessionId: string, queueItemId: string, userId: string) => Promise<StartRunResult>;
-  // Providers whose runs cannot start right now (rollout gates, e.g.
-  // CLAUDE_RUN_ENABLED=false). Items targeting these agents are SKIPPED like
-  // busy agents — never held — because a "disabled" StartRunResult from the
-  // seam is treated as a session-wide precondition and would halt dispatch
-  // of every other provider's items behind it, backing off for a condition
-  // that only resolves when an operator flips a Worker var.
-  disabledProviders?: ReadonlySet<string>;
 };
 
 type AgentRow = {
@@ -26,7 +19,6 @@ type AgentRow = {
   name: string;
   role: string;
   task: string;
-  provider: string;
   createdAt: number;
 };
 
@@ -93,7 +85,7 @@ export async function runRoutingTick(
        ORDER BY p.created_at, p.id`,
     ).bind(sessionId).all<{ queueItemId: string; text: string }>(),
     database.prepare(
-      `SELECT id, name, role, task, provider, created_at AS createdAt FROM floor_agents
+      `SELECT id, name, role, task, created_at AS createdAt FROM floor_agents
        WHERE session_id = ? ORDER BY created_at, id`,
     ).bind(sessionId).all<AgentRow>(),
     database.prepare(
@@ -157,17 +149,16 @@ export async function runRoutingTick(
           }
         }
         const busy = busyAgents.has(agent.id) || claimedThisTick.has(agent.id);
-        const providerDisabled = deps.disabledProviders?.has(agent.provider) ?? false;
         return {
           agentId: agent.id,
           name: agent.name,
           overlap,
           lastRunAt: lastRunByAgent.get(agent.id) ?? null,
-          eligible: !busy && !providerDisabled,
-          why: matched.length > 0 ? `matched: ${matched.join(", ")}` : busy ? "busy" : providerDisabled ? "provider disabled" : "idle",
+          eligible: !busy,
+          why: matched.length > 0 ? `matched: ${matched.join(", ")}` : busy ? "busy" : "idle",
         };
       });
-      // Prefer idle, enabled agents; fall back to the rest (assignment is not dispatch).
+      // Prefer idle agents; fall back to busy ones (assignment is not dispatch).
       const pool = candidates.filter((candidate) => candidate.eligible);
       const ranked = (pool.length > 0 ? pool : candidates).slice().sort((a, b) => {
         if (a.overlap !== b.overlap) return b.overlap - a.overlap;
@@ -221,15 +212,6 @@ export async function runRoutingTick(
         decisions.push({
           queueItemId: item.id, agentId: item.agentId, runId: null, decision: "skipped",
           reason: `Agent ${agent?.name ?? "unknown"} is busy`, candidates: [],
-        });
-        continue;
-      }
-      // A gated provider is a per-item condition, not a session-wide one:
-      // skip and keep dispatching the rest of the queue (see RoutingDeps).
-      if (agent && deps.disabledProviders?.has(agent.provider)) {
-        decisions.push({
-          queueItemId: item.id, agentId: item.agentId, runId: null, decision: "skipped",
-          reason: `Agent ${agent.name}'s provider (${agent.provider}) is not enabled`, candidates: [],
         });
         continue;
       }
