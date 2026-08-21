@@ -42,6 +42,12 @@ export const users = sqliteTable(
   },
   (table) => [
     uniqueIndex("idx_users_chatgpt_user_id").on(table.providerUserId),
+    // Email is the only identity signal stable across login methods (Access
+    // issues a different chatgpt_user_id per IdP) — see 0022's merge
+    // migration and upsertUser in db/sessions.ts, both of which depend on
+    // this being unique and normalizeEmail (lib/identity.ts) keeping every
+    // stored value lowercase and trimmed.
+    uniqueIndex("idx_users_email").on(table.email),
     check("users_plan_check", sql`${table.plan} in ('pro', 'max', 'enterprise')`),
     check("users_plan_status_check", sql`${table.planStatus} in ('inactive', 'active', 'past_due', 'canceled')`),
   ],

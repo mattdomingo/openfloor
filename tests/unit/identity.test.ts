@@ -84,6 +84,60 @@ describe("Cloudflare Access identity", () => {
   });
 });
 
+describe("email normalization", () => {
+  const mixedCase = "  Matt@Opnflr.COM  ";
+  const expected = "matt@opnflr.com";
+
+  it("identityFromVerifiedAccessClaims lowercases and trims the email claim, leaving fullName untouched", () => {
+    const identity = identityFromVerifiedAccessClaims({ sub: "access-user", email: mixedCase, name: "  Matt  " });
+    expect(identity?.email).toBe(expected);
+    expect(identity?.fullName).toBe("Matt");
+  });
+
+  it("falls back displayName to the normalized email when there is no name claim", () => {
+    const identity = identityFromVerifiedAccessClaims({ sub: "access-user", email: mixedCase });
+    expect(identity?.fullName).toBeNull();
+    expect(identity?.displayName).toBe(expected);
+  });
+
+  it("identityFromTrustedHeaders lowercases and trims the internal email header", () => {
+    const headers = new Headers({
+      "x-openfloor-authenticated-user-id": "trusted-id",
+      "x-openfloor-authenticated-user-email": mixedCase,
+    });
+    expect(identityFromTrustedHeaders(headers)?.email).toBe(expected);
+  });
+
+  it("localDevelopmentIdentity lowercases and trims the dev/test email", () => {
+    const headers = new Headers({
+      host: "127.0.0.1:8787",
+      "x-openfloor-dev-user-id": "dev-id",
+      "x-openfloor-dev-user-email": mixedCase,
+    });
+    expect(localDevelopmentIdentity(headers, { OPENFLOOR_TEST_ALLOW_IDENTITY_HEADERS: "true" })?.email).toBe(expected);
+  });
+
+  // Table-driven on purpose: a fourth identity constructor added later that
+  // forgets to normalize would silently reopen the duplicate-account bug
+  // (db/sessions.ts:upsertUser and idx_users_email both assume every
+  // constructor here produces the same canonical form for the same mailbox).
+  it("normalizes identically across every identity constructor", () => {
+    const results = [
+      identityFromVerifiedAccessClaims({ sub: "s", email: mixedCase })?.email,
+      identityFromTrustedHeaders(new Headers({
+        "x-openfloor-authenticated-user-id": "id",
+        "x-openfloor-authenticated-user-email": mixedCase,
+      }))?.email,
+      localDevelopmentIdentity(new Headers({
+        host: "127.0.0.1",
+        "x-openfloor-dev-user-id": "id",
+        "x-openfloor-dev-user-email": mixedCase,
+      }), { OPENFLOOR_TEST_ALLOW_IDENTITY_HEADERS: "true" })?.email,
+    ];
+    expect(results).toEqual([expected, expected, expected]);
+  });
+});
+
 describe("development identity isolation", () => {
   it("uses explicit local variables only on loopback", () => {
     const environment = {

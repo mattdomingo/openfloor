@@ -110,6 +110,32 @@ describe("D1 session persistence", () => {
     expect(relinked.email).toBe(first.email);
   });
 
+  it("round-trips between two login methods for the same email without ever creating a third account", async () => {
+    const base = identity("ping-pong", "Ping Pong");
+    const google = { ...base, providerUserId: "chatgpt-ping-pong-google" };
+    const otp = { ...base, providerUserId: "chatgpt-ping-pong-otp" };
+
+    const first = await upsertUser(google, env.DB);
+    const second = await upsertUser(otp, env.DB);
+    const third = await upsertUser(google, env.DB);
+    const fourth = await upsertUser(otp, env.DB);
+
+    expect(new Set([first.id, second.id, third.id, fourth.id]).size).toBe(1);
+    const rows = await env.DB.prepare("SELECT COUNT(*) AS n FROM users WHERE email = ?").bind(base.email).first<{ n: number }>();
+    expect(rows?.n).toBe(1);
+  });
+
+  it("resolves a concurrent first login for the same new email to a single account", async () => {
+    const first = identity("concurrent-new", "Concurrent");
+    const second = { ...first, providerUserId: "chatgpt-concurrent-new-other-method" };
+
+    const [a, b] = await Promise.all([upsertUser(first, env.DB), upsertUser(second, env.DB)]);
+
+    expect(a.id).toBe(b.id);
+    const rows = await env.DB.prepare("SELECT COUNT(*) AS n FROM users WHERE email = ?").bind(first.email).first<{ n: number }>();
+    expect(rows?.n).toBe(1);
+  });
+
   it("updateProfile sets, keeps, and clears the avatar independently of names, and recomputes display_name", async () => {
     const user = await upsertUser(identity("profile-edit", "Original Name"), env.DB);
     await expect(updateProfile(user.id, { firstName: "Matt", lastName: "Domingo", githubHandle: "octocat", avatarKey: "users/a/avatar" }, env.DB))
