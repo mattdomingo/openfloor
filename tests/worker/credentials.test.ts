@@ -133,6 +133,31 @@ describe("provider credential persistence", () => {
     expect(await getSessionOwnerCredential(sessionId, "anthropic", env.DB)).toBeNull();
   });
 
+  it("a cross-method re-key (account merge path) preserves the user id, so credentials stay decryptable", async () => {
+    // upsertUser's byEmail fallback re-keys the SAME row to the new provider
+    // sub — the user id never changes, so ciphertext bound to
+    // `${userId}:${provider}` as AAD stays valid. A future migration that
+    // collapses two rows into one would break that binding and must migrate
+    // or drop the losing row's credentials — this test pins the invariant
+    // the runtime path relies on.
+    const first = await upsertUser(
+      { providerUserId: "credentials-rekey-google", email: "rekey@example.com", displayName: "Rekey Example", fullName: "Rekey Example" },
+      env.DB,
+    );
+    await connectOpenAiKey(first.id, "sk-openai-rekey-key9");
+    const second = await upsertUser(
+      { providerUserId: "credentials-rekey-otp", email: "rekey@example.com", displayName: "Rekey Example", fullName: "Rekey Example" },
+      env.DB,
+    );
+    expect(second.id).toBe(first.id);
+    const stored = await env.DB.prepare("SELECT ciphertext FROM user_provider_credentials WHERE user_id = ? AND provider = 'openai'")
+      .bind(second.id)
+      .first<{ ciphertext: string }>();
+    expect(stored).not.toBeNull();
+    const { decryptCredential } = await import("@/lib/credential-crypto");
+    expect(await decryptCredential(stored!.ciphertext, ENCRYPTION_SECRET, `${second.id}:openai`)).toBe("sk-openai-rekey-key9");
+  });
+
   it("deleteAccount removes the user's credentials", async () => {
     const user = await upsertUser(identity("delete", "Delete Example"), env.DB);
     await connectOpenAiKey(user.id, "sk-openai-test-gone");

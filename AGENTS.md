@@ -424,6 +424,8 @@ Deliberately left alone: `usage_months` rows survive (see that table's own no-FK
 - Write-only from the client: no endpoint returns a stored value. Reads return `fingerprint` (last four characters), `kind`, and `validated_at` (set on connect after a successful provider models-endpoint check).
 - `kind` is `api_key` only; a `kind: "oauth"` row slots into the same identity unchanged if Anthropic ever approves third-party OAuth for openfloor (`ponytail:` comment in `db/schema.ts`). Do not build claude.ai/Max/Pro subscription login without that approval.
 - The `ON DELETE CASCADE` FK to `users` never fires in practice — `deleteAccount` scrubs the users row rather than deleting it, so it deletes these rows explicitly in the same batch.
+- **AAD binds ciphertext to the user id, so account identity operations must preserve that id.** Every runtime path does: `upsertUser`'s cross-method email fallback and its `ON CONFLICT(email)` insert both re-key the *same surviving row* — the id never changes (pinned by a test in `tests/worker/credentials.test.ts`). The one historical row-collapse (migration `0022_account_email_merge`) predates this table in migration order, so no credential row can ever have existed for a merged-away account. Any *future* migration that collapses two `users` rows must explicitly migrate (decrypt-and-re-encrypt under the winner's id) or delete the losing row's credentials — silently orphaning undecryptable ciphertext is not acceptable.
+- Owner credential resolution (`getSessionOwnerCredential`) requires `removed_at IS NULL` on the membership row, following the member-removal convention; credentials themselves belong to the user, not a membership, so removal from a session never touches them.
 
 #### `github_connection_states`
 

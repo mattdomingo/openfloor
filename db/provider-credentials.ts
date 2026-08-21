@@ -77,7 +77,7 @@ export async function getSessionOwnerCredential(
       `SELECT sm.user_id AS ownerUserId, c.ciphertext AS ciphertext
        FROM session_members sm
        JOIN user_provider_credentials c ON c.user_id = sm.user_id AND c.provider = ?
-       WHERE sm.session_id = ? AND sm.role = 'owner'`,
+       WHERE sm.session_id = ? AND sm.role = 'owner' AND sm.removed_at IS NULL`,
     )
     .bind(provider, sessionId)
     .first<{ ownerUserId: string; ciphertext: string }>();
