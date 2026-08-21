@@ -349,6 +349,8 @@ Do not hand-edit Drizzle metadata. If a generated migration is wrong, correct th
 - Unique stable provider identity in legacy-named `chatgpt_user_id`.
 - Email and display name update on authentication.
 - Creation and update timestamps are epoch milliseconds.
+- `plan` (`pro`/`max`/`enterprise`, default `pro`) and `plan_status` (`inactive`/`active`/`past_due`/`canceled`, default `inactive`) together decide entitlement — see "Plan limits and metering" below for the full model. Neither column is written by `upsertUser`; both are set only by a manual grant (`wrangler d1 execute`) until billing integration exists.
+- **`users` must never be recreated via a Drizzle table-swap migration once it holds real rows.** It has three inbound `ON DELETE CASCADE` foreign keys (`session_members.user_id`, `session_invites.created_by`, `github_connection_states.user_id`); a `DROP TABLE users` cascade-deletes all three even inside the standard `PRAGMA foreign_keys=OFF` migration wrapper drizzle-kit generates for a table with a named CHECK constraint — confirmed by rehearsing the generated migration for `plan_status` against seeded local data during the plan-limits work (`drizzle/0019_redundant_may_parker.sql` was hand-fixed to a plain `ALTER TABLE ADD COLUMN` instead, the same technique `0018` already used for `plan` itself). Any future change to this table's CHECK-constrained columns needs the same hand-fix, or a genuinely different migration strategy (backfill into a new table, dual-write, swap) — never a bare `db:generate` accept.
 
 #### `sessions`
 
@@ -358,6 +360,7 @@ Do not hand-edit Drizzle metadata. If a generated migration is wrong, correct th
 - Session creation also creates owner membership and an active invite in one D1 batch.
 - Nullable `ended_at` is the lifecycle marker. Null means live; a timestamp means ended and read-only. Writes authorize through `getActiveMembershipRole` (throws `SessionEndedError` for members of ended sessions); reads keep using `getMembershipRole` so ended sessions stay viewable. `leaveSession`, `endSession`, `deleteSession`, and non-member concealment intentionally bypass the ended guard.
 - Retention: the Worker's `scheduled()` handler (daily cron in `wrangler.jsonc`) runs `purgeExpiredSessions`, deleting repository-free sessions with `ended_at` older than `ENDED_SESSION_RETENTION_MS` (30 days), then broadcasts `members.changed` so connected tabs refetch. Never-ended sessions and sessions with any repository connection are never purged automatically. Manual deletion uses the same repository-state guard.
+- `active_seconds` is a display-only running total of seconds this session had at least one connected participant, booked by the `SessionPresence` Durable Object (see "Plan limits and metering" below). It cascades away with the session, unlike the `usage_months` billing ledger.
 
 #### `session_members`
 
@@ -374,6 +377,12 @@ Do not hand-edit Drizzle metadata. If a generated migration is wrong, correct th
 - D1 stores no bearer secret.
 - GET reconstructs the active signed URL; POST revokes the old invite and creates a new one; DELETE revokes the active invite.
 - Invalid, forged, missing, or revoked tokens reveal no session information.
+
+#### `usage_months`
+
+- Composite primary key `(owner_user_id, month)`, `month` a UTC `"YYYY-MM"` string (`lib/plans.ts`'s `currentMonth()`). One row per owner per calendar month; `seconds` accumulates presence time across every session that owner owns, live and ended alike.
+- **Deliberately has no foreign keys.** The ledger must outlive both `purgeExpiredSessions` (a session's `active_seconds` cascades away with it; the owner's `usage_months` total must not) and, if it is ever added, account deletion. Do not add a `references()` here without re-deriving this from scratch.
+- Written only by `SessionPresence.flushUsage` (`worker/presence.ts`), via `INSERT ... ON CONFLICT DO UPDATE SET seconds = seconds + excluded.seconds`. Never written from an HTTP route.
 
 #### `github_connection_states`
 
@@ -569,7 +578,7 @@ All paths below are shown without the production `/app` prefix.
 
 | Method and path | Authorization | Behavior |
 | --- | --- | --- |
-| `POST /api/sessions` | Authenticated user | Create `{ title, objective? }`; creator becomes owner; returns session and active invite URL. |
+| `POST /api/sessions` | Authenticated user | Create `{ title, objective? }`; creator becomes owner; returns session and active invite URL. `403 { code: "quota_exhausted" }` once the caller's monthly session hours are spent. |
 | `PATCH /api/sessions/[id]` | Session member | Update `{ objective: string \| null }`; broadcasts `session.changed`. |
 | `GET /api/sessions/[id]/members` | Session member | Return authorized roster. |
 | `GET /api/sessions/[id]/invite` | Owner | Return active reusable signed link or null. |
@@ -595,15 +604,15 @@ All paths below are shown without the production `/app` prefix.
 | `PATCH /api/sessions/[id]/repository` | Owner | Change the base branch or required commands for the same connected repository. |
 | `DELETE /api/sessions/[id]/repository` | Owner | Mark the connection disconnected without mutating GitHub. |
 | `POST /api/sessions/[id]/repository/candidate` | Owner | Accept bounded `{ name, description }` metadata (defaulted by the UI and legacy empty-body callers from the session title/objective), verify the configured base SHA, and create one safely slugged server-owned candidate branch without force. |
-| `POST /api/sessions/[id]/repository/sync` | Owner | Reconcile repository metadata and base/candidate heads without modifying GitHub. |
+| `POST /api/sessions/[id]/repository/sync` | Owner | Reconcile repository metadata and base/candidate heads without modifying GitHub. `403 { code: "quota_exhausted" }` at the owner's spent quota. |
 | `GET /api/sessions/[id]/repository/preflight` | Session member | Return the latest bounded preflight/check state. |
-| `POST /api/sessions/[id]/repository/preflight` | Owner | Start one durable preflight for the exact active candidate; requires at least one command. |
+| `POST /api/sessions/[id]/repository/preflight` | Owner | Start one durable preflight for the exact active candidate; requires at least one command. `403 { code: "quota_exhausted" }` at the owner's spent quota. |
 | `GET /api/sessions/[id]/repository/preflight/[preflightId]/logs` | Session member | Stream the caller-authorized bounded command logs from private R2. |
 | `GET /runtime/preflight/source` | Short-lived source JWT | Proxy the exact candidate archive without exposing a GitHub installation token to the Sandbox process. |
-| `POST /api/sessions/[id]/queue/[queueItemId]/run` | Owner | Start a durable Codex run for an assigned queued item at the exact active candidate SHA. |
+| `POST /api/sessions/[id]/queue/[queueItemId]/run` | Owner | Start a durable Codex run for an assigned queued item at the exact active candidate SHA. `403 { code: "quota_exhausted" }` at the owner's spent quota (also gates `worker/session-router.ts`'s auto-dispatch, the only other place a run starts). |
 | `POST /api/sessions/[id]/runs/[runId]/cancel` | Owner | Request cancellation of an active run. |
 | `POST /api/sessions/[id]/runs/[runId]/discard` | Owner | Delete only an unchanged, verified openfloor run branch using an expected-SHA lease; retain audit history. |
-| `POST /api/sessions/[id]/runs/[runId]/retry` | Owner | Retry a conflicted queue item as a new run attempt pinned to the latest candidate SHA. |
+| `POST /api/sessions/[id]/runs/[runId]/retry` | Owner | Retry a conflicted queue item as a new run attempt pinned to the latest candidate SHA. `403 { code: "quota_exhausted" }` at the owner's spent quota. |
 | `POST /api/sessions/[id]/review/ready` | Owner | Reconcile the exact active PR and use GitHub's ready-for-review mutation; preserve 404 concealment. |
 | `POST /api/sessions/[id]/review/merge` | Owner | Reconcile head/base/files/checks/mergeability, request an exact-head squash merge, confirm it, and safely clean matching openfloor refs. |
 | `GET /api/sessions/[id]/runs/[runId]/artifacts` | Session member | Return caller-authorized bounded run artifacts from private R2; unfiltered defaults to `codex_log` + `diff` (unchanged), `?kind=` returns exactly one artifact (e.g. `prompt`). |
@@ -621,6 +630,7 @@ Response conventions:
 - `400` means invalid input or a cross-session/invalid target.
 - `404` conceals nonexistent sessions, non-membership, unauthorized owner-only resources, invalid invites, and revoked invites.
 - `409` represents conflicts such as duplicate normalized agent name, stale queue order, owner leave, or any mutation on an ended session ("This session has ended.").
+- `403` with `{ code: "quota_exhausted" }` marks the session owner's monthly session-hours quota as spent — see "Plan limits and metering" below. `acceptInvite`'s seat-cap refusal returns `403` too, but without a machine-readable `code` today.
 - Floor mutations return `{ floor }`; clients treat it as authoritative.
 
 ### Validation limits
@@ -640,6 +650,47 @@ Keep server validation in `lib/validation.ts` and cover it with unit tests.
 - Repository selection: repository ID maximum 100 characters; base branch required and maximum 255 characters.
 - Required check commands: optional; zero to eight ordered nonempty commands, trimmed, maximum 500 characters each.
 - Candidate name: required, NFKC-normalized, whitespace-collapsed, maximum 100 characters; it is slugged server-side and never accepted as a complete ref. Candidate description: trimmed, maximum 2,000 characters and may be empty.
+
+## Plan limits and metering
+
+Seats are sold but not assigned. The product enforces two limits per session owner's *effective* plan (`lib/plans.ts`'s `effectivePlan(plan, planStatus)` — `planStatus !== "active"` always resolves to `free`, so a lapsed or never-purchased plan never grants its stored tier's limits):
+
+| Plan | Seats / session | Session hours / month |
+| --- | --- | --- |
+| free (default until a plan is granted) | 3 | 2 |
+| pro | 5 | 30 |
+| max | 10 | 100 |
+| enterprise | unlimited | unlimited |
+
+Granting a plan is manual (`README.md`'s "Grant a plan after purchase") until Stripe webhook integration exists; the Stripe payment link linked from the product (`lib/plans.ts`'s `UPGRADE_URL`) does not itself change any `users` row.
+
+### Enforcement points — spend initiators only
+
+Deliberately **not** folded into `getActiveMembershipRole` (Persistence model, above): that function backs 22 call sites, and gating all of them at quota would strand an out-of-hours owner unable to revoke a leaked invite, turn auto-dispatch off, disconnect a repository, pause/delete a queue item, discard a run branch, or land already-completed work through review/merge — the wind-down set an owner must always retain, listed in full below. It would also throw into `worker/session-router.ts`'s bare `catch`, driving a permanent 60-second alarm retry loop for a condition (out of hours) that does not resolve until the month rolls over.
+
+Instead, the quota gate sits at exactly four points, all "this is about to spend money or occupy a paid seat":
+
+1. **`acceptInvite`** (`db/sessions.ts`) — seat cap only. One gate query; re-accepting as an already-existing member stays idempotent past the cap (`// ponytail:` comment documents the accepted check-then-insert race).
+2. **The presence WebSocket upgrade** (`worker/presence.ts`'s `handlePresenceRequest`) — hour quota. Ended sessions are never gated (or metered); live sessions past quota get an accept-then-close with WebSocket code `4003`. Already-connected sockets are never kicked — the DO's booked total lags real usage by at most one `USAGE_FLUSH_INTERVAL_MS` (15 min).
+3. **`startQueueItemRun`** (`lib/agent-run-start.ts`) — hour quota, returned as a `StartRunResult` union variant (`{ ok: false, kind: "quota_exhausted" }`), not thrown. This is the single seam covering both HTTP routes (`.../queue/[queueItemId]/run`, `.../runs/[runId]/retry`) *and* `worker/session-router.ts`'s auto-dispatch path, which has no HTTP layer to gate at all. `db/routing.ts` already treats any non-`"conflict"` failure kind as a session-wide precondition and holds with exponential backoff (`HELD_RETRY_BASE_MS` doubling up to `HELD_RETRY_MAX_MS`) — returning the variant gets correct backoff for free; throwing would not.
+4. **Repository preflight and sync** (`lib/floor-api.ts`'s `quotaExhaustedErrorResponse`, called from both routes after `activeOwnerErrorResponse`) — hour quota. Unlike (3), a null `getOwnerHourQuota` result here fails closed (throws) rather than falling through, because `activeOwnerErrorResponse` has already confirmed the session and owner exist — a null result at that point is an invariant violation, not the ordinary shape of "unknown session" the way it is in `startQueueItemRun` (which runs before any such check).
+
+**Never gated — the wind-down set.** An owner past quota must always be able to: read anything, send chat, edit/pause/delete queue items, cancel a run, revoke an invite, turn auto-dispatch off, disconnect a repository, discard a run branch, mark review ready, merge, end, leave, archive, and delete. None of these call the quota helpers; keep it that way.
+
+### Metering
+
+`SessionPresence` (per-session Durable Object, see Realtime model above) meters wall-clock time while at least one socket is connected, independent of how many sockets or which users:
+
+- `ctx.storage` keys `clockStart`, `meterOwnerId`, `meterSessionId` are set once, on the first socket that carries `x-openfloor-meter-*` headers (set by `handlePresenceRequest`, stripped from the inbound client request first — these headers are Worker-internal, the same trust boundary as `lib/identity.ts`'s trusted-identity headers). A reconnect after hibernation never resets a running clock, because it's keyed on stored state, not live socket count.
+- `flushUsage(keepRunning, endAtHint?)` books elapsed seconds to `usage_months` (upsert) and `sessions.active_seconds` (increment) in one D1 batch, on: occupancy hitting zero (`webSocketClose`), the 15-minute alarm while occupied, and `/session-ended`. `endAtHint`, when given, trims billing to a real timestamp earlier than "now" (see idle timeout below); the clamp — `min(now, max(clockStart, endAtHint))` — lives inside `flushUsage` itself so no caller can get either edge case wrong: an unclamped upper bound would silently lose the unbooked remainder on the next flush, and an unclamped lower bound can go *negative* (a stale `endAtHint` from an earlier flush interval predating the already-advanced `clockStart`) and, unclamped, would **decrease** `usage_months.seconds` through `seconds = seconds + excluded.seconds`.
+- **Idle timeout (`IDLE_TIMEOUT_MS`, 30 min):** the same 15-minute alarm closes any socket whose `lastActivityAt` attachment field predates the cutoff, with close code `4004`, and books only up to that real last-activity timestamp — not up to the alarm firing. `lastActivityAt` is refreshed by typing updates and by a client-sent `"ping"` (`AgentFloorScreen.tsx` sends one every 30s, but only while `document.visibilityState === "visible"` *and* there has been real `pointermove`/`keydown`/`focus`/`scroll` input in the last 5 minutes) — an open-but-unattended tab, visible or not, stops refreshing it and eventually gets closed and stops billing.
+- **Session end stops metering immediately**, even though sockets stay open (ended sessions remain readable — Persistence model, above): `/session-ended` calls `stopMetering()` (flush + clear `clockStart`/`meterOwnerId`/`meterSessionId`), and `alarm()` independently re-checks `sessions.ended_at` on every firing as a backstop for the case the `/session-ended` fetch never reached this DO instance (a mid-request crash between the D1 write and the DO call).
+- Close codes in use: `4001` membership ended (terminal — client navigates to `/home`, does not retry), `4003` quota exhausted (terminal, no retry, shows the upgrade banner), `4004` idle (paused, not terminal — client reconnects on the next real input or `visibilitychange`, not on the exponential-backoff schedule the other close paths use).
+- Accepted, bounded imprecision (see `// ponytail:` comments in `worker/presence.ts`): a flush interval spanning a UTC month boundary books wholly to the flush-time month; a DO crash around a flush can lose or double-count up to one `USAGE_FLUSH_INTERVAL_MS`. Hours are metered per session and summed onto one monthly total — an owner running two sessions concurrently burns the month at 2x wall-clock; `HomeScreen`'s usage line says so explicitly when it detects more than one live owned session, rather than let it read as a billing bug.
+
+### Known gap: purchases don't self-serve
+
+The Stripe payment link is not backed by a webhook. A customer can pay and nothing in the product changes until someone runs the manual grant in `README.md`. Before that link was added to product UI (this work), that manual step only ever needed to happen for people the operator already knew about; now it is reachable by anyone. The entitlement webhook is the top item in "Roadmap guidance" below — do not treat the current manual process as adequate once real payment volume exists.
 
 ## Frontend architecture
 
@@ -1034,7 +1085,11 @@ Pushes to `main` run this exact sequence automatically via `.github/workflows/de
 
 ## Roadmap guidance
 
+**A Stripe webhook that grants/revokes `users.plan`/`plan_status` automatically is the top priority billing item.** "Plan limits and metering" above documents the current manual-grant posture (`README.md`'s "Grant a plan after purchase"); a payment link now lives in product UI with nothing behind it that changes entitlement. Land the webhook before real payment volume exists, not after someone notices they paid and got nothing.
+
 Repository execution Phases 1–7 are implemented. Future milestones should focus on deployment integrations, resolving the separately tracked manual-discard issue without weakening its lease, and broader agent lifecycle/product work rather than expanding GitHub permissions casually.
+
+An owner cannot remove a member from a session today — `leaveSession` is self-service only and refuses owners. At a 3-seat free tier, one mis-sent invite permanently consumes a third of a session's capacity with no in-product remedy. An owner-initiated remove-member action is the next plan-limits-adjacent piece of work; it needs its own decision about notifying the removed member (`disconnectPresenceUser` and WebSocket close code `4001` already exist and would cover it).
 
 ## Key decision log
 
@@ -1309,6 +1364,14 @@ Repository execution Phases 1–7 are implemented. Future milestones should focu
 **Rationale:** Injecting context an agent can act on, without any way for a human to see exactly what it was told, would work against the trust the rest of this system is built on. Separately, `sessions.updated_at` looked like a plausible staleness signal for the objective but isn't one: `bumpFloorRevision` advances it on every floor mutation, including the very chat messages a staleness check would want to count — using it would have made the nudge a permanent no-op, discovered while implementing this feature rather than by design.
 
 **Consequences:** Migration `0016` adds `objective_updated_at NOT NULL DEFAULT 0`, then backfills existing rows to their current `updated_at` (SQLite `ADD COLUMN` can't default to another column's value, so the backfill is a second statement in the same migration). `createSession` and `updateSessionObjective` are the only writers. `tests/worker/sessions.test.ts` asserts the isolation directly: creating an agent and sending a message must not move `objectiveUpdatedAt`, only an objective save can.
+
+### 2026-08-20 — Close the plan-limits gaps: quota-gate placement, metering correctness, and a non-recreate free tier
+
+**Decision:** Following a review of the initial plan-limits work (seat caps, hour quota, presence metering), this closes eight gaps in one PR, split across seven commits. Two were live defects: `handlePresenceRequest` copied client headers verbatim and only overwrote the metering headers on the live-session path, so a forged `x-openfloor-meter-owner-id` against an *ended* session booked hours to an arbitrary user (fixed by unconditionally stripping both headers before the gate runs); and `/session-ended` left `clockStart` running, so an occupied ended session kept billing invisibly (fixed by `stopMetering()` plus an `alarm()` backstop that independently notices `sessions.ended_at`). The rest is new: a 30-minute idle timeout (close code `4004`) with billing trimmed to real last activity rather than detection time; a `free` tier represented as a synthetic `effectivePlan()` value rather than a stored `plan` enum member, with a new `plan_status` column added via plain `ALTER TABLE` (not the table recreate `drizzle-kit generate` naturally produces for a new column backed by a named CHECK — see the `users` invariant in "Persistence model" above); quota gating extended from presence-only to the actual spend initiators (run dispatch via a `StartRunResult` variant, repository preflight/sync); and the usage/upgrade UI described in "Plan limits and metering" above.
+
+**Rationale:** The header-stripping bug mirrors exactly the convention `lib/identity.ts` already states for its own trusted headers — the fix generalizes an existing pattern rather than inventing one. The quota-gate placement (spend initiators, not `getActiveMembershipRole`) was a live design fork: folding quota into the general write guard was tried first and rejected after tracing it against all 22 `getActiveMembershipRole` call sites — it would have blocked an out-of-hours owner from revoking a leaked invite, disabling their own auto-dispatch loop, or landing already-finished review work, and would have turned a persistent "out of hours" condition into a 60-second hot retry loop in `worker/session-router.ts`'s bare catch. The free-tier schema question was a similar fork, discovered empirically: the original plan called for recreating `users` with a literal `'free'` value (justified as safe because production was believed to have no rows yet); rehearsing that migration locally against seeded data — before ever touching remote — showed it cascade-deletes `session_members`/`session_invites`/`github_connection_states` despite the generated `PRAGMA foreign_keys=OFF` wrapper, and a remote row-count check found production already has 5 users, 9 sessions, 12 session_members. The synthetic-value approach (mirroring how `0018` was already hand-fixed for the same reason) gets the identical entitlement behavior with zero migration risk.
+
+**Consequences:** `lib/plans.ts` is now the single source for `Plan`/`PlanStatus`/`PLAN_LIMITS`/`effectivePlan`/`currentMonth`, re-exported from `db/sessions.ts` for existing importers; it has no `cloudflare:workers` import specifically so it stays reachable from `tests/unit`. `getOwnerHourQuota` returns the *effective* plan, not the raw purchased one — a caller that indexes `PLAN_LIMITS` by a raw `plan` field again would hand a lapsed Max owner 100h. `getOwnerHourQuota` and the presence gate now fail closed (throw) on a missing owner row rather than silently connecting ungated; `lib/agent-run-start.ts`'s use of the same function deliberately does not, because it runs before any existence check and a throw there would turn an ordinary "unknown session" into an unhandled 500 instead of the existing 404. Migration `0019` is a two-statement `ALTER TABLE ADD` plus an `UPDATE` backfilling existing rows to `plan_status = 'active'`; do not attempt to consolidate a future `plan`-column change into a recreate without re-rehearsing against seeded data first. The Stripe payment link now live in product UI has no webhook behind it — see "Roadmap guidance" above.
 
 ## How to record the next decision
 

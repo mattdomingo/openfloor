@@ -81,6 +81,22 @@ Apply D1 migrations before deploying the Worker revision. See [`docs/agent-backe
 
 The deployment expects `DB`, `SESSION_PRESENCE`, `REPOSITORY_PREFLIGHT`, `AGENT_RUN_WORKFLOW`, `SANDBOX`, `PREFLIGHT_LOGS`, `IMAGES`, and `ASSETS` bindings configured in `wrangler.jsonc`. It also requires the existing identity/GitHub secrets plus `RUNTIME_GATEWAY_SECRET` and `OPENAI_API_KEY`. Docker must be running when Wrangler builds or deploys the pinned Sandbox image, and the Cloudflare account must have Workers Paid/Containers access. Keep each rollout gate disabled until its image, Workflow, and credential prerequisites are live.
 
+### Grant a plan after purchase
+
+There is no billing webhook yet — the Stripe payment link in the product takes payment but changes nothing in openfloor by itself. Every purchase needs this checklist run by hand:
+
+1. **Watch the Stripe dashboard** for the completed payment and note the payer's email.
+2. **Confirm the buyer has an openfloor account.** They must have signed in at least once — `users` has no row for an email that has never authenticated. If they haven't signed in yet, ask them to, then continue.
+3. **Grant the plan**, setting `plan` and `plan_status` together (a plan alone grants nothing — see "Plan limits and metering" in [`AGENTS.md`](AGENTS.md)):
+   ```bash
+   npx wrangler d1 execute openfloor-production --remote --command \
+     "UPDATE users SET plan='pro', plan_status='active' WHERE email='<buyer-email>'"
+   ```
+4. **Check the output for `"changes": 1`.** `0` means step 2's email didn't match any row — the buyer's account email may differ from their payment email; look them up by name/GitHub handle instead of re-running blindly.
+5. **Confirm with the buyer** that `/home` now shows their plan and limits.
+
+The payment link sells exactly one tier. Selling a second tier (e.g. Max) needs a second Stripe payment link and a way to tell them apart when running step 3 — the current single link and this runbook only cover Pro.
+
 ## Project direction
 
 See [`AGENTS.md`](AGENTS.md) for the product vision, system architecture, engineering invariants, key decisions, and roadmap guidance.
