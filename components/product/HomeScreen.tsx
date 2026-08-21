@@ -7,6 +7,7 @@ import { BASE_PATH } from "@/components/basePath";
 import { LocalDateTime } from "@/components/LocalDateTime";
 import { formatDuration } from "@/lib/date-format";
 import { SegmentedControl, useDialogDismiss } from "@/components/session/primitives";
+import type { Plan } from "@/lib/plans";
 import type { AppUser, SessionSummary } from "@/lib/session-types";
 import { AppHeader } from "./AppHeader";
 
@@ -19,7 +20,7 @@ export function HomeScreen({
 }: {
   user: AppUser;
   sessions: SessionSummary[];
-  usage: { plan: "pro" | "max" | "enterprise"; seconds: number; limitHours: number };
+  usage: { plan: Plan; seconds: number; limitHours: number };
 }) {
   const router = useRouter();
   const [sessions, setSessions] = useState(initialSessions);

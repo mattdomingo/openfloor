@@ -14,15 +14,29 @@ export const users = sqliteTable(
     avatarKey: text("avatar_key"),
     onboardedAt: integer("onboarded_at"),
     doNotDisturb: integer("do_not_disturb", { mode: "boolean" }).notNull().default(false),
-    // Set manually (wrangler d1 execute) after a Stripe purchase until billing
-    // integration exists; every limit check keys off this.
+    // The purchased tier. Only meaningful while planStatus is "active" — see
+    // effectivePlan() in lib/plans.ts, which is what every limit check
+    // actually calls. Deliberately unchanged (enum, default) from when this
+    // column had no planStatus alongside it: the "free" tier is a synthetic
+    // TypeScript-only value effectivePlan returns, never stored here — that
+    // keeps this an ADD-COLUMN-only migration (see 0019) instead of a table
+    // recreate, which would cascade-delete session_members/session_invites/
+    // github_connection_states (all ON DELETE CASCADE on users.id).
     plan: text("plan", { enum: ["pro", "max", "enterprise"] }).notNull().default("pro"),
+    // Whether `plan` is currently paid for. Only "active" grants its plan's
+    // limits; inactive (never purchased), past_due, and canceled all
+    // resolve to free via effectivePlan(). New signups start inactive; a
+    // manual grant sets plan + status together.
+    planStatus: text("plan_status", { enum: ["inactive", "active", "past_due", "canceled"] })
+      .notNull()
+      .default("inactive"),
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
   },
   (table) => [
     uniqueIndex("idx_users_chatgpt_user_id").on(table.providerUserId),
     check("users_plan_check", sql`${table.plan} in ('pro', 'max', 'enterprise')`),
+    check("users_plan_status_check", sql`${table.planStatus} in ('inactive', 'active', 'past_due', 'canceled')`),
   ],
 );
 

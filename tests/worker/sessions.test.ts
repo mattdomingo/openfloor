@@ -7,13 +7,15 @@ import {
   deleteSession,
   ENDED_SESSION_RETENTION_MS,
   endSession,
-  hourQuotaExhausted,
   getActiveInviteId,
   getInvitePreview,
   getSessionForMember,
   getSessionMembers,
+  getUsageForUser,
+  hourQuotaExhausted,
   leaveSession,
   listSessionsForUser,
+  PLAN_LIMITS,
   purgeExpiredSessions,
   revokeInvite,
   rotateInvite,
@@ -539,35 +541,102 @@ describe("D1 session persistence", () => {
 });
 
 describe("plan limits", () => {
-  it("stops invite accepts at the owner plan's seat cap", async () => {
+  it("a newly created user defaults to the free plan, inactive", async () => {
+    const user = await upsertUser(identity("plan-default-user", "Default"), env.DB);
+    // The stored columns default to plan='pro'/'inactive' — free-tier limits
+    // come from effectivePlan(), not from a literal 'free' in the plan
+    // column (see the schema comment in db/schema.ts for why).
+    expect(user.plan).toBe("pro");
+    expect(user.planStatus).toBe("inactive");
+    const usage = await getUsageForUser(user.id, env.DB);
+    expect(usage.effectivePlan).toBe("free");
+    expect(usage.limitHours).toBe(PLAN_LIMITS.free.hours);
+    expect(usage.limitSeats).toBe(PLAN_LIMITS.free.seats);
+  });
+
+  it("stops invite accepts at the owner's effective plan's seat cap, per plan and status", async () => {
     const owner = await upsertUser(identity("cap-owner", "Owner"), env.DB);
     const created = await createSession(owner.id, { title: "Full", objective: null }, env.DB);
+
+    // Default (inactive → free, 3 seats: owner + 2).
     const members = [];
-    for (let index = 0; index < 4; index += 1) {
-      const member = await upsertUser(identity(`cap-member-${index}`, `Member ${index}`), env.DB);
+    for (let index = 0; index < 2; index += 1) {
+      const member = await upsertUser(identity(`cap-member-free-${index}`, `Free ${index}`), env.DB);
       members.push(member);
       await expect(acceptInvite(created.inviteId, member.id, env.DB)).resolves.toBe(created.session.id);
     }
-
-    const sixth = await upsertUser(identity("cap-member-late", "Latecomer"), env.DB);
-    await expect(acceptInvite(created.inviteId, sixth.id, env.DB)).resolves.toBe("full");
+    const overFree = await upsertUser(identity("cap-member-over-free", "OverFree"), env.DB);
+    await expect(acceptInvite(created.inviteId, overFree.id, env.DB)).resolves.toBe("full");
     // Re-accepting as an existing member stays idempotent past the cap.
     await expect(acceptInvite(created.inviteId, members[0].id, env.DB)).resolves.toBe(created.session.id);
-    expect(await getSessionMembers(created.session.id, owner.id, env.DB)).toHaveLength(5);
+    expect(await getSessionMembers(created.session.id, owner.id, env.DB)).toHaveLength(3);
 
+    // Activate Pro (5 seats): owner + 2 free-tier + overFree = 4 already;
+    // one more fits exactly at the cap.
+    await env.DB.prepare("UPDATE users SET plan = 'pro', plan_status = 'active' WHERE id = ?").bind(owner.id).run();
+    await expect(acceptInvite(created.inviteId, overFree.id, env.DB)).resolves.toBe(created.session.id);
+    const fifthPro = await upsertUser(identity("cap-member-pro", "Pro"), env.DB);
+    members.push(fifthPro);
+    await expect(acceptInvite(created.inviteId, fifthPro.id, env.DB)).resolves.toBe(created.session.id);
+    expect(await getSessionMembers(created.session.id, owner.id, env.DB)).toHaveLength(5);
+    const overPro = await upsertUser(identity("cap-member-over-pro", "OverPro"), env.DB);
+    await expect(acceptInvite(created.inviteId, overPro.id, env.DB)).resolves.toBe("full");
+
+    // Activate Max (10 seats): the sixth fits.
     await env.DB.prepare("UPDATE users SET plan = 'max' WHERE id = ?").bind(owner.id).run();
-    await expect(acceptInvite(created.inviteId, sixth.id, env.DB)).resolves.toBe(created.session.id);
+    await expect(acceptInvite(created.inviteId, overPro.id, env.DB)).resolves.toBe(created.session.id);
+    expect(await getSessionMembers(created.session.id, owner.id, env.DB)).toHaveLength(6);
+
+    // Cancel: falls straight back to the free 3-seat cap, already exceeded
+    // at 6 members — a brand new member is refused even though an existing
+    // one can still idempotently "re-accept".
+    await env.DB.prepare("UPDATE users SET plan_status = 'canceled' WHERE id = ?").bind(owner.id).run();
+    await expect(acceptInvite(created.inviteId, members[0].id, env.DB)).resolves.toBe(created.session.id);
+    const afterCancel = await upsertUser(identity("cap-member-after-cancel", "AfterCancel"), env.DB);
+    await expect(acceptInvite(created.inviteId, afterCancel.id, env.DB)).resolves.toBe("full");
   });
 
-  it("reports hour quota exhaustion from usage_months", async () => {
+  it("enterprise has no seat cap", async () => {
+    const owner = await upsertUser(identity("cap-owner-enterprise", "Owner"), env.DB);
+    await env.DB.prepare("UPDATE users SET plan = 'enterprise', plan_status = 'active' WHERE id = ?").bind(owner.id).run();
+    const created = await createSession(owner.id, { title: "Enterprise", objective: null }, env.DB);
+    for (let index = 0; index < 12; index += 1) {
+      const member = await upsertUser(identity(`cap-member-enterprise-${index}`, `Member ${index}`), env.DB);
+      await expect(acceptInvite(created.inviteId, member.id, env.DB)).resolves.toBe(created.session.id);
+    }
+    expect(await getSessionMembers(created.session.id, owner.id, env.DB)).toHaveLength(13);
+  });
+
+  it("reports hour quota exhaustion from usage_months, gated by plan_status not plan alone", async () => {
     const user = await upsertUser(identity("quota-user", "Quota"), env.DB);
+    // Default (inactive → free's 2h cap).
     await expect(hourQuotaExhausted(user.id, env.DB)).resolves.toBe(false);
     await env.DB.prepare("INSERT INTO usage_months (owner_user_id, month, seconds) VALUES (?, ?, ?)")
-      .bind(user.id, currentMonth(), 30 * 3600)
+      .bind(user.id, currentMonth(), 2 * 3600)
       .run();
     await expect(hourQuotaExhausted(user.id, env.DB)).resolves.toBe(true);
-    // Same booked seconds sit under the Max ceiling.
+
+    // Setting plan alone (still inactive) does not lift the gate — a
+    // purchased tier only grants its limits while active.
     await env.DB.prepare("UPDATE users SET plan = 'max' WHERE id = ?").bind(user.id).run();
+    await expect(hourQuotaExhausted(user.id, env.DB)).resolves.toBe(true);
+
+    // Activating status lifts it: the same 2h sits well under Max's 100h.
+    await env.DB.prepare("UPDATE users SET plan_status = 'active' WHERE id = ?").bind(user.id).run();
     await expect(hourQuotaExhausted(user.id, env.DB)).resolves.toBe(false);
+
+    // Cancelling (or past_due) drops back to the free 2h cap, already spent.
+    await env.DB.prepare("UPDATE users SET plan_status = 'canceled' WHERE id = ?").bind(user.id).run();
+    await expect(hourQuotaExhausted(user.id, env.DB)).resolves.toBe(true);
+    await env.DB.prepare("UPDATE users SET plan_status = 'past_due' WHERE id = ?").bind(user.id).run();
+    await expect(hourQuotaExhausted(user.id, env.DB)).resolves.toBe(true);
+  });
+
+  it("upsertUser does not reset plan or plan_status on re-login", async () => {
+    const user = await upsertUser(identity("plan-persist-user", "Persist"), env.DB);
+    await env.DB.prepare("UPDATE users SET plan = 'max', plan_status = 'active' WHERE id = ?").bind(user.id).run();
+    const relogged = await upsertUser(identity("plan-persist-user", "Persist"), env.DB);
+    expect(relogged.plan).toBe("max");
+    expect(relogged.planStatus).toBe("active");
   });
 });

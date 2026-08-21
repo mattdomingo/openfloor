@@ -1,7 +1,7 @@
 import { env } from "cloudflare:workers";
 import { evictDurableObject, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { describe, expect, it, vi } from "vitest";
-import { createSession, currentMonth, endSession, upsertUser } from "@/db/sessions";
+import { acceptInvite, createSession, currentMonth, endSession, upsertUser } from "@/db/sessions";
 import worker from "./entry";
 import type { PresenceEvent } from "@/lib/session-types";
 import type { SessionPresence } from "@/worker/presence";
@@ -417,6 +417,40 @@ describe("authenticated presence upgrade", () => {
       .bind(impersonated.id, currentMonth())
       .first<{ seconds: number }>();
     expect(impersonatedUsage).toBeNull();
+  });
+});
+
+describe("hour-quota gate fails closed", () => {
+  it("throws rather than connecting ungated and unmetered when a session has no owner row", async () => {
+    const owner = await upsertUser({
+      providerUserId: "chatgpt-no-owner-owner",
+      email: "no-owner-owner@example.com",
+      displayName: "Owner",
+      fullName: "Owner",
+    }, env.DB);
+    const member = await upsertUser({
+      providerUserId: "chatgpt-no-owner-member",
+      email: "no-owner-member@example.com",
+      displayName: "Member",
+      fullName: "Member",
+    }, env.DB);
+    const created = await createSession(owner.id, { title: "Ownerless", objective: null }, env.DB);
+    await acceptInvite(created.inviteId, member.id, env.DB);
+    // Simulate the invariant breaking: the caller (member) still has a
+    // membership row, but the owner's is gone, so getOwnerHourQuota's
+    // INNER JOIN finds nothing to gate or meter against.
+    await env.DB.prepare("DELETE FROM session_members WHERE session_id = ? AND role = 'owner'")
+      .bind(created.session.id)
+      .run();
+
+    await expect(worker.fetch(new Request(`http://localhost/app/api/sessions/${created.session.id}/presence`, {
+      headers: {
+        host: "localhost",
+        upgrade: "websocket",
+        "x-openfloor-dev-user-id": "chatgpt-no-owner-member",
+        "x-openfloor-dev-user-email": "no-owner-member@example.com",
+      },
+    }), env)).rejects.toThrow(/getOwnerHourQuota returned no row/);
   });
 });
 

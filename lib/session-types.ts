@@ -1,3 +1,5 @@
+import type { Plan, PlanStatus } from "./plans";
+
 export type SessionRole = "owner" | "member";
 
 export type SessionSummary = {
@@ -59,7 +61,8 @@ export type AppUser = {
   avatarKey: string | null;
   onboardedAt: number | null;
   doNotDisturb: boolean;
-  plan: "pro" | "max" | "enterprise";
+  plan: Plan;
+  planStatus: PlanStatus;
   createdAt: number;
   updatedAt: number;
 };

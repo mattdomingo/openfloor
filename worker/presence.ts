@@ -380,11 +380,19 @@ export async function handlePresenceRequest(request: Request, env: PresenceEnv):
   headers.delete("x-openfloor-meter-session-id");
 
   // Hour-quota gate: the one point every floor WebSocket passes through.
-  // Ended sessions stay viewable for free; live ones are gated on the owner's
-  // plan and metered by the DO (already-connected users are never kicked —
-  // the DO's booked total lags real usage by at most one flush interval).
+  // Ended sessions stay viewable for free; live ones are gated on the
+  // owner's effective plan and metered by the DO (already-connected users
+  // are never kicked — the DO's booked total lags real usage by at most one
+  // flush interval).
   const quota = await getOwnerHourQuota(sessionId, env.DB);
-  if (quota && quota.endedAt == null) {
+  if (!quota) {
+    // authorizePresence just confirmed this session and member exist, and
+    // every session has exactly one owner row — this can only mean that
+    // invariant broke. Fail closed (surfaced as a Workers error log) rather
+    // than silently falling through to an ungated, unmetered connection.
+    throw new Error(`getOwnerHourQuota returned no row for session ${sessionId}`);
+  }
+  if (quota.endedAt == null) {
     if (quota.seconds >= PLAN_LIMITS[quota.plan].hours * 3600) {
       // Accept-then-close so the browser sees a close code; a 4xx upgrade
       // failure is opaque to the WebSocket API.
