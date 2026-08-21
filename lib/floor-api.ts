@@ -1,5 +1,6 @@
 import { FloorConflictError, FloorTargetError } from "@/db/floor";
-import { getActiveMembershipRole, SessionEndedError } from "@/db/sessions";
+import { getActiveMembershipRole, getOwnerHourQuota, PLAN_LIMITS, SessionEndedError } from "@/db/sessions";
+import { getDb } from "@/db";
 import type { FloorDomain, FloorSnapshot } from "./floor-types";
 import { notifyFloorChanged } from "./presence-server";
 
@@ -30,6 +31,23 @@ export async function activeOwnerErrorResponse(sessionId: string, userId: string
   } catch (error) {
     return mutationErrorResponse(error);
   }
+}
+
+/* Gate for the spend-initiating repository operations (preflight, sync) —
+   both burn real sandbox/GitHub-API time. Call after activeOwnerErrorResponse
+   has already confirmed the session exists and the caller is its active
+   owner, which is why (unlike lib/agent-run-start.ts's use of the same
+   getOwnerHourQuota) a null quota here is treated as an invariant violation
+   and fails closed rather than silently allowing the operation through. */
+export async function quotaExhaustedErrorResponse(sessionId: string): Promise<Response | null> {
+  const quota = await getOwnerHourQuota(sessionId, getDb());
+  if (!quota) throw new Error(`getOwnerHourQuota returned no row for session ${sessionId}`);
+  if (quota.endedAt != null) return null;
+  if (quota.seconds < PLAN_LIMITS[quota.plan].hours * 3600) return null;
+  return Response.json(
+    { error: "Your plan's monthly session hours are used up.", code: "quota_exhausted" },
+    { status: 403 },
+  );
 }
 
 export async function floorMutationResponse(

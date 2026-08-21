@@ -5,7 +5,7 @@ import {
   reconcileRepositoryCandidate,
   setRepositoryAvailability,
 } from "@/db/repositories";
-import { activeOwnerErrorResponse } from "@/lib/floor-api";
+import { activeOwnerErrorResponse, quotaExhaustedErrorResponse } from "@/lib/floor-api";
 import { getInstallationRepository, getRepositoryRefSha, GitHubApiError } from "@/lib/github";
 import { notifyFloorChanged } from "@/lib/presence-server";
 import { isApiError, requireApiUser } from "@/lib/server-auth";
@@ -16,6 +16,8 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
   const sessionId = (await params).id;
   const ownerError = await activeOwnerErrorResponse(sessionId, user.id);
   if (ownerError) return ownerError;
+  const quotaError = await quotaExhaustedErrorResponse(sessionId);
+  if (quotaError) return quotaError;
   const connection = await getRepositoryConnectionForMember(sessionId, user.id);
   const candidate = await getActiveRepositoryCandidateForMember(sessionId, user.id);
   if (!connection || !candidate?.candidateSha || connection.status === "disconnected") {

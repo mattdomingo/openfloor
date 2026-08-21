@@ -1,5 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
-import { authorizePresence } from "../db/sessions";
+import { authorizePresence, currentMonth, getOwnerHourQuota, PLAN_LIMITS } from "../db/sessions";
 import type { D1DatabaseLike } from "../db";
 import {
   cloudflareAccessIdentity,
@@ -21,6 +21,15 @@ export interface PresenceEnv extends IdentityEnvironment {
 }
 
 const MAX_DRAFT_LENGTH = 4_000;
+// How often an occupied session books its active time to D1. Also the bound
+// on how much time a DO crash can lose or double-count.
+const USAGE_FLUSH_INTERVAL_MS = 15 * 60_000;
+// A socket with no real user input (see lastActivityAt) for this long is
+// closed rather than left billing an unattended tab. Checked on the same
+// alarm as the usage flush, so detection lags the true idle moment by up to
+// USAGE_FLUSH_INTERVAL_MS — booking is still trimmed to the real last
+// activity, not to detection time.
+const IDLE_TIMEOUT_MS = 30 * 60_000;
 
 type SocketAttachment = {
   userId: string;
@@ -29,13 +38,16 @@ type SocketAttachment = {
   draft?: string;
   typing?: boolean;
   draftUpdatedAt?: number;
+  // Real client activity (typing, or an input-gated "ping" heartbeat), not
+  // merely an open socket — see IDLE_TIMEOUT_MS.
+  lastActivityAt: number;
 };
 type AttachedWebSocket = WebSocket & {
   serializeAttachment(value: SocketAttachment): void;
   deserializeAttachment(): SocketAttachment | null;
 };
 
-export class SessionPresence extends DurableObject {
+export class SessionPresence extends DurableObject<PresenceEnv> {
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
     if (url.pathname === "/connect") return this.acceptConnection(request);
@@ -57,7 +69,10 @@ export class SessionPresence extends DurableObject {
         return new Response("Invalid session end", { status: 400 });
       }
       // Sockets stay open on purpose: ended sessions remain readable, and the
-      // server-side write guard is the enforcement.
+      // server-side write guard is the enforcement. Metering stops here,
+      // though — an ended session must not keep booking hours to the owner
+      // while people linger reading it.
+      await this.stopMetering();
       this.broadcast({ type: "session.ended", endedAt: body.endedAt, reason: body.reason });
       return new Response(null, { status: 204 });
     }
@@ -97,7 +112,7 @@ export class SessionPresence extends DurableObject {
     return new Response("Not found", { status: 404 });
   }
 
-  private acceptConnection(request: Request): Response {
+  private async acceptConnection(request: Request): Promise<Response> {
     if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") {
       return new Response("WebSocket upgrade required", { status: 426 });
     }
@@ -105,11 +120,24 @@ export class SessionPresence extends DurableObject {
     const displayName = request.headers.get("x-openfloor-display-name");
     if (!userId || !displayName) return new Response("Unauthorized", { status: 401 });
 
+    // Hour metering: the route only sends these for live (not ended) sessions.
+    // Keying the clock on stored state, not live socket count, means a
+    // wake-from-hibernation reconnect never resets a running clock.
+    const meterOwnerId = request.headers.get("x-openfloor-meter-owner-id");
+    const meterSessionId = request.headers.get("x-openfloor-meter-session-id");
+    if (meterOwnerId && meterSessionId) {
+      await this.ctx.storage.put({ meterOwnerId, meterSessionId });
+      if (!(await this.ctx.storage.get("clockStart"))) {
+        await this.ctx.storage.put("clockStart", Date.now());
+        await this.ctx.storage.setAlarm(Date.now() + USAGE_FLUSH_INTERVAL_MS);
+      }
+    }
+
     const pair = new WebSocketPair();
     const client = pair[0];
     const server = pair[1] as AttachedWebSocket;
     const wasOnline = this.socketsFor(userId).length > 0;
-    server.serializeAttachment({ userId, displayName, connectionId: crypto.randomUUID(), draft: "", typing: false, draftUpdatedAt: 0 });
+    server.serializeAttachment({ userId, displayName, connectionId: crypto.randomUUID(), draft: "", typing: false, draftUpdatedAt: 0, lastActivityAt: Date.now() });
     this.ctx.acceptWebSocket(server);
     server.send(JSON.stringify({
       type: "presence.snapshot",
@@ -122,6 +150,13 @@ export class SessionPresence extends DurableObject {
 
   webSocketMessage(socket: AttachedWebSocket, message: string | ArrayBuffer): void {
     if (message === "ping") {
+      // The client only sends this while the tab is visible and the user has
+      // recently interacted with it — see AgentFloorScreen's heartbeat — so
+      // it is real evidence of presence, not just an open connection. Spread
+      // the existing attachment: constructing a fresh one would blank this
+      // user's in-flight typing draft for every other participant.
+      const attachment = socket.deserializeAttachment();
+      if (attachment) socket.serializeAttachment({ ...attachment, lastActivityAt: Date.now() });
       socket.send("pong");
       return;
     }
@@ -149,11 +184,12 @@ export class SessionPresence extends DurableObject {
       draft: update.text,
       typing: update.text.length > 0 && update.typing,
       draftUpdatedAt: this.nextDraftUpdatedAt(),
+      lastActivityAt: Date.now(),
     });
     this.broadcastUserDraft(attachment.userId, attachment.displayName);
   }
 
-  webSocketClose(socket: AttachedWebSocket): void {
+  async webSocketClose(socket: AttachedWebSocket): Promise<void> {
     const attachment = socket.deserializeAttachment();
     if (attachment) {
       if (attachment.draft || attachment.typing) this.broadcastUserDraft(attachment.userId, attachment.displayName);
@@ -161,10 +197,104 @@ export class SessionPresence extends DurableObject {
         this.broadcast({ type: "presence.changed", userId: attachment.userId, online: false });
       }
     }
+    if (!this.sockets().some((open) => open !== socket && open.readyState === WebSocket.OPEN)) {
+      // Book to this socket's own last activity, not to now: a socket that
+      // went idle and was later closed (by the client, not just by our idle
+      // timeout) must not bill the idle tail either.
+      await this.flushUsage(false, this.lastActivityAcross(socket)); // occupancy hit zero
+    }
   }
 
-  webSocketError(socket: AttachedWebSocket): void {
-    this.webSocketClose(socket);
+  async webSocketError(socket: AttachedWebSocket): Promise<void> {
+    await this.webSocketClose(socket);
+  }
+
+  // Books time for long-lived occupied sessions and for sockets that died
+  // without a close event.
+  async alarm(): Promise<void> {
+    // Backstop for the rare case the /session-ended fetch never reached this
+    // instance (a mid-request crash between the D1 write and the DO call):
+    // notice the session ended, stop the clock, and don't re-arm.
+    const meteredSessionId = await this.ctx.storage.get<string>("meterSessionId");
+    if (meteredSessionId) {
+      const row = await this.env.DB.prepare("SELECT ended_at AS endedAt FROM sessions WHERE id = ?")
+        .bind(meteredSessionId)
+        .first<{ endedAt: number | null }>();
+      if (row?.endedAt != null) {
+        await this.stopMetering();
+        return;
+      }
+    }
+    const now = Date.now();
+    const open = this.sockets().filter((socket) => socket.readyState === WebSocket.OPEN);
+    const idle = open.filter((socket) => (socket.deserializeAttachment()?.lastActivityAt ?? 0) < now - IDLE_TIMEOUT_MS);
+    const active = open.filter((socket) => !idle.includes(socket));
+
+    // Flush before closing idle sockets, not after: closing can synchronously
+    // (or on the next turn) trigger webSocketClose, whose own flush must find
+    // no clockStart left to book — flushUsage's early return is what makes
+    // that safe — rather than racing to double-book the same interval.
+    if (active.length > 0) {
+      await this.flushUsage(true, now);
+      for (const socket of idle) socket.close(4004, "Disconnected for inactivity");
+      await this.ctx.storage.setAlarm(now + USAGE_FLUSH_INTERVAL_MS);
+    } else {
+      // Every open socket (if any) is idle: occupancy is effectively zero.
+      // Book only up to the last real activity, not up to this alarm firing.
+      await this.flushUsage(false, this.lastActivityAcross());
+      for (const socket of idle) socket.close(4004, "Disconnected for inactivity");
+    }
+  }
+
+  // Books whatever is owed, then clears metering state so a later reconnect
+  // (which will not carry meter headers for an ended session) cannot revive it.
+  private async stopMetering(): Promise<void> {
+    await this.flushUsage(false);
+    await this.ctx.storage.delete(["meterOwnerId", "meterSessionId"]);
+  }
+
+  // endAtHint lets a caller trim billing to real last activity instead of
+  // "now" (the idle-close paths). The clamp lives here, not in callers, so
+  // no call site can get the two edge cases wrong: an endAtHint in the
+  // future (clamped to now) or, the common 30-minute-idle case, an
+  // endAtHint before clockStart — without the lower clamp that would book
+  // negative seconds and *credit* usage_months via `seconds + excluded.seconds`.
+  private async flushUsage(keepRunning: boolean, endAtHint?: number): Promise<void> {
+    const clockStart = await this.ctx.storage.get<number>("clockStart");
+    const ownerId = await this.ctx.storage.get<string>("meterOwnerId");
+    const sessionId = await this.ctx.storage.get<string>("meterSessionId");
+    if (!clockStart || !ownerId || !sessionId) return;
+    const now = Date.now();
+    const endAt = Math.min(now, Math.max(clockStart, endAtHint ?? now));
+    const seconds = Math.round((endAt - clockStart) / 1000);
+    // ponytail: an interval spanning a UTC month boundary books wholly to the
+    // flush-time month, and a failed storage write after this D1 write can
+    // double-count — both bounded by one flush interval.
+    await this.env.DB.batch([
+      this.env.DB.prepare(
+        `INSERT INTO usage_months (owner_user_id, month, seconds) VALUES (?, ?, ?)
+         ON CONFLICT(owner_user_id, month) DO UPDATE SET seconds = seconds + excluded.seconds`,
+      ).bind(ownerId, currentMonth(), seconds),
+      this.env.DB.prepare("UPDATE sessions SET active_seconds = active_seconds + ? WHERE id = ?")
+        .bind(seconds, sessionId),
+    ]);
+    if (keepRunning) {
+      // Advance to endAt, not now: when endAt < now (an idle trim), the
+      // untrimmed remainder up to now has not been booked and must stay
+      // owed on the clock, not be silently dropped.
+      await this.ctx.storage.put("clockStart", endAt);
+    } else {
+      await this.ctx.storage.delete("clockStart");
+      await this.ctx.storage.deleteAlarm();
+    }
+  }
+
+  // Latest real-activity timestamp across currently attached sockets, plus
+  // an optional extra socket (webSocketClose's own socket may already be
+  // excluded from getWebSockets() by the time this runs).
+  private lastActivityAcross(extra?: AttachedWebSocket): number {
+    const all = extra ? [...this.sockets(), extra] : this.sockets();
+    return Math.max(0, ...all.map((socket) => socket.deserializeAttachment()?.lastActivityAt ?? 0));
   }
 
   private sockets(): AttachedWebSocket[] {
@@ -234,12 +364,48 @@ export async function handlePresenceRequest(request: Request, env: PresenceEnv):
   const identity = localDevelopmentIdentity(request.headers, env)
     ?? await cloudflareAccessIdentity(request.headers, env);
   if (!identity) return new Response("Authentication required", { status: 401 });
-  const member = await authorizePresence(decodeURIComponent(presenceMatch[1]), identity.providerUserId, env.DB);
+  const sessionId = decodeURIComponent(presenceMatch[1]);
+  const member = await authorizePresence(sessionId, identity.providerUserId, env.DB);
   if (!member) return new Response("Session not found", { status: 404 });
 
   const headers = new Headers(request.headers);
   headers.set("x-openfloor-user-id", member.userId);
   headers.set("x-openfloor-display-name", member.displayName);
-  const stub = env.SESSION_PRESENCE.get(env.SESSION_PRESENCE.idFromName(decodeURIComponent(presenceMatch[1])));
+  // These are Worker-internal, like the identity headers in lib/identity.ts:
+  // strip any client-forged value before the gate below decides whether to
+  // set its own. Without this, a request against an ended (ungated) session
+  // could pass its own owner/session id straight through to the DO and book
+  // metered time to an arbitrary user.
+  headers.delete("x-openfloor-meter-owner-id");
+  headers.delete("x-openfloor-meter-session-id");
+
+  // Hour-quota gate: the one point every floor WebSocket passes through.
+  // Ended sessions stay viewable for free; live ones are gated on the
+  // owner's effective plan and metered by the DO (already-connected users
+  // are never kicked — the DO's booked total lags real usage by at most one
+  // flush interval).
+  const quota = await getOwnerHourQuota(sessionId, env.DB);
+  if (!quota) {
+    // authorizePresence just confirmed this session and member exist, and
+    // every session has exactly one owner row — this can only mean that
+    // invariant broke. Fail closed (surfaced as a Workers error log) rather
+    // than silently falling through to an ungated, unmetered connection.
+    throw new Error(`getOwnerHourQuota returned no row for session ${sessionId}`);
+  }
+  if (quota.endedAt == null) {
+    if (quota.seconds >= PLAN_LIMITS[quota.plan].hours * 3600) {
+      // Accept-then-close so the browser sees a close code; a 4xx upgrade
+      // failure is opaque to the WebSocket API.
+      const rejected = new WebSocketPair();
+      const server = rejected[1] as WebSocket & { accept(): void };
+      server.accept();
+      server.close(4003, "This session's host has used up their plan's monthly session hours.");
+      return new Response(null, { status: 101, webSocket: rejected[0] });
+    }
+    headers.set("x-openfloor-meter-owner-id", quota.ownerId);
+    headers.set("x-openfloor-meter-session-id", sessionId);
+  }
+
+  const stub = env.SESSION_PRESENCE.get(env.SESSION_PRESENCE.idFromName(sessionId));
   return stub.fetch(new Request("https://presence.internal/connect", { method: "GET", headers }));
 }

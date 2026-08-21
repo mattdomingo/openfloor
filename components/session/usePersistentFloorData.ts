@@ -66,6 +66,7 @@ export function usePersistentFloorData(sessionId: string, initialFloor: FloorSna
     busy,
     error,
     blockingRunId,
+    setError,
     clearError: () => setError(null),
     refresh,
     createAgent: (input: CreateFloorAgentInput) => request("/agents", "POST", input),

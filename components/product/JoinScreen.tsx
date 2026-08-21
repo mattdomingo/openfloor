@@ -7,10 +7,20 @@ import { BASE_PATH } from "@/components/basePath";
 import type { InvitePreview } from "@/db/sessions";
 import { Brand } from "./Brand";
 
-export function JoinScreen({ token, preview, displayName }: { token: string; preview: InvitePreview; displayName: string }) {
+export function JoinScreen({ token, preview, displayName, alreadyMember }: {
+  token: string;
+  preview: InvitePreview;
+  displayName: string;
+  alreadyMember: boolean;
+}) {
   const router = useRouter();
   const [joining, setJoining] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Advisory only — the 403 from actually accepting is the enforcement, in
+  // case the owner's plan changed or another racer filled the last seat
+  // between this render and the click. A returning member's re-accept is
+  // idempotent past the cap, so this never applies to them.
+  const full = !alreadyMember && preview.memberCount >= preview.seatLimit;
 
   async function join() {
     setJoining(true);
@@ -33,8 +43,9 @@ export function JoinScreen({ token, preview, displayName }: { token: string; pre
         <h1>{preview.title}</h1>
         <p className="join-objective">{preview.objective || "No objective has been written yet."}</p>
         <dl><div><dt>Host</dt><dd>{preview.ownerName}</dd></div><div><dt>Joining as</dt><dd>{displayName}</dd></div></dl>
+        {full && !error && <p className="form-error" role="alert">This session is full ({preview.memberCount} of {preview.seatLimit} seats).</p>}
         {error && <p className="form-error" role="alert">{error}</p>}
-        <button className="button" data-variant="primary" data-size="lg" disabled={joining} onClick={join}>{joining ? "Joining…" : "Join session"}</button>
+        <button className="button" data-variant="primary" data-size="lg" disabled={joining || full} onClick={join}>{joining ? "Joining…" : full ? "Session full" : "Join session"}</button>
         <Link href="/home">Back to your sessions</Link>
       </section>
     </main>

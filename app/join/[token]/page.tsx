@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import { requireOnboardedUser } from "@/lib/server-auth";
 import { getInviteSigningSecret } from "@/db";
-import { getInvitePreview } from "@/db/sessions";
+import { getInvitePreview, getMembershipRole } from "@/db/sessions";
 import { verifyInviteToken } from "@/lib/invites";
 import { JoinScreen } from "@/components/product/JoinScreen";
 
@@ -18,5 +18,9 @@ async function AuthenticatedInvite({ token }: { token: string }) {
   if (!inviteId) notFound();
   const preview = await getInvitePreview(inviteId);
   if (!preview) notFound();
-  return <JoinScreen token={token} preview={preview} displayName={user.displayName} />;
+  // A returning member's idempotent re-accept always succeeds server-side
+  // regardless of the seat cap — the "session is full" advisory below must
+  // not block them from re-entering their own session.
+  const alreadyMember = Boolean(await getMembershipRole(preview.sessionId, user.id));
+  return <JoinScreen token={token} preview={preview} displayName={user.displayName} alreadyMember={alreadyMember} />;
 }

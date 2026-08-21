@@ -13,7 +13,7 @@ import {
 } from "@/db/preflights";
 import { getRepositoryFloorRevision } from "@/db/repositories";
 import { getMembershipRole } from "@/db/sessions";
-import { activeOwnerErrorResponse, mutationErrorResponse } from "@/lib/floor-api";
+import { activeOwnerErrorResponse, mutationErrorResponse, quotaExhaustedErrorResponse } from "@/lib/floor-api";
 import { notifyFloorChanged } from "@/lib/presence-server";
 import { isApiError, requireApiUser } from "@/lib/server-auth";
 
@@ -34,6 +34,8 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
   const sessionId = (await params).id;
   const ownerError = await activeOwnerErrorResponse(sessionId, user.id);
   if (ownerError) return ownerError;
+  const quotaError = await quotaExhaustedErrorResponse(sessionId);
+  if (quotaError) return quotaError;
   if ((env as unknown as { PREFLIGHT_ENABLED?: string }).PREFLIGHT_ENABLED !== "true") {
     return Response.json({ error: "Repository preflight is not available" }, { status: 503 });
   }
