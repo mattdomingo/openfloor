@@ -591,6 +591,28 @@ export const sandboxPool = sqliteTable(
   ],
 );
 
+// Session-scoped imported Claude skills: the owner pastes a SKILL.md, the
+// run workflow materializes it into the container user's ~/.claude/skills/
+// for Claude runs. `name` comes from validated frontmatter
+// (lib/skill-validation.ts) and is filesystem-safe by construction — a
+// lowercase slug, so no path separators or traversal segments can reach the
+// materialization step. Content is bounded on the way in; per-session count
+// is enforced at the write path.
+export const sessionSkills = sqliteTable(
+  "session_skills",
+  {
+    id: text("id").primaryKey(),
+    sessionId: text("session_id").notNull().references(() => sessions.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    description: text("description").notNull(),
+    content: text("content").notNull(),
+    createdBy: text("created_by").notNull().references(() => users.id),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [uniqueIndex("idx_session_skills_session_name").on(table.sessionId, table.name)],
+);
+
 // Per-user agent-provider credentials, encrypted at rest (AES-256-GCM via
 // lib/credential-crypto.ts; key from the CREDENTIAL_ENCRYPTION_KEY Worker
 // secret). `ciphertext` never leaves the server — routes return only the

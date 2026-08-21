@@ -175,6 +175,7 @@ WebSocket events notify clients about presence or changed domains. D1 remains au
 - Verified post-merge cleanup of matching server-generated run/candidate refs using Git leases; mismatched refs are preserved and recorded as partial cleanup.
 - Merged candidate audit history remains durable, while the next owner-started run creates a fresh candidate cycle from the latest base SHA.
 - Per-user provider credentials (`user_provider_credentials`, providers `anthropic`/`openai`): connected in `/settings` → Connections, validated against the provider's models endpoint on connect, AES-256-GCM-encrypted at rest under `CREDENTIAL_ENCRYPTION_KEY`, and write-only from the client (routes return only a last-four fingerprint). Per run, both runtime gateways use the **session owner's** connected key when present, else the server key, else refuse with a clear `503`; a present-but-unreadable owner key refuses rather than silently falling back.
+- Session-scoped imported Claude skills (`session_skills`): the owner pastes a validated `SKILL.md` in the session lobby (members read the list), bounded to 32,000 characters and 20 per session, with the name constrained to a filesystem-safe slug. Claude runs materialize them into the container user's `~/.claude/skills/` (never the git worktree) and enable exactly the imported names via the SDK's `skills` option; a skill's `allowed-tools` frontmatter cannot widen the run's toolset. The target repository's own `CLAUDE.md` is appended to the run prompt as bounded text (first 8,000 characters) rather than loaded as a settings source. claude.ai skill sync is not implemented.
 - A Claude agent runner (`scripts/claude-runner.mjs`, Claude Agent SDK, default model `claude-opus-5`) structurally parallel to the Codex runner, gated behind `CLAUDE_RUN_ENABLED=false` until its prerequisites are live. `floor_agents.provider` (default `openai`) and nullable `model` choose the runner per run; `AgentRunWorkflow` branches at dispatch. Claude runs execute as the non-root `openfloor-agent` user under the SDK's kernel sandbox (bubblewrap + proxy-enforced domain allowlist), with the pinned posture in `lib/claude-sandbox-settings.ts` and model traffic through `POST /runtime/anthropic/*` — see the 2026-08-21 Claude-runner decision-log entry for the verified isolation semantics.
 
 Known production follow-up: the owner discard action still reports failure in the disposable acceptance repository after its Git authentication correction. Preserve the expected-SHA lease and error separation; diagnose this independently rather than weakening deletion safety or folding it into Phase 6.
@@ -400,6 +401,13 @@ Deliberately left alone: `usage_months` rows survive (see that table's own no-FK
 - Composite primary key `(owner_user_id, month)`, `month` a UTC `"YYYY-MM"` string (`lib/plans.ts`'s `currentMonth()`). One row per owner per calendar month; `seconds` accumulates presence time across every session that owner owns, live and ended alike.
 - **Deliberately has no foreign keys.** The ledger must outlive both `purgeExpiredSessions` (a session's `active_seconds` cascades away with it; the owner's `usage_months` total must not) and, if it is ever added, account deletion. Do not add a `references()` here without re-deriving this from scratch.
 - Written only by `SessionPresence.flushUsage` (`worker/presence.ts`), via `INSERT ... ON CONFLICT DO UPDATE SET seconds = seconds + excluded.seconds`. Never written from an HTTP route.
+
+#### `session_skills`
+
+- Session-scoped imported Claude skills, unique per `(session_id, name)`; re-importing a name replaces it. Cascades away with the session.
+- `name` comes from validated `SKILL.md` frontmatter (`lib/skill-validation.ts`) and is a lowercase slug by construction — path separators and traversal segments are unrepresentable, which is what makes the materialization path (`~/.claude/skills/<name>/SKILL.md` in the run container) safe. The workflow re-checks the slug before writing anyway.
+- Content is bounded (32,000 characters), descriptions to 500, and a session holds at most 20 skills (`SkillLimitError` → `409`). Members read summaries (never content over the API); only the owner imports or removes; mutations refuse on ended sessions.
+- Skills are enabled per run as an explicit SDK `skills` list. The runner always passes the option — an omitted `skills` means "CLI defaults", not "off" — and adds the `Skill` tool to its positive `tools` base set only when at least one skill exists.
 
 #### `user_provider_credentials`
 
@@ -629,6 +637,9 @@ All paths below are shown without the production `/app` prefix.
 | `POST /api/sessions/[id]/queue` | Session member | Persist `{ prompt, agentId? }`; null target is valid. |
 | `PATCH /api/sessions/[id]/queue/order` | Session member | Persist an exact unique `{ itemIds }` order. |
 | `POST /api/sessions/[id]/queue/merge` | Session member | Merge at least two existing same-target items, preserving prompts. |
+| `GET /api/sessions/[id]/skills` | Session member | List imported Claude-skill summaries (name, description, size, updated); never content. |
+| `POST /api/sessions/[id]/skills` | Owner | Import `{ content }` as a validated `SKILL.md`; upserts by frontmatter name. `400` malformed, `409` at the 20-skill cap or on an ended session. |
+| `DELETE /api/sessions/[id]/skills/[skillId]` | Owner | Remove one imported skill; returns the updated list. |
 | `GET /api/sessions/[id]/presence` with Upgrade | Session member | Authenticated WebSocket handoff to the per-session Durable Object. |
 | `POST /api/sessions/[id]/repository/connect` | Owner | Create a short-lived signed GitHub installation state and return the installation URL. |
 | `GET /api/github/callback` | Authenticated initiating owner | Consume the signed installation callback once and return to repository setup. |
@@ -688,6 +699,7 @@ Keep server validation in `lib/validation.ts` and cover it with unit tests.
 - Required check commands: optional; zero to eight ordered nonempty commands, trimmed, maximum 500 characters each.
 - Candidate name: required, NFKC-normalized, whitespace-collapsed, maximum 100 characters; it is slugged server-side and never accepted as a complete ref. Candidate description: trimmed, maximum 2,000 characters and may be empty.
 - Provider API key (`parseCredentialConnectInput`): required, trimmed, a single opaque token (no whitespace or control characters), maximum 512 characters.
+- Imported skill (`parseSkillContent`, `lib/skill-validation.ts`): frontmatter `name` a lowercase slug (`[a-z0-9][a-z0-9-]{0,63}`), `description` required at most 500 characters, nonempty body, whole document at most 32,000 characters; 20 skills per session.
 
 ## Plan limits and metering
 
@@ -801,6 +813,7 @@ db/
   schema.ts                  Drizzle schema source
   sessions.ts                Prepared D1 user/session/member/invite queries
   provider-credentials.ts    Encrypted per-user provider credential rows and owner resolution
+  skills.ts                  Owner-gated session skill imports and run materialization reads
   floor.ts                   Prepared D1 floor snapshot and mutation queries
   repositories.ts            Owner-gated GitHub connection and check-command persistence
   preflights.ts              Durable preflight/check state and internal Workflow transitions
@@ -818,6 +831,7 @@ lib/
   provider-credentials.ts    Pure provider/credential types, per-provider default models, run resolution order
   provider-validation.ts     Connect-time key validation against provider models endpoints
   claude-sandbox-settings.ts Pinned Claude-runner sandbox posture serializer
+  skill-validation.ts        Bounded SKILL.md frontmatter parsing and slug rules
   github.ts                  GitHub App JWT, installation-token, repository, and branch reads
   github-state.ts            Signed callback state and webhook HMAC verification
   runtime-token.ts           Short-lived preflight/run operation-scoped gateway JWTs
@@ -1442,6 +1456,14 @@ An owner cannot remove a member from a session today — `leaveSession` is self-
 **Rationale:** Encryption key from a Worker secret rather than a KMS binding because no KMS binding exists in this stack and Worker secrets are the established channel for exactly this class of material (`INVITE_SIGNING_SECRET`, `GITHUB_STATE_SECRET`); AES-GCM via WebCrypto needs no new dependency. Owner-else-server rather than initiator-else-server because the owner is who the plan quota already bills — the two "who pays" ledgers should not diverge. Refusal instead of silent server-key fallback whenever an owner credential exists but fails, because a run that silently switches payer mid-stream is a billing surprise and masks a broken key the owner believes is active. Open TS-only enums follow the `agent_run_artifacts.kind` precedent and the `users`-recreate invariant's lesson: a CHECK-constrained column change on a live table is a table recreate away from cascade data loss.
 
 **Consequences:** `CREDENTIAL_ENCRYPTION_KEY` joins the required secrets (README, `docs/github-production.md`, `.env.example`, both vitest configs); rotating it invalidates every stored credential and users must reconnect — there is no re-encryption path. `users` now has four inbound `ON DELETE CASCADE` FKs (the never-recreate invariant tightens), and `deleteAccount` deletes credential rows explicitly because the scrub never fires the cascade. The OpenAI gateway no longer requires `OPENAI_API_KEY` to exist before verifying the token — resolution happens after authentication, and its rejection paths are covered by `tests/worker/credentials.test.ts` (registered in the `test:worker` script list, which enumerates files explicitly). Connect-time validation uses the `OPENFLOOR_TEST_PROVIDER_KEYS` deterministic adapter in tests, following `OPENFLOOR_TEST_GITHUB_DATA`. The Claude runner (next milestone piece) consumes the same store through an equivalent Anthropic gateway; provider/model selection per agent remains deferred until that runner exists.
+
+### 2026-08-21 — Session-scoped imported Claude skills, materialized into user scope
+
+**Decision:** Session owners import Claude skills by pasting a `SKILL.md` (`session_skills` table, lobby `SkillsCard`, member-readable summaries). Validation (`lib/skill-validation.ts`) requires frontmatter with a lowercase-slug `name` (`[a-z0-9][a-z0-9-]{0,63}`) and a bounded `description`, bounds the document to 32,000 characters and the session to 20 skills, and re-importing a name replaces it. Claude runs materialize the skills into the container user's `~/.claude/skills/<name>/SKILL.md` during workspace preparation and enable exactly the imported names via the SDK's `skills` option; the target repository's own `CLAUDE.md` is appended to the run prompt as bounded text (first 8,000 characters). claude.ai skill sync is not built.
+
+**Rationale:** User scope (`settingSources: ["user"]`), never the git worktree — anything written into the worktree becomes a changed path the publisher validates against the expected set, and the `project` source would also load the customer repository's own `.claude/settings.json` and `.mcp.json`, which openfloor does not control; that is also why `CLAUDE.md` arrives as prompt text instead of a settings source. The slug rule makes path traversal unrepresentable rather than filtered. Two SDK behaviors were verified empirically because they are load-bearing: an omitted `skills` option means "CLI defaults", **not** "skills off", so the runner always passes an explicit list (`[]` when none); and the positive `tools` base set excludes the `Skill` tool even when `skills` is set, so the runner adds `"Skill"` to `tools` only when at least one skill exists (verified end-to-end: skill invoked and its instruction followed). A skill's `allowed-tools` frontmatter stays inert — the runner's explicit tool lists are the only tool authority.
+
+**Consequences:** Skills are user-supplied agent instructions with the same trust level as queue prompts — session-scoped, owner-gated, member-visible. The workflow re-checks the slug before writing to the filesystem even though validation already guarantees it. Skill names are read again at the start step, so a skill imported mid-provisioning may be absent from that run — bounded imprecision, same class as the dispatch-time session brief. The lobby card renders only while `CLAUDE_RUN_ENABLED` is on (hide-while-gated convention).
 
 ### 2026-08-21 — Add a Claude runner with kernel-sandboxed, non-root execution, behind a disabled rollout gate
 

@@ -31,6 +31,7 @@ import { createDraftPullRequest, createInstallationToken, getRepositoryRefSha, G
 import type { AgentRunFile } from "../lib/floor-types";
 import type { GitHubRepositoryOption } from "../lib/session-types";
 import { renderSessionContext } from "../lib/session-context";
+import { getSessionSkillsForRun } from "../db/skills";
 import { buildClaudeSandboxSettings } from "../lib/claude-sandbox-settings";
 import { notifyFloorChanged } from "../lib/presence-server";
 import { pokeSessionRouter } from "../lib/router-server";
@@ -132,7 +133,20 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
           } },
         );
         if (!result.success) throw new Error(`Candidate workspace preparation failed with exit code ${result.exitCode}`);
-        const prompt = await buildRunPrompt(context, this.env.DB);
+        let prompt = await buildRunPrompt(context, this.env.DB);
+        if (context.provider === "anthropic") {
+          // The target repository's CLAUDE.md is useful context, but it is
+          // deliberately NOT loaded as a settings source — user-scope keeps
+          // the repo's .claude/ out of the session — so read it as text into
+          // the prompt, bounded like every other brief section.
+          const claudeMd = await sandbox.exec(
+            "head -c 8000 /workspace/repository/CLAUDE.md 2>/dev/null || true",
+            { timeout: 30_000 },
+          );
+          if (claudeMd.success && claudeMd.stdout.trim()) {
+            prompt += `\n\n## Repository CLAUDE.md (first 8,000 characters)\n\n${claudeMd.stdout}`;
+          }
+        }
         await sandbox.writeFile("/tmp/openfloor/prompt.txt", prompt);
         // Persisted so members can see exactly what a run was told — the
         // honest counterpart to injecting context they can't otherwise see.
@@ -154,6 +168,16 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
             "/home/openfloor-agent/.claude/settings.json",
             buildClaudeSandboxSettings({ gatewayHost: new URL(this.env.OPENFLOOR_RUNTIME_ORIGIN).host }),
           );
+          // Imported session skills materialize into the agent user's home
+          // (user scope — never the git worktree, which would make them
+          // changed paths the publisher then rejects). Names are validated
+          // slugs at the write path; the re-check here keeps the exec safe
+          // even against a hand-edited row.
+          for (const skill of await getSessionSkillsForRun(context.sessionId, this.env.DB)) {
+            if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(skill.name)) continue;
+            await sandbox.exec(`mkdir -p /home/openfloor-agent/.claude/skills/${skill.name}`, { timeout: 30_000 });
+            await sandbox.writeFile(`/home/openfloor-agent/.claude/skills/${skill.name}/SKILL.md`, skill.content);
+          }
           const prepared = await sandbox.exec(
             "chown -R openfloor-agent:openfloor-agent /home/openfloor-agent /workspace/repository /tmp/openfloor && git config --global --add safe.directory /workspace/repository",
             { timeout: 60_000 },
@@ -189,6 +213,13 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
                 OPENFLOOR_ANTHROPIC_BASE_URL: `${this.env.OPENFLOOR_RUNTIME_ORIGIN}/runtime/anthropic`,
                 OPENFLOOR_ANTHROPIC_TOKEN: providerToken,
                 HOME: "/home/openfloor-agent",
+                // Names of the materialized skills; the runner passes them as
+                // the SDK's explicit `skills` list ([] disables CLI skill
+                // defaults — omitted is NOT off). A skill added between the
+                // prepare and start steps is simply absent from this run.
+                OPENFLOOR_SKILLS: JSON.stringify(
+                  (await getSessionSkillsForRun(context.sessionId, this.env.DB)).map((skill) => skill.name),
+                ),
               }
             : {
                 OPENFLOOR_OPENAI_BASE_URL: `${this.env.OPENFLOOR_RUNTIME_ORIGIN}/runtime/openai/v1`,

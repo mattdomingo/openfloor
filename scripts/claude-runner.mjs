@@ -116,6 +116,18 @@ function normalizeAssistantBlock(block) {
   }
 }
 
+// Imported session skills, materialized by the workflow into this user's
+// ~/.claude/skills/. Verified SDK behavior: `skills` must ALWAYS be passed —
+// omitted means "CLI defaults", not "off" — and the Skill tool only exists
+// when it is in the positive `tools` base set.
+let skillNames = [];
+try {
+  const parsed = JSON.parse(process.env.OPENFLOOR_SKILLS ?? "[]");
+  if (Array.isArray(parsed)) skillNames = parsed.filter((name) => typeof name === "string");
+} catch {
+  skillNames = [];
+}
+
 const prompt = await readFile(promptPath, "utf8");
 // The MCP child is spawned by the CLI outside the Bash sandbox (same shape as
 // the Codex runner's MCP bridge); its env is passed explicitly.
@@ -143,12 +155,16 @@ const response = query({
     // sandbox proxy — the Codex runner's webSearchMode: "disabled" parity).
     // A skill's allowed-tools frontmatter cannot widen any of this.
     permissionMode: "dontAsk",
-    tools: ["Bash", "Read", "Write", "Edit", "MultiEdit", "NotebookEdit", "Glob", "Grep", "TodoWrite"],
+    tools: [
+      "Bash", "Read", "Write", "Edit", "MultiEdit", "NotebookEdit", "Glob", "Grep", "TodoWrite",
+      ...(skillNames.length > 0 ? ["Skill"] : []),
+    ],
     allowedTools: [
       "Bash", "Read", "Write", "Edit", "MultiEdit", "NotebookEdit", "Glob", "Grep", "TodoWrite",
       ...(mcpServers ? ["mcp__openfloor__openfloor_session_context"] : []),
     ],
     disallowedTools: ["WebFetch", "WebSearch"],
+    skills: skillNames,
     // "user" only: loads the sandbox posture (and later, imported skills)
     // from the container home directory, and keeps the target repository's
     // own .claude/settings.json, .mcp.json, and CLAUDE.md out of the session.
