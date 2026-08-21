@@ -40,6 +40,18 @@ export type StartRunResult =
   | { ok: true; runId: string }
   | { ok: false; kind: "disabled" | "not_ready" | "conflict" | "quota_exhausted"; message: string };
 
+// Providers whose runs cannot start right now, from the rollout gates. The
+// router passes this into runRoutingTick so gated items are SKIPPED during
+// auto-dispatch (a per-item condition); the seam check below still refuses a
+// direct manual start with kind "disabled" (the correct answer there).
+export function disabledRunProviders(): ReadonlySet<import("@/lib/provider-credentials").CredentialProvider> {
+  const bindings = env as unknown as { CLAUDE_RUN_ENABLED?: string; OPENFLOOR_TEST_ALLOW_IDENTITY_HEADERS?: string };
+  if (bindings.CLAUDE_RUN_ENABLED === "true" || bindings.OPENFLOOR_TEST_ALLOW_IDENTITY_HEADERS === "true") {
+    return new Set();
+  }
+  return new Set(["anthropic"] as const);
+}
+
 // This is the one seam that covers every way a run can start: the two HTTP
 // routes (run, retry) AND worker/session-router.ts's auto-dispatch DO, which
 // has no HTTP layer at all. A quota check placed in the route handlers
@@ -54,7 +66,6 @@ export async function startQueueItemRun(sessionId: string, queueItemId: string, 
   const bindings = env as unknown as {
     AGENT_RUN_WORKFLOW?: WorkflowBinding;
     AGENT_RUN_ENABLED?: string;
-    CLAUDE_RUN_ENABLED?: string;
     PREFLIGHT_LOGS?: R2BucketLike;
     OPENFLOOR_TEST_ALLOW_IDENTITY_HEADERS?: string;
     OPENFLOOR_TEST_AGENT_RUN_DATA?: string;
@@ -65,13 +76,15 @@ export async function startQueueItemRun(sessionId: string, queueItemId: string, 
   // Independent rollout gate for the Claude runner (same convention as
   // AGENT_RUN_ENABLED): stays false until the image with the Agent SDK and
   // sandbox packages, the anthropic gateway, and a resolvable credential are
-  // live. Checked at this seam for the same reason the quota is — it must
-  // also cover worker/session-router.ts's auto-dispatch path.
-  if (
-    bindings.CLAUDE_RUN_ENABLED !== "true" && bindings.OPENFLOOR_TEST_ALLOW_IDENTITY_HEADERS !== "true"
-    && (await getQueueItemProvider(sessionId, queueItemId, getDb())) === "anthropic"
-  ) {
-    return { ok: false, kind: "disabled", message: "Claude execution is not enabled" };
+  // live. This seam check answers the manual-run path; auto-dispatch never
+  // reaches it for gated items because runRoutingTick skips them upstream —
+  // a "disabled" result here would otherwise hold the whole session's queue.
+  const disabledProviders = disabledRunProviders();
+  if (disabledProviders.size > 0) {
+    const provider = await getQueueItemProvider(sessionId, queueItemId, getDb());
+    if (provider && disabledProviders.has(provider)) {
+      return { ok: false, kind: "disabled", message: "Claude execution is not enabled" };
+    }
   }
   // Unlike worker/presence.ts's use of this same function, a null quota here
   // does not fail closed: this is the first thing in the function that

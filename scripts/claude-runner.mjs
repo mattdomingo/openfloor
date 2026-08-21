@@ -136,18 +136,18 @@ const response = query({
     // clean denial instead of waiting on a human. Verified empirically
     // (AGENTS.md decision log): ask-default tools like WebFetch deny in this
     // mode, but Bash auto-approves rather than denying — so allowedTools is
-    // an allow-list, not a restriction, and the hard restriction mechanism
-    // is disallowedTools. A skill's allowed-tools frontmatter cannot widen
-    // any of this.
+    // an allow-list, not a restriction. The restriction mechanisms are the
+    // positive `tools` base set (fails closed when an SDK upgrade adds new
+    // built-ins) and `disallowedTools` (belt-and-braces for the two
+    // network-capable tools that run in the CLI process OUTSIDE the Bash
+    // sandbox proxy — the Codex runner's webSearchMode: "disabled" parity).
+    // A skill's allowed-tools frontmatter cannot widen any of this.
     permissionMode: "dontAsk",
+    tools: ["Bash", "Read", "Write", "Edit", "MultiEdit", "NotebookEdit", "Glob", "Grep", "TodoWrite"],
     allowedTools: [
       "Bash", "Read", "Write", "Edit", "MultiEdit", "NotebookEdit", "Glob", "Grep", "TodoWrite",
       ...(mcpServers ? ["mcp__openfloor__openfloor_session_context"] : []),
     ],
-    // WebFetch/WebSearch run in the CLI process, OUTSIDE the Bash sandbox
-    // proxy — left enabled they would be arbitrary network egress. Explicit
-    // deny removes them from the toolset entirely (the Codex runner's
-    // webSearchMode: "disabled" parity).
     disallowedTools: ["WebFetch", "WebSearch"],
     // "user" only: loads the sandbox posture (and later, imported skills)
     // from the container home directory, and keeps the target repository's
