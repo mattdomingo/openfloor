@@ -174,12 +174,13 @@ WebSocket events notify clients about presence or changed domains. D1 remains au
 - Owner-only **Ready for review** and expected-head **Squash merge** actions. GitHub protection and review requirements are never bypassed.
 - Verified post-merge cleanup of matching server-generated run/candidate refs using Git leases; mismatched refs are preserved and recorded as partial cleanup.
 - Merged candidate audit history remains durable, while the next owner-started run creates a fresh candidate cycle from the latest base SHA.
+- Per-user provider credentials (`user_provider_credentials`, providers `anthropic`/`openai`): connected in `/settings` → Connections, validated against the provider's models endpoint on connect, AES-256-GCM-encrypted at rest under `CREDENTIAL_ENCRYPTION_KEY`, and write-only from the client (routes return only a last-four fingerprint). Per run, the OpenAI gateway uses the **session owner's** connected key when present, else the server key, else refuses with a clear `503`; a present-but-unreadable owner key refuses rather than silently falling back.
 
 Known production follow-up: the owner discard action still reports failure in the disposable acceptance repository after its Git authentication correction. Preserve the expected-SHA lease and error separation; diagnose this independently rather than weakening deletion safety or folding it into Phase 6.
 
 ### Explicitly deferred
 
-- Agent model/provider selection and user-managed provider credentials; Phase 4 deliberately uses one server-configured Codex model and project credential.
+- Agent model/provider selection; Phase 4 deliberately uses one server-configured Codex model. (User-managed provider credentials are now implemented — see "Implemented and real" above. What remains deferred is choosing a provider/model per agent; every run still executes Codex with `AGENT_RUN_MODEL`.)
 - Agent-authored chat messages and generic artifact download UI beyond the per-run raw-log and session-brief expanders. (Live run activity streaming is now real: the sandbox runner posts normalized Codex events to `/runtime/run/events`, they persist in `agent_run_events`, and sessions receive them as `run.activity` presence events. An agent may also read live session state mid-run through the `openfloor_session_context` MCP tool — see `/runtime/run/context` in the API table — but it cannot write.)
 - Deployment automation after repository merge.
 - Agent edit, archive, deletion, or lifecycle states beyond `created`.
@@ -354,13 +355,13 @@ Do not hand-edit Drizzle metadata. If a generated migration is wrong, correct th
 - Creation and update timestamps are epoch milliseconds.
 - `plan` (`pro`/`max`/`enterprise`, default `pro`) and `plan_status` (`inactive`/`active`/`past_due`/`canceled`, default `inactive`) together decide entitlement — see "Plan limits and metering" below for the full model. Neither column is written by `upsertUser`; both are set only by a manual grant (`wrangler d1 execute`) until billing integration exists.
 - `deleted_at` is a tombstone, not a soft-delete filter — no read path queries against it. Set only by `deleteAccount` (`DELETE /api/account`), it marks a row that account deletion scrubbed and released rather than one currently in use; see "Account deletion" below for the full contract.
-- **`users` must never be recreated via a Drizzle table-swap migration once it holds real rows.** It has three inbound `ON DELETE CASCADE` foreign keys (`session_members.user_id`, `session_invites.created_by`, `github_connection_states.user_id`); a `DROP TABLE users` cascade-deletes all three even inside the standard `PRAGMA foreign_keys=OFF` migration wrapper drizzle-kit generates for a table with a named CHECK constraint — confirmed by rehearsing the generated migration for `plan_status` against seeded local data during the plan-limits work (`drizzle/0019_redundant_may_parker.sql` was hand-fixed to a plain `ALTER TABLE ADD COLUMN` instead, the same technique `0018` already used for `plan` itself). `deleted_at` (`drizzle/0020_regular_cardiac.sql`) is a nullable, unconstrained column, so drizzle-kit generated a plain `ALTER TABLE ADD COLUMN` on its own — no hand-fix needed. Any future change to this table's CHECK-constrained columns still needs the same hand-fix, or a genuinely different migration strategy (backfill into a new table, dual-write, swap) — never a bare `db:generate` accept.
+- **`users` must never be recreated via a Drizzle table-swap migration once it holds real rows.** It has four inbound `ON DELETE CASCADE` foreign keys (`session_members.user_id`, `session_invites.created_by`, `github_connection_states.user_id`, `user_provider_credentials.user_id`); a `DROP TABLE users` cascade-deletes all three even inside the standard `PRAGMA foreign_keys=OFF` migration wrapper drizzle-kit generates for a table with a named CHECK constraint — confirmed by rehearsing the generated migration for `plan_status` against seeded local data during the plan-limits work (`drizzle/0019_redundant_may_parker.sql` was hand-fixed to a plain `ALTER TABLE ADD COLUMN` instead, the same technique `0018` already used for `plan` itself). `deleted_at` (`drizzle/0020_regular_cardiac.sql`) is a nullable, unconstrained column, so drizzle-kit generated a plain `ALTER TABLE ADD COLUMN` on its own — no hand-fix needed. Any future change to this table's CHECK-constrained columns still needs the same hand-fix, or a genuinely different migration strategy (backfill into a new table, dual-write, swap) — never a bare `db:generate` accept.
 
 **Account deletion.** `deleteAccount` (`db/sessions.ts`) cannot issue a hard `DELETE FROM users`: roughly a dozen columns across `floor_messages`, `floor_agents`, `floor_queue_prompts`, `repository_candidates`, and other tables reference `users.id` with no cascade action, and the invariant above rules out adding one via a table recreate. Instead it, in one D1 batch:
 
 1. Pre-checks every session the user owns with the same guards `deleteSession` uses (`getBlockingIntegrationRunId`, live `repository_candidates`). Any blocked session refuses the *entire* deletion and nothing is written — the account and every session stay exactly as they were.
 2. Hard-deletes every session the user owns (children cascade with the session, same as `deleteSession`).
-3. Drops the user's membership and `floor_assignments` rows in sessions *other* people own (`session_members` would cascade on its own; `floor_assignments` has no FK action, the same reason `leaveSession` deletes it explicitly).
+3. Drops the user's membership and `floor_assignments` rows in sessions *other* people own (`session_members` would cascade on its own; `floor_assignments` has no FK action, the same reason `leaveSession` deletes it explicitly), and the user's `user_provider_credentials` rows — that table's cascade FK never fires because step 4 scrubs the users row instead of deleting it.
 4. Scrubs and releases the identity: `chatgpt_user_id` and `email` are rewritten to values the IdP can never present again (`'deleted:' || id`, `'deleted+' || id || '@invalid'`), name/handle/avatar are cleared, `display_name` becomes `"Deleted user"`, `plan_status` becomes `canceled`, and `deleted_at` is stamped. `upsertUser`'s two identity lookups both add `AND deleted_at IS NULL`, so the next sign-in with the same Access identity creates a brand-new row rather than resurrecting the tombstone.
 
 Deliberately left alone: `usage_months` rows survive (see that table's own no-FK note — "future account deletion" is this), and authored `floor_messages`/`floor_agents`/`floor_queue_prompts`/`repository_*` rows in sessions the user did not own survive too, now attributed to the scrubbed `"Deleted user"` display name — the tombstone row exists specifically to keep those foreign keys valid.
@@ -396,6 +397,14 @@ Deliberately left alone: `usage_months` rows survive (see that table's own no-FK
 - Composite primary key `(owner_user_id, month)`, `month` a UTC `"YYYY-MM"` string (`lib/plans.ts`'s `currentMonth()`). One row per owner per calendar month; `seconds` accumulates presence time across every session that owner owns, live and ended alike.
 - **Deliberately has no foreign keys.** The ledger must outlive both `purgeExpiredSessions` (a session's `active_seconds` cascades away with it; the owner's `usage_months` total must not) and, if it is ever added, account deletion. Do not add a `references()` here without re-deriving this from scratch.
 - Written only by `SessionPresence.flushUsage` (`worker/presence.ts`), via `INSERT ... ON CONFLICT DO UPDATE SET seconds = seconds + excluded.seconds`. Never written from an HTTP route.
+
+#### `user_provider_credentials`
+
+- Composite primary key `(user_id, provider)`. `provider` (`anthropic`/`openai`) and `kind` (`api_key`) are open enums — TS-typed with **no SQL CHECK** (the `agent_run_artifacts.kind` convention) so adding a provider or credential kind never requires a table recreate.
+- `ciphertext` is the AES-256-GCM encryption of the API key (`lib/credential-crypto.ts`): key derived by SHA-256 from the `CREDENTIAL_ENCRYPTION_KEY` Worker secret, fresh 96-bit IV per write, and `"<userId>:<provider>"` bound as AAD so a ciphertext copied to another row fails to decrypt. Rotating the secret invalidates every stored credential; users reconnect.
+- Write-only from the client: no endpoint returns a stored value. Reads return `fingerprint` (last four characters), `kind`, and `validated_at` (set on connect after a successful provider models-endpoint check).
+- `kind` is `api_key` only; a `kind: "oauth"` row slots into the same identity unchanged if Anthropic ever approves third-party OAuth for openfloor (`ponytail:` comment in `db/schema.ts`). Do not build claude.ai/Max/Pro subscription login without that approval.
+- The `ON DELETE CASCADE` FK to `users` never fires in practice — `deleteAccount` scrubs the users row rather than deleting it, so it deletes these rows explicitly in the same batch.
 
 #### `github_connection_states`
 
@@ -596,6 +605,9 @@ All paths below are shown without the production `/app` prefix.
 | `PATCH /api/account/settings` | Authenticated user | Update `{ doNotDisturb: boolean }`. |
 | `GET /api/account/avatar/[userId]` | Authenticated user | Stream the target user's avatar from R2, or `404` if none is set; `cache-control: private, max-age=300`. |
 | `DELETE /api/account` | Authenticated user | Body `{ confirm: "DELETE" }` (`400` otherwise). Scrubs and releases the account — see "Account deletion" in the Persistence model above. `409 { code: "sessions_blocked", sessions }` when an owned session has live repository state; nothing is written in that case. |
+| `GET /api/account/credentials` | Authenticated user | List the caller's provider-credential summaries (provider, kind, last-four fingerprint, validation time). Never returns a stored value. |
+| `PUT /api/account/credentials/[provider]` | Authenticated user | Body `{ apiKey }`. Validates against the provider's models endpoint, encrypts, and upserts. `404` unknown provider, `400` invalid input or provider-rejected key, `502` provider unreachable. Returns `{ credential }` (summary only — write-only contract). |
+| `DELETE /api/account/credentials/[provider]` | Authenticated user | Disconnect the caller's credential for that provider; `204`. |
 | `POST /api/sessions` | Authenticated user | Create `{ title, objective? }`; creator becomes owner; returns session and active invite URL. `403 { code: "quota_exhausted" }` once the caller's monthly session hours are spent. |
 | `PATCH /api/sessions/[id]` | Session member | Update `{ objective: string \| null }`; broadcasts `session.changed`. |
 | `GET /api/sessions/[id]/members` | Session member | Return authorized roster. |
@@ -639,7 +651,7 @@ All paths below are shown without the production `/app` prefix.
 | `GET /runtime/run/source` | Short-lived run source JWT | Proxy the exact candidate archive for one run. |
 | `GET /runtime/run/context` | Short-lived run context JWT | Re-render the same session brief the run was dispatched with, from current D1 state; called by the `openfloor_session_context` MCP tool the sandbox exposes to Codex so a long run can re-read the floor mid-run. |
 | `POST/GET /runtime/run/bundle` | Short-lived operation JWT | Store an agent-exported bounded Git bundle and serve it only to the clean trusted publisher. |
-| `POST /runtime/openai/v1/responses` | Short-lived run OpenAI JWT | Forward one active run's Codex request while injecting the project credential outside the repository process. |
+| `POST /runtime/openai/v1/responses` | Short-lived run OpenAI JWT | Forward one active run's Codex request, injecting the session owner's connected OpenAI key when present, else the server credential, outside the repository process. `503` with a clear message when neither exists or the owner's key cannot be decrypted — never a silent fallback. |
 | `POST /webhooks/github` | Valid GitHub HMAC | Deduplicate and process bounded installation, access, repository, push, PR, check, and status deliveries. |
 
 Response conventions:
@@ -670,6 +682,7 @@ Keep server validation in `lib/validation.ts` and cover it with unit tests.
 - Repository selection: repository ID maximum 100 characters; base branch required and maximum 255 characters.
 - Required check commands: optional; zero to eight ordered nonempty commands, trimmed, maximum 500 characters each.
 - Candidate name: required, NFKC-normalized, whitespace-collapsed, maximum 100 characters; it is slugged server-side and never accepted as a complete ref. Candidate description: trimmed, maximum 2,000 characters and may be empty.
+- Provider API key (`parseCredentialConnectInput`): required, trimmed, a single opaque token (no whitespace or control characters), maximum 512 characters.
 
 ## Plan limits and metering
 
@@ -782,6 +795,7 @@ components/session/          Agent Floor workspace components and client data so
 db/
   schema.ts                  Drizzle schema source
   sessions.ts                Prepared D1 user/session/member/invite queries
+  provider-credentials.ts    Encrypted per-user provider credential rows and owner resolution
   floor.ts                   Prepared D1 floor snapshot and mutation queries
   repositories.ts            Owner-gated GitHub connection and check-command persistence
   preflights.ts              Durable preflight/check state and internal Workflow transitions
@@ -795,6 +809,9 @@ lib/
   validation.ts              Bounded input parsing and normalization
   identity.ts                Access verification and local identity isolation
   invites.ts                 HMAC signing and constant-time verification
+  credential-crypto.ts       AES-GCM encryption at rest for provider credentials
+  provider-credentials.ts    Pure provider/credential types, fingerprints, run resolution order
+  provider-validation.ts     Connect-time key validation against provider models endpoints
   github.ts                  GitHub App JWT, installation-token, repository, and branch reads
   github-state.ts            Signed callback state and webhook HMAC verification
   runtime-token.ts           Short-lived preflight/run operation-scoped gateway JWTs
@@ -987,6 +1004,7 @@ Durable Object migration `v1` registers `SessionPresence`; `v2` registers `Sandb
 - `GITHUB_WEBHOOK_SECRET`
 - `RUNTIME_GATEWAY_SECRET`
 - `OPENAI_API_KEY`
+- `CREDENTIAL_ENCRYPTION_KEY`
 
 Set a secret by its variable name, then enter the value when prompted:
 
@@ -1406,6 +1424,14 @@ An owner cannot remove a member from a session today — `leaveSession` is self-
 **Rationale:** Each fork picked the option that added zero migration/authorization risk over one that would have required either a schema change disallowed by an existing invariant, a new backend capability (a customer portal, an email-change flow) with no product need yet, or bypassing a safety guard another code path already established for the same class of state. The consolidation (one `AccountMenu`, one `/settings`) removes duplicated controls that had drifted apart (the floor `TopBar` had Theme/DND/sign-out; `AppHeader` had the same three independently) rather than adding a fourth copy.
 
 **Consequences:** `lib/display-name.ts` is now the single source for `displayNameFrom`/`initials`/`initialsFromParts`, used by onboarding, account settings, and every avatar label — the three previous ad hoc copies (`completeOnboarding`'s inline template literal, `AppHeader.tsx`'s exported `initials`, `OnboardingScreen.tsx`'s inline initials math) are gone. `lib/account-avatar.ts` (server, R2-bound) and `lib/avatar-constraints.ts` (client-safe constants, split out specifically because `account-avatar.ts` imports `cloudflare:workers` and cannot enter a `"use client"` bundle) are the only place avatar size/type limits and the R2 key layout are defined; onboarding's upload route was rewritten to call them instead of inlining the logic a second time. `Avatar` (`components/session/primitives.tsx`) gained `version` (cache-busts the 5-minute R2 response against `user.updatedAt` after an edit) and `previewSrc` (a local object URL for an unsaved picker selection) — roster avatars that only have a `SessionMember`, not a full `AppUser`, still accept up to 5 minutes of staleness for other people. `usage_months` and other users' authored floor content are untouched by deletion by design; anything that later changes that must re-read the "Account deletion" contract in Persistence model first. No Stripe SDK, checkout, or webhook was added — `/settings`'s Plan tab still points at the same manual-grant runbook, now stated in-product.
+
+### 2026-08-21 — Store user provider credentials encrypted under a Worker secret, resolved per run as owner-else-server
+
+**Decision:** New table `user_provider_credentials` keyed `(user_id, provider)` holds per-user API keys for agent providers (`anthropic` and `openai` today), managed from `/settings` → Connections. Values are encrypted at rest with AES-256-GCM: the key is derived (SHA-256) from a new `CREDENTIAL_ENCRYPTION_KEY` Worker secret, each write uses a fresh 96-bit IV, and `"<userId>:<provider>"` is bound as AAD. Keys are validated on connect against the provider's free models endpoint and are write-only from the client — every read returns only provider, kind, a last-four fingerprint, and timestamps. Per run, the credential gateway resolves in a fixed order: the **session owner's** connected key for the run's provider, else the server-configured key, else refuse the run with a clear `503`; a present-but-undecryptable owner key also refuses. `provider` and `kind` are TS-typed open enums with no SQL CHECK. `kind` is `api_key` only; the schema accepts a future `kind: "oauth"` row unchanged, but claude.ai/Max/Pro subscription login is not built — Anthropic does not allow third-party products to offer claude.ai login without prior approval.
+
+**Rationale:** Encryption key from a Worker secret rather than a KMS binding because no KMS binding exists in this stack and Worker secrets are the established channel for exactly this class of material (`INVITE_SIGNING_SECRET`, `GITHUB_STATE_SECRET`); AES-GCM via WebCrypto needs no new dependency. Owner-else-server rather than initiator-else-server because the owner is who the plan quota already bills — the two "who pays" ledgers should not diverge. Refusal instead of silent server-key fallback whenever an owner credential exists but fails, because a run that silently switches payer mid-stream is a billing surprise and masks a broken key the owner believes is active. Open TS-only enums follow the `agent_run_artifacts.kind` precedent and the `users`-recreate invariant's lesson: a CHECK-constrained column change on a live table is a table recreate away from cascade data loss.
+
+**Consequences:** `CREDENTIAL_ENCRYPTION_KEY` joins the required secrets (README, `docs/github-production.md`, `.env.example`, both vitest configs); rotating it invalidates every stored credential and users must reconnect — there is no re-encryption path. `users` now has four inbound `ON DELETE CASCADE` FKs (the never-recreate invariant tightens), and `deleteAccount` deletes credential rows explicitly because the scrub never fires the cascade. The OpenAI gateway no longer requires `OPENAI_API_KEY` to exist before verifying the token — resolution happens after authentication, and its rejection paths are covered by `tests/worker/credentials.test.ts` (registered in the `test:worker` script list, which enumerates files explicitly). Connect-time validation uses the `OPENFLOOR_TEST_PROVIDER_KEYS` deterministic adapter in tests, following `OPENFLOOR_TEST_GITHUB_DATA`. The Claude runner (next milestone piece) consumes the same store through an equivalent Anthropic gateway; provider/model selection per agent remains deferred until that runner exists.
 
 ## How to record the next decision
 

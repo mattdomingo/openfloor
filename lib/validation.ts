@@ -13,9 +13,11 @@ export type QueueItemPauseInput = { paused: boolean };
 export type RepositoryConnectionInput = { repositoryId: string; baseBranch: string; checkCommands: string[] };
 export type RepositoryCandidateInput = { name: string; description: string };
 export type ProfileInput = { firstName: string; lastName: string; githubHandle: string | null };
+export type CredentialConnectInput = { apiKey: string };
 
 const MAX_PROFILE_NAME_LENGTH = 50;
 const MAX_GITHUB_HANDLE_LENGTH = 39;
+const MAX_API_KEY_LENGTH = 512;
 
 export function parseSessionInput(value: unknown): SessionInput | null {
   if (!value || typeof value !== "object") return null;
@@ -166,6 +168,18 @@ export function parseProfileInput(value: unknown): ProfileInput | null {
   if (!lastName || lastName.length > MAX_PROFILE_NAME_LENGTH) return null;
   if (githubHandle.length > MAX_GITHUB_HANDLE_LENGTH) return null;
   return { firstName, lastName, githubHandle: githubHandle || null };
+}
+
+export function parseCredentialConnectInput(value: unknown): CredentialConnectInput | null {
+  if (!value || typeof value !== "object") return null;
+  const input = value as { apiKey?: unknown };
+  if (typeof input.apiKey !== "string") return null;
+  const apiKey = input.apiKey.trim();
+  if (!apiKey || apiKey.length > MAX_API_KEY_LENGTH) return null;
+  // API keys are single opaque tokens; embedded whitespace or control
+  // characters mean a paste error, not a longer key format.
+  if (/[\s\p{Cc}]/u.test(apiKey)) return null;
+  return { apiKey };
 }
 
 function parseIdList(value: unknown, key: string, minimum: number): { itemIds: string[] } | null {

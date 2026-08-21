@@ -1,0 +1,222 @@
+import { env } from "cloudflare:workers";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { POST as postOpenAiGateway } from "@/app/runtime/openai/[...path]/route";
+import { createFloorAgent } from "@/db/floor";
+import {
+  deleteProviderCredential,
+  getSessionOwnerCredential,
+  listProviderCredentials,
+  upsertProviderCredential,
+} from "@/db/provider-credentials";
+import { acceptInvite, createSession, deleteAccount, upsertUser } from "@/db/sessions";
+import { encryptCredential } from "@/lib/credential-crypto";
+import { signRunGatewayToken } from "@/lib/runtime-token";
+import { parseAgentInput } from "@/lib/validation";
+
+const GATEWAY_SECRET = "worker-test-runtime-gateway-secret";
+const ENCRYPTION_SECRET = "worker-test-credential-encryption-key";
+
+function identity(id: string, name: string) {
+  return { providerUserId: `credentials-${id}`, email: `${id}@example.com`, displayName: name, fullName: name };
+}
+
+async function room(suffix: string) {
+  const owner = await upsertUser(identity(`${suffix}-owner`, "Owner Example"), env.DB);
+  const member = await upsertUser(identity(`${suffix}-member`, "Member Example"), env.DB);
+  const created = await createSession(owner.id, { title: `Credentials ${suffix}`, objective: null }, env.DB);
+  await acceptInvite(created.inviteId, member.id, env.DB);
+  return { sessionId: created.session.id, owner, member };
+}
+
+async function connectOpenAiKey(userId: string, apiKey: string) {
+  const ciphertext = await encryptCredential(apiKey, ENCRYPTION_SECRET, `${userId}:openai`);
+  return upsertProviderCredential(userId, "openai", {
+    kind: "api_key",
+    ciphertext,
+    fingerprint: apiKey.slice(-4),
+    validatedAt: Date.now(),
+  }, env.DB);
+}
+
+/** Run row plus the connection/candidate scaffolding getRunGatewayContext joins against. */
+async function insertRunRow(sessionId: string, agentId: string, userId: string, status: string): Promise<string> {
+  const now = Date.now();
+  const connectionId = crypto.randomUUID();
+  await env.DB.prepare(
+    `INSERT INTO repository_connections (id, session_id, installation_id, repository_id, repository_node_id, repository_owner, repository_name, repository_full_name, repository_private, default_branch, base_branch, status, connected_by, connected_at, updated_at)
+     VALUES (?, ?, 'inst', 'repo', 'node', 'owner', 'name', 'owner/name', 1, 'main', 'main', 'ready', ?, ?, ?)`,
+  ).bind(connectionId, sessionId, userId, now, now).run();
+  const candidateId = crypto.randomUUID();
+  await env.DB.prepare(
+    `INSERT INTO repository_candidates (id, session_id, connection_id, branch_name, base_branch, base_sha, status, created_by, created_at, updated_at)
+     VALUES (?, ?, ?, ?, 'main', 'sha-base', 'active', ?, ?, ?)`,
+  ).bind(candidateId, sessionId, connectionId, `candidate-${candidateId}`, userId, now, now).run();
+  const queueItemId = crypto.randomUUID();
+  await env.DB.prepare(
+    `INSERT INTO floor_queue_items (id, session_id, agent_id, position, status, created_at, updated_at)
+     VALUES (?, ?, ?, 999, 'running', ?, ?)`,
+  ).bind(queueItemId, sessionId, agentId, now, now).run();
+  const runId = crypto.randomUUID();
+  await env.DB.prepare(
+    `INSERT INTO agent_runs (id, session_id, queue_item_id, agent_id, candidate_id, candidate_sha, attempt, status, model, sandbox_id, created_by, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, 'sha-run', 1, ?, 'test-model', 'sandbox', ?, ?, ?)`,
+  ).bind(runId, sessionId, queueItemId, agentId, candidateId, status, userId, now, now).run();
+  return runId;
+}
+
+async function runningRun(suffix: string) {
+  const { sessionId, owner, member } = await room(suffix);
+  const input = parseAgentInput({ name: "Builder", role: "Engineer", task: "Implement changes", ownerUserId: owner.id });
+  if (!input) throw new Error("Invalid test agent");
+  const floor = await createFloorAgent(sessionId, owner.id, input, env.DB);
+  const agent = floor?.agents.find((candidate) => candidate.name === "Builder");
+  if (!agent) throw new Error("Agent was not created");
+  const runId = await insertRunRow(sessionId, agent.id, owner.id, "running");
+  return { sessionId, owner, member, runId };
+}
+
+function gatewayRequest(token: string) {
+  return new Request("https://opnflr.com/app/runtime/openai/v1/responses", {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+    body: JSON.stringify({ model: "test", input: [] }),
+  });
+}
+
+function gatewayParams(path: string[] = ["v1", "responses"]) {
+  return { params: Promise.resolve({ path }) };
+}
+
+async function signedRunToken(runId: string, sessionId: string) {
+  return signRunGatewayToken(
+    { runId, sessionId, repositoryId: "repo", candidateSha: "sha-run", operation: "openai" },
+    GATEWAY_SECRET,
+  );
+}
+
+describe("provider credential persistence", () => {
+  it("stores, lists, and deletes write-only credential summaries", async () => {
+    const user = await upsertUser(identity("store", "Store Example"), env.DB);
+    const stored = await connectOpenAiKey(user.id, "sk-openai-test-abcd");
+    expect(stored.provider).toBe("openai");
+    expect(stored.kind).toBe("api_key");
+    expect(stored.fingerprint).toBe("abcd");
+    expect("ciphertext" in stored).toBe(false);
+
+    const listed = await listProviderCredentials(user.id, env.DB);
+    expect(listed).toHaveLength(1);
+    expect(listed[0].fingerprint).toBe("abcd");
+
+    const replaced = await connectOpenAiKey(user.id, "sk-openai-test-wxyz");
+    expect(replaced.fingerprint).toBe("wxyz");
+    expect(await listProviderCredentials(user.id, env.DB)).toHaveLength(1);
+
+    expect(await deleteProviderCredential(user.id, "openai", env.DB)).toBe(true);
+    expect(await deleteProviderCredential(user.id, "openai", env.DB)).toBe(false);
+    expect(await listProviderCredentials(user.id, env.DB)).toHaveLength(0);
+  });
+
+  it("resolves only the session owner's credential for a provider", async () => {
+    const { sessionId, owner, member } = await room("resolve");
+    expect(await getSessionOwnerCredential(sessionId, "openai", env.DB)).toBeNull();
+    // A member's credential must never be picked up — the owner is billed.
+    await connectOpenAiKey(member.id, "sk-openai-member-key1");
+    expect(await getSessionOwnerCredential(sessionId, "openai", env.DB)).toBeNull();
+    await connectOpenAiKey(owner.id, "sk-openai-owner-key2");
+    const resolved = await getSessionOwnerCredential(sessionId, "openai", env.DB);
+    expect(resolved?.ownerUserId).toBe(owner.id);
+    expect(resolved?.ciphertext).toBeTruthy();
+    // Provider is part of the key: no anthropic credential exists yet.
+    expect(await getSessionOwnerCredential(sessionId, "anthropic", env.DB)).toBeNull();
+  });
+
+  it("deleteAccount removes the user's credentials", async () => {
+    const user = await upsertUser(identity("delete", "Delete Example"), env.DB);
+    await connectOpenAiKey(user.id, "sk-openai-test-gone");
+    const result = await deleteAccount(user.id, env.DB);
+    expect(result).toEqual({ deleted: true });
+    const remaining = await env.DB.prepare("SELECT 1 AS present FROM user_provider_credentials WHERE user_id = ?")
+      .bind(user.id)
+      .first<{ present: number }>();
+    expect(remaining).toBeNull();
+  });
+});
+
+describe("OpenAI gateway credential resolution", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    delete (env as unknown as Record<string, unknown>).OPENAI_API_KEY;
+  });
+
+  function stubUpstream(capture: { authorization: string | null }) {
+    vi.stubGlobal("fetch", async (_url: string, init: { headers: Headers }) => {
+      capture.authorization = init.headers.get("authorization");
+      return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+    });
+  }
+
+  it("uses the session owner's connected key for the run", async () => {
+    const { sessionId, owner, runId } = await runningRun("gw-owner");
+    await connectOpenAiKey(owner.id, "sk-openai-owner-gwkey");
+    const capture = { authorization: null as string | null };
+    stubUpstream(capture);
+    const response = await postOpenAiGateway(gatewayRequest(await signedRunToken(runId, sessionId)), gatewayParams());
+    expect(response.status).toBe(200);
+    expect(capture.authorization).toBe("Bearer sk-openai-owner-gwkey");
+  });
+
+  it("uses the server key only when the owner has no credential", async () => {
+    const { sessionId, runId } = await runningRun("gw-server");
+    (env as unknown as Record<string, unknown>).OPENAI_API_KEY = "sk-openai-server-key";
+    const capture = { authorization: null as string | null };
+    stubUpstream(capture);
+    const response = await postOpenAiGateway(gatewayRequest(await signedRunToken(runId, sessionId)), gatewayParams());
+    expect(response.status).toBe(200);
+    expect(capture.authorization).toBe("Bearer sk-openai-server-key");
+  });
+
+  it("refuses the run when neither an owner nor a server credential exists", async () => {
+    const { sessionId, runId } = await runningRun("gw-none");
+    const response = await postOpenAiGateway(gatewayRequest(await signedRunToken(runId, sessionId)), gatewayParams());
+    expect(response.status).toBe(503);
+    expect(await response.text()).toContain("No OpenAI credential");
+  });
+
+  it("refuses rather than silently falling back when the owner credential cannot be read", async () => {
+    const { sessionId, owner, runId } = await runningRun("gw-unreadable");
+    // Ciphertext bound to the wrong context decrypts to null at the gateway.
+    const wrongContext = await encryptCredential("sk-openai-owner-key3", ENCRYPTION_SECRET, "someone-else:openai");
+    await upsertProviderCredential(owner.id, "openai", {
+      kind: "api_key",
+      ciphertext: wrongContext,
+      fingerprint: "key3",
+      validatedAt: Date.now(),
+    }, env.DB);
+    (env as unknown as Record<string, unknown>).OPENAI_API_KEY = "sk-openai-server-key";
+    const response = await postOpenAiGateway(gatewayRequest(await signedRunToken(runId, sessionId)), gatewayParams());
+    expect(response.status).toBe(503);
+    expect(await response.text()).toContain("could not be read");
+  });
+
+  it("keeps the existing rejection paths", async () => {
+    const { sessionId, owner, runId } = await runningRun("gw-reject");
+    await connectOpenAiKey(owner.id, "sk-openai-owner-key4");
+    const noToken = await postOpenAiGateway(
+      new Request("https://opnflr.com/app/runtime/openai/v1/responses", { method: "POST", body: "{}" }),
+      gatewayParams(),
+    );
+    expect(noToken.status).toBe(404);
+    const badToken = await postOpenAiGateway(gatewayRequest("not-a-jwt"), gatewayParams());
+    expect(badToken.status).toBe(404);
+    const wrongPath = await postOpenAiGateway(gatewayRequest(await signedRunToken(runId, sessionId)), gatewayParams(["v1", "models"]));
+    expect(wrongPath.status).toBe(404);
+    const wrongOperation = await postOpenAiGateway(
+      gatewayRequest(await signRunGatewayToken(
+        { runId, sessionId, repositoryId: "repo", candidateSha: "sha-run", operation: "events" },
+        GATEWAY_SECRET,
+      )),
+      gatewayParams(),
+    );
+    expect(wrongOperation.status).toBe(404);
+  });
+});

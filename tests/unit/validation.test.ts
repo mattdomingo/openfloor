@@ -3,6 +3,7 @@ import {
   normalizeAgentName,
   parseAgentInput,
   parseAssignmentInput,
+  parseCredentialConnectInput,
   parseMessageInput,
   parseObjectiveInput,
   parseProfileInput,
@@ -139,5 +140,21 @@ describe("objective input validation", () => {
     expect(parseObjectiveInput({})).toBeNull();
     expect(parseObjectiveInput({ objective: 42 })).toBeNull();
     expect(parseObjectiveInput({ objective: "x".repeat(2001) })).toBeNull();
+  });
+});
+
+describe("credential connect input validation", () => {
+  it("trims and accepts a single opaque token", () => {
+    expect(parseCredentialConnectInput({ apiKey: "  sk-ant-api03-abcd  " })).toEqual({ apiKey: "sk-ant-api03-abcd" });
+  });
+
+  it("rejects missing, empty, oversized, and multi-token values", () => {
+    expect(parseCredentialConnectInput(null)).toBeNull();
+    expect(parseCredentialConnectInput({})).toBeNull();
+    expect(parseCredentialConnectInput({ apiKey: 42 })).toBeNull();
+    expect(parseCredentialConnectInput({ apiKey: "   " })).toBeNull();
+    expect(parseCredentialConnectInput({ apiKey: `sk-${"x".repeat(512)}` })).toBeNull();
+    expect(parseCredentialConnectInput({ apiKey: "sk-abc def" })).toBeNull();
+    expect(parseCredentialConnectInput({ apiKey: "sk-abc\ndef" })).toBeNull();
   });
 });

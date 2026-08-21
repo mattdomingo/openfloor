@@ -580,3 +580,30 @@ export const sandboxPool = sqliteTable(
     index("idx_sandbox_pool_repository_state").on(table.repositoryId, table.state, table.lastUsedAt),
   ],
 );
+
+// Per-user agent-provider credentials, encrypted at rest (AES-256-GCM via
+// lib/credential-crypto.ts; key from the CREDENTIAL_ENCRYPTION_KEY Worker
+// secret). `ciphertext` never leaves the server — routes return only the
+// fingerprint (last four characters). `provider` and `kind` are open enums,
+// TS-typed but deliberately without a SQL CHECK (same convention as
+// agent_run_artifacts.kind) so adding a provider never requires a table
+// recreate. The users FK cascade never fires in practice — deleteAccount
+// scrubs the row instead of deleting it, so it deletes credentials explicitly.
+export const userProviderCredentials = sqliteTable(
+  "user_provider_credentials",
+  {
+    userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    provider: text("provider", { enum: ["anthropic", "openai"] }).notNull(),
+    // ponytail: kind stays "api_key" until Anthropic approves third-party
+    // OAuth for openfloor (claude.ai/Max/Pro login is disallowed for
+    // third-party products). If that approval lands, a kind:"oauth" row slots
+    // into this same identity and ciphertext column unchanged.
+    kind: text("kind", { enum: ["api_key"] }).notNull().default("api_key"),
+    ciphertext: text("ciphertext").notNull(),
+    fingerprint: text("fingerprint").notNull(),
+    validatedAt: integer("validated_at"),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.userId, table.provider] })],
+);

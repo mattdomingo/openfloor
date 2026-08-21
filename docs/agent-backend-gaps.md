@@ -4,7 +4,7 @@ The current backend persists collaboration state, repository/candidate state, pr
 
 The following capabilities require a separate trusted agent-runtime and repository integration and are intentionally not simulated:
 
-- Model/provider discovery, user-managed credentials, and agent-authored chat messages.
+- Model/provider discovery per agent, and agent-authored chat messages. (User-managed provider credentials are implemented: per-user encrypted keys in `user_provider_credentials`, connected in `/settings`, resolved per run as session-owner-key-else-server-key — see AGENTS.md. Choosing a provider/model per agent remains deferred; every run still executes Codex.)
 - Deployment and generic support for merge queues or non-squash merge methods.
 - Generic artifact download UI beyond the per-run raw-log and session-brief expanders.
 - Agent editing, archival/deletion, ownership transfer, and queue completion/removal.
