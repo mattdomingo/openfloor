@@ -38,3 +38,13 @@ const PLAN_LABELS: Record<Plan, string> = { free: "Free", pro: "Pro", max: "Max"
 export function planLabel(plan: Plan): string {
   return PLAN_LABELS[plan];
 }
+
+// The seats/hours sentence used wherever a plan's limits are spelled out in
+// full (currently just the settings Plan section) — the Infinity branches
+// match PLAN_LIMITS.enterprise.
+export function planLimitsSummary(plan: Plan): string {
+  const limits = PLAN_LIMITS[plan];
+  const seats = Number.isFinite(limits.seats) ? `${limits.seats} seats per session` : "unlimited seats per session";
+  const hours = Number.isFinite(limits.hours) ? `${limits.hours}h of session time per month` : "unlimited session time";
+  return `${seats}, ${hours}`;
+}

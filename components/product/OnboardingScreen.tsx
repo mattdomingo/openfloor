@@ -3,10 +3,10 @@
 import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
 import { BASE_PATH } from "@/components/basePath";
+import { Avatar } from "@/components/session/primitives";
+import { ACCEPTED_AVATAR_TYPE_LIST, ACCEPTED_AVATAR_TYPES, MAX_AVATAR_BYTES } from "@/lib/avatar-constraints";
+import { initialsFromParts } from "@/lib/display-name";
 import { Brand } from "./Brand";
-
-const MAX_AVATAR_BYTES = 5 * 1024 * 1024;
-const ACCEPTED_AVATAR_TYPES = ["image/png", "image/jpeg", "image/webp"];
 
 function splitName(fullName: string | null): { firstName: string; lastName: string } {
   const parts = (fullName ?? "").trim().split(/\s+/).filter(Boolean);
@@ -29,7 +29,7 @@ export function OnboardingScreen({ fullName, returnTo }: { fullName: string | nu
 
   function pickAvatar(file: File | undefined) {
     if (!file) return;
-    if (!ACCEPTED_AVATAR_TYPES.includes(file.type)) {
+    if (!ACCEPTED_AVATAR_TYPES.has(file.type)) {
       setError("Profile pictures must be a PNG, JPEG, or WebP image.");
       return;
     }
@@ -78,14 +78,8 @@ export function OnboardingScreen({ fullName, returnTo }: { fullName: string | nu
           <label className="field">
             <span className="label">Profile picture <em>optional</em></span>
             <div className="onboarding-avatar-picker">
-              <span className="avatar" data-tone="you" aria-hidden="true">
-                {avatarPreview ? (
-                  <img src={avatarPreview} alt="" className="onboarding-avatar-preview" />
-                ) : (
-                  (firstName[0] ?? "?").toUpperCase() + (lastName[0] ?? "").toUpperCase()
-                )}
-              </span>
-              <input type="file" accept={ACCEPTED_AVATAR_TYPES.join(",")} onChange={(event) => pickAvatar(event.target.files?.[0])} />
+              <Avatar initials={initialsFromParts(firstName, lastName)} tone="you" previewSrc={avatarPreview ?? undefined} />
+              <input type="file" accept={ACCEPTED_AVATAR_TYPE_LIST.join(",")} onChange={(event) => pickAvatar(event.target.files?.[0])} />
             </div>
           </label>
 

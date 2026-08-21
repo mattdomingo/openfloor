@@ -53,9 +53,13 @@ npm test
 Production authentication is provided by one Cloudflare Access self-hosted application. Keep the public landing page and assets outside Access, and add these protected public hostnames to the same application so they share one audience tag:
 
 - `opnflr.com/app/home`
+- `opnflr.com/app/settings`
+- `opnflr.com/app/onboarding`
 - `opnflr.com/app/session/*`
 - `opnflr.com/app/join/*`
 - `opnflr.com/app/api/*`
+
+This path list is manually maintained in the Access application, not covered by a wildcard — every new protected page needs its path added here (and in the two copies of this list in `AGENTS.md` and `docs/github-production.md`) in the same change, or the page bounces every visitor back to sign-in.
 
 Enable Google and One-time PIN as identity providers. The application policy determines who may authenticate; session membership and invite acceptance remain enforced by openfloor.
 
@@ -92,10 +96,12 @@ There is no billing webhook yet — the Stripe payment link in the product takes
    npx wrangler d1 execute openfloor-production --remote --command \
      "UPDATE users SET plan='pro', plan_status='active' WHERE email='<buyer-email>'"
    ```
-4. **Check the output for `"changes": 1`.** `0` means step 2's email didn't match any row — the buyer's account email may differ from their payment email; look them up by name/GitHub handle instead of re-running blindly.
-5. **Confirm with the buyer** that `/home` now shows their plan and limits.
+4. **Check the output for `"changes": 1`.** `0` means step 2's email didn't match any row — the buyer's account email may differ from their payment email; look them up by name/GitHub handle instead of re-running blindly. It can also mean they deleted their account: `/settings`'s account-deletion flow rewrites `email` to an unmatchable tombstone value, so a re-signed-up buyer needs this grant run again against their new account.
+5. **Confirm with the buyer** that `/home` and `/settings` now show their plan and limits.
 
 The payment link sells exactly one tier. Selling a second tier (e.g. Max) needs a second Stripe payment link and a way to tell them apart when running step 3 — the current single link and this runbook only cover Pro.
+
+`/settings`'s Plan & usage tab now tells buyers in-product that activation is manual and can take a little while — this runbook is that latency.
 
 ## Project direction
 

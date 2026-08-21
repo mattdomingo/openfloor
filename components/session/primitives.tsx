@@ -153,18 +153,42 @@ export function Avatar({
   online,
   typing,
   userId,
+  version,
+  previewSrc,
 }: {
   initials: string;
   tone: string;
   online?: boolean;
   typing?: boolean;
   userId?: string;
+  // GET /api/account/avatar/[userId] caches for 5 minutes, so a page holding
+  // a full AppUser should pass its updatedAt here — a fresh upload/removal
+  // bumps updated_at, which changes this query param and busts the stale
+  // cached image immediately. Roster avatars (no full AppUser available)
+  // omit it and simply accept up to 5 minutes of staleness for other people.
+  version?: number;
+  // A local object URL for a freshly picked file (onboarding, the settings
+  // profile-picture picker) shown in place of the stored avatar until the
+  // picker's owner saves or discards the change. Takes priority over userId.
+  previewSrc?: string;
 }) {
   const [imageFailed, setImageFailed] = useState(false);
+  const src = previewSrc ?? `${BASE_PATH}/api/account/avatar/${userId}${version != null ? `?v=${version}` : ""}`;
+  // A version bump (fresh upload/removal) deserves a fresh attempt even if
+  // an earlier version 404'd — without this, removing a picture and
+  // immediately uploading a new one would stay stuck on initials. Reset
+  // during render (React's documented pattern for this, same idiom as
+  // HomeScreen's syncedSessions) rather than in an effect, to avoid the
+  // extra render an effect-driven setState would cause.
+  const [trackedSrc, setTrackedSrc] = useState(src);
+  if (trackedSrc !== src) {
+    setTrackedSrc(src);
+    setImageFailed(false);
+  }
   return (
     <span className="avatar" data-tone={tone} data-online={online ? "true" : undefined} data-typing={typing ? "true" : undefined} aria-hidden="true">
-      {userId && !imageFailed ? (
-        <img src={`${BASE_PATH}/api/account/avatar/${userId}`} alt="" className="onboarding-avatar-preview" onError={() => setImageFailed(true)} />
+      {previewSrc || (userId && !imageFailed) ? (
+        <img src={src} alt="" className="onboarding-avatar-preview" onError={() => setImageFailed(true)} />
       ) : (
         initials
       )}

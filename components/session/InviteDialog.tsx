@@ -2,7 +2,7 @@
 
 import { useEffect, useId, useState } from "react";
 import { BASE_PATH } from "@/components/basePath";
-import { initials } from "@/components/product/AppHeader";
+import { initials } from "@/lib/display-name";
 import type { SessionMember, SessionSummary } from "@/lib/session-types";
 import { Avatar, Icon, useDialogDismiss } from "./primitives";
 

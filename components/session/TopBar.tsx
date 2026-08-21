@@ -3,13 +3,12 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { formatDuration } from "@/lib/date-format";
-import { ThemeToggle } from "@/components/ThemeToggle";
-import { initials } from "@/components/product/AppHeader";
+import { AccountMenu } from "@/components/product/AccountMenu";
 import { Brand } from "@/components/product/Brand";
+import { formatDuration } from "@/lib/date-format";
+import { initials } from "@/lib/display-name";
 import type { AppUser, SessionMember, SessionSummary } from "@/lib/session-types";
 import { InviteDialog } from "./InviteDialog";
-import { SettingsDialog } from "./SettingsDialog";
 import { Avatar, Icon } from "./primitives";
 import type { WorkspaceScreen } from "./data";
 
@@ -49,18 +48,11 @@ export function TopBar({
 }) {
   const router = useRouter();
   const [inviting, setInviting] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
   const inviteButtonRef = useRef<HTMLButtonElement>(null);
-  const settingsButtonRef = useRef<HTMLButtonElement>(null);
 
   function closeInvite() {
     setInviting(false);
     inviteButtonRef.current?.focus();
-  }
-
-  function closeSettings() {
-    setSettingsOpen(false);
-    settingsButtonRef.current?.focus();
   }
 
   return (
@@ -100,15 +92,10 @@ export function TopBar({
             <Icon name="plus" />Invite
           </button>
         )}
-        <button type="button" ref={settingsButtonRef} className="icon-button" aria-label="Session settings" title="Session settings" onClick={() => setSettingsOpen(true)}>
-          <Icon name="sliders" />
-        </button>
-        <ThemeToggle />
-        <a className="button" data-variant="quiet" href="/cdn-cgi/access/logout">Sign out</a>
+        <AccountMenu user={user} />
       </div>
 
       {inviting && <InviteDialog session={session} members={members} onNotice={onNotice} onClose={closeInvite} />}
-      {settingsOpen && <SettingsDialog user={user} onClose={closeSettings} />}
     </header>
   );
 }

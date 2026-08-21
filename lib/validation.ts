@@ -12,6 +12,10 @@ export type QueuePromptTextInput = { text: string };
 export type QueueItemPauseInput = { paused: boolean };
 export type RepositoryConnectionInput = { repositoryId: string; baseBranch: string; checkCommands: string[] };
 export type RepositoryCandidateInput = { name: string; description: string };
+export type ProfileInput = { firstName: string; lastName: string; githubHandle: string | null };
+
+const MAX_PROFILE_NAME_LENGTH = 50;
+const MAX_GITHUB_HANDLE_LENGTH = 39;
 
 export function parseSessionInput(value: unknown): SessionInput | null {
   if (!value || typeof value !== "object") return null;
@@ -145,6 +149,23 @@ export function parseRepositoryCandidateInput(value: unknown): RepositoryCandida
   const description = input.description.trim();
   if (!name || name.length > 100 || description.length > 2_000) return null;
   return { name, description };
+}
+
+// Shared by onboarding (POST /api/account/onboarding) and account settings
+// (PATCH /api/account/profile) so the two endpoints can never drift on what
+// counts as a valid name or GitHub handle.
+export function parseProfileInput(value: unknown): ProfileInput | null {
+  if (!value || typeof value !== "object") return null;
+  const input = value as Record<string, unknown>;
+  if (typeof input.firstName !== "string" || typeof input.lastName !== "string") return null;
+  if (input.githubHandle !== undefined && input.githubHandle !== null && typeof input.githubHandle !== "string") return null;
+  const firstName = input.firstName.normalize("NFKC").trim().replace(/\s+/g, " ");
+  const lastName = input.lastName.normalize("NFKC").trim().replace(/\s+/g, " ");
+  const githubHandle = typeof input.githubHandle === "string" ? input.githubHandle.trim() : "";
+  if (!firstName || firstName.length > MAX_PROFILE_NAME_LENGTH) return null;
+  if (!lastName || lastName.length > MAX_PROFILE_NAME_LENGTH) return null;
+  if (githubHandle.length > MAX_GITHUB_HANDLE_LENGTH) return null;
+  return { firstName, lastName, githubHandle: githubHandle || null };
 }
 
 function parseIdList(value: unknown, key: string, minimum: number): { itemIds: string[] } | null {

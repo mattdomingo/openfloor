@@ -7,9 +7,13 @@ openfloor connects the production application to a GitHub App, keeps one real ca
 The application is served at `https://opnflr.com/app`. The existing Cloudflare Access application protects:
 
 - `opnflr.com/app/home`
+- `opnflr.com/app/settings`
+- `opnflr.com/app/onboarding`
 - `opnflr.com/app/session/*`
 - `opnflr.com/app/join/*`
 - `opnflr.com/app/api/*`
+
+This list is per-path, dashboard-configured state (see `docs/cloudflare-access-branding.md` and AGENTS.md's "Authentication and identity") — every new protected page needs its path added to the Access application in Zero Trust, or visitors get bounced back to sign-in on that page even while authenticated everywhere else.
 
 Do not put `opnflr.com/app/webhooks/github` behind Access. It is public only so GitHub can reach it; the Worker rejects payloads without the configured HMAC signature.
 

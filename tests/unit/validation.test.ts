@@ -5,6 +5,7 @@ import {
   parseAssignmentInput,
   parseMessageInput,
   parseObjectiveInput,
+  parseProfileInput,
   parseQueueMergeInput,
   parseQueueOrderInput,
   parseQueuePromptInput,
@@ -27,6 +28,52 @@ describe("session input validation", () => {
     expect(parseSessionInput({ title: "  " })).toBeNull();
     expect(parseSessionInput({ title: "x".repeat(101) })).toBeNull();
     expect(parseSessionInput({ title: "Room", objective: "x".repeat(2001) })).toBeNull();
+  });
+});
+
+describe("profile input validation", () => {
+  it("trims and normalizes valid input", () => {
+    expect(parseProfileInput({ firstName: "  Matt ", lastName: " Domingo ", githubHandle: " octocat " })).toEqual({
+      firstName: "Matt",
+      lastName: "Domingo",
+      githubHandle: "octocat",
+    });
+  });
+
+  it("collapses internal whitespace via NFKC normalization, like agent names", () => {
+    expect(parseProfileInput({ firstName: "Matt   G", lastName: "Domingo", githubHandle: null })).toEqual({
+      firstName: "Matt G",
+      lastName: "Domingo",
+      githubHandle: null,
+    });
+  });
+
+  it("maps an absent or empty GitHub handle to null", () => {
+    expect(parseProfileInput({ firstName: "Matt", lastName: "Domingo" })).toEqual({
+      firstName: "Matt",
+      lastName: "Domingo",
+      githubHandle: null,
+    });
+    expect(parseProfileInput({ firstName: "Matt", lastName: "Domingo", githubHandle: "   " })).toEqual({
+      firstName: "Matt",
+      lastName: "Domingo",
+      githubHandle: null,
+    });
+  });
+
+  it("rejects blank or missing names", () => {
+    expect(parseProfileInput(null)).toBeNull();
+    expect(parseProfileInput({ firstName: "  ", lastName: "Domingo" })).toBeNull();
+    expect(parseProfileInput({ firstName: "Matt", lastName: "  " })).toBeNull();
+    expect(parseProfileInput({ firstName: "Matt" })).toBeNull();
+  });
+
+  it("enforces the 50/50/39 length caps", () => {
+    expect(parseProfileInput({ firstName: "x".repeat(51), lastName: "Domingo" })).toBeNull();
+    expect(parseProfileInput({ firstName: "Matt", lastName: "x".repeat(51) })).toBeNull();
+    expect(parseProfileInput({ firstName: "Matt", lastName: "Domingo", githubHandle: "x".repeat(40) })).toBeNull();
+    expect(parseProfileInput({ firstName: "x".repeat(50), lastName: "Domingo" })).not.toBeNull();
+    expect(parseProfileInput({ firstName: "Matt", lastName: "Domingo", githubHandle: "x".repeat(39) })).not.toBeNull();
   });
 });
 

@@ -53,7 +53,7 @@ describe("server rendering", () => {
   });
 
   it("redirects every protected page to the public landing page", async () => {
-    for (const path of ["/home", "/session/private-room", "/session/private-room/floor", "/join/not-a-token"]) {
+    for (const path of ["/home", "/settings", "/session/private-room", "/session/private-room/floor", "/join/not-a-token"]) {
       const response = await render(path);
       expect(response.status).toBeGreaterThanOrEqual(300);
       expect(response.status).toBeLessThan(400);
@@ -172,5 +172,36 @@ describe("plan-limits UI", () => {
     expect(html).toContain("session time used this month (UTC)");
     expect(html).not.toContain("of undefinedh");
     expect(html).not.toContain("NaN");
+  });
+});
+
+describe("settings page", () => {
+  it("an onboarded user's /app/settings renders their profile tab and ships usage data for the plan tab", async () => {
+    const { headers } = await onboardedUser("settings-user", "Settings", "User");
+    const response = await SELF.fetch("http://localhost/app/settings", { headers });
+    expect(response.status).toBe(200);
+    const html = await response.text();
+    // The Profile tab (SegmentedControl's default) renders server-side.
+    expect(html).toContain("settings-user@example.com");
+    expect(html).toContain("Managed by your sign-in provider");
+    // "Plan & usage" only renders once selected client-side, but its data
+    // must reach the client in the initial RSC payload (a JS string literal,
+    // hence the escaped quotes) for that to work.
+    expect(html).toContain('\\"effectivePlan\\":\\"free\\"');
+    expect(html).toContain('\\"limitHours\\":2');
+  });
+
+  it("an authenticated but not-yet-onboarded user is redirected to /app/onboarding", async () => {
+    const headers = {
+      accept: "text/html",
+      host: "localhost",
+      "x-openfloor-dev-user-id": "settings-not-onboarded",
+      "x-openfloor-dev-user-email": "settings-not-onboarded@example.com",
+      "x-openfloor-dev-user-name": "Not Onboarded",
+    };
+    const response = await SELF.fetch("http://localhost/app/settings", { headers, redirect: "manual" });
+    expect(response.status).toBeGreaterThanOrEqual(300);
+    expect(response.status).toBeLessThan(400);
+    expect(response.headers.get("location")).toContain("/app/onboarding?return_to=%2Fapp%2Fsettings");
   });
 });

@@ -1,3 +1,4 @@
+import { displayNameFrom } from "@/lib/display-name";
 import type { AuthenticatedIdentity } from "@/lib/identity";
 import { currentMonth, effectivePlan, PLAN_LIMITS, type Plan, type PlanStatus } from "@/lib/plans";
 import type { AppUser, SessionMember, SessionRole, SessionSummary } from "@/lib/session-types";
@@ -47,7 +48,8 @@ export type InvitePreview = {
 const APP_USER_COLUMNS = `id, chatgpt_user_id AS providerUserId, email, display_name AS displayName,
               first_name AS firstName, last_name AS lastName, github_handle AS githubHandle,
               avatar_key AS avatarKey, onboarded_at AS onboardedAt, do_not_disturb AS doNotDisturb,
-              plan, plan_status AS planStatus, created_at AS createdAt, updated_at AS updatedAt`;
+              plan, plan_status AS planStatus, created_at AS createdAt, updated_at AS updatedAt,
+              deleted_at AS deletedAt`;
 
 // D1 has no native boolean type, so RETURNING/SELECT come back with
 // doNotDisturb as 0/1 — normalize to a real boolean before handing out AppUser.
@@ -62,9 +64,15 @@ export async function upsertUser(identity: AuthenticatedIdentity, database = get
   // Only email/updated_at refresh on repeat logins: display_name and the
   // profile fields are owned by onboarding/account-settings, not the IdP, so
   // this must never stomp what the user already set.
+  //
+  // Both lookups exclude deleted_at rows: deleteAccount scrubs
+  // chatgpt_user_id/email to a value the IdP will never present again, so
+  // this exclusion is belt-and-braces rather than the thing doing the work —
+  // but it keeps a tombstone row permanently unmatchable even if that ever
+  // changed, so a deleted identity always lands on a brand-new account below.
   const byProvider = await database
     .prepare(
-      `UPDATE users SET email = ?, updated_at = ? WHERE chatgpt_user_id = ? RETURNING ${APP_USER_COLUMNS}`,
+      `UPDATE users SET email = ?, updated_at = ? WHERE chatgpt_user_id = ? AND deleted_at IS NULL RETURNING ${APP_USER_COLUMNS}`,
     )
     .bind(identity.email, now, identity.providerUserId)
     .first<AppUserRow>();
@@ -77,7 +85,7 @@ export async function upsertUser(identity: AuthenticatedIdentity, database = get
   // session memberships) instead of a fresh, empty one.
   const byEmail = await database
     .prepare(
-      `UPDATE users SET chatgpt_user_id = ?, updated_at = ? WHERE email = ? RETURNING ${APP_USER_COLUMNS}`,
+      `UPDATE users SET chatgpt_user_id = ?, updated_at = ? WHERE email = ? AND deleted_at IS NULL RETURNING ${APP_USER_COLUMNS}`,
     )
     .bind(identity.providerUserId, now, identity.email)
     .first<AppUserRow>();
@@ -122,7 +130,7 @@ export async function completeOnboarding(
   database = getDb(),
 ): Promise<AppUser> {
   const now = Date.now();
-  const displayName = `${input.firstName} ${input.lastName.charAt(0)}.`;
+  const displayName = displayNameFrom(input.firstName, input.lastName);
   const user = await database
     .prepare(
       `UPDATE users SET
@@ -139,6 +147,36 @@ export async function completeOnboarding(
     .bind(input.firstName, input.lastName, input.githubHandle, input.avatarKey, displayName, now, now, userId)
     .first<AppUserRow>();
   if (!user) throw new Error("Unable to complete onboarding for the current user.");
+  return normalizeAppUser(user);
+}
+
+// Account-settings profile edit, unlike completeOnboarding above: avatarKey
+// is a genuine three-state value (undefined keeps the existing picture,
+// null clears it, a string sets a new R2 key) rather than completeOnboarding's
+// COALESCE-only "add, never remove." Never touches onboarded_at.
+export async function updateProfile(
+  userId: string,
+  input: { firstName: string; lastName: string; githubHandle: string | null; avatarKey: string | null | undefined },
+  database = getDb(),
+): Promise<AppUser> {
+  const now = Date.now();
+  const displayName = displayNameFrom(input.firstName, input.lastName);
+  const keepAvatar = input.avatarKey === undefined;
+  const user = await database
+    .prepare(
+      `UPDATE users SET
+         first_name = ?,
+         last_name = ?,
+         github_handle = ?,
+         avatar_key = CASE WHEN ? THEN avatar_key ELSE ? END,
+         display_name = ?,
+         updated_at = ?
+       WHERE id = ?
+       RETURNING ${APP_USER_COLUMNS}`,
+    )
+    .bind(input.firstName, input.lastName, input.githubHandle, keepAvatar ? 1 : 0, input.avatarKey ?? null, displayName, now, userId)
+    .first<AppUserRow>();
+  if (!user) throw new Error("Unable to update the current user's profile.");
   return normalizeAppUser(user);
 }
 
@@ -573,6 +611,79 @@ export async function deleteSession(
   const result = await database.prepare("DELETE FROM sessions WHERE id = ?").bind(sessionId).run();
   if (Number(result.meta?.changes ?? 0) === 0) return "missing";
   return { deleted: true, candidateBranchAlive: Boolean(survivingBranch) };
+}
+
+export type DeleteAccountBlockedSession = { id: string; title: string; reason: "repository_state" | "integration_in_progress" };
+
+/* Account deletion cannot be a hard `DELETE FROM users`: ~12 columns
+   (floor_messages.author_user_id, floor_agents.owner_user_id,
+   repository_candidates.merged_by, ...) reference users.id with no cascade,
+   and the users-must-never-be-recreated invariant (see the plan/planStatus
+   comment on the table above) rules out an FK migration to add one. Instead
+   this scrubs the identifying fields and releases chatgpt_user_id/email so a
+   future sign-in with the same provider identity creates a fresh row
+   (upsertUser's two lookups both exclude deleted_at rows) — every FK that
+   pointed at this row keeps pointing at a valid, if anonymized, one.
+   usage_months is deliberately never touched here; see its no-FK comment. */
+export async function deleteAccount(
+  userId: string,
+  database = getDb(),
+): Promise<{ deleted: true } | { blocked: "sessions"; sessions: DeleteAccountBlockedSession[] }> {
+  const owned = await database
+    .prepare(
+      `SELECT s.id AS id, s.title AS title
+       FROM session_members sm JOIN sessions s ON s.id = sm.session_id
+       WHERE sm.user_id = ? AND sm.role = 'owner'`,
+    )
+    .bind(userId)
+    .all<{ id: string; title: string }>();
+
+  // Same guards as deleteSession, run per owned session, before anything is
+  // written — a live repository candidate or in-progress integration on any
+  // one owned session blocks the entire account deletion rather than
+  // silently losing that work.
+  const blocked: DeleteAccountBlockedSession[] = [];
+  for (const session of owned.results) {
+    const blocking = await getBlockingIntegrationRunId(session.id, database);
+    if (blocking) {
+      blocked.push({ id: session.id, title: session.title, reason: "integration_in_progress" });
+      continue;
+    }
+    const liveCandidate = await database
+      .prepare("SELECT 1 AS present FROM repository_candidates WHERE session_id = ? AND status IN ('creating', 'active') AND merged_at IS NULL")
+      .bind(session.id)
+      .first<{ present: number }>();
+    if (liveCandidate) blocked.push({ id: session.id, title: session.title, reason: "repository_state" });
+  }
+  if (blocked.length > 0) return { blocked: "sessions", sessions: blocked };
+
+  const now = Date.now();
+  await database.batch([
+    ...owned.results.map((session) => database.prepare("DELETE FROM sessions WHERE id = ?").bind(session.id)),
+    // Memberships (and assignments) in sessions this user did not own —
+    // session_members would cascade on its own, but floor_assignments has no
+    // FK action, same reason leaveSession deletes it explicitly.
+    database.prepare("DELETE FROM floor_assignments WHERE user_id = ?").bind(userId),
+    database.prepare("DELETE FROM session_members WHERE user_id = ?").bind(userId),
+    database
+      .prepare(
+        `UPDATE users SET
+           chatgpt_user_id = 'deleted:' || id,
+           email = 'deleted+' || id || '@invalid',
+           display_name = 'Deleted user',
+           first_name = NULL,
+           last_name = NULL,
+           github_handle = NULL,
+           avatar_key = NULL,
+           do_not_disturb = 0,
+           plan_status = 'canceled',
+           deleted_at = ?,
+           updated_at = ?
+         WHERE id = ?`,
+      )
+      .bind(now, now, userId),
+  ]);
+  return { deleted: true };
 }
 
 export async function authorizePresence(

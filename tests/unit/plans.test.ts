@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { currentMonth, effectivePlan, PLAN_LIMITS, UPGRADE_URL, type Plan, type PlanStatus } from "@/lib/plans";
+import { currentMonth, effectivePlan, PLAN_LIMITS, planLimitsSummary, UPGRADE_URL, type Plan, type PlanStatus } from "@/lib/plans";
 
 describe("PLAN_LIMITS", () => {
   it("gives each plan the documented seat and hour caps", () => {
@@ -61,5 +61,17 @@ describe("currentMonth", () => {
 describe("UPGRADE_URL", () => {
   it("is the configured Stripe payment link", () => {
     expect(UPGRADE_URL).toBe("https://buy.stripe.com/fZudR93OAaWMehu35t4F200");
+  });
+});
+
+describe("planLimitsSummary", () => {
+  it("spells out the numeric seat and hour caps for finite plans", () => {
+    expect(planLimitsSummary("free")).toBe("3 seats per session, 2h of session time per month");
+    expect(planLimitsSummary("pro")).toBe("5 seats per session, 30h of session time per month");
+    expect(planLimitsSummary("max")).toBe("10 seats per session, 100h of session time per month");
+  });
+
+  it("describes enterprise's Infinity limits as unlimited, not as a number", () => {
+    expect(planLimitsSummary("enterprise")).toBe("unlimited seats per session, unlimited session time");
   });
 });

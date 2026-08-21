@@ -32,6 +32,13 @@ export const users = sqliteTable(
       .default("inactive"),
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
+    // Tombstone marker set only by deleteAccount, not a soft-delete filter —
+    // rows with this set are never queried against in normal reads; they
+    // exist only so authored floor_messages/floor_agents/... rows in
+    // sessions the deleted user did not own keep a valid FK target. Both
+    // upsertUser lookups exclude it so the next sign-in with the same
+    // identity creates a fresh row instead of resurrecting this one.
+    deletedAt: integer("deleted_at"),
   },
   (table) => [
     uniqueIndex("idx_users_chatgpt_user_id").on(table.providerUserId),

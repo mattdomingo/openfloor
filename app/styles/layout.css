@@ -102,7 +102,6 @@
 .breadcrumbs a { text-decoration: none; }
 .breadcrumbs strong { overflow: hidden; color: var(--text-primary); text-overflow: ellipsis; white-space: nowrap; }
 .account { display: flex; align-items: center; gap: var(--space-3); margin-left: auto; }
-.account-name { max-width: 220px; overflow: hidden; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
 
 .page-body { width: min(1180px, calc(100% - 40px)); margin: 0 auto; padding: clamp(48px, 7vw, 88px) 0; }
 .page-heading { display: flex; align-items: end; justify-content: space-between; gap: var(--space-6); padding-bottom: var(--space-7); border-bottom: 1px solid var(--line-strong); }
@@ -126,8 +125,10 @@
 
 @media (max-width: 760px) {
   .app-header { min-height: 58px; padding-inline: 16px; }
-  .account-name, .breadcrumbs { display: none; }
-  .account .avatar { display: none; }
+  /* .account's avatar is the only entry point into AccountMenu (settings,
+     theme, DND, sign out) — it must stay visible at every width, unlike the
+     old bare name label this replaced. */
+  .breadcrumbs { display: none; }
   .page-heading, .session-hero { align-items: flex-start; flex-direction: column; }
   .session-hero-actions, .floor-heading, .floor-heading-actions { align-items: flex-start; flex-direction: column; }
   .session-layout { grid-template-columns: 1fr; }

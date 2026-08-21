@@ -6,10 +6,11 @@ import { useRouter } from "next/navigation";
 import { BASE_PATH } from "@/components/basePath";
 import { LocalDateTime } from "@/components/LocalDateTime";
 import { useDialogDismiss } from "@/components/session/primitives";
+import { initials } from "@/lib/display-name";
 import { reducePresence } from "@/lib/presence";
 import { isRepositoryReadyForFloor } from "@/lib/repository-gate";
 import type { AppUser, PresenceEvent, RepositoryCandidate, RepositoryConnection, RepositoryPreflight, SessionMember, SessionSummary } from "@/lib/session-types";
-import { AppHeader, initials } from "./AppHeader";
+import { AppHeader } from "./AppHeader";
 import { RepositoryCard } from "./RepositoryCard";
 
 type ConnectionState = "connecting" | "connected" | "reconnecting";

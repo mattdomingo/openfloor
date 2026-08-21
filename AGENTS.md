@@ -2,7 +2,7 @@
 
 This file is the authoritative repository-level guide for engineers and coding agents working on openfloor. It applies to the entire repository unless a more specific `AGENTS.md` is added in a subdirectory.
 
-Last verified against `main`: 2026-08-19.
+Last verified against `main`: 2026-08-21.
 
 ## Mandatory maintenance rule
 
@@ -197,6 +197,7 @@ Production is mounted under `/app` on `opnflr.com`. Local `npm run dev` is mount
 | --- | --- | --- | --- |
 | `/app` | `/` | Public | Product landing and entry into Cloudflare Access. |
 | `/app/home` | `/home` | Protected | Sessions where the current user is a member; session creation. |
+| `/app/settings` | `/settings` | Protected | Account settings: profile (name, GitHub handle, picture), plan and usage, preferences (Do Not Disturb, theme), and account deletion. Reached from the account menu behind the avatar in the header. |
 | `/app/onboarding` | `/onboarding` | Protected | First-login account setup (profile picture, name, GitHub handle); gates `/home`, `/join/*`, and `/session/*` until complete. |
 | `/app/join/[token]` | `/join/[token]` | Protected | Valid invite preview followed by explicit acceptance. |
 | `/app/session/[id]` | `/session/[id]` | Protected/member-only | Session lobby, roster, invite controls, leave, and floor entry. |
@@ -287,12 +288,13 @@ Per-session WebSocket
 Production identity is Cloudflare Access, not application-owned “Sign in with ChatGPT.” Google and One-time PIN are the intended Access identity providers. The Access application protects:
 
 - `opnflr.com/app/home`
+- `opnflr.com/app/settings`
 - `opnflr.com/app/onboarding`
 - `opnflr.com/app/session/*`
 - `opnflr.com/app/join/*`
 - `opnflr.com/app/api/*`
 
-The public `/app` landing and required assets remain outside Access.
+The public `/app` landing and required assets remain outside Access. **This list is enumerated per path in the Access application, not covered by a wildcard — it is dashboard state, external to this repo (`docs/cloudflare-access-branding.md`).** Adding any new protected page requires adding its path to the Access application in the Zero Trust dashboard in the same change; forgetting this step causes exactly the failure mode the (now-fixed) 2026-08-21 gap did — the page bounces every visitor back to sign-in because Cloudflare Access never attaches an identity header to it, `getAccessUser()` (`app/access-auth.ts`) sees nothing to trust, and `requireAccessUser`/`requireOnboardedUser` redirect to the landing interstitial regardless of whether the visitor is actually signed in elsewhere in the app.
 
 The Worker validates the `cf-access-jwt-assertion` using:
 
@@ -347,10 +349,21 @@ Do not hand-edit Drizzle metadata. If a generated migration is wrong, correct th
 
 - Internal UUID primary key.
 - Unique stable provider identity in legacy-named `chatgpt_user_id`.
-- Email and display name update on authentication.
+- Email updates on authentication (`upsertUser`). `display_name`, `first_name`, `last_name`, `github_handle`, and `avatar_key` are owned by onboarding and account settings, not the IdP — `upsertUser` never touches them.
+- `first_name`/`last_name`/`github_handle`/`avatar_key` are set once by onboarding (`completeOnboarding`, `POST /api/account/onboarding`) and are editable afterward through account settings (`updateProfile`, `PATCH /api/account/profile`). `display_name` is always derived as `"First L."` (`lib/display-name.ts`'s `displayNameFrom`) by both writers, so it can never drift out of that format. Unlike onboarding's `COALESCE`-based avatar write (which can only add a picture, never remove one), `updateProfile`'s `avatarKey` is a genuine three-state argument — omitted keeps the existing key, `null` clears it — so account settings is the only place a picture can be removed.
 - Creation and update timestamps are epoch milliseconds.
 - `plan` (`pro`/`max`/`enterprise`, default `pro`) and `plan_status` (`inactive`/`active`/`past_due`/`canceled`, default `inactive`) together decide entitlement — see "Plan limits and metering" below for the full model. Neither column is written by `upsertUser`; both are set only by a manual grant (`wrangler d1 execute`) until billing integration exists.
-- **`users` must never be recreated via a Drizzle table-swap migration once it holds real rows.** It has three inbound `ON DELETE CASCADE` foreign keys (`session_members.user_id`, `session_invites.created_by`, `github_connection_states.user_id`); a `DROP TABLE users` cascade-deletes all three even inside the standard `PRAGMA foreign_keys=OFF` migration wrapper drizzle-kit generates for a table with a named CHECK constraint — confirmed by rehearsing the generated migration for `plan_status` against seeded local data during the plan-limits work (`drizzle/0019_redundant_may_parker.sql` was hand-fixed to a plain `ALTER TABLE ADD COLUMN` instead, the same technique `0018` already used for `plan` itself). Any future change to this table's CHECK-constrained columns needs the same hand-fix, or a genuinely different migration strategy (backfill into a new table, dual-write, swap) — never a bare `db:generate` accept.
+- `deleted_at` is a tombstone, not a soft-delete filter — no read path queries against it. Set only by `deleteAccount` (`DELETE /api/account`), it marks a row that account deletion scrubbed and released rather than one currently in use; see "Account deletion" below for the full contract.
+- **`users` must never be recreated via a Drizzle table-swap migration once it holds real rows.** It has three inbound `ON DELETE CASCADE` foreign keys (`session_members.user_id`, `session_invites.created_by`, `github_connection_states.user_id`); a `DROP TABLE users` cascade-deletes all three even inside the standard `PRAGMA foreign_keys=OFF` migration wrapper drizzle-kit generates for a table with a named CHECK constraint — confirmed by rehearsing the generated migration for `plan_status` against seeded local data during the plan-limits work (`drizzle/0019_redundant_may_parker.sql` was hand-fixed to a plain `ALTER TABLE ADD COLUMN` instead, the same technique `0018` already used for `plan` itself). `deleted_at` (`drizzle/0020_regular_cardiac.sql`) is a nullable, unconstrained column, so drizzle-kit generated a plain `ALTER TABLE ADD COLUMN` on its own — no hand-fix needed. Any future change to this table's CHECK-constrained columns still needs the same hand-fix, or a genuinely different migration strategy (backfill into a new table, dual-write, swap) — never a bare `db:generate` accept.
+
+**Account deletion.** `deleteAccount` (`db/sessions.ts`) cannot issue a hard `DELETE FROM users`: roughly a dozen columns across `floor_messages`, `floor_agents`, `floor_queue_prompts`, `repository_candidates`, and other tables reference `users.id` with no cascade action, and the invariant above rules out adding one via a table recreate. Instead it, in one D1 batch:
+
+1. Pre-checks every session the user owns with the same guards `deleteSession` uses (`getBlockingIntegrationRunId`, live `repository_candidates`). Any blocked session refuses the *entire* deletion and nothing is written — the account and every session stay exactly as they were.
+2. Hard-deletes every session the user owns (children cascade with the session, same as `deleteSession`).
+3. Drops the user's membership and `floor_assignments` rows in sessions *other* people own (`session_members` would cascade on its own; `floor_assignments` has no FK action, the same reason `leaveSession` deletes it explicitly).
+4. Scrubs and releases the identity: `chatgpt_user_id` and `email` are rewritten to values the IdP can never present again (`'deleted:' || id`, `'deleted+' || id || '@invalid'`), name/handle/avatar are cleared, `display_name` becomes `"Deleted user"`, `plan_status` becomes `canceled`, and `deleted_at` is stamped. `upsertUser`'s two identity lookups both add `AND deleted_at IS NULL`, so the next sign-in with the same Access identity creates a brand-new row rather than resurrecting the tombstone.
+
+Deliberately left alone: `usage_months` rows survive (see that table's own no-FK note — "future account deletion" is this), and authored `floor_messages`/`floor_agents`/`floor_queue_prompts`/`repository_*` rows in sessions the user did not own survive too, now attributed to the scrubbed `"Deleted user"` display name — the tombstone row exists specifically to keep those foreign keys valid.
 
 #### `sessions`
 
@@ -578,6 +591,11 @@ All paths below are shown without the production `/app` prefix.
 
 | Method and path | Authorization | Behavior |
 | --- | --- | --- |
+| `POST /api/account/onboarding` | Authenticated user | `multipart/form-data` `{ firstName, lastName, githubHandle?, avatar? }`; first-login profile setup, sets `onboarded_at`. |
+| `PATCH /api/account/profile` | Authenticated user | `multipart/form-data` `{ firstName, lastName, githubHandle?, avatar?, removeAvatar? }`; account-settings profile edit. `avatar` and `removeAvatar` are mutually exclusive (`400` if both are sent); omitting both keeps the existing picture. Never touches `onboarded_at`. Returns `{ user }`. |
+| `PATCH /api/account/settings` | Authenticated user | Update `{ doNotDisturb: boolean }`. |
+| `GET /api/account/avatar/[userId]` | Authenticated user | Stream the target user's avatar from R2, or `404` if none is set; `cache-control: private, max-age=300`. |
+| `DELETE /api/account` | Authenticated user | Body `{ confirm: "DELETE" }` (`400` otherwise). Scrubs and releases the account — see "Account deletion" in the Persistence model above. `409 { code: "sessions_blocked", sessions }` when an owned session has live repository state; nothing is written in that case. |
 | `POST /api/sessions` | Authenticated user | Create `{ title, objective? }`; creator becomes owner; returns session and active invite URL. `403 { code: "quota_exhausted" }` once the caller's monthly session hours are spent. |
 | `PATCH /api/sessions/[id]` | Session member | Update `{ objective: string \| null }`; broadcasts `session.changed`. |
 | `GET /api/sessions/[id]/members` | Session member | Return authorized roster. |
@@ -629,7 +647,7 @@ Response conventions:
 - `401` means no authenticated identity.
 - `400` means invalid input or a cross-session/invalid target.
 - `404` conceals nonexistent sessions, non-membership, unauthorized owner-only resources, invalid invites, and revoked invites.
-- `409` represents conflicts such as duplicate normalized agent name, stale queue order, owner leave, or any mutation on an ended session ("This session has ended.").
+- `409` represents conflicts such as duplicate normalized agent name, stale queue order, owner leave, or any mutation on an ended session ("This session has ended."). `DELETE /api/account` returns `409 { code: "sessions_blocked", sessions }` when an owned session has live repository state (same class of conflict as `DELETE /api/sessions/[id]`'s `repository_state`/`integration_in_progress`), and writes nothing in that case.
 - `403` with `{ code: "quota_exhausted" }` marks the session owner's monthly session-hours quota as spent — see "Plan limits and metering" below. `acceptInvite`'s seat-cap refusal returns `403` too, but without a machine-readable `code` today.
 - Floor mutations return `{ floor }`; clients treat it as authoritative.
 
@@ -637,6 +655,8 @@ Response conventions:
 
 Keep server validation in `lib/validation.ts` and cover it with unit tests.
 
+- Profile first/last name (`parseProfileInput`, shared by onboarding and account settings): required, NFKC-normalized, whitespace-collapsed, maximum 50 characters each. GitHub handle: optional, trimmed, empty becomes null, maximum 39 characters.
+- Avatar upload (`lib/account-avatar.ts`, shared by onboarding and account settings): PNG/JPEG/WebP only, maximum 5MB.
 - Session title: required, trimmed, maximum 100 characters.
 - Objective: nullable, trimmed, empty becomes null, maximum 2,000.
 - Agent name: required, NFKC-normalized, whitespace-collapsed, maximum 24.
@@ -691,6 +711,8 @@ Instead, the quota gate sits at exactly four points, all "this is about to spend
 ### Known gap: purchases don't self-serve
 
 The Stripe payment link is not backed by a webhook. A customer can pay and nothing in the product changes until someone runs the manual grant in `README.md`. Before that link was added to product UI (this work), that manual step only ever needed to happen for people the operator already knew about; now it is reachable by anyone. The entitlement webhook is the top item in "Roadmap guidance" below — do not treat the current manual process as adequate once real payment volume exists.
+
+`/settings`'s Plan & usage tab (`components/product/SettingsScreen.tsx`) is now the single place plan management lives — current plan, usage against the hour/seat limits, and the Upgrade link all read from `getUsageForUser`/`lib/plans.ts`, the same functions `HomeScreen` and the (now-removed) floor `SettingsDialog` used. It states the manual-activation gap in-product ("Upgrades are activated manually today — it can take a little while after you pay.") rather than implying self-serve billing exists. `HomeScreen`'s usage line and quota-exhausted banner, and `Workspace`'s quota banner, are deliberately unchanged — they are enforcement feedback at the moment a limit is hit, not plan management, so they stay where the limit actually bites.
 
 ## Frontend architecture
 
@@ -1372,6 +1394,18 @@ An owner cannot remove a member from a session today — `leaveSession` is self-
 **Rationale:** The header-stripping bug mirrors exactly the convention `lib/identity.ts` already states for its own trusted headers — the fix generalizes an existing pattern rather than inventing one. The quota-gate placement (spend initiators, not `getActiveMembershipRole`) was a live design fork: folding quota into the general write guard was tried first and rejected after tracing it against all 22 `getActiveMembershipRole` call sites — it would have blocked an out-of-hours owner from revoking a leaked invite, disabling their own auto-dispatch loop, or landing already-finished review work, and would have turned a persistent "out of hours" condition into a 60-second hot retry loop in `worker/session-router.ts`'s bare catch. The free-tier schema question was a similar fork, discovered empirically: the original plan called for recreating `users` with a literal `'free'` value (justified as safe because production was believed to have no rows yet); rehearsing that migration locally against seeded data — before ever touching remote — showed it cascade-deletes `session_members`/`session_invites`/`github_connection_states` despite the generated `PRAGMA foreign_keys=OFF` wrapper, and a remote row-count check found production already has 5 users, 9 sessions, 12 session_members. The synthetic-value approach (mirroring how `0018` was already hand-fixed for the same reason) gets the identical entitlement behavior with zero migration risk.
 
 **Consequences:** `lib/plans.ts` is now the single source for `Plan`/`PlanStatus`/`PLAN_LIMITS`/`effectivePlan`/`currentMonth`, re-exported from `db/sessions.ts` for existing importers; it has no `cloudflare:workers` import specifically so it stays reachable from `tests/unit`. `getOwnerHourQuota` returns the *effective* plan, not the raw purchased one — a caller that indexes `PLAN_LIMITS` by a raw `plan` field again would hand a lapsed Max owner 100h. `getOwnerHourQuota` and the presence gate now fail closed (throw) on a missing owner row rather than silently connecting ungated; `lib/agent-run-start.ts`'s use of the same function deliberately does not, because it runs before any existence check and a throw there would turn an ordinary "unknown session" into an unhandled 500 instead of the existing 404. Migration `0019` is a two-statement `ALTER TABLE ADD` plus an `UPDATE` backfilling existing rows to `plan_status = 'active'`; do not attempt to consolidate a future `plan`-column change into a recreate without re-rehearsing against seeded data first. The Stripe payment link now live in product UI has no webhook behind it — see "Roadmap guidance" above.
+
+### 2026-08-21 — Build a complete account settings surface, consolidating every scattered settings affordance into it
+
+**Decision:** Added `/settings` (`app/settings/page.tsx`, `components/product/SettingsScreen.tsx`) covering profile editing (name, GitHub handle, avatar upload/removal), plan and usage, preferences (Do Not Disturb, theme), and account deletion. It is reached from a new `AccountMenu` (`components/product/AccountMenu.tsx`) behind the avatar in both headers, replacing the bare non-interactive avatar, the duplicated `ThemeToggle`/`DoNotDisturbToggle`/sign-out pairs in `AppHeader.tsx` and `TopBar.tsx`, and the floor-only `SettingsDialog` (deleted) whose "Profile"/"Appearance" rows were permanently stubbed "Coming soon." New DB writers: `updateProfile` (three-state avatar argument, unlike onboarding's add-only `COALESCE`) and `deleteAccount` (see the "Account deletion" note under `users` in Persistence model, above). Resolved three forks along the way, each with a narrower alternative rejected:
+
+- **Email stays read-only, IdP-owned.** Cloudflare Access is the only identity provider (`app/access-auth.ts`) and `upsertUser` refreshes `email` from its JWT on every login while also using it as the account-matching fallback when Access issues a different `sub` per login method — a user-editable email field would silently revert at next sign-in and could collide with that fallback match. `/settings` shows it with an explanation instead of a dead input.
+- **Account deletion scrubs and releases the identity rather than hard-deleting the row.** A real `DELETE FROM users` fails outright: roughly a dozen columns across `floor_messages`, `floor_agents`, `repository_candidates`, and others reference `users.id` with no cascade action, and the existing `users`-must-never-be-recreated invariant (three inbound `ON DELETE CASCADE` FKs, confirmed by rehearsal during the plan-limits work) rules out adding cascades via a table-swap migration. Scrubbing `chatgpt_user_id`/`email` to values the IdP can never present again, clearing profile fields, and stamping a new `deleted_at` tombstone gets the same practical outcome (the account is gone, a fresh sign-in starts clean) with a plain `ALTER TABLE ADD COLUMN`.
+- **A blocked owned session refuses the whole deletion rather than force-deleting repository state.** `deleteAccount` reuses `deleteSession`'s exact guards (`getBlockingIntegrationRunId`, live `repository_candidates`) per owned session before writing anything, because those D1 rows hold the leases needed for external (GitHub) cleanup — the same reasoning `purgeExpiredSessions` already applies to retention. Force-deleting through it would either abandon a live GitHub integration mid-flight or silently orphan the lease record.
+
+**Rationale:** Each fork picked the option that added zero migration/authorization risk over one that would have required either a schema change disallowed by an existing invariant, a new backend capability (a customer portal, an email-change flow) with no product need yet, or bypassing a safety guard another code path already established for the same class of state. The consolidation (one `AccountMenu`, one `/settings`) removes duplicated controls that had drifted apart (the floor `TopBar` had Theme/DND/sign-out; `AppHeader` had the same three independently) rather than adding a fourth copy.
+
+**Consequences:** `lib/display-name.ts` is now the single source for `displayNameFrom`/`initials`/`initialsFromParts`, used by onboarding, account settings, and every avatar label — the three previous ad hoc copies (`completeOnboarding`'s inline template literal, `AppHeader.tsx`'s exported `initials`, `OnboardingScreen.tsx`'s inline initials math) are gone. `lib/account-avatar.ts` (server, R2-bound) and `lib/avatar-constraints.ts` (client-safe constants, split out specifically because `account-avatar.ts` imports `cloudflare:workers` and cannot enter a `"use client"` bundle) are the only place avatar size/type limits and the R2 key layout are defined; onboarding's upload route was rewritten to call them instead of inlining the logic a second time. `Avatar` (`components/session/primitives.tsx`) gained `version` (cache-busts the 5-minute R2 response against `user.updatedAt` after an edit) and `previewSrc` (a local object URL for an unsaved picker selection) — roster avatars that only have a `SessionMember`, not a full `AppUser`, still accept up to 5 minutes of staleness for other people. `usage_months` and other users' authored floor content are untouched by deletion by design; anything that later changes that must re-read the "Account deletion" contract in Persistence model first. No Stripe SDK, checkout, or webhook was added — `/settings`'s Plan tab still points at the same manual-grant runbook, now stated in-product.
 
 ## How to record the next decision
 

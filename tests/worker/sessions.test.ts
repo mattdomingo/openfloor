@@ -5,6 +5,7 @@ import {
   archiveSessionForMember,
   createSession,
   currentMonth,
+  deleteAccount,
   deleteSession,
   ENDED_SESSION_RETENTION_MS,
   endSession,
@@ -22,6 +23,7 @@ import {
   rotateInvite,
   SessionEndedError,
   setSessionAutoDispatch,
+  updateProfile,
   updateSessionObjective,
   upsertUser,
 } from "@/db/sessions";
@@ -53,7 +55,7 @@ import {
   markPreflightRunning,
   PreflightConflictError,
 } from "@/db/preflights";
-import { createFloorAgent, createFloorMessage, createFloorQueueItem, getFloorSnapshot, setFloorQueueItemPaused } from "@/db/floor";
+import { createFloorAgent, createFloorMessage, createFloorQueueItem, getFloorSnapshot, setFloorQueueItemPaused, updateFloorAssignment } from "@/db/floor";
 import {
   beginRunIntegration,
   AgentRunNotReadyError,
@@ -101,6 +103,94 @@ describe("D1 session persistence", () => {
     expect(relinked.id).toBe(first.id);
     expect(relinked.providerUserId).toBe("chatgpt-switcher-alt-method");
     expect(relinked.email).toBe(first.email);
+  });
+
+  it("updateProfile sets, keeps, and clears the avatar independently of names, and recomputes display_name", async () => {
+    const user = await upsertUser(identity("profile-edit", "Original Name"), env.DB);
+    await expect(updateProfile(user.id, { firstName: "Matt", lastName: "Domingo", githubHandle: "octocat", avatarKey: "users/a/avatar" }, env.DB))
+      .resolves.toMatchObject({ firstName: "Matt", lastName: "Domingo", githubHandle: "octocat", displayName: "Matt D.", avatarKey: "users/a/avatar" });
+
+    // avatarKey omitted (undefined): keeps the existing key.
+    const kept = await updateProfile(user.id, { firstName: "Matt", lastName: "D.", githubHandle: "octocat", avatarKey: undefined }, env.DB);
+    expect(kept.avatarKey).toBe("users/a/avatar");
+    expect(kept.displayName).toBe("Matt D.");
+
+    // avatarKey explicitly null: clears it — completeOnboarding's COALESCE
+    // can only ever add a picture, never remove one; this is the fix.
+    const cleared = await updateProfile(user.id, { firstName: "Matt", lastName: "Domingo", githubHandle: null, avatarKey: null }, env.DB);
+    expect(cleared.avatarKey).toBeNull();
+    expect(cleared.githubHandle).toBeNull();
+
+    // Never touches onboarded_at.
+    expect(cleared.onboardedAt).toBeNull();
+  });
+
+  it("deleteAccount deletes owned sessions, drops residual memberships elsewhere, and scrubs the identity, without touching usage_months", async () => {
+    const deleted = await upsertUser(identity("delacct-self", "Self"), env.DB);
+    const otherOwner = await upsertUser(identity("delacct-other", "Other Owner"), env.DB);
+
+    const owned = await createSession(deleted.id, { title: "My room", objective: null }, env.DB);
+    const joined = await createSession(otherOwner.id, { title: "Their room", objective: null }, env.DB);
+    await acceptInvite(joined.inviteId, deleted.id, env.DB);
+    await updateFloorAssignment(joined.session.id, otherOwner.id, deleted.id, { task: "Review" }, env.DB);
+    await createFloorMessage(joined.session.id, deleted.id, { text: "hello from the deleted user", recipientUserId: null }, env.DB);
+
+    await env.DB.prepare("INSERT INTO usage_months (owner_user_id, month, seconds) VALUES (?, ?, ?)")
+      .bind(deleted.id, currentMonth(), 120)
+      .run();
+
+    await expect(deleteAccount(deleted.id, env.DB)).resolves.toEqual({ deleted: true });
+
+    // Owned session and its graph are gone.
+    expect(await getSessionForMember(owned.session.id, otherOwner.id, env.DB)).toBeNull();
+
+    // Membership and assignment in the other owner's session are gone, but
+    // the message the deleted user authored survives, attributed to the
+    // scrubbed tombstone display name.
+    const remainingMembers = await getSessionMembers(joined.session.id, otherOwner.id, env.DB);
+    expect(remainingMembers?.map((member) => member.id)).toEqual([otherOwner.id]);
+    const assignmentRow = await env.DB.prepare("SELECT 1 AS present FROM floor_assignments WHERE session_id = ? AND user_id = ?")
+      .bind(joined.session.id, deleted.id).first();
+    expect(assignmentRow).toBeNull();
+    const messageRow = await env.DB.prepare(
+      "SELECT fm.text AS text, u.display_name AS authorName FROM floor_messages fm JOIN users u ON u.id = fm.author_user_id WHERE fm.session_id = ?",
+    ).bind(joined.session.id).first<{ text: string; authorName: string }>();
+    expect(messageRow).toEqual({ text: "hello from the deleted user", authorName: "Deleted user" });
+
+    // The usage ledger survives account deletion by design.
+    const usageRow = await env.DB.prepare("SELECT seconds FROM usage_months WHERE owner_user_id = ? AND month = ?")
+      .bind(deleted.id, currentMonth()).first<{ seconds: number }>();
+    expect(usageRow).toEqual({ seconds: 120 });
+
+    // The same Access identity signing in again creates a brand-new row,
+    // not a resurrection of the tombstoned one.
+    const resurrected = await upsertUser(identity("delacct-self", "Self Again"), env.DB);
+    expect(resurrected.id).not.toBe(deleted.id);
+    expect(resurrected.displayName).toBe("Self Again");
+    expect(resurrected.onboardedAt).toBeNull();
+  });
+
+  it("deleteAccount refuses and writes nothing when an owned session has live repository state", async () => {
+    const owner = await upsertUser(identity("delacct-blocked", "Blocked Owner"), env.DB);
+    const created = await createSession(owner.id, { title: "Blocked room", objective: null }, env.DB);
+    const saved = await saveRepositoryConnection(created.session.id, owner.id, null, "installation-delacct", {
+      id: "repository-delacct", nodeId: "R_delacct", owner: "openfloor-test", name: "delacct",
+      fullName: "openfloor-test/delacct", private: true, defaultBranch: "main",
+    }, "main", [], env.DB);
+    const candidateId = crypto.randomUUID();
+    const branch = `openfloor/${created.session.id.slice(0, 8)}/candidate/${candidateId.slice(0, 8)}`;
+    await reserveRepositoryCandidate(created.session.id, owner.id, saved!.id, candidateId, "Blocked room", "", branch, "main", "a".repeat(40), env.DB);
+    await activateRepositoryCandidate(created.session.id, candidateId, "a".repeat(40), env.DB);
+
+    await expect(deleteAccount(owner.id, env.DB)).resolves.toEqual({
+      blocked: "sessions",
+      sessions: [{ id: created.session.id, title: "Blocked room", reason: "repository_state" }],
+    });
+
+    // Nothing was written: the session and the owner's account both remain.
+    expect(await getSessionForMember(created.session.id, owner.id, env.DB)).not.toBeNull();
+    const stillThere = await env.DB.prepare("SELECT deleted_at AS deletedAt FROM users WHERE id = ?").bind(owner.id).first<{ deletedAt: number | null }>();
+    expect(stillThere?.deletedAt).toBeNull();
   });
 
   it("creates and lists only the current user's sessions", async () => {

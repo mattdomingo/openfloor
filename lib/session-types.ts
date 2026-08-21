@@ -65,6 +65,10 @@ export type AppUser = {
   planStatus: PlanStatus;
   createdAt: number;
   updatedAt: number;
+  // Tombstone set only by deleteAccount; see db/schema.ts's users.deletedAt
+  // comment. Not used to filter reads — a live AppUser is never expected to
+  // have this set.
+  deletedAt: number | null;
 };
 
 export type RepositoryConnectionStatus = "connected" | "ready" | "revoked" | "inaccessible" | "externally_modified" | "disconnected";
