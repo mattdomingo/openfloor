@@ -37,6 +37,11 @@ export type InvitePreview = {
   title: string;
   objective: string | null;
   ownerName: string;
+  memberCount: number;
+  // The owner's effective seat cap — Infinity for enterprise, same as
+  // PLAN_LIMITS. Lets JoinScreen show "This session is full" up front
+  // instead of only after a 403 from actually clicking Join.
+  seatLimit: number;
 };
 
 const APP_USER_COLUMNS = `id, chatgpt_user_id AS providerUserId, email, display_name AS displayName,
@@ -367,10 +372,11 @@ async function getBlockingIntegrationRunId(sessionId: string, database: D1Databa
 }
 
 export async function getInvitePreview(inviteId: string, database = getDb()): Promise<InvitePreview | null> {
-  return database
+  const row = await database
     .prepare(
       `SELECT i.id AS inviteId, s.id AS sessionId, s.title, s.objective,
-              owner.display_name AS ownerName
+              owner.display_name AS ownerName, owner.plan AS ownerPlan, owner.plan_status AS ownerPlanStatus,
+              (SELECT COUNT(*) FROM session_members m WHERE m.session_id = s.id) AS memberCount
        FROM session_invites i
        JOIN sessions s ON s.id = i.session_id
        JOIN session_members owner_member ON owner_member.session_id = s.id AND owner_member.role = 'owner'
@@ -378,7 +384,13 @@ export async function getInvitePreview(inviteId: string, database = getDb()): Pr
        WHERE i.id = ? AND i.revoked_at IS NULL`,
     )
     .bind(inviteId)
-    .first<InvitePreview>();
+    .first<{
+      inviteId: string; sessionId: string; title: string; objective: string | null; ownerName: string;
+      ownerPlan: Plan; ownerPlanStatus: PlanStatus; memberCount: number;
+    }>();
+  if (!row) return null;
+  const { ownerPlan, ownerPlanStatus, ...preview } = row;
+  return { ...preview, seatLimit: PLAN_LIMITS[effectivePlan(ownerPlan, ownerPlanStatus)].seats };
 }
 
 export async function acceptInvite(

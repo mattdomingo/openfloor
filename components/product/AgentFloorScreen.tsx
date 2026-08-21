@@ -30,6 +30,10 @@ export function AgentFloorScreen({
   const [members, setMembers] = useState(initialMembers);
   const [onlineIds, setOnlineIds] = useState<Set<string>>(new Set());
   const [presenceConnected, setPresenceConnected] = useState(false);
+  // Separate from floorData.error (which also carries transient mutation
+  // failures) so Workspace can show a persistent banner + upgrade link only
+  // for the one terminal, non-self-resolving case.
+  const [quotaExhausted, setQuotaExhausted] = useState(false);
   const [typingDrafts, setTypingDrafts] = useState<Map<string, TypingDraft>>(new Map());
   const retryRef = useRef(0);
   const socketRef = useRef<WebSocket | null>(null);
@@ -97,6 +101,7 @@ export function AgentFloorScreen({
       socket.addEventListener("open", () => {
         retryRef.current = 0;
         setPresenceConnected(true);
+        setQuotaExhausted(false);
         if (latestTypingUpdateRef.current.text) socket?.send(JSON.stringify(latestTypingUpdateRef.current));
         void refreshFloor();
         catchUpActivity(activeRunIdsRef.current);
@@ -135,6 +140,7 @@ export function AgentFloorScreen({
         if (event.code === 4003) {
           // Hour quota exhausted: surface the reason and stop reconnecting.
           setFloorError(event.reason || "This session's host has used up their plan's monthly session hours.");
+          setQuotaExhausted(true);
           return;
         }
         if (event.code === 4001) {
@@ -211,5 +217,5 @@ export function AgentFloorScreen({
     if (socketRef.current?.readyState === WebSocket.OPEN) socketRef.current.send(JSON.stringify(update));
   }, []);
 
-  return <Workspace user={user} session={session} members={visibleMembers} floorData={floorData} activity={activity} typingDrafts={typingDrafts} onTypingUpdate={sendTypingUpdate} onSaveObjective={saveObjective} agentRunEnabled={agentRunEnabled} presenceConnected={presenceConnected} />;
+  return <Workspace user={user} session={session} members={visibleMembers} floorData={floorData} activity={activity} typingDrafts={typingDrafts} onTypingUpdate={sendTypingUpdate} onSaveObjective={saveObjective} agentRunEnabled={agentRunEnabled} presenceConnected={presenceConnected} quotaExhausted={quotaExhausted} />;
 }

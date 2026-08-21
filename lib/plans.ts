@@ -32,3 +32,9 @@ export function currentMonth(at: number = Date.now()): string {
 // README.md. One link can only sell one tier; a second product (e.g. Max)
 // needs a second link and a way to tell them apart at grant time.
 export const UPGRADE_URL = "https://buy.stripe.com/fZudR93OAaWMehu35t4F200";
+
+const PLAN_LABELS: Record<Plan, string> = { free: "Free", pro: "Pro", max: "Max", enterprise: "Enterprise" };
+
+export function planLabel(plan: Plan): string {
+  return PLAN_LABELS[plan];
+}

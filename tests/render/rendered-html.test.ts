@@ -1,3 +1,4 @@
+import { env } from "cloudflare:workers";
 import { SELF } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 
@@ -101,5 +102,75 @@ describe("server rendering", () => {
     for (const path of ["/", "/home", "/why", "/session/private-room"]) {
       expect((await fetchPath(path)).status).toBe(404);
     }
+  });
+});
+
+async function onboardedUser(providerUserId: string, firstName: string, lastName: string) {
+  const headers = {
+    accept: "text/html",
+    host: "localhost",
+    "x-openfloor-dev-user-id": providerUserId,
+    "x-openfloor-dev-user-email": `${providerUserId}@example.com`,
+    "x-openfloor-dev-user-name": `${firstName} ${lastName}`,
+  };
+  const form = new FormData();
+  form.set("firstName", firstName);
+  form.set("lastName", lastName);
+  const onboarded = await SELF.fetch("http://localhost/app/api/account/onboarding", { method: "POST", headers, body: form });
+  expect(onboarded.status).toBe(204);
+  const row = await env.DB.prepare("SELECT id FROM users WHERE chatgpt_user_id = ?").bind(providerUserId).first<{ id: string }>();
+  if (!row) throw new Error("Onboarded user was not persisted");
+  return { userId: row.id, headers };
+}
+
+describe("plan-limits UI", () => {
+  it("a new user's /app/home shows the free-tier copy", async () => {
+    const { headers } = await onboardedUser("plan-free-user", "Free", "User");
+    const response = await SELF.fetch("http://localhost/app/home", { headers });
+    expect(response.status).toBe(200);
+    const html = await response.text();
+    expect(html).toContain("Free plan");
+    expect(html).toContain("of 2h session time used this month (UTC)");
+  });
+
+  it("seeding usage_months to the cap renders the exhausted notice and the upgrade link", async () => {
+    const { userId, headers } = await onboardedUser("plan-exhausted-user", "Exhausted", "User");
+    const month = new Date().toISOString().slice(0, 7); // UTC "YYYY-MM", matching lib/plans.ts:currentMonth
+    await env.DB.prepare("INSERT INTO usage_months (owner_user_id, month, seconds) VALUES (?, ?, ?)")
+      .bind(userId, month, 2 * 3600)
+      .run();
+    const response = await SELF.fetch("http://localhost/app/home", { headers });
+    expect(response.status).toBe(200);
+    const html = await response.text();
+    expect(html).toContain("2h of monthly session time is used up");
+    expect(html).toContain("https://buy.stripe.com/fZudR93OAaWMehu35t4F200");
+  });
+
+  it("POST /app/api/sessions returns 403 with code quota_exhausted once the free cap is spent", async () => {
+    const { userId, headers } = await onboardedUser("plan-exhausted-api-user", "ExhaustedApi", "User");
+    const month = new Date().toISOString().slice(0, 7);
+    await env.DB.prepare("INSERT INTO usage_months (owner_user_id, month, seconds) VALUES (?, ?, ?)")
+      .bind(userId, month, 2 * 3600)
+      .run();
+    const response = await SELF.fetch("http://localhost/app/api/sessions", {
+      method: "POST",
+      headers: { ...headers, "content-type": "application/json", accept: "application/json" },
+      body: JSON.stringify({ title: "Should be refused" }),
+    });
+    expect(response.status).toBe(403);
+    const body = await response.json() as { error?: string; code?: string };
+    expect(body.code).toBe("quota_exhausted");
+  });
+
+  it("an enterprise, active user renders the unlimited copy without crashing", async () => {
+    const { userId, headers } = await onboardedUser("plan-enterprise-user", "Enterprise", "User");
+    await env.DB.prepare("UPDATE users SET plan = 'enterprise', plan_status = 'active' WHERE id = ?").bind(userId).run();
+    const response = await SELF.fetch("http://localhost/app/home", { headers });
+    expect(response.status).toBe(200);
+    const html = await response.text();
+    expect(html).toContain("Enterprise plan");
+    expect(html).toContain("session time used this month (UTC)");
+    expect(html).not.toContain("of undefinedh");
+    expect(html).not.toContain("NaN");
   });
 });

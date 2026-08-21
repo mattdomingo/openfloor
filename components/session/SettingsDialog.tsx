@@ -2,6 +2,7 @@
 
 import { useId } from "react";
 import { DoNotDisturbToggle } from "@/components/DoNotDisturbToggle";
+import { effectivePlan, planLabel, PLAN_LIMITS, UPGRADE_URL } from "@/lib/plans";
 import type { AppUser } from "@/lib/session-types";
 import { Icon, useDialogDismiss } from "./primitives";
 
@@ -13,6 +14,8 @@ const INERT_CATEGORIES = [
 export function SettingsDialog({ user, onClose }: { user: AppUser; onClose: () => void }) {
   const titleId = useId();
   const { dismiss, dialogProps } = useDialogDismiss(onClose);
+  const plan = effectivePlan(user.plan, user.planStatus);
+  const limits = PLAN_LIMITS[plan];
 
   return (
     <dialog className="dialog settings-dialog" {...dialogProps} aria-labelledby={titleId}>
@@ -22,6 +25,14 @@ export function SettingsDialog({ user, onClose }: { user: AppUser; onClose: () =
       </div>
       <div className="dialog-body">
         <ul className="settings-category-list">
+          <li className="settings-category-row">
+            <span className="settings-category-name">Plan</span>
+            <span className="settings-category-detail">
+              {planLabel(plan)} plan — {Number.isFinite(limits.seats) ? `${limits.seats} seats per session` : "unlimited seats per session"},{" "}
+              {Number.isFinite(limits.hours) ? `${limits.hours}h of session time per month` : "unlimited session time"}.
+            </span>
+            {plan === "free" && <a className="button" data-variant="quiet" href={UPGRADE_URL} target="_blank" rel="noreferrer noopener">Upgrade</a>}
+          </li>
           <li className="settings-category-row">
             <span className="settings-category-name">Notifications</span>
             <span className="settings-category-detail">Do Not Disturb mutes the team chat unread badge everywhere, on every device.</span>

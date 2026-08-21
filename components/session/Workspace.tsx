@@ -2,6 +2,7 @@
 
 import { CSSProperties, PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState } from "react";
 import { LocalDateTime } from "@/components/LocalDateTime";
+import { UPGRADE_URL } from "@/lib/plans";
 import type { AppUser, SessionMember, SessionSummary, TypingDraft } from "@/lib/session-types";
 import type { CreateFloorAgentInput } from "@/lib/floor-types";
 import { countMessagesSinceObjective, countUnreadTeamMessages, firstMergeableQueueGroup, latestTeamMessageAt, resolvePersistedAgentMention } from "@/lib/floor-state";
@@ -22,7 +23,7 @@ const RAIL_COLLAPSED_WIDTH = 40;
 const RAIL_MIN_WIDTH = 250;
 const RAIL_MAX_WIDTH = 520;
 
-export function Workspace({ user, session, members, floorData, activity, typingDrafts, onTypingUpdate, onSaveObjective, agentRunEnabled, presenceConnected }: {
+export function Workspace({ user, session, members, floorData, activity, typingDrafts, onTypingUpdate, onSaveObjective, agentRunEnabled, presenceConnected, quotaExhausted }: {
   user: AppUser;
   session: SessionSummary;
   members: SessionMember[];
@@ -33,6 +34,7 @@ export function Workspace({ user, session, members, floorData, activity, typingD
   onSaveObjective: (objective: string | null) => Promise<boolean>;
   agentRunEnabled: boolean;
   presenceConnected: boolean;
+  quotaExhausted: boolean;
 }) {
   const { agents, assignments, queue, messages, review, runs } = floorData.floor;
   const participants = useMemo(() => floorParticipants(members, user), [members, user]);
@@ -160,6 +162,17 @@ export function Workspace({ user, session, members, floorData, activity, typingD
       /* Banner only: the server-side write guard is the enforcement, so a
          stale control just surfaces its 409 through the dock status line. */
       <p className="notice" data-tone="attention" role="status">This session ended <LocalDateTime timestamp={session.endedAt} mode="date" />{session.endedReason === "merged" ? " because the candidate branch was merged" : ""}. The floor is read-only.</p>
+    )}
+    {quotaExhausted && session.endedAt == null && (
+      /* Same advisory-only pattern as the ended-session banner above: the
+         presence gate (close code 4003) is the enforcement, this is just
+         the persistent explanation for why new connections keep failing. */
+      <p className="notice" data-tone="attention" role="status">
+        {`${session.role === "owner"
+          ? "Your plan's monthly session hours are used up."
+          : "Your host has used up their plan's monthly session hours."} New connections are paused until next month. `}
+        <a href={UPGRADE_URL} target="_blank" rel="noreferrer noopener">Upgrade for more session hours</a>.
+      </p>
     )}
     <ObjectiveBar objective={session.objective} updatedAt={session.updatedAt} staleMessageCount={countMessagesSinceObjective(messages, session.objectiveUpdatedAt)} isOwner={session.role === "owner"} onSave={onSaveObjective} />
     {screen === "review" ? <ReviewScreen review={review} owner={session.role === "owner"} busy={floorData.busy} blockingRunId={floorData.blockingRunId} onReady={async () => { if (await floorData.readyReview()) setNotice("GitHub review status synchronized"); }} onMerge={async (deleteCandidateBranch) => { const result = await floorData.squashMergeReview(deleteCandidateBranch); if (result) setNotice(deleteCandidateBranch ? "Pull request squash merged and branches cleaned up" : "Pull request squash merged; candidate branch kept"); return Boolean(result); }} onDeleteBranch={async () => { const result = await floorData.deleteReviewBranch(); if (result) setNotice("Candidate branch deleted"); return Boolean(result); }} onCancelRun={async (runId) => { await floorData.cancelRun(runId); }} teamChat={messages} onSendTeamMessage={async (text, recipient) => Boolean(await floorData.sendMessage(text, recipient))} participants={participants} currentUserId={user.id} /> : <><div className="workspace" data-expanded={expandedPanel ? "true" : "false"} data-resizing={resizing ? "true" : "false"}>{panelOrder.map((panel, index) => { const next = panelOrder[index + 1]; const showHandle = !expandedPanel && next !== undefined && !(isCollapsed(panel) && panel !== "floor"); return <div key={panel} className="panel-slot" style={slotStyle(panel)} data-expanded={expandedPanel === panel ? "true" : "false"} data-collapsed={isCollapsed(panel) ? "true" : "false"} data-dragging={draggedPanel === panel ? "true" : "false"} data-drop-target={dragOverPanel === panel ? "true" : "false"} onDragOver={(event) => { event.preventDefault(); if (draggedPanel && draggedPanel !== panel) setDragOverPanel(panel); }} onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragOverPanel((current) => current === panel ? null : current); }} onDrop={() => dropPanel(panel)}>{renderPanel(panel, chromeFor(panel, index))}{showHandle && <div className="resize-handle" role="separator" aria-label={`Resize ${panel} panel`} onPointerDown={(event) => startResize(panel, next, event)} />}</div>; })}</div><FloorDock onSubmit={enqueuePrompt} agents={agents} queueTarget={queueTarget} onQueueTargetChange={setQueueTarget} textareaRef={composerRef} notice={notice} error={floorData.error} busy={floorData.busy} user={user} participants={participants} typingDrafts={typingDrafts} onTypingUpdate={onTypingUpdate} /></>}

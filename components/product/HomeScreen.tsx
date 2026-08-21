@@ -7,11 +7,12 @@ import { BASE_PATH } from "@/components/basePath";
 import { LocalDateTime } from "@/components/LocalDateTime";
 import { formatDuration } from "@/lib/date-format";
 import { SegmentedControl, useDialogDismiss } from "@/components/session/primitives";
-import type { Plan } from "@/lib/plans";
+import { planLabel, UPGRADE_URL, type Plan, type PlanStatus } from "@/lib/plans";
 import type { AppUser, SessionSummary } from "@/lib/session-types";
 import { AppHeader } from "./AppHeader";
 
 type SessionTab = "active" | "archived" | "ended";
+type Usage = { plan: Plan; planStatus: PlanStatus; effectivePlan: Plan; seconds: number; limitHours: number; limitSeats: number };
 
 export function HomeScreen({
   user,
@@ -20,7 +21,7 @@ export function HomeScreen({
 }: {
   user: AppUser;
   sessions: SessionSummary[];
-  usage: { plan: Plan; seconds: number; limitHours: number };
+  usage: Usage;
 }) {
   const router = useRouter();
   const [sessions, setSessions] = useState(initialSessions);
@@ -43,6 +44,20 @@ export function HomeScreen({
   const archivedSessions = sessions.filter((session) => session.archivedAt != null);
   const endedSessions = sessions.filter((session) => session.archivedAt == null && session.endedAt != null);
   const tabSessions = tab === "active" ? activeSessions : tab === "archived" ? archivedSessions : endedSessions;
+  // Hours are metered per session and summed onto one monthly total, so two
+  // live owned sessions burn the month at twice wall-clock — worth calling
+  // out explicitly, or it reads as a billing bug rather than the chosen
+  // (and documented) behavior.
+  const liveOwnedSessions = sessions.filter((session) => session.role === "owner" && session.endedAt == null).length;
+  const quotaExhausted = Number.isFinite(usage.limitHours) && usage.seconds >= usage.limitHours * 3600;
+  // One computed string, not several adjacent JSX expressions: React SSR
+  // inserts an <!-- --> hydration-boundary comment between adjacent text
+  // nodes, which would otherwise split "Free plan" across a comment.
+  const usageLine = `${planLabel(usage.effectivePlan)} plan · ${
+    Number.isFinite(usage.limitHours)
+      ? `${formatDuration(usage.seconds)} of ${usage.limitHours}h session time used this month (UTC)`
+      : `${formatDuration(usage.seconds)} session time used this month (UTC)`
+  }${liveOwnedSessions > 1 ? ` · ${liveOwnedSessions} live sessions, all counting toward your usage` : ""}`;
 
   async function setArchived(session: SessionSummary, archived: boolean) {
     const response = await fetch(`${BASE_PATH}/api/sessions/${session.id}/${archived ? "archive" : "unarchive"}`, { method: "POST" });
@@ -77,11 +92,16 @@ export function HomeScreen({
         <div className="page-heading">
           <div>
             <p className="eyebrow">Sessions</p><h1>Your sessions</h1><p>Durable sessions for the people doing the work.</p>
-            <p className="usage-line">
-              {Number.isFinite(usage.limitHours)
-                ? `${formatDuration(usage.seconds)} of ${usage.limitHours}h session time used this month`
-                : `${formatDuration(usage.seconds)} session time used this month`}
-            </p>
+            <p className="usage-line">{usageLine}</p>
+            {quotaExhausted && (
+              /* Advisory only, same as the ended-session banner in
+                 Workspace.tsx: the 403s on create/dispatch are the
+                 enforcement. */
+              <p className="notice" data-tone="attention" role="status">
+                {`Your ${planLabel(usage.effectivePlan)} plan's ${usage.limitHours}h of monthly session time is used up. `}
+                <a href={UPGRADE_URL} target="_blank" rel="noreferrer noopener">Upgrade for more session hours</a>.
+              </p>
+            )}
           </div>
           <button className="button" data-variant="primary" onClick={() => setCreating((value) => !value)}>
             {creating ? "Cancel" : "New session"}
@@ -119,7 +139,7 @@ export function HomeScreen({
                   {tab === "ended" && "Sessions the owner ends will show up here."}</p>
               </div>
             ) : (
-              <SessionGrid sessions={tabSessions} archived={tab === "archived"} onDelete={setPendingDelete} onSetArchived={setArchived} />
+              <SessionGrid sessions={tabSessions} archived={tab === "archived"} onDelete={setPendingDelete} onSetArchived={setArchived} limitSeats={usage.limitSeats} />
             )}
           </>
         )}
@@ -134,11 +154,13 @@ function SessionGrid({
   archived,
   onDelete,
   onSetArchived,
+  limitSeats,
 }: {
   sessions: SessionSummary[];
   archived: boolean;
   onDelete: (session: SessionSummary) => void;
   onSetArchived: (session: SessionSummary, archived: boolean) => void;
+  limitSeats: number;
 }) {
   return (
     <div className="session-grid">
@@ -151,7 +173,11 @@ function SessionGrid({
           </div>
           <p>{session.objective || "No objective has been written yet."}</p>
           <div className="session-card-foot">
-            <span>{session.memberCount} {session.memberCount === 1 ? "member" : "members"} · {formatDuration(session.activeSeconds)} active</span>
+            <span>{`${
+              session.role === "owner" && Number.isFinite(limitSeats)
+                ? `${session.memberCount} of ${limitSeats} seats`
+                : `${session.memberCount} ${session.memberCount === 1 ? "member" : "members"}`
+            } · ${formatDuration(session.activeSeconds)} active`}</span>
             <span className="session-card-foot-end">
               <button type="button" className="button" data-variant="quiet" data-size="sm" onClick={() => onSetArchived(session, !archived)}>{archived ? "Unarchive" : "Archive"}</button>
               {session.role === "owner" && <button type="button" className="button danger-button" data-size="sm" onClick={() => onDelete(session)}>Delete</button>}
