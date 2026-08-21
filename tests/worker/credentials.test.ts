@@ -1,5 +1,6 @@
 import { env } from "cloudflare:workers";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { POST as postAnthropicGateway } from "@/app/runtime/anthropic/[...path]/route";
 import { POST as postOpenAiGateway } from "@/app/runtime/openai/[...path]/route";
 import { createFloorAgent } from "@/db/floor";
 import {
@@ -28,15 +29,17 @@ async function room(suffix: string) {
   return { sessionId: created.session.id, owner, member };
 }
 
-async function connectOpenAiKey(userId: string, apiKey: string) {
-  const ciphertext = await encryptCredential(apiKey, ENCRYPTION_SECRET, `${userId}:openai`);
-  return upsertProviderCredential(userId, "openai", {
+async function connectKey(userId: string, provider: "anthropic" | "openai", apiKey: string) {
+  const ciphertext = await encryptCredential(apiKey, ENCRYPTION_SECRET, `${userId}:${provider}`);
+  return upsertProviderCredential(userId, provider, {
     kind: "api_key",
     ciphertext,
     fingerprint: apiKey.slice(-4),
     validatedAt: Date.now(),
   }, env.DB);
 }
+
+const connectOpenAiKey = (userId: string, apiKey: string) => connectKey(userId, "openai", apiKey);
 
 /** Run row plus the connection/candidate scaffolding getRunGatewayContext joins against. */
 async function insertRunRow(sessionId: string, agentId: string, userId: string, status: string): Promise<string> {
@@ -196,6 +199,72 @@ describe("OpenAI gateway credential resolution", () => {
     const response = await postOpenAiGateway(gatewayRequest(await signedRunToken(runId, sessionId)), gatewayParams());
     expect(response.status).toBe(503);
     expect(await response.text()).toContain("could not be read");
+  });
+
+  it("anthropic gateway forwards allowed paths with the owner's key and x-api-key auth", async () => {
+    const { sessionId, owner, runId } = await runningRun("anthro-owner");
+    await connectKey(owner.id, "anthropic", "sk-ant-owner-gwkey");
+    const captured: Array<{ url: string; apiKey: string | null; bearer: string | null }> = [];
+    vi.stubGlobal("fetch", async (url: string, init: { headers: Headers }) => {
+      captured.push({ url, apiKey: init.headers.get("x-api-key"), bearer: init.headers.get("authorization") });
+      return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+    });
+    const token = await signRunGatewayToken(
+      { runId, sessionId, repositoryId: "repo", candidateSha: "sha-run", operation: "anthropic" },
+      GATEWAY_SECRET,
+    );
+    function anthropicRequest(path: string) {
+      return postAnthropicGateway(
+        new Request(`https://opnflr.com/app/runtime/anthropic/${path}`, {
+          method: "POST",
+          headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+          body: JSON.stringify({ model: "claude-opus-5" }),
+        }),
+        { params: Promise.resolve({ path: path.split("/") }) },
+      );
+    }
+    expect((await anthropicRequest("v1/messages")).status).toBe(200);
+    expect((await anthropicRequest("v1/messages/count_tokens")).status).toBe(200);
+    expect(captured.map((call) => call.url)).toEqual([
+      "https://api.anthropic.com/v1/messages",
+      "https://api.anthropic.com/v1/messages/count_tokens",
+    ]);
+    // Upstream auth is x-api-key with the owner's key; the run JWT never leaves.
+    expect(captured.every((call) => call.apiKey === "sk-ant-owner-gwkey" && call.bearer === null)).toBe(true);
+    // Paths outside the allowlist are concealed even with a valid token.
+    expect((await anthropicRequest("v1/models")).status).toBe(404);
+  });
+
+  it("anthropic gateway refuses without a resolvable credential and rejects wrong-operation tokens", async () => {
+    const { sessionId, runId } = await runningRun("anthro-none");
+    const token = await signRunGatewayToken(
+      { runId, sessionId, repositoryId: "repo", candidateSha: "sha-run", operation: "anthropic" },
+      GATEWAY_SECRET,
+    );
+    const refused = await postAnthropicGateway(
+      new Request("https://opnflr.com/app/runtime/anthropic/v1/messages", {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+        body: "{}",
+      }),
+      { params: Promise.resolve({ path: ["v1", "messages"] }) },
+    );
+    expect(refused.status).toBe(503);
+    expect(await refused.text()).toContain("No Anthropic credential");
+
+    const openaiOperation = await signRunGatewayToken(
+      { runId, sessionId, repositoryId: "repo", candidateSha: "sha-run", operation: "openai" },
+      GATEWAY_SECRET,
+    );
+    const crossed = await postAnthropicGateway(
+      new Request("https://opnflr.com/app/runtime/anthropic/v1/messages", {
+        method: "POST",
+        headers: { authorization: `Bearer ${openaiOperation}`, "content-type": "application/json" },
+        body: "{}",
+      }),
+      { params: Promise.resolve({ path: ["v1", "messages"] }) },
+    );
+    expect(crossed.status).toBe(404);
   });
 
   it("keeps the existing rejection paths", async () => {

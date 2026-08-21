@@ -174,13 +174,14 @@ WebSocket events notify clients about presence or changed domains. D1 remains au
 - Owner-only **Ready for review** and expected-head **Squash merge** actions. GitHub protection and review requirements are never bypassed.
 - Verified post-merge cleanup of matching server-generated run/candidate refs using Git leases; mismatched refs are preserved and recorded as partial cleanup.
 - Merged candidate audit history remains durable, while the next owner-started run creates a fresh candidate cycle from the latest base SHA.
-- Per-user provider credentials (`user_provider_credentials`, providers `anthropic`/`openai`): connected in `/settings` → Connections, validated against the provider's models endpoint on connect, AES-256-GCM-encrypted at rest under `CREDENTIAL_ENCRYPTION_KEY`, and write-only from the client (routes return only a last-four fingerprint). Per run, the OpenAI gateway uses the **session owner's** connected key when present, else the server key, else refuses with a clear `503`; a present-but-unreadable owner key refuses rather than silently falling back.
+- Per-user provider credentials (`user_provider_credentials`, providers `anthropic`/`openai`): connected in `/settings` → Connections, validated against the provider's models endpoint on connect, AES-256-GCM-encrypted at rest under `CREDENTIAL_ENCRYPTION_KEY`, and write-only from the client (routes return only a last-four fingerprint). Per run, both runtime gateways use the **session owner's** connected key when present, else the server key, else refuse with a clear `503`; a present-but-unreadable owner key refuses rather than silently falling back.
+- A Claude agent runner (`scripts/claude-runner.mjs`, Claude Agent SDK, default model `claude-opus-5`) structurally parallel to the Codex runner, gated behind `CLAUDE_RUN_ENABLED=false` until its prerequisites are live. `floor_agents.provider` (default `openai`) and nullable `model` choose the runner per run; `AgentRunWorkflow` branches at dispatch. Claude runs execute as the non-root `openfloor-agent` user under the SDK's kernel sandbox (bubblewrap + proxy-enforced domain allowlist), with the pinned posture in `lib/claude-sandbox-settings.ts` and model traffic through `POST /runtime/anthropic/*` — see the 2026-08-21 Claude-runner decision-log entry for the verified isolation semantics.
 
 Known production follow-up: the owner discard action still reports failure in the disposable acceptance repository after its Git authentication correction. Preserve the expected-SHA lease and error separation; diagnose this independently rather than weakening deletion safety or folding it into Phase 6.
 
 ### Explicitly deferred
 
-- Agent model/provider selection; Phase 4 deliberately uses one server-configured Codex model. (User-managed provider credentials are now implemented — see "Implemented and real" above. What remains deferred is choosing a provider/model per agent; every run still executes Codex with `AGENT_RUN_MODEL`.)
+- Provider/model selection in the agent-creation UI. The Claude runner itself is implemented behind `CLAUDE_RUN_ENABLED=false` (see "Implemented and real"), `floor_agents.provider`/`model` exist with per-provider defaults in `lib/provider-credentials.ts`, but no API accepts a provider yet — every agent row is created as `openai`, so every run still executes Codex until the selection UI lands and the flag turns on.
 - Agent-authored chat messages and generic artifact download UI beyond the per-run raw-log and session-brief expanders. (Live run activity streaming is now real: the sandbox runner posts normalized Codex events to `/runtime/run/events`, they persist in `agent_run_events`, and sessions receive them as `run.activity` presence events. An agent may also read live session state mid-run through the `openfloor_session_context` MCP tool — see `/runtime/run/context` in the API table — but it cannot write.)
 - Deployment automation after repository merge.
 - Agent edit, archive, deletion, or lifecycle states beyond `created`.
@@ -309,6 +310,8 @@ The provider user ID is stored as `cloudflare-access:<sub>`. Email and name are 
 ### Legacy schema naming
 
 The `users.chatgpt_user_id` column and `idx_users_chatgpt_user_id` index retain names from the earlier ChatGPT-identity design. In current code this column stores the generic stable `providerUserId`, currently the prefixed Cloudflare Access subject.
+
+`agent_runs.codex_thread_id` is the same pattern: it stores whichever provider's thread/session id a run used and is exposed in TypeScript as `providerThreadId`. Never rename the SQL column — `agent_runs` has four inbound `ON DELETE CASCADE` foreign keys plus a set-null, and a drizzle rename emits a table recreate that cascade-deletes children (the `users` invariant's failure mode exactly).
 
 Do not build logic that assumes the column contains a ChatGPT ID. Do not rename it casually: a rename requires a generated D1 migration, updated queries, integration tests, and a deployment plan.
 
@@ -652,6 +655,7 @@ All paths below are shown without the production `/app` prefix.
 | `GET /runtime/run/context` | Short-lived run context JWT | Re-render the same session brief the run was dispatched with, from current D1 state; called by the `openfloor_session_context` MCP tool the sandbox exposes to Codex so a long run can re-read the floor mid-run. |
 | `POST/GET /runtime/run/bundle` | Short-lived operation JWT | Store an agent-exported bounded Git bundle and serve it only to the clean trusted publisher. |
 | `POST /runtime/openai/v1/responses` | Short-lived run OpenAI JWT | Forward one active run's Codex request, injecting the session owner's connected OpenAI key when present, else the server credential, outside the repository process. `503` with a clear message when neither exists or the owner's key cannot be decrypted — never a silent fallback. |
+| `POST /runtime/anthropic/v1/messages` (+ `/count_tokens`) | Short-lived run Anthropic JWT | Forward one Claude run's model request with the same owner-else-server-else-`503` resolution, translating the run JWT to upstream `x-api-key` auth. Any other path is logged and concealed so the allowlist is finalized from observed traffic. |
 | `POST /webhooks/github` | Valid GitHub HMAC | Deduplicate and process bounded installation, access, repository, push, PR, check, and status deliveries. |
 
 Response conventions:
@@ -810,8 +814,9 @@ lib/
   identity.ts                Access verification and local identity isolation
   invites.ts                 HMAC signing and constant-time verification
   credential-crypto.ts       AES-GCM encryption at rest for provider credentials
-  provider-credentials.ts    Pure provider/credential types, fingerprints, run resolution order
+  provider-credentials.ts    Pure provider/credential types, per-provider default models, run resolution order
   provider-validation.ts     Connect-time key validation against provider models endpoints
+  claude-sandbox-settings.ts Pinned Claude-runner sandbox posture serializer
   github.ts                  GitHub App JWT, installation-token, repository, and branch reads
   github-state.ts            Signed callback state and webhook HMAC verification
   runtime-token.ts           Short-lived preflight/run operation-scoped gateway JWTs
@@ -827,6 +832,7 @@ worker/
 Dockerfile.sandbox           Version-matched Cloudflare Sandbox runtime image
 .github/workflows/deploy.yml Push-to-main production deploy (test → migrate → build → deploy)
 scripts/codex-runner.mjs     Pinned server-side Codex SDK runner inside the Sandbox image
+scripts/claude-runner.mjs    Pinned Claude Agent SDK runner (non-root, kernel-sandboxed) in the same image
 scripts/openfloor-mcp.mjs    Read-only stdio MCP server exposing openfloor_session_context to Codex
 scripts/publish-bundle.mjs   Fixed trusted bundle/ref/ancestry/file/object validation and non-force publication
 tests/
@@ -990,6 +996,8 @@ Cloudflare Containers requires a Workers Paid account. `PREFLIGHT_ENABLED` is th
 
 `AGENT_RUN_ENABLED` independently gates Phase 4. Production is enabled only after the updated image and Workflow deploy and `OPENAI_API_KEY` is configured; while false the UI omits **Run** and direct starts return `503`. Tests enable only the deterministic test adapter.
 
+`CLAUDE_RUN_ENABLED` independently gates the Claude runner, checked at the same `startQueueItemRun` seam as the quota so it also covers auto-dispatch. Keep it `false` until the Agent SDK image deploys, the anthropic gateway is reachable, and an Anthropic credential resolves (owner-connected or server). While false, a run whose agent's provider is `anthropic` refuses as `disabled`; Codex runs are unaffected.
+
 Durable Object migration `v1` registers `SessionPresence`; `v2` registers `Sandbox`. Keep migration syntax compatible with the pinned Wrangler version.
 
 ### Required secrets
@@ -1005,6 +1013,7 @@ Durable Object migration `v1` registers `SessionPresence`; `v2` registers `Sandb
 - `RUNTIME_GATEWAY_SECRET`
 - `OPENAI_API_KEY`
 - `CREDENTIAL_ENCRYPTION_KEY`
+- `ANTHROPIC_API_KEY` (optional: the server-side fallback for Claude runs; without it, a Claude run requires the session owner's connected key)
 
 Set a secret by its variable name, then enter the value when prompted:
 
@@ -1432,6 +1441,16 @@ An owner cannot remove a member from a session today — `leaveSession` is self-
 **Rationale:** Encryption key from a Worker secret rather than a KMS binding because no KMS binding exists in this stack and Worker secrets are the established channel for exactly this class of material (`INVITE_SIGNING_SECRET`, `GITHUB_STATE_SECRET`); AES-GCM via WebCrypto needs no new dependency. Owner-else-server rather than initiator-else-server because the owner is who the plan quota already bills — the two "who pays" ledgers should not diverge. Refusal instead of silent server-key fallback whenever an owner credential exists but fails, because a run that silently switches payer mid-stream is a billing surprise and masks a broken key the owner believes is active. Open TS-only enums follow the `agent_run_artifacts.kind` precedent and the `users`-recreate invariant's lesson: a CHECK-constrained column change on a live table is a table recreate away from cascade data loss.
 
 **Consequences:** `CREDENTIAL_ENCRYPTION_KEY` joins the required secrets (README, `docs/github-production.md`, `.env.example`, both vitest configs); rotating it invalidates every stored credential and users must reconnect — there is no re-encryption path. `users` now has four inbound `ON DELETE CASCADE` FKs (the never-recreate invariant tightens), and `deleteAccount` deletes credential rows explicitly because the scrub never fires the cascade. The OpenAI gateway no longer requires `OPENAI_API_KEY` to exist before verifying the token — resolution happens after authentication, and its rejection paths are covered by `tests/worker/credentials.test.ts` (registered in the `test:worker` script list, which enumerates files explicitly). Connect-time validation uses the `OPENFLOOR_TEST_PROVIDER_KEYS` deterministic adapter in tests, following `OPENFLOOR_TEST_GITHUB_DATA`. The Claude runner (next milestone piece) consumes the same store through an equivalent Anthropic gateway; provider/model selection per agent remains deferred until that runner exists.
+
+### 2026-08-21 — Add a Claude runner with kernel-sandboxed, non-root execution, behind a disabled rollout gate
+
+**Decision:** `scripts/claude-runner.mjs` runs the Claude Agent SDK (`@anthropic-ai/claude-agent-sdk@0.3.239`, default model `claude-opus-5`) inside the same Sandbox image as the Codex runner, selected per run by the new `floor_agents.provider` column (TS-only open enum, default `openai`; nullable `model` overrides the per-provider defaults in `lib/provider-credentials.ts`, which replace the old `AGENT_RUN_MODEL` constant). Model traffic goes through a new `POST /runtime/anthropic/*` gateway (`x-api-key` injected server-side, owner-else-server-else-refuse, path allowlist `messages` + `messages/count_tokens` with rejected paths logged so the list is finalized from observed traffic). The runner executes as the dedicated non-root `openfloor-agent` user under the SDK's own sandbox, configured by `lib/claude-sandbox-settings.ts` in the container user's `~/.claude/settings.json` (`settingSources: ["user"]`) with every value pinned: `enabled`, `failIfUnavailable`, `allowUnsandboxedCommands: false`, `network.allowedDomains: [gateway host]`, `allowManagedDomainsOnly`. The runner additionally pins `permissionMode: "dontAsk"`, explicit `allowedTools`, `disallowedTools: ["WebFetch", "WebSearch"]`, and `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB`. Everything is behind `CLAUDE_RUN_ENABLED=false`; no API sets a provider yet.
+
+**Rationale — the isolation posture, stated precisely.** The Step 0 spike established that Cloudflare Sandbox containers are Firecracker microVMs (full capability set, `Seccomp: 0`, user namespaces available), so the Claude runner gets the same two isolation layers as the Codex runner — microVM outside, kernel sandbox (bubblewrap) inside — **but the inner layers are not equivalent and this log does not claim they are**: Codex's inner sandbox has a network on/off flag (`networkAccessEnabled: false`); Claude's is a proxy-enforced domain allowlist, pinned here to the gateway host, which in practice keeps repository-controlled Bash at no-network. The SDK's sandbox cannot initialize as root (its seccomp helper fails writing `uid_map`), which is why Claude runs drop to `openfloor-agent` while the root-side pipeline (git reads, bundle export, checks) is unchanged. The SDK's built-in sandbox settings were chosen over driving `@anthropic-ai/sandbox-runtime` directly: the CLI already decides per-command sandboxing, the settings live in a file only openfloor writes (user scope — a customer repo's `.claude/` is never loaded), and direct wrapping would have had to solve the same gateway-reachability allowlist anyway.
+
+**Rationale — verified, not inferred.** Four behaviors were verified empirically in headless SDK sessions against these exact settings before this shipped, because each is load-bearing and one doc-inferred assumption proved wrong: (1) with `allowUnsandboxedCommands: false`, a `dangerouslyDisableSandbox` retry executes but the parameter is **ignored** — the command stays sandboxed (observed: the retried curl still hit the proxy's 403, never the network); (2) headless permission denials resolve cleanly and never hang — a run continues after a denial; (3) `dontAsk` denial is **per-tool default, not a guarantee**: WebFetch/WebSearch deny, but Bash auto-approves even when absent from `allowedTools` — `allowedTools` is an allow-list, not a restriction, and the hard mechanism is `disallowedTools`, which is why WebFetch/WebSearch (CLI-process tools that bypass the sandbox proxy — the egress hole the allowlist can't see) are explicitly denied rather than trusted to default-deny; (4) `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB` strips the documented credential set from Bash subprocesses (verified with an AWS decoy scrubbed while a control variable survived), which keeps the run-scoped `ANTHROPIC_AUTH_TOKEN` gateway JWT out of repository-controlled commands.
+
+**Consequences:** `RUN_SANDBOX_IMAGE_VERSION` bumped to `v2` (image adds the SDK, bubblewrap/socat/ripgrep, the `openfloor-agent` user, and the runner script). `agent_runs.codex_thread_id` keeps its name and is exposed as `providerThreadId` — see Legacy schema naming. The run-event copy that said "Codex" now says "the agent" on shared paths; event kinds and artifact kinds are unchanged (a Claude run's log persists under the existing `codex_log` artifact kind). The runner captures the SDK's `usage` field into `result.json`; `parseCodexResult` still discards it — API-usage metering remains future work. Two verifications intentionally remain for the flag-enable acceptance, because they need a deployed image and a resolvable Anthropic credential: the composed end-to-end (SDK + bubblewrap inside a real Cloudflare container — Stage B proved the srt layer alone), and directly observing `ANTHROPIC_AUTH_TOKEN` scrubbed in-container (local auth doesn't use that variable, so scenario 4 verified the mechanism on the documented set rather than that exact variable). Gateway credential resolution adds a D1 read + AES decrypt per model call; measure during rollout before considering any caching. Re-run the four verifications if the SDK pin changes. §4's configurable MCP servers must revisit finding (3): with `dontAsk` auto-approving some tool classes, per-server tool enablement must be enforced with explicit configuration, not permission-mode defaults.
 
 ## How to record the next decision
 

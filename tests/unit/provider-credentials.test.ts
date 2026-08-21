@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   credentialFingerprint,
+  DEFAULT_PROVIDER_MODELS,
   parseCredentialProvider,
   providerLabel,
   resolveRunCredentialSource,
+  resolveRunModel,
 } from "@/lib/provider-credentials";
 import { validateProviderApiKey } from "@/lib/provider-validation";
 
@@ -23,6 +25,19 @@ describe("provider parsing and labels", () => {
 
   it("fingerprints as the last four characters", () => {
     expect(credentialFingerprint("sk-ant-api03-abcd")).toBe("abcd");
+  });
+});
+
+describe("per-provider run models", () => {
+  it("defaults each provider and lets a nonempty agent model override", () => {
+    expect(resolveRunModel("openai", null)).toBe(DEFAULT_PROVIDER_MODELS.openai);
+    expect(resolveRunModel("anthropic", null)).toBe("claude-opus-5");
+    expect(resolveRunModel("anthropic", "  ")).toBe("claude-opus-5");
+    expect(resolveRunModel("anthropic", "claude-sonnet-5")).toBe("claude-sonnet-5");
+  });
+
+  it("keeps the Codex default the historical AGENT_RUN_MODEL value", () => {
+    expect(DEFAULT_PROVIDER_MODELS.openai).toBe("gpt-5.6-terra");
   });
 });
 

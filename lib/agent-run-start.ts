@@ -7,6 +7,7 @@ import {
   finishRunCheck,
   finishRunPublished,
   finishRunIntegrated,
+  getQueueItemProvider,
   getRunExecutionContext,
   insertRunActivityEvents,
   markRunChecking,
@@ -53,12 +54,24 @@ export async function startQueueItemRun(sessionId: string, queueItemId: string, 
   const bindings = env as unknown as {
     AGENT_RUN_WORKFLOW?: WorkflowBinding;
     AGENT_RUN_ENABLED?: string;
+    CLAUDE_RUN_ENABLED?: string;
     PREFLIGHT_LOGS?: R2BucketLike;
     OPENFLOOR_TEST_ALLOW_IDENTITY_HEADERS?: string;
     OPENFLOOR_TEST_AGENT_RUN_DATA?: string;
   };
   if (bindings.AGENT_RUN_ENABLED !== "true" && bindings.OPENFLOOR_TEST_ALLOW_IDENTITY_HEADERS !== "true") {
     return { ok: false, kind: "disabled", message: "Agent execution is not enabled" };
+  }
+  // Independent rollout gate for the Claude runner (same convention as
+  // AGENT_RUN_ENABLED): stays false until the image with the Agent SDK and
+  // sandbox packages, the anthropic gateway, and a resolvable credential are
+  // live. Checked at this seam for the same reason the quota is — it must
+  // also cover worker/session-router.ts's auto-dispatch path.
+  if (
+    bindings.CLAUDE_RUN_ENABLED !== "true" && bindings.OPENFLOOR_TEST_ALLOW_IDENTITY_HEADERS !== "true"
+    && (await getQueueItemProvider(sessionId, queueItemId, getDb())) === "anthropic"
+  ) {
+    return { ok: false, kind: "disabled", message: "Claude execution is not enabled" };
   }
   // Unlike worker/presence.ts's use of this same function, a null quota here
   // does not fail closed: this is the first thing in the function that

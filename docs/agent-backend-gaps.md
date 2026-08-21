@@ -4,7 +4,7 @@ The current backend persists collaboration state, repository/candidate state, pr
 
 The following capabilities require a separate trusted agent-runtime and repository integration and are intentionally not simulated:
 
-- Model/provider discovery per agent, and agent-authored chat messages. (User-managed provider credentials are implemented: per-user encrypted keys in `user_provider_credentials`, connected in `/settings`, resolved per run as session-owner-key-else-server-key — see AGENTS.md. Choosing a provider/model per agent remains deferred; every run still executes Codex.)
+- Provider/model selection in the agent-creation UI, and agent-authored chat messages. (User-managed provider credentials are implemented — per-user encrypted keys in `user_provider_credentials`, resolved per run as session-owner-key-else-server-key. The Claude runner, anthropic gateway, and `floor_agents.provider`/`model` columns are implemented behind `CLAUDE_RUN_ENABLED=false`; no API sets a provider yet, so every run still executes Codex. See AGENTS.md's 2026-08-21 Claude-runner decision-log entry.)
 - Deployment and generic support for merge queues or non-squash merge methods.
 - Generic artifact download UI beyond the per-run raw-log and session-brief expanders.
 - Agent editing, archival/deletion, ownership transfer, and queue completion/removal.

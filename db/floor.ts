@@ -45,7 +45,7 @@ async function readFloorSnapshot(sessionId: string, userId: string, database: D1
     database.prepare(
       `SELECT a.id, a.name, a.role, a.task, a.owner_user_id AS ownerUserId,
               owner.display_name AS ownerName, a.created_by AS createdByUserId,
-              a.state, a.created_at AS createdAt, a.updated_at AS updatedAt
+              a.state, a.provider, a.model, a.created_at AS createdAt, a.updated_at AS updatedAt
        FROM floor_agents a
        JOIN users owner ON owner.id = a.owner_user_id
        WHERE a.session_id = ?

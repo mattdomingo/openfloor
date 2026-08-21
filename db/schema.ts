@@ -153,6 +153,11 @@ export const floorAgents = sqliteTable(
     role: text("role").notNull(),
     task: text("task").notNull(),
     state: text("state", { enum: ["created"] }).notNull(),
+    // Open enum, TS-only, no SQL CHECK (agent_run_artifacts.kind convention);
+    // existing rows keep current behavior via the default. `model` null means
+    // "use the provider's default" (lib/provider-credentials.ts).
+    provider: text("provider", { enum: ["anthropic", "openai"] }).notNull().default("openai"),
+    model: text("model"),
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
   },
@@ -429,7 +434,12 @@ export const agentRuns = sqliteTable(
     workflowInstanceId: text("workflow_instance_id"),
     sandboxId: text("sandbox_id").notNull(),
     sandboxProcessId: text("sandbox_process_id"),
-    codexThreadId: text("codex_thread_id"),
+    // Legacy column name from the Codex-only era (same rule as
+    // users.chatgpt_user_id): it now stores whichever provider's thread or
+    // session id the run used. Never rename the SQL column — agent_runs has
+    // four inbound ON DELETE CASCADE FKs and a set-null, and a drizzle
+    // rename emits a table recreate that cascade-deletes children.
+    providerThreadId: text("codex_thread_id"),
     summary: text("summary"),
     finalResponse: text("final_response"),
     createdBy: text("created_by").notNull().references(() => users.id),

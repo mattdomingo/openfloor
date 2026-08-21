@@ -31,6 +31,19 @@ export function credentialFingerprint(apiKey: string): string {
   return apiKey.slice(-4);
 }
 
+// Per-provider default models, replacing the old single AGENT_RUN_MODEL
+// constant. A floor agent's nullable `model` column overrides its provider's
+// default; today no API accepts a model, so every run uses these.
+export const DEFAULT_PROVIDER_MODELS: Record<CredentialProvider, string> = {
+  openai: "gpt-5.6-terra",
+  anthropic: "claude-opus-5",
+};
+
+export function resolveRunModel(provider: CredentialProvider, agentModel: string | null): string {
+  const model = agentModel?.trim();
+  return model || DEFAULT_PROVIDER_MODELS[provider];
+}
+
 export type RunCredentialResolution = { source: "owner" } | { source: "server" } | { source: "none" };
 
 // Per-run resolution order: the session owner's connected credential for the
