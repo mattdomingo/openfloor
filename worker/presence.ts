@@ -294,6 +294,13 @@ export async function handlePresenceRequest(request: Request, env: PresenceEnv):
   const headers = new Headers(request.headers);
   headers.set("x-openfloor-user-id", member.userId);
   headers.set("x-openfloor-display-name", member.displayName);
+  // These are Worker-internal, like the identity headers in lib/identity.ts:
+  // strip any client-forged value before the gate below decides whether to
+  // set its own. Without this, a request against an ended (ungated) session
+  // could pass its own owner/session id straight through to the DO and book
+  // metered time to an arbitrary user.
+  headers.delete("x-openfloor-meter-owner-id");
+  headers.delete("x-openfloor-meter-session-id");
 
   // Hour-quota gate: the one point every floor WebSocket passes through.
   // Ended sessions stay viewable for free; live ones are gated on the owner's

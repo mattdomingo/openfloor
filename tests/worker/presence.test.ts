@@ -1,7 +1,7 @@
 import { env } from "cloudflare:workers";
 import { evictDurableObject } from "cloudflare:test";
 import { describe, expect, it, vi } from "vitest";
-import { createSession, currentMonth, upsertUser } from "@/db/sessions";
+import { createSession, currentMonth, endSession, upsertUser } from "@/db/sessions";
 import worker from "./entry";
 import type { PresenceEvent } from "@/lib/session-types";
 
@@ -256,5 +256,91 @@ describe("authenticated presence upgrade", () => {
         .first<{ activeSeconds: number }>();
       expect(session!.activeSeconds).toBe(usage!.seconds);
     });
+  });
+
+  it("ignores forged meter headers on an ended session (no usage booked to the forged owner)", async () => {
+    const attacker = await upsertUser({
+      providerUserId: "chatgpt-spoof-attacker",
+      email: "spoof-attacker@example.com",
+      displayName: "Attacker",
+      fullName: "Attacker",
+    }, env.DB);
+    const victim = await upsertUser({
+      providerUserId: "chatgpt-spoof-victim",
+      email: "spoof-victim@example.com",
+      displayName: "Victim",
+      fullName: "Victim",
+    }, env.DB);
+    const created = await createSession(attacker.id, { title: "Ended", objective: null }, env.DB);
+    await endSession(created.session.id, attacker.id, "owner", env.DB);
+
+    const response = await worker.fetch(new Request(`http://localhost/app/api/sessions/${created.session.id}/presence`, { headers: {
+      host: "localhost",
+      upgrade: "websocket",
+      "x-openfloor-dev-user-id": "chatgpt-spoof-attacker",
+      "x-openfloor-dev-user-email": "spoof-attacker@example.com",
+      // Forged: on the live path these get overwritten by the real owner's
+      // id, but the ended-session path skips the gate (and used to skip
+      // stripping too) — this must not reach the DO at all.
+      "x-openfloor-meter-owner-id": victim.id,
+      "x-openfloor-meter-session-id": created.session.id,
+    } }), env);
+    expect(response.status).toBe(101);
+    const socket = response.webSocket;
+    if (!socket) throw new Error("Missing WebSocket");
+    socket.accept();
+    socket.close(1000, "done");
+
+    // Give any (incorrect) flush a moment to land, then assert nothing did.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const victimUsage = await env.DB.prepare("SELECT seconds FROM usage_months WHERE owner_user_id = ? AND month = ?")
+      .bind(victim.id, currentMonth())
+      .first<{ seconds: number }>();
+    expect(victimUsage).toBeNull();
+    const sessionRow = await env.DB.prepare("SELECT active_seconds AS activeSeconds FROM sessions WHERE id = ?")
+      .bind(created.session.id)
+      .first<{ activeSeconds: number }>();
+    expect(sessionRow!.activeSeconds).toBe(0);
+  });
+
+  it("overwrites forged meter headers with the true owner on a live session", async () => {
+    const owner = await upsertUser({
+      providerUserId: "chatgpt-spoof-owner",
+      email: "spoof-owner@example.com",
+      displayName: "Owner",
+      fullName: "Owner",
+    }, env.DB);
+    const impersonated = await upsertUser({
+      providerUserId: "chatgpt-spoof-impersonated",
+      email: "spoof-impersonated@example.com",
+      displayName: "Impersonated",
+      fullName: "Impersonated",
+    }, env.DB);
+    const created = await createSession(owner.id, { title: "Live", objective: null }, env.DB);
+
+    const response = await worker.fetch(new Request(`http://localhost/app/api/sessions/${created.session.id}/presence`, { headers: {
+      host: "localhost",
+      upgrade: "websocket",
+      "x-openfloor-dev-user-id": "chatgpt-spoof-owner",
+      "x-openfloor-dev-user-email": "spoof-owner@example.com",
+      "x-openfloor-meter-owner-id": impersonated.id,
+      "x-openfloor-meter-session-id": created.session.id,
+    } }), env);
+    expect(response.status).toBe(101);
+    const socket = response.webSocket;
+    if (!socket) throw new Error("Missing WebSocket");
+    socket.accept();
+    socket.close(1000, "done");
+
+    await vi.waitFor(async () => {
+      const ownerUsage = await env.DB.prepare("SELECT seconds FROM usage_months WHERE owner_user_id = ? AND month = ?")
+        .bind(owner.id, currentMonth())
+        .first<{ seconds: number }>();
+      expect(ownerUsage).not.toBeNull();
+    });
+    const impersonatedUsage = await env.DB.prepare("SELECT seconds FROM usage_months WHERE owner_user_id = ? AND month = ?")
+      .bind(impersonated.id, currentMonth())
+      .first<{ seconds: number }>();
+    expect(impersonatedUsage).toBeNull();
   });
 });
