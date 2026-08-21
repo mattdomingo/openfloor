@@ -1,7 +1,7 @@
 import { displayNameFrom } from "@/lib/display-name";
 import type { AuthenticatedIdentity } from "@/lib/identity";
 import { currentMonth, effectivePlan, PLAN_LIMITS, type Plan, type PlanStatus } from "@/lib/plans";
-import type { AppUser, SessionMember, SessionRole, SessionSummary } from "@/lib/session-types";
+import type { AppUser, RemovedSessionMember, SessionMember, SessionRole, SessionSummary } from "@/lib/session-types";
 import { getDb, type D1DatabaseLike } from "./index";
 
 // Re-exported so existing importers (worker/presence.ts, tests) don't need
@@ -24,6 +24,7 @@ type SessionRecord = {
   endedReason: "owner" | "merged" | null;
   archivedAt: number | null;
   activeSeconds: number;
+  lockedAt: number | null;
 };
 
 export class SessionEndedError extends Error {
@@ -43,6 +44,9 @@ export type InvitePreview = {
   // PLAN_LIMITS. Lets JoinScreen show "This session is full" up front
   // instead of only after a 403 from actually clicking Join.
   seatLimit: number;
+  // A locked session still resolves (so a stale bookmark reads as "locked",
+  // not as a broken link) but acceptInvite refuses new joins while true.
+  locked: boolean;
 };
 
 const APP_USER_COLUMNS = `id, chatgpt_user_id AS providerUserId, email, display_name AS displayName,
@@ -197,10 +201,10 @@ export async function listSessionsForUser(userId: string, database = getDb()): P
               COUNT(all_members.user_id) AS memberCount,
               s.created_at AS createdAt, s.updated_at AS updatedAt, s.objective_updated_at AS objectiveUpdatedAt,
               s.ended_at AS endedAt, s.ended_reason AS endedReason,
-              mine.archived_at AS archivedAt, s.active_seconds AS activeSeconds
+              mine.archived_at AS archivedAt, s.active_seconds AS activeSeconds, s.locked_at AS lockedAt
        FROM sessions s
-       JOIN session_members mine ON mine.session_id = s.id AND mine.user_id = ?
-       JOIN session_members all_members ON all_members.session_id = s.id
+       JOIN session_members mine ON mine.session_id = s.id AND mine.user_id = ? AND mine.removed_at IS NULL
+       JOIN session_members all_members ON all_members.session_id = s.id AND all_members.removed_at IS NULL
        GROUP BY s.id, mine.role, mine.archived_at
        ORDER BY s.updated_at DESC`,
     )
@@ -244,6 +248,7 @@ export async function createSession(
       endedReason: null,
       archivedAt: null,
       activeSeconds: 0,
+      lockedAt: null,
     },
     inviteId,
   };
@@ -260,10 +265,10 @@ export async function getSessionForMember(
               COUNT(all_members.user_id) AS memberCount,
               s.created_at AS createdAt, s.updated_at AS updatedAt, s.objective_updated_at AS objectiveUpdatedAt,
               s.ended_at AS endedAt, s.ended_reason AS endedReason,
-              mine.archived_at AS archivedAt, s.active_seconds AS activeSeconds
+              mine.archived_at AS archivedAt, s.active_seconds AS activeSeconds, s.locked_at AS lockedAt
        FROM sessions s
-       JOIN session_members mine ON mine.session_id = s.id AND mine.user_id = ?
-       JOIN session_members all_members ON all_members.session_id = s.id
+       JOIN session_members mine ON mine.session_id = s.id AND mine.user_id = ? AND mine.removed_at IS NULL
+       JOIN session_members all_members ON all_members.session_id = s.id AND all_members.removed_at IS NULL
        WHERE s.id = ?
        GROUP BY s.id, mine.role, mine.archived_at`,
     )
@@ -325,12 +330,34 @@ export async function getSessionMembers(
       `SELECT u.id, u.display_name AS displayName, sm.role, sm.joined_at AS joinedAt
        FROM session_members sm
        JOIN users u ON u.id = sm.user_id
-       WHERE sm.session_id = ?
+       WHERE sm.session_id = ? AND sm.removed_at IS NULL
        ORDER BY CASE sm.role WHEN 'owner' THEN 0 ELSE 1 END, lower(u.display_name), sm.joined_at`,
     )
     .bind(sessionId)
     .all<Omit<SessionMember, "online">>();
   return result.results.map((member) => ({ ...member, online: false }));
+}
+
+// Owner-only audit view of who has been removed, so the soft delete this
+// backs (acceptInvite blocks these rows; restoreMember clears them) is
+// visible in the product rather than only in D1.
+export async function getRemovedSessionMembers(
+  sessionId: string,
+  ownerId: string,
+  database = getDb(),
+): Promise<RemovedSessionMember[] | null> {
+  if ((await getMembershipRole(sessionId, ownerId, database)) !== "owner") return null;
+  const result = await database
+    .prepare(
+      `SELECT u.id, u.display_name AS displayName, sm.removed_at AS removedAt
+       FROM session_members sm
+       JOIN users u ON u.id = sm.user_id
+       WHERE sm.session_id = ? AND sm.removed_at IS NOT NULL
+       ORDER BY sm.removed_at DESC`,
+    )
+    .bind(sessionId)
+    .all<RemovedSessionMember>();
+  return result.results;
 }
 
 export async function getMembershipRole(
@@ -339,7 +366,7 @@ export async function getMembershipRole(
   database = getDb(),
 ): Promise<SessionRole | null> {
   const row = await database
-    .prepare("SELECT role FROM session_members WHERE session_id = ? AND user_id = ?")
+    .prepare("SELECT role FROM session_members WHERE session_id = ? AND user_id = ? AND removed_at IS NULL")
     .bind(sessionId, userId)
     .first<{ role: SessionRole }>();
   return row?.role ?? null;
@@ -360,7 +387,7 @@ export async function getActiveMembershipRole(
       `SELECT sm.role, s.ended_at AS endedAt
        FROM session_members sm
        JOIN sessions s ON s.id = sm.session_id
-       WHERE sm.session_id = ? AND sm.user_id = ?`,
+       WHERE sm.session_id = ? AND sm.user_id = ? AND sm.removed_at IS NULL`,
     )
     .bind(sessionId, userId)
     .first<{ role: SessionRole; endedAt: number | null }>();
@@ -412,52 +439,68 @@ async function getBlockingIntegrationRunId(sessionId: string, database: D1Databa
 export async function getInvitePreview(inviteId: string, database = getDb()): Promise<InvitePreview | null> {
   const row = await database
     .prepare(
-      `SELECT i.id AS inviteId, s.id AS sessionId, s.title, s.objective,
+      `SELECT i.id AS inviteId, s.id AS sessionId, s.title, s.objective, s.locked_at AS lockedAt,
               owner.display_name AS ownerName, owner.plan AS ownerPlan, owner.plan_status AS ownerPlanStatus,
-              (SELECT COUNT(*) FROM session_members m WHERE m.session_id = s.id) AS memberCount
+              (SELECT COUNT(*) FROM session_members m WHERE m.session_id = s.id AND m.removed_at IS NULL) AS memberCount
        FROM session_invites i
        JOIN sessions s ON s.id = i.session_id
-       JOIN session_members owner_member ON owner_member.session_id = s.id AND owner_member.role = 'owner'
+       JOIN session_members owner_member ON owner_member.session_id = s.id AND owner_member.role = 'owner' AND owner_member.removed_at IS NULL
        JOIN users owner ON owner.id = owner_member.user_id
        WHERE i.id = ? AND i.revoked_at IS NULL`,
     )
     .bind(inviteId)
     .first<{
-      inviteId: string; sessionId: string; title: string; objective: string | null; ownerName: string;
+      inviteId: string; sessionId: string; title: string; objective: string | null; lockedAt: number | null; ownerName: string;
       ownerPlan: Plan; ownerPlanStatus: PlanStatus; memberCount: number;
     }>();
   if (!row) return null;
-  const { ownerPlan, ownerPlanStatus, ...preview } = row;
-  return { ...preview, seatLimit: PLAN_LIMITS[effectivePlan(ownerPlan, ownerPlanStatus)].seats };
+  const { ownerPlan, ownerPlanStatus, lockedAt, ...preview } = row;
+  return { ...preview, seatLimit: PLAN_LIMITS[effectivePlan(ownerPlan, ownerPlanStatus)].seats, locked: lockedAt != null };
 }
 
 export async function acceptInvite(
   inviteId: string,
   userId: string,
   database = getDb(),
-): Promise<string | "full" | null> {
+): Promise<string | "full" | "removed" | "locked" | null> {
   const gate = await database
     .prepare(
-      `SELECT (SELECT COUNT(*) FROM session_members m WHERE m.session_id = i.session_id) AS memberCount,
+      `SELECT (SELECT COUNT(*) FROM session_members m WHERE m.session_id = i.session_id AND m.removed_at IS NULL) AS memberCount,
               (SELECT u.plan FROM session_members o JOIN users u ON u.id = o.user_id
-                 WHERE o.session_id = i.session_id AND o.role = 'owner') AS ownerPlan,
+                 WHERE o.session_id = i.session_id AND o.role = 'owner' AND o.removed_at IS NULL) AS ownerPlan,
               (SELECT u.plan_status FROM session_members o JOIN users u ON u.id = o.user_id
-                 WHERE o.session_id = i.session_id AND o.role = 'owner') AS ownerPlanStatus,
+                 WHERE o.session_id = i.session_id AND o.role = 'owner' AND o.removed_at IS NULL) AS ownerPlanStatus,
               EXISTS(SELECT 1 FROM session_members m
-                 WHERE m.session_id = i.session_id AND m.user_id = ?1) AS alreadyMember
-       FROM session_invites i WHERE i.id = ?2 AND i.revoked_at IS NULL`,
+                 WHERE m.session_id = i.session_id AND m.user_id = ?1) AS callerExists,
+              (SELECT m.removed_at FROM session_members m
+                 WHERE m.session_id = i.session_id AND m.user_id = ?1) AS callerRemovedAt,
+              s.locked_at AS lockedAt
+       FROM session_invites i
+       JOIN sessions s ON s.id = i.session_id
+       WHERE i.id = ?2 AND i.revoked_at IS NULL`,
     )
     .bind(userId, inviteId)
-    .first<{ memberCount: number; ownerPlan: Plan | null; ownerPlanStatus: PlanStatus | null; alreadyMember: number }>();
+    .first<{
+      memberCount: number; ownerPlan: Plan | null; ownerPlanStatus: PlanStatus | null;
+      callerExists: number; callerRemovedAt: number | null; lockedAt: number | null;
+    }>();
   if (!gate) return null;
-  // Missing owner plan/status shouldn't happen (every session has an owner
-  // row), but if it ever does, resolve to the strictest limits rather than
-  // the old "pro" fallback.
+  // A removed row still exists, so callerExists is true for it — check the
+  // block before deriving alreadyMember below, or a removed caller would
+  // read as a brand-new joiner instead of being refused.
+  if (gate.callerExists && gate.callerRemovedAt != null) return "removed";
+  const alreadyMember = Boolean(gate.callerExists);
+  // Lock gates new joins only; an existing member's idempotent re-accept
+  // (e.g. after a reload) must keep working while locked.
+  if (!alreadyMember && gate.lockedAt != null) return "locked";
+  // Missing owner plan/status shouldn't happen (every session has an active
+  // owner row), but if it ever does, resolve to the strictest limits rather
+  // than the old "pro" fallback.
   const plan = effectivePlan(gate.ownerPlan ?? "free", gate.ownerPlanStatus ?? "inactive");
   // ponytail: check-then-insert; concurrent accepts can exceed the cap by the
   // number of racers. Upgrade path if it matters: conditional INSERT...SELECT
   // guarded by the count inside the batch.
-  if (!gate.alreadyMember && gate.memberCount >= PLAN_LIMITS[plan].seats) {
+  if (!alreadyMember && gate.memberCount >= PLAN_LIMITS[plan].seats) {
     return "full";
   }
 
@@ -480,7 +523,7 @@ export async function acceptInvite(
       `SELECT sm.session_id AS sessionId
        FROM session_members sm
        JOIN session_invites i ON i.session_id = sm.session_id
-       WHERE i.id = ? AND i.revoked_at IS NULL AND sm.user_id = ?`,
+       WHERE i.id = ? AND i.revoked_at IS NULL AND sm.user_id = ? AND sm.removed_at IS NULL`,
     )
     .bind(inviteId, userId)
     .first<{ sessionId: string }>();
@@ -558,12 +601,128 @@ export async function leaveSession(
   const role = await getMembershipRole(sessionId, userId, database);
   if (!role) return "missing";
   if (role === "owner") return "owner";
+  const now = Date.now();
   await database.batch([
     database.prepare("DELETE FROM floor_assignments WHERE session_id = ? AND user_id = ?").bind(sessionId, userId),
+    // Keeps floor_agents.owner_user_id pointed at a real member: without
+    // this, a leaving agent owner strands the create-time invariant
+    // (db/floor.ts's createFloorAgent requires the owner be a member) and
+    // the snapshot still renders the agent because it joins users, not
+    // session_members.
+    database
+      .prepare(
+        `UPDATE floor_agents SET owner_user_id = (
+           SELECT user_id FROM session_members WHERE session_id = ? AND role = 'owner' AND removed_at IS NULL
+         ), updated_at = ?
+         WHERE session_id = ? AND owner_user_id = ?`,
+      )
+      .bind(sessionId, now, sessionId, userId),
     database.prepare("DELETE FROM session_members WHERE session_id = ? AND user_id = ?").bind(sessionId, userId),
-    database.prepare("UPDATE sessions SET updated_at = ? WHERE id = ?").bind(Date.now(), sessionId),
+    database.prepare("UPDATE sessions SET updated_at = ? WHERE id = ?").bind(now, sessionId),
   ]);
   return "left";
+}
+
+// Soft delete: the row is kept (removed_at/removed_by set) rather than
+// deleted, so acceptInvite can refuse the same person on the still-valid
+// invite link and the owner has an audit trail to restore from. Authorizes
+// through getActiveMembershipRole (not the plain read guard) because an
+// ended session is already read-only for everyone — there is nothing left
+// to evict a member from.
+export async function removeMember(
+  sessionId: string,
+  ownerId: string,
+  targetUserId: string,
+  database = getDb(),
+): Promise<"missing" | "forbidden" | "self" | "owner_target" | { removedAt: number; revision: number }> {
+  const role = await getActiveMembershipRole(sessionId, ownerId, database);
+  if (!role) return "missing";
+  if (role !== "owner") return "forbidden";
+  if (targetUserId === ownerId) return "self";
+  const target = await database
+    .prepare("SELECT role FROM session_members WHERE session_id = ? AND user_id = ? AND removed_at IS NULL")
+    .bind(sessionId, targetUserId)
+    .first<{ role: SessionRole }>();
+  if (!target) return "missing";
+  if (target.role === "owner") return "owner_target";
+
+  const now = Date.now();
+  await database.batch([
+    database
+      .prepare("UPDATE session_members SET removed_at = ?, removed_by = ? WHERE session_id = ? AND user_id = ? AND removed_at IS NULL")
+      .bind(now, ownerId, sessionId, targetUserId),
+    database.prepare("DELETE FROM floor_assignments WHERE session_id = ? AND user_id = ?").bind(sessionId, targetUserId),
+    // Their content (chat, queue prompts) stays as session history; only the
+    // agents they owned transfer, to the owner doing the removing.
+    database
+      .prepare("UPDATE floor_agents SET owner_user_id = ?, updated_at = ? WHERE session_id = ? AND owner_user_id = ?")
+      .bind(ownerId, now, sessionId, targetUserId),
+    database
+      .prepare("UPDATE sessions SET updated_at = ?, floor_revision = floor_revision + 1 WHERE id = ?")
+      .bind(now, sessionId),
+  ]);
+  const revision = await database
+    .prepare("SELECT floor_revision AS revision FROM sessions WHERE id = ?")
+    .bind(sessionId)
+    .first<{ revision: number }>();
+  return { removedAt: now, revision: Number(revision?.revision ?? 0) };
+}
+
+// Re-runs the seat cap (not just idempotently clearing removed_at) because a
+// restore is functionally a fresh join — skipping this would let an owner
+// walk straight through their own plan's seat limit.
+export async function restoreMember(
+  sessionId: string,
+  ownerId: string,
+  targetUserId: string,
+  database = getDb(),
+): Promise<"missing" | "forbidden" | "full" | { restoredAt: number }> {
+  const role = await getActiveMembershipRole(sessionId, ownerId, database);
+  if (!role) return "missing";
+  if (role !== "owner") return "forbidden";
+  const target = await database
+    .prepare("SELECT removed_at AS removedAt FROM session_members WHERE session_id = ? AND user_id = ?")
+    .bind(sessionId, targetUserId)
+    .first<{ removedAt: number | null }>();
+  if (!target || target.removedAt == null) return "missing";
+
+  const owner = await database
+    .prepare(
+      `SELECT u.plan AS plan, u.plan_status AS planStatus,
+              (SELECT COUNT(*) FROM session_members m WHERE m.session_id = ? AND m.removed_at IS NULL) AS memberCount
+       FROM session_members o JOIN users u ON u.id = o.user_id
+       WHERE o.session_id = ? AND o.role = 'owner' AND o.removed_at IS NULL`,
+    )
+    .bind(sessionId, sessionId)
+    .first<{ plan: Plan; planStatus: PlanStatus; memberCount: number }>();
+  const plan = effectivePlan(owner?.plan ?? "free", owner?.planStatus ?? "inactive");
+  if ((owner?.memberCount ?? 0) >= PLAN_LIMITS[plan].seats) return "full";
+
+  const now = Date.now();
+  await database
+    .prepare("UPDATE session_members SET removed_at = NULL, removed_by = NULL WHERE session_id = ? AND user_id = ?")
+    .bind(sessionId, targetUserId)
+    .run();
+  return { restoredAt: now };
+}
+
+// Reversible door-seal: acceptInvite refuses new joins while locked, but
+// existing members keep full read/write and stay connected. Distinct from
+// endSession, which is terminal and read-only for everyone.
+export async function setSessionLocked(
+  sessionId: string,
+  ownerId: string,
+  locked: boolean,
+  database = getDb(),
+): Promise<{ lockedAt: number | null } | false> {
+  if ((await getActiveMembershipRole(sessionId, ownerId, database)) !== "owner") return false;
+  const now = Date.now();
+  const lockedAt = locked ? now : null;
+  await database
+    .prepare("UPDATE sessions SET locked_at = ?, updated_at = ? WHERE id = ? AND ended_at IS NULL")
+    .bind(lockedAt, now, sessionId)
+    .run();
+  return { lockedAt };
 }
 
 export const ENDED_SESSION_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
@@ -696,7 +855,7 @@ export async function authorizePresence(
       `SELECT u.id AS userId, u.display_name AS displayName
        FROM users u
        JOIN session_members sm ON sm.user_id = u.id
-       WHERE u.chatgpt_user_id = ? AND sm.session_id = ?`,
+       WHERE u.chatgpt_user_id = ? AND sm.session_id = ? AND sm.removed_at IS NULL`,
     )
     .bind(providerUserId, sessionId)
     .first<{ userId: string; displayName: string }>();
@@ -722,7 +881,7 @@ export async function getOwnerHourQuota(
        JOIN sessions s ON s.id = o.session_id
        JOIN users u ON u.id = o.user_id
        LEFT JOIN usage_months um ON um.owner_user_id = o.user_id AND um.month = ?
-       WHERE o.session_id = ? AND o.role = 'owner'`,
+       WHERE o.session_id = ? AND o.role = 'owner' AND o.removed_at IS NULL`,
     )
     .bind(currentMonth(), sessionId)
     .first<{ ownerId: string; plan: Plan; planStatus: PlanStatus; seconds: number; endedAt: number | null }>();

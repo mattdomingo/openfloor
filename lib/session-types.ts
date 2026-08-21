@@ -15,6 +15,9 @@ export type SessionSummary = {
   endedReason: "owner" | "merged" | null;
   archivedAt: number | null;
   activeSeconds: number;
+  // Reversible door-seal: null means new joins are accepted. Distinct from
+  // endedAt, which is terminal and makes the floor read-only for everyone.
+  lockedAt: number | null;
 };
 
 export type SessionMember = {
@@ -23,6 +26,15 @@ export type SessionMember = {
   role: SessionRole;
   joinedAt: number;
   online: boolean;
+};
+
+// Owner-only audit view of a soft-deleted member. Their chat and queue
+// prompts remain as session history; only this row's removed_at/removed_by
+// (and their transferred agent ownership) reflect the removal.
+export type RemovedSessionMember = {
+  id: string;
+  displayName: string;
+  removedAt: number;
 };
 
 export type TypingDraft = {
@@ -46,6 +58,7 @@ export type PresenceEvent =
   | { type: "members.changed" }
   | { type: "session.changed"; objective: string | null; updatedAt: number }
   | { type: "session.ended"; endedAt: number; reason: "owner" | "merged" }
+  | { type: "session.locked"; lockedAt: number | null }
   | { type: "floor.changed"; revision: number; domains: import("./floor-types").FloorDomain[] }
   | { type: "run.activity"; runId: string; agentId: string; events: import("./floor-types").RunActivityEvent[] }
   | { type: "error"; code: string };

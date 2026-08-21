@@ -60,6 +60,9 @@ export function InviteDialog({
         <button type="button" className="dialog-close" onClick={dismiss} aria-label="Close"><Icon name="close" /></button>
       </div>
       <div className="dialog-body">
+        {session.lockedAt != null && (
+          <p className="notice" data-tone="attention" role="status">This session is locked. The link is suspended until you unlock it.</p>
+        )}
         <div className="field">
           <span className="label">Share link</span>
           {inviteUrl === undefined ? (

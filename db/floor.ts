@@ -57,7 +57,7 @@ async function readFloorSnapshot(sessionId: string, userId: string, database: D1
        FROM session_members sm
        JOIN users u ON u.id = sm.user_id
        LEFT JOIN floor_assignments fa ON fa.session_id = sm.session_id AND fa.user_id = sm.user_id
-       WHERE sm.session_id = ?
+       WHERE sm.session_id = ? AND sm.removed_at IS NULL
        ORDER BY CASE sm.role WHEN 'owner' THEN 0 ELSE 1 END, lower(u.display_name), sm.joined_at`,
     ).bind(sessionId).all<AssignmentRecord>(),
     database.prepare(
@@ -520,7 +520,7 @@ async function activeBatchApplied(results: Array<{ meta?: { changes?: number } }
 
 async function isSessionMember(sessionId: string, userId: string, database: D1DatabaseLike) {
   const row = await database.prepare(
-    "SELECT 1 AS present FROM session_members WHERE session_id = ? AND user_id = ?",
+    "SELECT 1 AS present FROM session_members WHERE session_id = ? AND user_id = ? AND removed_at IS NULL",
   ).bind(sessionId, userId).first<{ present: number }>();
   return Boolean(row);
 }

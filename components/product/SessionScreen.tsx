@@ -9,7 +9,7 @@ import { useDialogDismiss } from "@/components/session/primitives";
 import { initials } from "@/lib/display-name";
 import { reducePresence } from "@/lib/presence";
 import { isRepositoryReadyForFloor } from "@/lib/repository-gate";
-import type { AppUser, PresenceEvent, RepositoryCandidate, RepositoryConnection, RepositoryPreflight, SessionMember, SessionSummary } from "@/lib/session-types";
+import type { AppUser, PresenceEvent, RemovedSessionMember, RepositoryCandidate, RepositoryConnection, RepositoryPreflight, SessionMember, SessionSummary } from "@/lib/session-types";
 import { AppHeader } from "./AppHeader";
 import { RepositoryCard } from "./RepositoryCard";
 
@@ -19,6 +19,7 @@ export function SessionScreen({
   user,
   session,
   initialMembers,
+  initialRemovedMembers,
   initialRepository,
   initialCandidate,
   initialPreflight,
@@ -29,6 +30,7 @@ export function SessionScreen({
   user: AppUser;
   session: SessionSummary;
   initialMembers: SessionMember[];
+  initialRemovedMembers: RemovedSessionMember[];
   initialRepository: RepositoryConnection | null;
   initialCandidate: RepositoryCandidate | null;
   initialPreflight: RepositoryPreflight | null;
@@ -38,12 +40,17 @@ export function SessionScreen({
 }) {
   const router = useRouter();
   const [members, setMembers] = useState(initialMembers);
+  const [removedMembers, setRemovedMembers] = useState(initialRemovedMembers);
   const [onlineIds, setOnlineIds] = useState<Set<string>>(new Set());
   const [connection, setConnection] = useState<ConnectionState>("connecting");
   const [inviteUrl, setInviteUrl] = useState<string | null | undefined>(undefined);
   const [inviteBusy, setInviteBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [ending, setEnding] = useState(false);
+  const [removeTarget, setRemoveTarget] = useState<SessionMember | null>(null);
+  const [restoreBusy, setRestoreBusy] = useState<string | null>(null);
+  const [restoreError, setRestoreError] = useState<string | null>(null);
+  const [lockBusy, setLockBusy] = useState(false);
   const repositoryReady = isRepositoryReadyForFloor(initialRepository, initialCandidate);
   const [repoGateOpen, setRepoGateOpen] = useState(repoGateRequested && !repositoryReady);
   const [repositoryHighlighted, setRepositoryHighlighted] = useState(false);
@@ -71,8 +78,9 @@ export function SessionScreen({
       return;
     }
     if (!response.ok) return;
-    const body = (await response.json()) as { members: SessionMember[] };
+    const body = (await response.json()) as { members: SessionMember[]; removedMembers: RemovedSessionMember[] };
     setMembers(body.members);
+    setRemovedMembers(body.removedMembers);
   }, [router, session.id]);
 
   useEffect(() => {
@@ -101,10 +109,21 @@ export function SessionScreen({
         }
         if (event.type === "members.changed") void refreshMembers();
         if (event.type === "session.ended") router.refresh();
+        // Re-fetches session.lockedAt from the server rather than patching
+        // local state, matching how session.ended is already handled here.
+        if (event.type === "session.locked") router.refresh();
         if (event.type === "floor.changed" && event.domains.some((domain) => domain === "repository" || domain === "review")) router.refresh();
       });
-      socket.addEventListener("close", () => {
+      socket.addEventListener("close", (event) => {
         if (disposed) return;
+        if (event.code === 4005) {
+          // Owner-initiated removal: leave instead of retrying, and carry the
+          // reason to /home the same way AgentFloorScreen already does for
+          // its own presence socket.
+          sessionStorage.setItem("openfloor:removed-notice", event.reason || "The owner removed you from this session.");
+          router.replace("/home");
+          return;
+        }
         retryRef.current += 1;
         setConnection("reconnecting");
         const delay = Math.min(10_000, 500 * 2 ** Math.min(retryRef.current - 1, 5));
@@ -164,6 +183,27 @@ export function SessionScreen({
     router.replace("/home");
   }
 
+  async function restoreMemberAccess(memberId: string) {
+    setRestoreBusy(memberId);
+    setRestoreError(null);
+    const response = await fetch(`${BASE_PATH}/api/sessions/${session.id}/members/${memberId}`, { method: "POST" });
+    if (response.ok) {
+      await refreshMembers();
+      setNotice("Member allowed back in.");
+    } else {
+      const body = (await response.json().catch(() => null)) as { error?: string } | null;
+      setRestoreError(body?.error ?? "Unable to restore this member.");
+    }
+    setRestoreBusy(null);
+  }
+
+  async function toggleLock() {
+    setLockBusy(true);
+    const response = await fetch(`${BASE_PATH}/api/sessions/${session.id}/lock`, { method: session.lockedAt == null ? "POST" : "DELETE" });
+    if (response.ok) router.refresh();
+    setLockBusy(false);
+  }
+
   return (
     <main className="product-shell">
       <AppHeader user={user} sessionTitle={session.title} />
@@ -185,10 +225,31 @@ export function SessionScreen({
                 <div><strong title={member.displayName}>{member.displayName}{member.id === user.id && <em> You</em>}</strong><span>Joined <LocalDateTime timestamp={member.joinedAt} mode="date" /></span></div>
                 <span className="member-role">{member.role}</span>
                 <span className="presence-label" data-online={member.online}>{member.online ? "Online" : "Offline"}</span>
+                {session.role === "owner" && member.id !== user.id && (
+                  <button type="button" className="button danger-button" data-size="sm" onClick={() => setRemoveTarget(member)}>Remove</button>
+                )}
               </li>
             ))}
           </ul>
         </div>
+
+        {session.role === "owner" && removedMembers.length > 0 && (
+          <div className="member-panel removed-panel">
+            <div className="panel-heading"><div><p className="eyebrow">Removed</p><h2>No longer in this session</h2></div><span>{removedMembers.length}</span></div>
+            <ul className="member-list">
+              {removedMembers.map((member) => (
+                <li key={member.id}>
+                  <span className="avatar" aria-hidden="true">{initials(member.displayName)}</span>
+                  <div><strong title={member.displayName}>{member.displayName}</strong><span>Removed <LocalDateTime timestamp={member.removedAt} mode="date" /></span></div>
+                  <button type="button" className="button" data-size="sm" disabled={restoreBusy === member.id} onClick={() => restoreMemberAccess(member.id)}>
+                    {restoreBusy === member.id ? "Restoring…" : "Allow back in"}
+                  </button>
+                </li>
+              ))}
+            </ul>
+            {restoreError && <p className="form-error" role="alert">{restoreError}</p>}
+          </div>
+        )}
 
         <aside className="session-actions">
           {endedAt != null && (
@@ -214,6 +275,15 @@ export function SessionScreen({
                   </div>
                 </section>
                 <section className="action-card">
+                  <p className="eyebrow">Access</p><h2>{session.lockedAt == null ? "Lock this session" : "This session is locked"}</h2>
+                  <p>{session.lockedAt == null
+                    ? "Locks the door. Nobody new can join with the invite link. Everyone already here is unaffected."
+                    : "The invite link is suspended — nobody new can join. Unlock to let people in again."}</p>
+                  <button className="button" data-variant={session.lockedAt == null ? undefined : "primary"} onClick={toggleLock} disabled={lockBusy}>
+                    {session.lockedAt == null ? "Lock session" : "Unlock session"}
+                  </button>
+                </section>
+                <section className="action-card">
                   <p className="eyebrow">Wrap up</p><h2>End this session</h2><p>Ends it for everyone: the floor becomes read-only and the invite link stops working. Nothing is deleted.</p>
                   <button className="button danger-button" onClick={() => setEnding(true)}>End session</button>
                 </section>
@@ -232,6 +302,17 @@ export function SessionScreen({
         </aside>
       </section>
       {ending && <EndSessionDialog sessionId={session.id} onClose={() => setEnding(false)} />}
+      {removeTarget && (
+        <RemoveMemberDialog
+          sessionId={session.id}
+          member={removeTarget}
+          onClose={() => setRemoveTarget(null)}
+          onRemoved={() => {
+            setNotice(`${removeTarget.displayName} was removed.`);
+            void refreshMembers();
+          }}
+        />
+      )}
       {repoGateOpen && (
         <RepositoryGateDialog
           role={session.role}
@@ -284,6 +365,47 @@ function RepositoryGateDialog({ role, repository, candidate, onClose, onGoToSetu
       <div className="dialog-foot">
         <button type="button" className="button" data-variant="quiet" onClick={dismiss}>Not now</button>
         {role === "owner" && <button type="button" className="button" data-variant="primary" onClick={onGoToSetup}>Go to repository setup</button>}
+      </div>
+    </dialog>
+  );
+}
+
+function RemoveMemberDialog({ sessionId, member, onClose, onRemoved }: {
+  sessionId: string;
+  member: SessionMember;
+  onClose: () => void;
+  onRemoved: () => void;
+}) {
+  const { dismiss, dialogProps } = useDialogDismiss(onClose);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function confirm() {
+    setBusy(true);
+    setError(null);
+    const response = await fetch(`${BASE_PATH}/api/sessions/${sessionId}/members/${member.id}`, { method: "DELETE" });
+    if (!response.ok) {
+      const body = (await response.json().catch(() => null)) as { error?: string } | null;
+      setError(body?.error ?? "Unable to remove this member.");
+      setBusy(false);
+      return;
+    }
+    onRemoved();
+    dismiss();
+  }
+
+  return (
+    <dialog className="dialog" {...dialogProps} aria-labelledby="remove-member-title">
+      <div className="dialog-head">
+        <div className="dialog-title">
+          <h2 id="remove-member-title">Remove {member.displayName}?</h2>
+          <p>Their chat messages and prompts stay as session history. Any agents they own move to you. They won&apos;t be able to rejoin with the current invite link, but you can allow them back in later.</p>
+        </div>
+      </div>
+      {error && <div className="dialog-body"><p className="form-error" role="alert">{error}</p></div>}
+      <div className="dialog-foot">
+        <button type="button" className="button" data-variant="quiet" onClick={dismiss} disabled={busy}>Cancel</button>
+        <button type="button" className="button danger-button" onClick={confirm} disabled={busy}>Remove</button>
       </div>
     </dialog>
   );

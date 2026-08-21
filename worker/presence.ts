@@ -76,6 +76,16 @@ export class SessionPresence extends DurableObject<PresenceEnv> {
       this.broadcast({ type: "session.ended", endedAt: body.endedAt, reason: body.reason });
       return new Response(null, { status: 204 });
     }
+    if (url.pathname === "/session-locked" && request.method === "POST") {
+      const body = (await request.json()) as { lockedAt?: unknown };
+      if (body.lockedAt !== null && typeof body.lockedAt !== "number") {
+        return new Response("Invalid session lock", { status: 400 });
+      }
+      // Sockets stay open and metering is untouched: locking only seals the
+      // door against new joins (acceptInvite), unlike session-ended.
+      this.broadcast({ type: "session.locked", lockedAt: body.lockedAt ?? null });
+      return new Response(null, { status: 204 });
+    }
     if (url.pathname === "/floor-changed" && request.method === "POST") {
       const body = (await request.json()) as { revision?: unknown; domains?: unknown };
       const allowed = new Set<FloorDomain>(["agents", "assignments", "messages", "queue", "repository", "runs", "review"]);
@@ -103,9 +113,17 @@ export class SessionPresence extends DurableObject<PresenceEnv> {
       return new Response(null, { status: 204 });
     }
     if (url.pathname === "/disconnect-user" && request.method === "POST") {
-      const body = (await request.json()) as { userId?: string };
+      const body = (await request.json()) as { userId?: string; reason?: unknown };
+      // 4005 (owner-initiated removal) is distinct from 4001 (plain
+      // membership-ended, e.g. voluntary leave) so the client can tell the
+      // removed person what actually happened instead of silently bouncing
+      // them to /home.
+      const removed = body.reason === "removed";
       if (body.userId) {
-        for (const socket of this.socketsFor(body.userId)) socket.close(4001, "Membership ended");
+        for (const socket of this.socketsFor(body.userId)) {
+          if (removed) socket.close(4005, "Removed from this session");
+          else socket.close(4001, "Membership ended");
+        }
       }
       return new Response(null, { status: 204 });
     }
