@@ -28,8 +28,7 @@ describe("server rendering", () => {
 
     const html = await response.text();
     expect(html).toMatch(/<title>openfloor — Multiplayer agent development<\/title>/i);
-    expect(html).toContain("Build together without losing the thread.");
-    expect(html).toContain("Sign in with your email or a Google account.");
+    expect(html).toContain("Continue with Google or a one-time code sent to your email.");
     expect(html).not.toMatch(/Register|Guest|Session code|type="password"|mock/i);
     expect(html).not.toContain("signin-with-chatgpt");
   });
@@ -38,7 +37,7 @@ describe("server rendering", () => {
     const response = await fetchPath(`${BASE_PATH}?auth=required&return_to=${encodeURIComponent("/app/session/private-room")}`);
     expect(response.status).toBe(200);
     const html = await response.text();
-    expect(html).toContain("Sign in to open that page. You will be sent back to it.");
+    expect(html).toContain("Sign in to continue. You will be sent back to what you were opening.");
     expect(html).toContain('href="/app/session/private-room"');
     // Without the params the landing stays quiet.
     const plain = await (await render()).text();
@@ -105,12 +104,12 @@ describe("server rendering", () => {
   });
 });
 
-async function onboardedUser(providerUserId: string, firstName: string, lastName: string) {
+async function onboardedUser(providerUserId: string, firstName: string, lastName: string, email = `${providerUserId}@example.com`) {
   const headers = {
     accept: "text/html",
     host: "localhost",
     "x-openfloor-dev-user-id": providerUserId,
-    "x-openfloor-dev-user-email": `${providerUserId}@example.com`,
+    "x-openfloor-dev-user-email": email,
     "x-openfloor-dev-user-name": `${firstName} ${lastName}`,
   };
   const form = new FormData();
@@ -122,6 +121,64 @@ async function onboardedUser(providerUserId: string, firstName: string, lastName
   if (!row) throw new Error("Onboarded user was not persisted");
   return { userId: row.id, headers };
 }
+
+// Reproduces the reported bug end to end: a returning user whose second
+// login used a different method (simulated here by a different dev-identity
+// provider id) and a differently-cased but identical email must land on the
+// same account — and therefore the same session — as their first login,
+// not a fresh membership-less one that 404s. onboardedUser's headers path
+// through worker/index.ts's identity resolution exactly like a real
+// Cloudflare Access login would.
+describe("returning through a different login method", () => {
+  it("resolves a same-email, different-case, different-provider login to the account holding the session", async () => {
+    const owner = await onboardedUser("otp-login-owner", "Otp", "Owner", "dup-login@example.com");
+    const created = await SELF.fetch("http://localhost/app/api/sessions", {
+      method: "POST",
+      headers: { ...owner.headers, "content-type": "application/json", accept: "application/json" },
+      body: JSON.stringify({ title: "Reopened by Google" }),
+    });
+    expect(created.status).toBe(201);
+    const { session } = await created.json() as { session: { id: string } };
+
+    const googleHeaders = {
+      accept: "text/html",
+      host: "localhost",
+      "x-openfloor-dev-user-id": "google-login-owner",
+      "x-openfloor-dev-user-email": "Dup-Login@Example.com",
+      "x-openfloor-dev-user-name": "Otp Owner",
+    };
+
+    const sessionPage = await SELF.fetch(`http://localhost/app/session/${session.id}`, { headers: googleHeaders });
+    expect(sessionPage.status).toBe(200);
+    expect(await sessionPage.text()).toContain("Reopened by Google");
+
+    const floorPage = await SELF.fetch(`http://localhost/app/session/${session.id}/floor`, { headers: googleHeaders });
+    expect(floorPage.status).toBe(200);
+
+    const rows = await env.DB.prepare("SELECT COUNT(*) AS n FROM users WHERE email = ?").bind("dup-login@example.com").first<{ n: number }>();
+    expect(rows?.n).toBe(1);
+  });
+
+  it("still 404s for a genuine non-member with a different email", async () => {
+    const owner = await onboardedUser("real-owner", "Real", "Owner", "real-owner@example.com");
+    const created = await SELF.fetch("http://localhost/app/api/sessions", {
+      method: "POST",
+      headers: { ...owner.headers, "content-type": "application/json", accept: "application/json" },
+      body: JSON.stringify({ title: "Not shared" }),
+    });
+    const { session } = await created.json() as { session: { id: string } };
+
+    const outsider = await onboardedUser("real-outsider", "Real", "Outsider", "real-outsider@example.com");
+    const response = await SELF.fetch(`http://localhost/app/session/${session.id}`, { headers: outsider.headers });
+    expect(response.status).toBe(404);
+  });
+
+  it("404s for a session id that does not exist", async () => {
+    const owner = await onboardedUser("missing-session-user", "Missing", "User", "missing-session@example.com");
+    const response = await SELF.fetch("http://localhost/app/session/does-not-exist", { headers: owner.headers });
+    expect(response.status).toBe(404);
+  });
+});
 
 describe("plan-limits UI", () => {
   it("a new user's /app/home shows the free-tier copy", async () => {

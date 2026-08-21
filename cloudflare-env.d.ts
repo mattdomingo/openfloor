@@ -12,6 +12,7 @@ declare global {
       GITHUB_WEBHOOK_SECRET: string;
       SESSION_PRESENCE: DurableObjectNamespace<SessionPresence>;
       TEST_MIGRATIONS: string;
+      ACCOUNT_EMAIL_MERGE_QUERIES: string;
     }
   }
 }

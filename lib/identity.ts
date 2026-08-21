@@ -16,6 +16,16 @@ export type IdentityEnvironment = {
   OPENFLOOR_TEST_ALLOW_IDENTITY_HEADERS?: string;
 };
 
+// Cloudflare Access issues a different `sub` per identity provider (Google
+// vs. a one-time email code), so email is the only stable signal a returning
+// user carries across login methods. `db/sessions.ts:upsertUser` and the
+// `idx_users_email` unique index both depend on every identity constructor
+// here producing the same canonical form for the same mailbox — lowercase,
+// trimmed — or "sign in a different way" silently creates a second account.
+function normalizeEmail(value: string): string {
+  return value.trim().toLowerCase();
+}
+
 const ACCESS_JWT_HEADER = "cf-access-jwt-assertion";
 const TRUSTED_USER_ID_HEADER = "x-openfloor-authenticated-user-id";
 const TRUSTED_USER_EMAIL_HEADER = "x-openfloor-authenticated-user-email";
@@ -53,7 +63,7 @@ export async function cloudflareAccessIdentity(
 
 export function identityFromVerifiedAccessClaims(payload: JWTPayload): AuthenticatedIdentity | null {
   const subject = payload.sub?.trim();
-  const email = typeof payload.email === "string" ? payload.email.trim() : "";
+  const email = typeof payload.email === "string" ? normalizeEmail(payload.email) : "";
   if (!subject || !email) return null;
   const fullName = typeof payload.name === "string" ? payload.name.trim() || null : null;
   return {
@@ -68,8 +78,9 @@ export function identityFromVerifiedAccessClaims(payload: JWTPayload): Authentic
 // always deletes client-provided values before setting verified identity.
 export function identityFromTrustedHeaders(headers: Headers): AuthenticatedIdentity | null {
   const providerUserId = headers.get(TRUSTED_USER_ID_HEADER)?.trim();
-  const email = headers.get(TRUSTED_USER_EMAIL_HEADER)?.trim();
-  if (!providerUserId || !email) return null;
+  const rawEmail = headers.get(TRUSTED_USER_EMAIL_HEADER)?.trim();
+  if (!providerUserId || !rawEmail) return null;
+  const email = normalizeEmail(rawEmail);
   const fullName = headers.get(TRUSTED_USER_NAME_HEADER)?.trim() || null;
   return { providerUserId, email, fullName, displayName: fullName || email };
 }
@@ -101,9 +112,10 @@ export function localDevelopmentIdentity(
 
   const providerUserId = (allowTestHeaders ? headers.get(DEV_USER_ID_HEADER) : null)?.trim()
     || (isLoopback ? environment.OPENFLOOR_DEV_USER_ID?.trim() : null);
-  const email = (allowTestHeaders ? headers.get(DEV_USER_EMAIL_HEADER) : null)?.trim()
+  const rawEmail = (allowTestHeaders ? headers.get(DEV_USER_EMAIL_HEADER) : null)?.trim()
     || (isLoopback ? environment.OPENFLOOR_DEV_USER_EMAIL?.trim() : null);
-  if (!providerUserId || !email) return null;
+  if (!providerUserId || !rawEmail) return null;
+  const email = normalizeEmail(rawEmail);
 
   const fullName = ((allowTestHeaders ? headers.get(DEV_USER_NAME_HEADER) : null)
     || (isLoopback ? environment.OPENFLOOR_DEV_USER_NAME : null))?.trim() || null;

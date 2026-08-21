@@ -155,6 +155,13 @@
       "when": 1787335824386,
       "tag": "0021_nosy_black_bolt",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "6",
+      "when": 1787340000000,
+      "tag": "0022_account_email_merge",
+      "breakpoints": true
     }
   ]
 }

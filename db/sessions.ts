@@ -85,8 +85,14 @@ export async function upsertUser(identity: AuthenticatedIdentity, database = get
   // Cloudflare Access issues a different `sub` per login method (Google vs.
   // a one-time email code), so a returning user who signs in a different way
   // than last time presents a provider id we've never seen. Fall back to
-  // matching by email so they land on their existing account (and its
-  // session memberships) instead of a fresh, empty one.
+  // matching by email — the account key since idx_users_email, and always
+  // canonicalized before it reaches here (lib/identity.ts's normalizeEmail)
+  // — so they land on their existing account and its session memberships
+  // instead of a fresh, empty one. Before idx_users_email existed, a case
+  // mismatch here silently fell through to the INSERT below and created a
+  // permanent duplicate account with no memberships — the direct cause of
+  // the Google-sign-in-returns-404 bug that idx_users_email and the 0022
+  // merge migration fix.
   const byEmail = await database
     .prepare(
       `UPDATE users SET chatgpt_user_id = ?, updated_at = ? WHERE email = ? AND deleted_at IS NULL RETURNING ${APP_USER_COLUMNS}`,
@@ -95,11 +101,18 @@ export async function upsertUser(identity: AuthenticatedIdentity, database = get
     .first<AppUserRow>();
   if (byEmail) return normalizeAppUser(byEmail);
 
+  // Neither matched — a genuinely new account. ON CONFLICT(email) rather
+  // than a plain INSERT closes the race between two concurrent first logins
+  // for the same address via different methods (e.g. two tabs, one
+  // finishing a Google login and one finishing an email-code login at the
+  // same moment): the loser's insert becomes an update onto the row the
+  // winner just created instead of throwing on idx_users_email.
   const createdId = crypto.randomUUID();
   const created = await database
     .prepare(
       `INSERT INTO users (id, chatgpt_user_id, email, display_name, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(email) DO UPDATE SET chatgpt_user_id = excluded.chatgpt_user_id, updated_at = excluded.updated_at
        RETURNING ${APP_USER_COLUMNS}`,
     )
     .bind(createdId, identity.providerUserId, identity.email, identity.displayName, now, now)
@@ -107,17 +120,6 @@ export async function upsertUser(identity: AuthenticatedIdentity, database = get
 
   if (!created) throw new Error("Unable to create or update the current user.");
   return normalizeAppUser(created);
-}
-
-export async function findUserByProviderId(
-  providerUserId: string,
-  database = getDb(),
-): Promise<AppUser | null> {
-  const row = await database
-    .prepare(`SELECT ${APP_USER_COLUMNS} FROM users WHERE chatgpt_user_id = ?`)
-    .bind(providerUserId)
-    .first<AppUserRow>();
-  return row ? normalizeAppUser(row) : null;
 }
 
 export async function findUserById(userId: string, database = getDb()): Promise<AppUser | null> {
