@@ -2,6 +2,7 @@ import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import {
   acceptInvite,
+  archiveSessionForMember,
   createSession,
   currentMonth,
   deleteSession,
@@ -20,6 +21,7 @@ import {
   revokeInvite,
   rotateInvite,
   SessionEndedError,
+  setSessionAutoDispatch,
   updateSessionObjective,
   upsertUser,
 } from "@/db/sessions";
@@ -51,7 +53,7 @@ import {
   markPreflightRunning,
   PreflightConflictError,
 } from "@/db/preflights";
-import { createFloorAgent, createFloorMessage, createFloorQueueItem, getFloorSnapshot } from "@/db/floor";
+import { createFloorAgent, createFloorMessage, createFloorQueueItem, getFloorSnapshot, setFloorQueueItemPaused } from "@/db/floor";
 import {
   beginRunIntegration,
   AgentRunNotReadyError,
@@ -638,5 +640,41 @@ describe("plan limits", () => {
     const relogged = await upsertUser(identity("plan-persist-user", "Persist"), env.DB);
     expect(relogged.plan).toBe("max");
     expect(relogged.planStatus).toBe("active");
+  });
+
+  it("the wind-down set (end, leave, revoke, auto-dispatch off, pause, archive, delete) still works at quota", async () => {
+    // The quota gate only sits in front of the operations that spend money —
+    // startQueueItemRun and the repository preflight/sync routes — never in
+    // front of getActiveMembershipRole itself. Everything here must keep
+    // working for an owner who is out of hours, so they can always wind
+    // down and never get stuck.
+    const owner = await upsertUser(identity("winddown-owner", "Owner"), env.DB);
+    const member = await upsertUser(identity("winddown-member", "Member"), env.DB);
+    const created = await createSession(owner.id, { title: "Wind down", objective: null }, env.DB);
+    await acceptInvite(created.inviteId, member.id, env.DB);
+    await env.DB.prepare("INSERT INTO usage_months (owner_user_id, month, seconds) VALUES (?, ?, ?)")
+      .bind(owner.id, currentMonth(), 2 * 3600)
+      .run();
+    await expect(hourQuotaExhausted(owner.id, env.DB)).resolves.toBe(true);
+
+    await expect(revokeInvite(created.session.id, owner.id, env.DB)).resolves.toBe(true);
+    await expect(setSessionAutoDispatch(created.session.id, owner.id, false, env.DB)).resolves.toBe(true);
+
+    const floor = await createFloorQueueItem(created.session.id, owner.id, { prompt: "Pause me", agentId: null }, env.DB);
+    const queueItemId = floor!.queue[0].id;
+    await expect(setFloorQueueItemPaused(created.session.id, owner.id, queueItemId, true, env.DB)).resolves.not.toBeNull();
+
+    await expect(archiveSessionForMember(created.session.id, owner.id, env.DB)).resolves.toBe("archived");
+    await expect(leaveSession(created.session.id, member.id, env.DB)).resolves.toBe("left");
+    await expect(endSession(created.session.id, owner.id, "owner", env.DB)).resolves.toEqual(
+      expect.objectContaining({ reason: "owner" }),
+    );
+
+    // Delete needs its own session (endSession above already consumed this
+    // one's "live" state, and delete works on either).
+    const secondCreated = await createSession(owner.id, { title: "Wind down 2", objective: null }, env.DB);
+    await expect(deleteSession(secondCreated.session.id, owner.id, env.DB)).resolves.toEqual(
+      expect.objectContaining({ deleted: true }),
+    );
   });
 });

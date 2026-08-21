@@ -19,7 +19,7 @@ export async function POST(request: Request) {
   if (!input) return Response.json({ error: "A title under 100 characters is required" }, { status: 400 });
 
   if (await hourQuotaExhausted(user.id)) {
-    return Response.json({ error: "Your plan's monthly session hours are used up." }, { status: 403 });
+    return Response.json({ error: "Your plan's monthly session hours are used up.", code: "quota_exhausted" }, { status: 403 });
   }
 
   const created = await createSession(user.id, input);

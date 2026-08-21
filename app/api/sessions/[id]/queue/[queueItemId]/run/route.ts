@@ -21,6 +21,7 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
   if (!result.ok) {
     if (result.kind === "disabled") return Response.json({ error: result.message }, { status: 503 });
     if (result.kind === "not_ready") return Response.json({ error: result.message }, { status: result.message === "Session not found" ? 404 : 409 });
+    if (result.kind === "quota_exhausted") return Response.json({ error: result.message, code: "quota_exhausted" }, { status: 403 });
     return Response.json({ error: result.message }, { status: 409 });
   }
   const floor = await getFloorSnapshot(sessionId, user.id);

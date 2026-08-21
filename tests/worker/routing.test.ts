@@ -220,6 +220,30 @@ describe("agent router tick", () => {
     ]);
   });
 
+  it("holds with backoff, and does not throw, when the owner is out of session hours", async () => {
+    // The regression this guards: a quota check that throws instead of
+    // returning a StartRunResult would hit worker/session-router.ts's bare
+    // catch and retry every 60s forever, since "out of hours" does not
+    // resolve until the month rolls over — unlike "not_ready", which is a
+    // transient precondition. Scripting the union variant here (as
+    // lib/agent-run-start.ts actually returns it) proves runRoutingTick
+    // treats it exactly like any other session-wide precondition: held,
+    // recorded, no throw.
+    const room = await routingRoom("quota");
+    const agentA = await addAgent(room.sessionId, room.owner.id, "Alpha", "Backend", "api work");
+    await createFloorQueueItem(room.sessionId, room.owner.id, { prompt: "Backend api change", agentId: agentA }, env.DB);
+    const stub = startRunStub([
+      { ok: false, kind: "quota_exhausted", message: "Your plan's monthly session hours are used up." },
+    ]);
+    const outcome = await runRoutingTick(room.sessionId, "toggle", stub.deps, env.DB);
+    expect(outcome.held).toBe(true);
+    expect(stub.calls).toHaveLength(1);
+    const recorded = await decisions(room.sessionId);
+    expect(recorded).toEqual([
+      expect.objectContaining({ decision: "held", reason: "Your plan's monthly session hours are used up." }),
+    ]);
+  });
+
   it("holds when no agents exist and never re-assigns user-assigned items", async () => {
     const emptyRoom = await routingRoom("noagents");
     await createFloorQueueItem(emptyRoom.sessionId, emptyRoom.owner.id, { prompt: "Anything", agentId: null }, env.DB);

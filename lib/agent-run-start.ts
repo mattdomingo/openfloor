@@ -18,7 +18,7 @@ import {
   replaceRunFiles,
   RUNNER_SEQUENCE_BASE,
 } from "@/db/runs";
-import { getGitHubAppConfig } from "@/db";
+import { getDb, getGitHubAppConfig } from "@/db";
 import {
   activateRepositoryCandidate,
   failRepositoryCandidate,
@@ -26,7 +26,7 @@ import {
   getRepositoryConnectionForMember,
   reserveRepositoryCandidate,
 } from "@/db/repositories";
-import { getMembershipRole, getSessionForMember } from "@/db/sessions";
+import { getMembershipRole, getOwnerHourQuota, getSessionForMember, PLAN_LIMITS } from "@/db/sessions";
 import { createDraftPullRequest, createRepositoryBranch, getInstallationRepository, getRepositoryRefSha, GitHubApiError, mergeRepositoryBranch, setTestRepositoryMergeConflict } from "@/lib/github";
 import { openFloorBranchName } from "@/lib/repository-refs";
 import { notifyRunActivity } from "@/lib/presence-server";
@@ -37,8 +37,18 @@ type R2BucketLike = { put(key: string, value: string, options?: unknown): Promis
 
 export type StartRunResult =
   | { ok: true; runId: string }
-  | { ok: false; kind: "disabled" | "not_ready" | "conflict"; message: string };
+  | { ok: false; kind: "disabled" | "not_ready" | "conflict" | "quota_exhausted"; message: string };
 
+// This is the one seam that covers every way a run can start: the two HTTP
+// routes (run, retry) AND worker/session-router.ts's auto-dispatch DO, which
+// has no HTTP layer at all. A quota check placed in the route handlers
+// instead would be silently bypassed whenever a session's auto_dispatch is
+// on. Returning a StartRunResult variant rather than throwing matters for
+// the same reason: db/routing.ts already treats any non-"conflict" failure
+// as a session-wide precondition and holds with exponential backoff — a
+// throw would instead hit the router DO's bare catch and retry every 60s
+// forever, since "owner is out of hours" doesn't resolve until the month
+// rolls over.
 export async function startQueueItemRun(sessionId: string, queueItemId: string, userId: string): Promise<StartRunResult> {
   const bindings = env as unknown as {
     AGENT_RUN_WORKFLOW?: WorkflowBinding;
@@ -49,6 +59,17 @@ export async function startQueueItemRun(sessionId: string, queueItemId: string, 
   };
   if (bindings.AGENT_RUN_ENABLED !== "true" && bindings.OPENFLOOR_TEST_ALLOW_IDENTITY_HEADERS !== "true") {
     return { ok: false, kind: "disabled", message: "Agent execution is not enabled" };
+  }
+  // Unlike worker/presence.ts's use of this same function, a null quota here
+  // does not fail closed: this is the first thing in the function that
+  // touches the session at all (no prior authorization confirmed it
+  // exists), so null is the ordinary shape of "sessionId doesn't resolve to
+  // anything," not just a rare invariant violation — createAgentRun below
+  // already turns that into the existing AgentRunNotReadyError("Session not
+  // found"), which failing closed here would only pre-empt with a bare throw.
+  const quota = await getOwnerHourQuota(sessionId, getDb());
+  if (quota && quota.endedAt == null && quota.seconds >= PLAN_LIMITS[quota.plan].hours * 3600) {
+    return { ok: false, kind: "quota_exhausted", message: "Your plan's monthly session hours are used up." };
   }
   try {
     await ensureNextCandidateCycle(sessionId, userId);
