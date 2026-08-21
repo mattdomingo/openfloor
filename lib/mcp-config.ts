@@ -3,10 +3,10 @@
 //
 // The internal shape is deliberately provider-neutral: the Claude Agent SDK
 // takes options.mcpServers keyed by name ({type, url, headers}), and the
-// Codex SDK takes config.mcp_servers — its serializer lands with the Codex
-// parity work, once the CLI's remote-server config contract is verified
-// rather than written from memory (the SDK types are an untyped TOML
-// passthrough). Do not shape this module's types around either provider.
+// Codex SDK takes config.mcp_servers — verified against the pinned
+// codex-cli 0.148.0 binary as [mcp_servers.<name>] url/http_headers over
+// streamable_http (no sse equivalent). Its serializer lands with the Codex
+// parity work. Do not shape this module's types around either provider.
 
 export const RESERVED_MCP_SERVER_NAMES = new Set(["openfloor"]);
 export const MAX_MCP_SERVERS_PER_SESSION = 10;

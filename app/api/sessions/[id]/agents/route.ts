@@ -11,8 +11,10 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   const input = parseAgentInput(await readJson(request));
   if (!input) return Response.json({ error: "Name, role, task, and a valid owner are required" }, { status: 400 });
   // Same convention as the run gates: while a provider's rollout flag is off,
-  // its option is hidden in the UI and a direct request is refused, so no
-  // agent exists that can never execute.
+  // its option is hidden in the UI and a direct request is refused, so a
+  // gated-provider agent cannot be CREATED. Agents created while the flag was
+  // on persist through a rollback by design and degrade correctly: routing
+  // skips them, manual runs return disabled.
   if (disabledRunProviders().has(input.provider)) {
     return Response.json({ error: "Claude execution is not enabled" }, { status: 503 });
   }
