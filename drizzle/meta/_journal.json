@@ -148,6 +148,13 @@
       "when": 1787330706894,
       "tag": "0020_regular_cardiac",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "6",
+      "when": 1787335824386,
+      "tag": "0021_nosy_black_bolt",
+      "breakpoints": true
     }
   ]
 }

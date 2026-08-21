@@ -874,6 +874,11 @@ describe("plan limits", () => {
     const member = await upsertUser(identity("winddown-member", "Member"), env.DB);
     const created = await createSession(owner.id, { title: "Wind down", objective: null }, env.DB);
     await acceptInvite(created.inviteId, member.id, env.DB);
+    // Accept before the invite is revoked below — removeMember/setSessionLocked
+    // themselves don't touch the invite, but this session's only invite gets
+    // revoked a few lines down and a revoked invite can no longer be accepted.
+    const removable = await upsertUser(identity("winddown-removable", "Removable"), env.DB);
+    await expect(acceptInvite(created.inviteId, removable.id, env.DB)).resolves.toBe(created.session.id);
     await env.DB.prepare("INSERT INTO usage_months (owner_user_id, month, seconds) VALUES (?, ?, ?)")
       .bind(owner.id, currentMonth(), 2 * 3600)
       .run();
@@ -882,8 +887,6 @@ describe("plan limits", () => {
     await expect(revokeInvite(created.session.id, owner.id, env.DB)).resolves.toBe(true);
     await expect(setSessionAutoDispatch(created.session.id, owner.id, false, env.DB)).resolves.toBe(true);
 
-    const removable = await upsertUser(identity("winddown-removable", "Removable"), env.DB);
-    await acceptInvite(created.inviteId, removable.id, env.DB);
     await expect(removeMember(created.session.id, owner.id, removable.id, env.DB)).resolves.toEqual(
       expect.objectContaining({ removedAt: expect.any(Number) }),
     );
