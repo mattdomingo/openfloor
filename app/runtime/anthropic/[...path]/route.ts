@@ -1,6 +1,7 @@
 import { getSessionOwnerCredential } from "@/db/provider-credentials";
 import { getRunGatewayContext } from "@/db/runs";
 import { decryptCredential } from "@/lib/credential-crypto";
+import { resolveRunCredentialSource } from "@/lib/provider-credentials";
 import { verifyRunGatewayToken } from "@/lib/runtime-token";
 import { env } from "cloudflare:workers";
 
@@ -30,20 +31,25 @@ export async function POST(request: Request, { params }: { params: Promise<{ pat
     console.warn(`anthropic gateway rejected path: POST /${parts.join("/")}`);
     return new Response("Not found", { status: 404 });
   }
-  // Same resolution order as the OpenAI gateway (lib/provider-credentials.ts):
-  // session owner's connected key, else the server key, else refuse — and a
-  // present-but-unreadable owner credential refuses rather than switching payer.
+  // Same resolution order as the OpenAI gateway, decided by
+  // resolveRunCredentialSource: session owner's connected key, else the server
+  // key, else refuse — and a present-but-unreadable owner credential refuses
+  // rather than switching payer.
   const ownerCredential = await getSessionOwnerCredential(claims.sessionId, "anthropic");
+  const resolution = resolveRunCredentialSource({
+    ownerCredentialPresent: Boolean(ownerCredential),
+    serverKeyPresent: Boolean(bindings.ANTHROPIC_API_KEY),
+  });
   let apiKey: string;
-  if (ownerCredential) {
-    const decrypted = bindings.CREDENTIAL_ENCRYPTION_KEY
+  if (resolution.source === "owner") {
+    const decrypted = ownerCredential && bindings.CREDENTIAL_ENCRYPTION_KEY
       ? await decryptCredential(ownerCredential.ciphertext, bindings.CREDENTIAL_ENCRYPTION_KEY, `${ownerCredential.ownerUserId}:anthropic`)
       : null;
     if (!decrypted) {
       return new Response("The session owner's connected Anthropic key could not be read. Reconnect it in Settings.", { status: 503 });
     }
     apiKey = decrypted;
-  } else if (bindings.ANTHROPIC_API_KEY) {
+  } else if (resolution.source === "server" && bindings.ANTHROPIC_API_KEY) {
     apiKey = bindings.ANTHROPIC_API_KEY;
   } else {
     return new Response("No Anthropic credential is available for this run.", { status: 503 });

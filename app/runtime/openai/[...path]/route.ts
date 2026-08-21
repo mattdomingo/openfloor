@@ -1,6 +1,7 @@
 import { getSessionOwnerCredential } from "@/db/provider-credentials";
 import { getRunGatewayContext } from "@/db/runs";
 import { decryptCredential } from "@/lib/credential-crypto";
+import { resolveRunCredentialSource } from "@/lib/provider-credentials";
 import { verifyRunGatewayToken } from "@/lib/runtime-token";
 import { env } from "cloudflare:workers";
 
@@ -24,20 +25,24 @@ export async function POST(request: Request, { params }: { params: Promise<{ pat
   const parts = (await params).path;
   const normalized = parts[0] === "v1" ? parts.slice(1) : parts;
   if (normalized.length !== 1 || normalized[0] !== "responses") return new Response("Not found", { status: 404 });
-  // Resolution order (lib/provider-credentials.ts): the session owner's
+  // Resolution order lives in resolveRunCredentialSource: the session owner's
   // connected key, else the server key, else refuse. A present-but-unreadable
   // owner credential refuses rather than silently billing the server key.
   const ownerCredential = await getSessionOwnerCredential(claims.sessionId, "openai");
+  const resolution = resolveRunCredentialSource({
+    ownerCredentialPresent: Boolean(ownerCredential),
+    serverKeyPresent: Boolean(bindings.OPENAI_API_KEY),
+  });
   let apiKey: string;
-  if (ownerCredential) {
-    const decrypted = bindings.CREDENTIAL_ENCRYPTION_KEY
+  if (resolution.source === "owner") {
+    const decrypted = ownerCredential && bindings.CREDENTIAL_ENCRYPTION_KEY
       ? await decryptCredential(ownerCredential.ciphertext, bindings.CREDENTIAL_ENCRYPTION_KEY, `${ownerCredential.ownerUserId}:openai`)
       : null;
     if (!decrypted) {
       return new Response("The session owner's connected OpenAI key could not be read. Reconnect it in Settings.", { status: 503 });
     }
     apiKey = decrypted;
-  } else if (bindings.OPENAI_API_KEY) {
+  } else if (resolution.source === "server" && bindings.OPENAI_API_KEY) {
     apiKey = bindings.OPENAI_API_KEY;
   } else {
     return new Response("No OpenAI credential is available for this run.", { status: 503 });

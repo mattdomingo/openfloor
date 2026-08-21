@@ -64,6 +64,12 @@ const PUBLISHER_SANDBOX_IMAGE_VERSION = "v2";
 // unreachable immediately; the existing idle sweep reclaims them.
 // Bump this whenever Dockerfile.sandbox's run-sandbox contents change.
 const RUN_SANDBOX_IMAGE_VERSION = "v2";
+// Claude runs get a fresh HOME per run, inside the per-run scratch tree that
+// prepare wipes and the release reset removes. Pool sandboxes outlive
+// sessions, so everything the CLI persists under its home — transcripts,
+// todos, ~/.claude.json, whatever the next SDK version adds — must die with
+// the run by construction, not by enumerating state paths.
+const CLAUDE_AGENT_HOME = "/tmp/openfloor/agent-home";
 
 export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Params> {
   async run(event: Readonly<WorkflowEvent<Params>>, step: WorkflowStep): Promise<{ status: string }> {
@@ -116,13 +122,17 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
         labels: { sessionId: context.sessionId, runId },
       });
       pooled = { id: sandboxId, sandbox };
-      await step.do("prepare exact workspace", { retries: { limit: 2, delay: "5 seconds", backoff: "exponential" }, timeout: "5 minutes" }, async () => {
+      // Returns the names of the skills it materialized so the start step's
+      // OPENFLOOR_SKILLS is the same snapshot — a second D1 read there could
+      // observe a skill imported mid-provisioning and enable a name whose
+      // SKILL.md was never written.
+      const skillNames = await step.do("prepare exact workspace", { retries: { limit: 2, delay: "5 seconds", backoff: "exponential" }, timeout: "5 minutes" }, async () => {
         const sourceToken = await signRunGatewayToken({
           runId, sessionId: context.sessionId, repositoryId: context.repositoryId,
           candidateSha: context.candidateSha, operation: "source",
         }, this.env.RUNTIME_GATEWAY_SECRET);
         const result = await sandbox.exec(
-          `mkdir -p /workspace/repository /tmp/openfloor && find /workspace/repository -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + &&
+          `rm -rf /tmp/openfloor && mkdir -p /workspace/repository /tmp/openfloor && find /workspace/repository -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + &&
            curl --fail --silent --show-error --location --max-filesize 104857600 -H "Authorization: Bearer $OPENFLOOR_SOURCE_TOKEN" "$OPENFLOOR_SOURCE_URL" |
              tar -xz --strip-components=1 -C /workspace/repository &&
            git -C /workspace/repository init -q && git -C /workspace/repository config user.name openfloor &&
@@ -148,9 +158,12 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
             { timeout: 30_000 },
           );
           if (claudeMd.success && claudeMd.stdout.trim()) {
-            prompt += `\n\n## Repository CLAUDE.md (first 8,000 characters)\n\n${claudeMd.stdout}`;
+            // head -c counts bytes; a multi-byte character split at the
+            // boundary decodes as a trailing U+FFFD, dropped here.
+            prompt += `\n\n## Repository CLAUDE.md (first 8,000 bytes)\n\n${claudeMd.stdout.replace(/�$/, "")}`;
           }
         }
+        const materializedSkills: string[] = [];
         await sandbox.writeFile("/tmp/openfloor/prompt.txt", prompt);
         // Persisted so members can see exactly what a run was told — the
         // honest counterpart to injecting context they can't otherwise see.
@@ -165,11 +178,11 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
           // workspace and result paths become agent-owned, and root's git
           // needs safe.directory once ownership differs.
           await sandbox.exec(
-            "id -u openfloor-agent >/dev/null 2>&1 || useradd -m openfloor-agent; mkdir -p /home/openfloor-agent/.claude",
+            `id -u openfloor-agent >/dev/null 2>&1 || useradd -m openfloor-agent; mkdir -p ${CLAUDE_AGENT_HOME}/.claude`,
             { timeout: 30_000 },
           );
           await sandbox.writeFile(
-            "/home/openfloor-agent/.claude/settings.json",
+            `${CLAUDE_AGENT_HOME}/.claude/settings.json`,
             buildClaudeSandboxSettings({ gatewayHost: new URL(this.env.OPENFLOOR_RUNTIME_ORIGIN).host }),
           );
           // Imported session skills materialize into the agent user's home
@@ -179,15 +192,17 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
           // even against a hand-edited row.
           for (const skill of await getSessionSkillsForRun(context.sessionId, this.env.DB)) {
             if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(skill.name)) continue;
-            await sandbox.exec(`mkdir -p /home/openfloor-agent/.claude/skills/${skill.name}`, { timeout: 30_000 });
-            await sandbox.writeFile(`/home/openfloor-agent/.claude/skills/${skill.name}/SKILL.md`, skill.content);
+            await sandbox.exec(`mkdir -p ${CLAUDE_AGENT_HOME}/.claude/skills/${skill.name}`, { timeout: 30_000 });
+            await sandbox.writeFile(`${CLAUDE_AGENT_HOME}/.claude/skills/${skill.name}/SKILL.md`, skill.content);
+            materializedSkills.push(skill.name);
           }
           const prepared = await sandbox.exec(
-            "chown -R openfloor-agent:openfloor-agent /home/openfloor-agent /workspace/repository /tmp/openfloor && git config --global --add safe.directory /workspace/repository",
+            "chown -R openfloor-agent:openfloor-agent /workspace/repository /tmp/openfloor && git config --global --add safe.directory /workspace/repository",
             { timeout: 60_000 },
           );
           if (!prepared.success) throw new Error(`Claude runtime preparation failed with exit code ${prepared.exitCode}`);
         }
+        return materializedSkills;
       });
 
       const processId = `codex-${runId}`;
@@ -216,14 +231,13 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
             ? {
                 OPENFLOOR_ANTHROPIC_BASE_URL: `${this.env.OPENFLOOR_RUNTIME_ORIGIN}/runtime/anthropic`,
                 OPENFLOOR_ANTHROPIC_TOKEN: providerToken,
-                HOME: "/home/openfloor-agent",
+                HOME: CLAUDE_AGENT_HOME,
                 // Names of the materialized skills; the runner passes them as
                 // the SDK's explicit `skills` list ([] disables CLI skill
-                // defaults — omitted is NOT off). A skill added between the
-                // prepare and start steps is simply absent from this run.
-                OPENFLOOR_SKILLS: JSON.stringify(
-                  (await getSessionSkillsForRun(context.sessionId, this.env.DB)).map((skill) => skill.name),
-                ),
+                // defaults — omitted is NOT off). The prepare step's snapshot,
+                // so names and on-disk SKILL.md files always match; a skill
+                // imported after prepare is simply absent from this run.
+                OPENFLOOR_SKILLS: JSON.stringify(skillNames),
                 // Owner-configured remote MCP servers, already in the Claude
                 // SDK's mcpServers shape with decrypted headers. Undecryptable
                 // headers throw here and fail the run loudly — never a server
@@ -465,9 +479,16 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
               normalizeId: true,
             });
             await parked.killAllProcesses();
-            // Hard reset between runs: wipe the workspace, run scratch, and
-            // Codex state; only the npm cache survives for the next claim.
-            const reset = await parked.exec("rm -rf /workspace/repository /tmp/openfloor ~/.codex", { timeout: 60_000 });
+            // Hard reset between runs: wipe the workspace, run scratch (which
+            // contains the per-run Claude HOME), and Codex state; only the
+            // npm cache survives for the next claim. The /home/openfloor-agent
+            // paths are belt-and-braces — nothing should write there now that
+            // HOME points into the scratch tree, but a process that lost HOME
+            // would fall back to the passwd entry.
+            const reset = await parked.exec(
+              "rm -rf /workspace/repository /tmp/openfloor ~/.codex /home/openfloor-agent/.claude /home/openfloor-agent/.claude.json /home/openfloor-agent/.claude.json.backup",
+              { timeout: 60_000 },
+            );
             if (!reset.success) throw new Error(`Sandbox reset failed with exit code ${reset.exitCode}`);
             await releasePoolSandbox(claimed.id, this.env.DB);
           });
