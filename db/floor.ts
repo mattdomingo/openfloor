@@ -45,7 +45,7 @@ async function readFloorSnapshot(sessionId: string, userId: string, database: D1
     database.prepare(
       `SELECT a.id, a.name, a.role, a.task, a.owner_user_id AS ownerUserId,
               owner.display_name AS ownerName, a.created_by AS createdByUserId,
-              a.state, a.created_at AS createdAt, a.updated_at AS updatedAt
+              a.state, a.provider, a.model, a.created_at AS createdAt, a.updated_at AS updatedAt
        FROM floor_agents a
        JOIN users owner ON owner.id = a.owner_user_id
        WHERE a.session_id = ?
@@ -243,10 +243,10 @@ export async function createFloorAgent(
     const results = await database.batch([
       database.prepare(
         `INSERT INTO floor_agents
-           (id, session_id, created_by, owner_user_id, name, name_key, role, task, state, created_at, updated_at)
-         SELECT ?, ?, ?, ?, ?, ?, ?, ?, 'created', ?, ?
+           (id, session_id, created_by, owner_user_id, name, name_key, role, task, state, provider, created_at, updated_at)
+         SELECT ?, ?, ?, ?, ?, ?, ?, ?, 'created', ?, ?, ?
          WHERE EXISTS (SELECT 1 FROM sessions WHERE id = ? AND ended_at IS NULL)`,
-      ).bind(id, sessionId, userId, input.ownerUserId, input.name, input.nameKey, input.role, input.task, now, now, sessionId),
+      ).bind(id, sessionId, userId, input.ownerUserId, input.name, input.nameKey, input.role, input.task, input.provider, now, now, sessionId),
       bumpFloorRevision(database, sessionId, now),
     ]);
     if (!(await activeBatchApplied(results, sessionId, userId, database))) return null;

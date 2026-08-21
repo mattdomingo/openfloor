@@ -65,6 +65,16 @@ openssl rand -hex 32 | npx wrangler secret put RUNTIME_GATEWAY_SECRET
 
 The gateway token can fetch only the exact candidate archive for one preflight. It is not a GitHub credential.
 
+Create and store the credential-encryption secret for user-connected provider API keys:
+
+```bash
+openssl rand -hex 32 | npx wrangler secret put CREDENTIAL_ENCRYPTION_KEY
+```
+
+Rotating this value invalidates every stored user credential — users must reconnect their keys in `/settings`.
+
+An optional `ANTHROPIC_API_KEY` secret is the server-side fallback for Claude runs; without it, a Claude run requires the session owner's connected key. Keep `CLAUDE_RUN_ENABLED` set to `false` until the Agent SDK image deploys and an Anthropic credential resolves — while false, Claude-provider runs refuse as disabled and Codex runs are unaffected.
+
 Add an OpenAI project API key for server-side Codex execution:
 
 ```bash

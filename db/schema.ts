@@ -153,6 +153,11 @@ export const floorAgents = sqliteTable(
     role: text("role").notNull(),
     task: text("task").notNull(),
     state: text("state", { enum: ["created"] }).notNull(),
+    // Open enum, TS-only, no SQL CHECK (agent_run_artifacts.kind convention);
+    // existing rows keep current behavior via the default. `model` null means
+    // "use the provider's default" (lib/provider-credentials.ts).
+    provider: text("provider", { enum: ["anthropic", "openai"] }).notNull().default("openai"),
+    model: text("model"),
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
   },
@@ -429,7 +434,12 @@ export const agentRuns = sqliteTable(
     workflowInstanceId: text("workflow_instance_id"),
     sandboxId: text("sandbox_id").notNull(),
     sandboxProcessId: text("sandbox_process_id"),
-    codexThreadId: text("codex_thread_id"),
+    // Legacy column name from the Codex-only era (same rule as
+    // users.chatgpt_user_id): it now stores whichever provider's thread or
+    // session id the run used. Never rename the SQL column — agent_runs has
+    // four inbound ON DELETE CASCADE FKs and a set-null, and a drizzle
+    // rename emits a table recreate that cascade-deletes children.
+    providerThreadId: text("codex_thread_id"),
     summary: text("summary"),
     finalResponse: text("final_response"),
     createdBy: text("created_by").notNull().references(() => users.id),
@@ -579,4 +589,78 @@ export const sandboxPool = sqliteTable(
   (table) => [
     index("idx_sandbox_pool_repository_state").on(table.repositoryId, table.state, table.lastUsedAt),
   ],
+);
+
+// Session-scoped imported Claude skills: the owner pastes a SKILL.md, the
+// run workflow materializes it into the container user's ~/.claude/skills/
+// for Claude runs. `name` comes from validated frontmatter
+// (lib/skill-validation.ts) and is filesystem-safe by construction — a
+// lowercase slug, so no path separators or traversal segments can reach the
+// materialization step. Content is bounded on the way in; per-session count
+// is enforced at the write path.
+export const sessionSkills = sqliteTable(
+  "session_skills",
+  {
+    id: text("id").primaryKey(),
+    sessionId: text("session_id").notNull().references(() => sessions.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    description: text("description").notNull(),
+    content: text("content").notNull(),
+    createdBy: text("created_by").notNull().references(() => users.id),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [uniqueIndex("idx_session_skills_session_name").on(table.sessionId, table.name)],
+);
+
+// Session-configured remote MCP servers for agent runs (v1: http/sse only,
+// stdio deferred). `name` is a lowercase slug; "openfloor" is reserved for
+// the always-present session-context server. Header values may carry
+// credentials, so they follow the user_provider_credentials at-rest rules:
+// AES-256-GCM ciphertext under CREDENTIAL_ENCRYPTION_KEY (AAD "mcp:<row id>"),
+// write-only from the client — reads expose header NAMES (plaintext JSON
+// array) only. transport is a TS-only open enum (no SQL CHECK).
+export const sessionMcpServers = sqliteTable(
+  "session_mcp_servers",
+  {
+    id: text("id").primaryKey(),
+    sessionId: text("session_id").notNull().references(() => sessions.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    transport: text("transport", { enum: ["http", "sse"] }).notNull(),
+    url: text("url").notNull(),
+    headersCiphertext: text("headers_ciphertext"),
+    headerNames: text("header_names"),
+    enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+    createdBy: text("created_by").notNull().references(() => users.id),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [uniqueIndex("idx_session_mcp_servers_session_name").on(table.sessionId, table.name)],
+);
+
+// Per-user agent-provider credentials, encrypted at rest (AES-256-GCM via
+// lib/credential-crypto.ts; key from the CREDENTIAL_ENCRYPTION_KEY Worker
+// secret). `ciphertext` never leaves the server — routes return only the
+// fingerprint (last four characters). `provider` and `kind` are open enums,
+// TS-typed but deliberately without a SQL CHECK (same convention as
+// agent_run_artifacts.kind) so adding a provider never requires a table
+// recreate. The users FK cascade never fires in practice — deleteAccount
+// scrubs the row instead of deleting it, so it deletes credentials explicitly.
+export const userProviderCredentials = sqliteTable(
+  "user_provider_credentials",
+  {
+    userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    provider: text("provider", { enum: ["anthropic", "openai"] }).notNull(),
+    // ponytail: kind stays "api_key" until Anthropic approves third-party
+    // OAuth for openfloor (claude.ai/Max/Pro login is disallowed for
+    // third-party products). If that approval lands, a kind:"oauth" row slots
+    // into this same identity and ciphertext column unchanged.
+    kind: text("kind", { enum: ["api_key"] }).notNull().default("api_key"),
+    ciphertext: text("ciphertext").notNull(),
+    fingerprint: text("fingerprint").notNull(),
+    validatedAt: integer("validated_at"),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.userId, table.provider] })],
 );

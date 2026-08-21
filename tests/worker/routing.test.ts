@@ -267,4 +267,59 @@ describe("agent router tick", () => {
     expect(item?.assignedBy).toBe("user");
     expect((await decisions(room.sessionId)).filter((decision) => decision.decision === "assigned")).toHaveLength(0);
   });
+
+  it("skips gated-provider items without holding, so a mixed queue keeps dispatching", async () => {
+    const room = await routingRoom("mixed-provider");
+    const claudeAgentId = await addAgent(room.sessionId, room.owner.id, "Claude", "Researcher", "Research the domain model");
+    const codexAgentId = await addAgent(room.sessionId, room.owner.id, "Codex", "Engineer", "Implement backend changes");
+    await env.DB.prepare("UPDATE floor_agents SET provider = 'anthropic' WHERE id = ?").bind(claudeAgentId).run();
+    // Claude-targeted item sits FIRST in the queue — the regression this
+    // guards is that item halting everything behind it.
+    const first = await createFloorQueueItem(room.sessionId, room.owner.id, { prompt: "Claude work item", agentId: claudeAgentId }, env.DB);
+    const claudeItemId = first?.queue.find((item) => item.agentId === claudeAgentId)?.id;
+    const second = await createFloorQueueItem(room.sessionId, room.owner.id, { prompt: "Codex work item", agentId: codexAgentId }, env.DB);
+    const codexItemId = second?.queue.find((item) => item.agentId === codexAgentId)?.id;
+    if (!claudeItemId || !codexItemId) throw new Error("Queue items were not created");
+
+    const stub = startRunStub();
+    const outcome = await runRoutingTick(room.sessionId, "enqueue", { ...stub.deps, disabledProviders: new Set(["anthropic"]) }, env.DB);
+    // The Codex item behind the gated Claude item still dispatched, and the
+    // tick did not hold (a hold would back off the whole session).
+    expect(outcome.held).toBe(false);
+    expect(stub.calls.map((call) => call.queueItemId)).toEqual([codexItemId]);
+    const recorded = await decisions(room.sessionId);
+    const skipped = recorded.find((decision) => decision.queueItemId === claudeItemId);
+    expect(skipped?.decision).toBe("skipped");
+    expect(skipped?.reason).toContain("anthropic");
+    expect(recorded.find((decision) => decision.queueItemId === codexItemId)?.decision).toBe("dispatched");
+    expect((await queueItem(claudeItemId))?.status).toBe("queued");
+    expect((await queueItem(codexItemId))?.status).toBe("running");
+  });
+
+  it("dispatches gated providers normally once the gate opens", async () => {
+    const room = await routingRoom("mixed-open");
+    const claudeAgentId = await addAgent(room.sessionId, room.owner.id, "Claude", "Researcher", "Research the domain model");
+    await env.DB.prepare("UPDATE floor_agents SET provider = 'anthropic' WHERE id = ?").bind(claudeAgentId).run();
+    const floor = await createFloorQueueItem(room.sessionId, room.owner.id, { prompt: "Claude work item", agentId: claudeAgentId }, env.DB);
+    const itemId = floor?.queue.find((item) => item.agentId === claudeAgentId)?.id;
+    if (!itemId) throw new Error("Queue item was not created");
+    const stub = startRunStub();
+    const outcome = await runRoutingTick(room.sessionId, "enqueue", { ...stub.deps, disabledProviders: new Set() }, env.DB);
+    expect(outcome.held).toBe(false);
+    expect(stub.calls.map((call) => call.queueItemId)).toEqual([itemId]);
+    expect((await queueItem(itemId))?.status).toBe("running");
+  });
+
+  it("prefers an enabled-provider agent when auto-assigning while another provider is gated", async () => {
+    const room = await routingRoom("mixed-assign");
+    const claudeAgentId = await addAgent(room.sessionId, room.owner.id, "Claude", "Generalist", "Handle general work");
+    const codexAgentId = await addAgent(room.sessionId, room.owner.id, "Codex", "Generalist", "Handle general work");
+    await env.DB.prepare("UPDATE floor_agents SET provider = 'anthropic' WHERE id = ?").bind(claudeAgentId).run();
+    const floor = await createFloorQueueItem(room.sessionId, room.owner.id, { prompt: "Unassigned mixed work", agentId: null }, env.DB);
+    const itemId = floor?.queue.find((item) => item.agentId === null)?.id;
+    if (!itemId) throw new Error("Queue item was not created");
+    const stub = startRunStub();
+    await runRoutingTick(room.sessionId, "enqueue", { ...stub.deps, disabledProviders: new Set(["anthropic"]) }, env.DB);
+    expect((await queueItem(itemId))?.agentId).toBe(codexAgentId);
+  });
 });
