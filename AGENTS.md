@@ -181,7 +181,7 @@ Known production follow-up: the owner discard action still reports failure in th
 
 ### Explicitly deferred
 
-- Provider/model selection in the agent-creation UI. The Claude runner itself is implemented behind `CLAUDE_RUN_ENABLED=false` (see "Implemented and real"), `floor_agents.provider`/`model` exist with per-provider defaults in `lib/provider-credentials.ts`, but no API accepts a provider yet — every agent row is created as `openai`, so every run still executes Codex until the selection UI lands and the flag turns on.
+- Per-agent **model** selection. Provider selection is implemented (agent-creation dialog, shown only while `CLAUDE_RUN_ENABLED` is on) and the Claude runner exists behind that same flag, but `floor_agents.model` has no UI or API input — every run uses its provider's default model until model selection is deliberately added.
 - Agent-authored chat messages and generic artifact download UI beyond the per-run raw-log and session-brief expanders. (Live run activity streaming is now real: the sandbox runner posts normalized Codex events to `/runtime/run/events`, they persist in `agent_run_events`, and sessions receive them as `run.activity` presence events. An agent may also read live session state mid-run through the `openfloor_session_context` MCP tool — see `/runtime/run/context` in the API table — but it cannot write.)
 - Deployment automation after repository merge.
 - Agent edit, archive, deletion, or lifecycle states beyond `created`.
@@ -478,7 +478,8 @@ Deliberately left alone: `usage_months` rows survive (see that table's own no-FK
 - Name, free-text role, and task are required user input.
 - `name_key` is NFKC-normalized, whitespace-collapsed, and lowercased for case-insensitive uniqueness per session.
 - The only valid lifecycle state is currently `created`.
-- No runtime fields, model, branch, progress, files, or checks exist.
+- `provider` (`anthropic`/`openai`, TS-only open enum, default `openai`) selects the run runner; nullable `model` overrides the provider's default (`lib/provider-credentials.ts`) and has no UI yet. Creation offers the provider choice only while `CLAUDE_RUN_ENABLED` is on, and the API refuses a gated provider with `503`.
+- No other runtime fields, branch, progress, files, or checks exist.
 
 #### `floor_assignments`
 
@@ -622,7 +623,7 @@ All paths below are shown without the production `/app` prefix.
 | `POST /api/sessions/[id]/end` | Owner | Idempotently set `ended_at`, revoke the active invite, and broadcast `session.ended`. |
 | `DELETE /api/sessions/[id]` | Owner | Hard-delete a repository-free session; children cascade. Returns `409` when repository state must be preserved. Broadcasts `members.changed` after deletion so open tabs refetch, hit the 404 concealment, and return to `/home`. |
 | `GET /api/sessions/[id]/floor` | Session member | Return the caller-specific authoritative `FloorSnapshot`. |
-| `POST /api/sessions/[id]/agents` | Session member | Create `{ name, role, task, ownerUserId }`. |
+| `POST /api/sessions/[id]/agents` | Session member | Create `{ name, role, task, ownerUserId, provider? }` (provider defaults to `openai`; a rollout-gated provider returns `503`). |
 | `PATCH /api/sessions/[id]/assignments/[memberId]` | Session member | Persist `{ task: string \| null }`. |
 | `POST /api/sessions/[id]/messages` | Session member | Persist `{ text, recipientUserId? }`. |
 | `POST /api/sessions/[id]/queue` | Session member | Persist `{ prompt, agentId? }`; null target is valid. |
@@ -675,7 +676,7 @@ Keep server validation in `lib/validation.ts` and cover it with unit tests.
 - Avatar upload (`lib/account-avatar.ts`, shared by onboarding and account settings): PNG/JPEG/WebP only, maximum 5MB.
 - Session title: required, trimmed, maximum 100 characters.
 - Objective: nullable, trimmed, empty becomes null, maximum 2,000.
-- Agent name: required, NFKC-normalized, whitespace-collapsed, maximum 24.
+- Agent name: required, NFKC-normalized, whitespace-collapsed, maximum 24. Agent provider: optional, `anthropic` or `openai`, defaults to `openai`.
 - Agent role: required, trimmed, maximum 80.
 - Agent task: required, trimmed, maximum 1,000.
 - Assignment: nullable, trimmed, empty becomes null, maximum 2,000.

@@ -198,4 +198,7 @@ export type CreateFloorAgentInput = {
   role: string;
   task: string;
   ownerUserId: string;
+  // Omitted means "openai" (the historical behavior); the dialog only offers
+  // a choice while the Claude rollout gate is on.
+  provider?: "anthropic" | "openai";
 };

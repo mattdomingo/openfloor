@@ -86,8 +86,16 @@ describe("floor input validation", () => {
       role: "Researcher",
       task: "Map APIs",
       ownerUserId: "owner",
+      provider: "openai",
     });
     expect(normalizeAgentName("  LUMEN   Agent ")).toBe("lumen agent");
+  });
+
+  it("accepts a known provider and rejects unknown ones", () => {
+    expect(parseAgentInput({ name: "A", role: "R", task: "T", ownerUserId: "o", provider: "anthropic" })?.provider).toBe("anthropic");
+    expect(parseAgentInput({ name: "A", role: "R", task: "T", ownerUserId: "o", provider: "openai" })?.provider).toBe("openai");
+    expect(parseAgentInput({ name: "A", role: "R", task: "T", ownerUserId: "o", provider: "gemini" })).toBeNull();
+    expect(parseAgentInput({ name: "A", role: "R", task: "T", ownerUserId: "o", provider: 7 })).toBeNull();
   });
 
   it("validates assignments, messages, prompts, ordering, and merge lists", () => {

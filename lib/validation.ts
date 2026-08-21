@@ -1,6 +1,6 @@
 export type SessionInput = { title: string; objective: string | null };
 export type ObjectiveInput = { objective: string | null };
-export type AgentInput = { name: string; nameKey: string; role: string; task: string; ownerUserId: string };
+export type AgentInput = { name: string; nameKey: string; role: string; task: string; ownerUserId: string; provider: "anthropic" | "openai" };
 export type AgentTaskInput = { task: string };
 export type AssignmentInput = { task: string | null };
 export type MessageInput = { text: string; recipientUserId: string | null };
@@ -53,7 +53,9 @@ export function parseAgentInput(value: unknown): AgentInput | null {
   const task = input.task.trim();
   const ownerUserId = input.ownerUserId.trim();
   if (!name || name.length > 24 || !role || role.length > 80 || !task || task.length > 1000 || !ownerUserId || ownerUserId.length > 100) return null;
-  return { name, nameKey: normalizeAgentName(name), role, task, ownerUserId };
+  if (input.provider !== undefined && input.provider !== "anthropic" && input.provider !== "openai") return null;
+  const provider = (input.provider as "anthropic" | "openai" | undefined) ?? "openai";
+  return { name, nameKey: normalizeAgentName(name), role, task, ownerUserId, provider };
 }
 
 export function parseAgentTaskInput(value: unknown): AgentTaskInput | null {
