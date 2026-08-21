@@ -1,8 +1,8 @@
 "use client";
 
 import { CSSProperties, PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { LocalDateTime } from "@/components/LocalDateTime";
-import { UPGRADE_URL } from "@/lib/plans";
 import type { AppUser, SessionMember, SessionSummary, TypingDraft } from "@/lib/session-types";
 import type { CreateFloorAgentInput } from "@/lib/floor-types";
 import { countMessagesSinceObjective, countUnreadTeamMessages, firstMergeableQueueGroup, latestTeamMessageAt, resolvePersistedAgentMention } from "@/lib/floor-state";
@@ -171,7 +171,7 @@ export function Workspace({ user, session, members, floorData, activity, typingD
         {`${session.role === "owner"
           ? "Your plan's monthly session hours are used up."
           : "Your host has used up their plan's monthly session hours."} New connections are paused until next month. `}
-        <a href={UPGRADE_URL} target="_blank" rel="noreferrer noopener">Upgrade for more session hours</a>.
+        <Link href="/settings?section=plan">Upgrade for more session hours</Link>.
       </p>
     )}
     <ObjectiveBar objective={session.objective} updatedAt={session.updatedAt} staleMessageCount={countMessagesSinceObjective(messages, session.objectiveUpdatedAt)} isOwner={session.role === "owner"} onSave={onSaveObjective} />

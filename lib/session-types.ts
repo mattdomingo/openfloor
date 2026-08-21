@@ -76,6 +76,7 @@ export type AppUser = {
   doNotDisturb: boolean;
   plan: Plan;
   planStatus: PlanStatus;
+  seatLimit: number | null;
   createdAt: number;
   updatedAt: number;
   // Tombstone set only by deleteAccount; see db/schema.ts's users.deletedAt

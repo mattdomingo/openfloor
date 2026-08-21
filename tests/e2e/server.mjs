@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 
 const statePath = mkdtempSync(join(tmpdir(), "openfloor-e2e-"));
+const port = process.env.OPENFLOOR_E2E_PORT ?? "8787";
 const githubTestData = JSON.stringify({
   installationId: "test-installation",
   repositories: [{
@@ -35,7 +36,7 @@ const server = spawn("npx", [
   "--config",
   wranglerConfig,
   "--port",
-  "8787",
+  port,
   "--persist-to",
   statePath,
   "--var",
@@ -45,6 +46,12 @@ const server = spawn("npx", [
   "GITHUB_APP_PRIVATE_KEY:test-private-key",
   "GITHUB_STATE_SECRET:e2e-test-github-state-secret",
   "GITHUB_WEBHOOK_SECRET:e2e-test-github-webhook-secret",
+  "STRIPE_SECRET_KEY:sk_test_e2e",
+  "STRIPE_WEBHOOK_SECRET:whsec_e2e-test-stripe-webhook-secret",
+  "STRIPE_PRO_PRICE_ID:price_test_pro",
+  "STRIPE_MAX_PRICE_ID:price_test_max",
+  "STRIPE_PORTAL_CONFIGURATION_ID:bpc_test",
+  "STRIPE_CHECKOUT_ENABLED:true",
   `OPENFLOOR_TEST_GITHUB_DATA:${githubTestData}`,
   "PREFLIGHT_ENABLED:true",
   "AGENT_RUN_ENABLED:true",

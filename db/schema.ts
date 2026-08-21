@@ -30,6 +30,9 @@ export const users = sqliteTable(
     planStatus: text("plan_status", { enum: ["inactive", "active", "past_due", "canceled"] })
       .notNull()
       .default("inactive"),
+    // Purchased Stripe quantity. Null preserves legacy/manual Pro and Max
+    // grants at their historical fixed tier cap; inactive plans ignore it.
+    seatLimit: integer("seat_limit"),
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
     // Tombstone marker set only by deleteAccount, not a soft-delete filter —
@@ -52,6 +55,48 @@ export const users = sqliteTable(
     check("users_plan_status_check", sql`${table.planStatus} in ('inactive', 'active', 'past_due', 'canceled')`),
   ],
 );
+
+export const stripeCustomers = sqliteTable(
+  "stripe_customers",
+  {
+    userId: text("user_id").primaryKey().references(() => users.id),
+    stripeCustomerId: text("stripe_customer_id").notNull(),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [uniqueIndex("idx_stripe_customers_customer").on(table.stripeCustomerId)],
+);
+
+export const stripeSubscriptions = sqliteTable(
+  "stripe_subscriptions",
+  {
+    stripeSubscriptionId: text("stripe_subscription_id").primaryKey(),
+    userId: text("user_id").notNull().references(() => users.id),
+    stripeCustomerId: text("stripe_customer_id").notNull(),
+    stripePriceId: text("stripe_price_id").notNull(),
+    plan: text("plan", { enum: ["pro", "max"] }),
+    quantity: integer("quantity").notNull(),
+    status: text("status").notNull(),
+    currentPeriodEnd: integer("current_period_end"),
+    cancelAtPeriodEnd: integer("cancel_at_period_end", { mode: "boolean" }).notNull().default(false),
+    eventCreated: integer("event_created").notNull().default(0),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [
+    index("idx_stripe_subscriptions_user").on(table.userId),
+    index("idx_stripe_subscriptions_customer").on(table.stripeCustomerId),
+  ],
+);
+
+export const stripeWebhookEvents = sqliteTable("stripe_webhook_events", {
+  stripeEventId: text("stripe_event_id").primaryKey(),
+  eventType: text("event_type").notNull(),
+  processingStatus: text("processing_status", { enum: ["processing", "processed", "failed"] }).notNull(),
+  error: text("error"),
+  receivedAt: integer("received_at").notNull(),
+  processedAt: integer("processed_at"),
+});
 
 export const sessions = sqliteTable("sessions", {
   id: text("id").primaryKey(),

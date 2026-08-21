@@ -10,6 +10,12 @@ declare global {
       GITHUB_APP_PRIVATE_KEY: string;
       GITHUB_STATE_SECRET: string;
       GITHUB_WEBHOOK_SECRET: string;
+      STRIPE_SECRET_KEY: string;
+      STRIPE_WEBHOOK_SECRET: string;
+      STRIPE_PRO_PRICE_ID: string;
+      STRIPE_MAX_PRICE_ID: string;
+      STRIPE_PORTAL_CONFIGURATION_ID: string;
+      STRIPE_CHECKOUT_ENABLED: string;
       SESSION_PRESENCE: DurableObjectNamespace<SessionPresence>;
       TEST_MIGRATIONS: string;
       ACCOUNT_EMAIL_MERGE_QUERIES: string;

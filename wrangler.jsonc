@@ -80,7 +80,8 @@
 	"vars": {
 		"OPENFLOOR_RUNTIME_ORIGIN": "https://opnflr.com/app",
 		"PREFLIGHT_ENABLED": "true",
-		"AGENT_RUN_ENABLED": "true"
+		"AGENT_RUN_ENABLED": "true",
+		"STRIPE_CHECKOUT_ENABLED": "false"
 	},
 	"r2_buckets": [
 		{

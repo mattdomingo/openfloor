@@ -7,7 +7,7 @@ import { BASE_PATH } from "@/components/basePath";
 import { LocalDateTime } from "@/components/LocalDateTime";
 import { formatDuration } from "@/lib/date-format";
 import { SegmentedControl, useDialogDismiss } from "@/components/session/primitives";
-import { planLabel, UPGRADE_URL, type Plan, type PlanStatus } from "@/lib/plans";
+import { planLabel, type Plan, type PlanStatus } from "@/lib/plans";
 import type { AppUser, SessionSummary } from "@/lib/session-types";
 import { AppHeader } from "./AppHeader";
 
@@ -115,7 +115,7 @@ export function HomeScreen({
                  enforcement. */
               <p className="notice" data-tone="attention" role="status">
                 {`Your ${planLabel(usage.effectivePlan)} plan's ${usage.limitHours}h of monthly session time is used up. `}
-                <a href={UPGRADE_URL} target="_blank" rel="noreferrer noopener">Upgrade for more session hours</a>.
+                <Link href="/settings?section=plan">Upgrade for more session hours</Link>.
               </p>
             )}
           </div>

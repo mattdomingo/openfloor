@@ -9,16 +9,20 @@ import { Avatar, SegmentedControl, useDialogDismiss } from "@/components/session
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { ACCEPTED_AVATAR_TYPE_LIST, ACCEPTED_AVATAR_TYPES, MAX_AVATAR_BYTES } from "@/lib/avatar-constraints";
 import { formatDuration } from "@/lib/date-format";
+import { LocalDateTime } from "@/components/LocalDateTime";
 import { initialsFromParts } from "@/lib/display-name";
-import { planLabel, planLimitsSummary, UPGRADE_URL, type Plan, type PlanStatus } from "@/lib/plans";
+import { PAID_PLAN_CATALOG, planLabel, planLimitsSummary, type PaidPlan, type Plan, type PlanStatus } from "@/lib/plans";
 import type { AppUser } from "@/lib/session-types";
 import { AppHeader } from "./AppHeader";
 
 type SettingsSection = "profile" | "plan" | "preferences" | "danger";
 type Usage = { plan: Plan; planStatus: PlanStatus; effectivePlan: Plan; seconds: number; limitHours: number; limitSeats: number };
+type Billing = { customerId: string | null; subscriptionId: string | null; plan: PaidPlan | null; quantity: number | null; stripeStatus: string | null; currentPeriodEnd: number | null; cancelAtPeriodEnd: boolean };
 type BlockedSession = { id: string; title: string; reason: "repository_state" | "integration_in_progress" };
 
-export function SettingsScreen({ user: initialUser, usage }: { user: AppUser; usage: Usage }) {
+export function SettingsScreen({ user: initialUser, usage, billing, initialSection, billingNotice }: {
+  user: AppUser; usage: Usage; billing: Billing; initialSection: "profile" | "plan"; billingNotice: string | null;
+}) {
   const [user, setUser] = useState(initialUser);
   // Same render-time resync idiom as HomeScreen: router.refresh() re-renders
   // this Server Component prop without remounting SettingsScreen.
@@ -27,7 +31,7 @@ export function SettingsScreen({ user: initialUser, usage }: { user: AppUser; us
     setSyncedUser(initialUser);
     setUser(initialUser);
   }
-  const [section, setSection] = useState<SettingsSection>("profile");
+  const [section, setSection] = useState<SettingsSection>(initialSection);
 
   return (
     <main className="product-shell">
@@ -54,7 +58,7 @@ export function SettingsScreen({ user: initialUser, usage }: { user: AppUser; us
         />
 
         {section === "profile" && <ProfileSection user={user} onSaved={setUser} />}
-        {section === "plan" && <PlanSection usage={usage} />}
+        {section === "plan" && <PlanSection usage={usage} billing={billing} billingNotice={billingNotice} />}
         {section === "preferences" && <PreferencesSection user={user} />}
         {section === "danger" && <DangerZoneSection />}
       </section>
@@ -174,20 +178,51 @@ function ProfileSection({ user, onSaved }: { user: AppUser; onSaved: (user: AppU
   );
 }
 
-function PlanSection({ usage }: { usage: Usage }) {
+function PlanSection({ usage, billing, billingNotice }: { usage: Usage; billing: Billing; billingNotice: string | null }) {
   const limitSeconds = usage.limitHours * 3600;
   const limitedHours = Number.isFinite(usage.limitHours);
   const limitedSeats = Number.isFinite(usage.limitSeats);
+  const [selectedPlan, setSelectedPlan] = useState<PaidPlan>(billing.plan ?? "pro");
+  const [quantity, setQuantity] = useState(billing.quantity ?? 3);
+  const [submitting, setSubmitting] = useState<"checkout" | "change" | "portal" | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const activeStripeSubscription = billing.subscriptionId != null && billing.stripeStatus != null && !["canceled", "incomplete_expired"].includes(billing.stripeStatus);
+  const catalog = PAID_PLAN_CATALOG[selectedPlan];
+
+  function choosePlan(plan: PaidPlan) {
+    setSelectedPlan(plan);
+    setQuantity((current) => Math.min(PAID_PLAN_CATALOG[plan].maximumSeats, Math.max(PAID_PLAN_CATALOG[plan].minimumSeats, current)));
+  }
+
+  async function openBilling(kind: "checkout" | "change" | "portal") {
+    setError(null);
+    setSubmitting(kind);
+    const response = await fetch(`${BASE_PATH}/api/billing/${kind === "change" ? "change" : kind}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(kind === "portal"
+        ? { returnTo: `${BASE_PATH}/settings?section=plan` }
+        : { plan: selectedPlan, quantity, returnTo: `${BASE_PATH}/settings?section=plan&billing=success` }),
+    });
+    const body = await response.json().catch(() => null) as { url?: string; error?: string } | null;
+    if (!response.ok || !body?.url) {
+      setError(body?.error ?? "Unable to open Stripe billing. Try again.");
+      setSubmitting(null);
+      return;
+    }
+    window.location.assign(body.url);
+  }
 
   return (
     <ul className="settings-category-list">
       <li className="settings-category-row">
         <span className="settings-category-name">Plan</span>
         <span className="settings-category-detail">{planLabel(usage.effectivePlan)} plan — {planLimitsSummary(usage.effectivePlan)}.</span>
-        {usage.effectivePlan === "free" && (
-          <a className="button" data-variant="quiet" href={UPGRADE_URL} target="_blank" rel="noreferrer noopener">Upgrade</a>
-        )}
+        {activeStripeSubscription && <button className="button" data-variant="quiet" disabled={submitting != null} onClick={() => openBilling("portal")}>{submitting === "portal" ? "Opening…" : "Manage billing"}</button>}
       </li>
+
+      {billingNotice === "success" && <li className="notice" role="status">Billing updated. Stripe webhooks keep this plan in sync.</li>}
+      {billingNotice === "cancelled" && <li className="notice" data-tone="attention" role="status">Checkout canceled. No paid plan was activated.</li>}
 
       {(usage.planStatus === "past_due" || usage.planStatus === "canceled") && (
         <li className="settings-category-row">
@@ -195,6 +230,13 @@ function PlanSection({ usage }: { usage: Usage }) {
           <span className="settings-category-detail">
             {`Your ${planLabel(usage.plan)} plan is ${usage.planStatus === "past_due" ? "past due" : "canceled"} — Free plan limits apply until it's resolved.`}
           </span>
+        </li>
+      )}
+
+      {billing.currentPeriodEnd != null && activeStripeSubscription && (
+        <li className="settings-category-row">
+          <span className="settings-category-name">Billing period</span>
+          <span className="settings-category-detail">Current period ends <LocalDateTime timestamp={billing.currentPeriodEnd} />.</span>
         </li>
       )}
 
@@ -215,12 +257,36 @@ function PlanSection({ usage }: { usage: Usage }) {
         <span className="settings-category-detail">{limitedSeats ? `${usage.limitSeats} seats per session` : "Unlimited seats per session"}</span>
       </li>
 
-      {usage.effectivePlan === "free" && (
-        <li className="settings-category-row">
-          <span className="settings-category-name">Upgrades</span>
-          <span className="settings-category-detail">Upgrades are activated manually today — it can take a little while after you pay.</span>
+      {usage.effectivePlan !== "enterprise" && (
+        <li className="settings-category-row billing-choice">
+          <span className="settings-category-name">{activeStripeSubscription ? "Change plan" : "Paid plans"}</span>
+          <span className="settings-category-detail">
+            <span className="billing-plan-buttons">
+              {(["pro", "max"] as const).map((plan) => (
+                <button type="button" className="button" data-variant={selectedPlan === plan ? "primary" : "quiet"} onClick={() => choosePlan(plan)} key={plan}>
+                  {`${planLabel(plan)} · $${PAID_PLAN_CATALOG[plan].unitAmountCents / 100}/seat/month`}
+                </button>
+              ))}
+            </span>
+            <span>{`${catalog.minimumSeats}–${catalog.maximumSeats} seats per session · ${planLimitsSummary(selectedPlan).replace(/^\d+ seats per session, /, "")}`}</span>
+            <span className="seat-picker">
+              <span>{`Seats per session: ${quantity}`}</span>
+              <button type="button" className="button" data-variant="quiet" disabled={quantity <= catalog.minimumSeats} onClick={() => setQuantity((value) => value - 1)} aria-label="Remove one seat">−</button>
+              <button type="button" className="button" data-variant="quiet" disabled={quantity >= catalog.maximumSeats} onClick={() => setQuantity((value) => value + 1)} aria-label="Add one seat">+</button>
+            </span>
+          </span>
+          <button className="button" data-variant="primary" disabled={submitting != null} onClick={() => openBilling(activeStripeSubscription ? "change" : "checkout")}>
+            {submitting === (activeStripeSubscription ? "change" : "checkout") ? "Opening…" : activeStripeSubscription ? "Review prorated change" : "Subscribe"}
+          </button>
         </li>
       )}
+
+      <li className="settings-category-row">
+        <span className="settings-category-name">Enterprise</span>
+        <span className="settings-category-detail">Unlimited seats and session time. Talk with us about team billing and support.</span>
+        <a className="button" data-variant="quiet" href="mailto:hello@opnflr.com">Contact sales</a>
+      </li>
+      {error && <li><p className="form-error" role="alert">{error}</p></li>}
     </ul>
   );
 }

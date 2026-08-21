@@ -1,6 +1,6 @@
 import { displayNameFrom } from "@/lib/display-name";
 import type { AuthenticatedIdentity } from "@/lib/identity";
-import { currentMonth, effectivePlan, PLAN_LIMITS, type Plan, type PlanStatus } from "@/lib/plans";
+import { currentMonth, effectivePlan, effectiveSeatLimit, PLAN_LIMITS, type Plan, type PlanStatus } from "@/lib/plans";
 import type { AppUser, RemovedSessionMember, SessionMember, SessionRole, SessionSummary } from "@/lib/session-types";
 import { getDb, type D1DatabaseLike } from "./index";
 
@@ -52,7 +52,7 @@ export type InvitePreview = {
 const APP_USER_COLUMNS = `id, chatgpt_user_id AS providerUserId, email, display_name AS displayName,
               first_name AS firstName, last_name AS lastName, github_handle AS githubHandle,
               avatar_key AS avatarKey, onboarded_at AS onboardedAt, do_not_disturb AS doNotDisturb,
-              plan, plan_status AS planStatus, created_at AS createdAt, updated_at AS updatedAt,
+              plan, plan_status AS planStatus, seat_limit AS seatLimit, created_at AS createdAt, updated_at AS updatedAt,
               deleted_at AS deletedAt`;
 
 // D1 has no native boolean type, so RETURNING/SELECT come back with
@@ -135,6 +135,23 @@ export async function completeOnboarding(
   input: { firstName: string; lastName: string; githubHandle: string | null; avatarKey: string | null },
   database = getDb(),
 ): Promise<AppUser> {
+  return writeOnboardingProfile(userId, input, true, database);
+}
+
+export async function savePendingOnboardingProfile(
+  userId: string,
+  input: { firstName: string; lastName: string; githubHandle: string | null; avatarKey: string | null },
+  database = getDb(),
+): Promise<AppUser> {
+  return writeOnboardingProfile(userId, input, false, database);
+}
+
+async function writeOnboardingProfile(
+  userId: string,
+  input: { firstName: string; lastName: string; githubHandle: string | null; avatarKey: string | null },
+  complete: boolean,
+  database: D1DatabaseLike,
+): Promise<AppUser> {
   const now = Date.now();
   const displayName = displayNameFrom(input.firstName, input.lastName);
   const user = await database
@@ -145,15 +162,23 @@ export async function completeOnboarding(
          github_handle = ?,
          avatar_key = COALESCE(?, avatar_key),
          display_name = ?,
-         onboarded_at = ?,
+         onboarded_at = CASE WHEN ? THEN ? ELSE onboarded_at END,
          updated_at = ?
        WHERE id = ?
        RETURNING ${APP_USER_COLUMNS}`,
     )
-    .bind(input.firstName, input.lastName, input.githubHandle, input.avatarKey, displayName, now, now, userId)
+    .bind(input.firstName, input.lastName, input.githubHandle, input.avatarKey, displayName, complete ? 1 : 0, now, now, userId)
     .first<AppUserRow>();
   if (!user) throw new Error("Unable to complete onboarding for the current user.");
   return normalizeAppUser(user);
+}
+
+export async function markOnboardingComplete(userId: string, database = getDb()): Promise<void> {
+  const now = Date.now();
+  await database.prepare(
+    `UPDATE users SET onboarded_at = COALESCE(onboarded_at, ?), updated_at = ?
+     WHERE id = ? AND deleted_at IS NULL AND first_name IS NOT NULL AND last_name IS NOT NULL`,
+  ).bind(now, now, userId).run();
 }
 
 // Account-settings profile edit, unlike completeOnboarding above: avatarKey
@@ -443,6 +468,7 @@ export async function getInvitePreview(inviteId: string, database = getDb()): Pr
     .prepare(
       `SELECT i.id AS inviteId, s.id AS sessionId, s.title, s.objective, s.locked_at AS lockedAt,
               owner.display_name AS ownerName, owner.plan AS ownerPlan, owner.plan_status AS ownerPlanStatus,
+              owner.seat_limit AS ownerSeatLimit,
               (SELECT COUNT(*) FROM session_members m WHERE m.session_id = s.id AND m.removed_at IS NULL) AS memberCount
        FROM session_invites i
        JOIN sessions s ON s.id = i.session_id
@@ -453,11 +479,11 @@ export async function getInvitePreview(inviteId: string, database = getDb()): Pr
     .bind(inviteId)
     .first<{
       inviteId: string; sessionId: string; title: string; objective: string | null; lockedAt: number | null; ownerName: string;
-      ownerPlan: Plan; ownerPlanStatus: PlanStatus; memberCount: number;
+      ownerPlan: Plan; ownerPlanStatus: PlanStatus; ownerSeatLimit: number | null; memberCount: number;
     }>();
   if (!row) return null;
-  const { ownerPlan, ownerPlanStatus, lockedAt, ...preview } = row;
-  return { ...preview, seatLimit: PLAN_LIMITS[effectivePlan(ownerPlan, ownerPlanStatus)].seats, locked: lockedAt != null };
+  const { ownerPlan, ownerPlanStatus, ownerSeatLimit, lockedAt, ...preview } = row;
+  return { ...preview, seatLimit: effectiveSeatLimit(ownerPlan, ownerPlanStatus, ownerSeatLimit), locked: lockedAt != null };
 }
 
 export async function acceptInvite(
@@ -472,6 +498,8 @@ export async function acceptInvite(
                  WHERE o.session_id = i.session_id AND o.role = 'owner' AND o.removed_at IS NULL) AS ownerPlan,
               (SELECT u.plan_status FROM session_members o JOIN users u ON u.id = o.user_id
                  WHERE o.session_id = i.session_id AND o.role = 'owner' AND o.removed_at IS NULL) AS ownerPlanStatus,
+              (SELECT u.seat_limit FROM session_members o JOIN users u ON u.id = o.user_id
+                 WHERE o.session_id = i.session_id AND o.role = 'owner' AND o.removed_at IS NULL) AS ownerSeatLimit,
               EXISTS(SELECT 1 FROM session_members m
                  WHERE m.session_id = i.session_id AND m.user_id = ?1) AS callerExists,
               (SELECT m.removed_at FROM session_members m
@@ -483,7 +511,7 @@ export async function acceptInvite(
     )
     .bind(userId, inviteId)
     .first<{
-      memberCount: number; ownerPlan: Plan | null; ownerPlanStatus: PlanStatus | null;
+      memberCount: number; ownerPlan: Plan | null; ownerPlanStatus: PlanStatus | null; ownerSeatLimit: number | null;
       callerExists: number; callerRemovedAt: number | null; lockedAt: number | null;
     }>();
   if (!gate) return null;
@@ -498,11 +526,12 @@ export async function acceptInvite(
   // Missing owner plan/status shouldn't happen (every session has an active
   // owner row), but if it ever does, resolve to the strictest limits rather
   // than the old "pro" fallback.
-  const plan = effectivePlan(gate.ownerPlan ?? "free", gate.ownerPlanStatus ?? "inactive");
+  const plan = gate.ownerPlan ?? "free";
+  const status = gate.ownerPlanStatus ?? "inactive";
   // ponytail: check-then-insert; concurrent accepts can exceed the cap by the
   // number of racers. Upgrade path if it matters: conditional INSERT...SELECT
   // guarded by the count inside the batch.
-  if (!alreadyMember && gate.memberCount >= PLAN_LIMITS[plan].seats) {
+  if (!alreadyMember && gate.memberCount >= effectiveSeatLimit(plan, status, gate.ownerSeatLimit)) {
     return "full";
   }
 
@@ -690,15 +719,15 @@ export async function restoreMember(
 
   const owner = await database
     .prepare(
-      `SELECT u.plan AS plan, u.plan_status AS planStatus,
+      `SELECT u.plan AS plan, u.plan_status AS planStatus, u.seat_limit AS seatLimit,
               (SELECT COUNT(*) FROM session_members m WHERE m.session_id = ? AND m.removed_at IS NULL) AS memberCount
        FROM session_members o JOIN users u ON u.id = o.user_id
        WHERE o.session_id = ? AND o.role = 'owner' AND o.removed_at IS NULL`,
     )
     .bind(sessionId, sessionId)
-    .first<{ plan: Plan; planStatus: PlanStatus; memberCount: number }>();
-  const plan = effectivePlan(owner?.plan ?? "free", owner?.planStatus ?? "inactive");
-  if ((owner?.memberCount ?? 0) >= PLAN_LIMITS[plan].seats) return "full";
+    .first<{ plan: Plan; planStatus: PlanStatus; seatLimit: number | null; memberCount: number }>();
+  const seatLimit = effectiveSeatLimit(owner?.plan ?? "free", owner?.planStatus ?? "inactive", owner?.seatLimit ?? null);
+  if ((owner?.memberCount ?? 0) >= seatLimit) return "full";
 
   const now = Date.now();
   await database
@@ -776,6 +805,34 @@ export async function deleteSession(
 
 export type DeleteAccountBlockedSession = { id: string; title: string; reason: "repository_state" | "integration_in_progress" };
 
+export async function getAccountDeletionBlockers(
+  userId: string,
+  database = getDb(),
+): Promise<{ ownedSessionIds: string[]; blocked: DeleteAccountBlockedSession[] }> {
+  const owned = await database
+    .prepare(
+      `SELECT s.id AS id, s.title AS title
+       FROM session_members sm JOIN sessions s ON s.id = sm.session_id
+       WHERE sm.user_id = ? AND sm.role = 'owner'`,
+    )
+    .bind(userId)
+    .all<{ id: string; title: string }>();
+  const blocked: DeleteAccountBlockedSession[] = [];
+  for (const session of owned.results) {
+    const blocking = await getBlockingIntegrationRunId(session.id, database);
+    if (blocking) {
+      blocked.push({ id: session.id, title: session.title, reason: "integration_in_progress" });
+      continue;
+    }
+    const liveCandidate = await database
+      .prepare("SELECT 1 AS present FROM repository_candidates WHERE session_id = ? AND status IN ('creating', 'active') AND merged_at IS NULL")
+      .bind(session.id)
+      .first<{ present: number }>();
+    if (liveCandidate) blocked.push({ id: session.id, title: session.title, reason: "repository_state" });
+  }
+  return { ownedSessionIds: owned.results.map((session) => session.id), blocked };
+}
+
 /* Account deletion cannot be a hard `DELETE FROM users`: ~12 columns
    (floor_messages.author_user_id, floor_agents.owner_user_id,
    repository_candidates.merged_by, ...) reference users.id with no cascade,
@@ -790,37 +847,16 @@ export async function deleteAccount(
   userId: string,
   database = getDb(),
 ): Promise<{ deleted: true } | { blocked: "sessions"; sessions: DeleteAccountBlockedSession[] }> {
-  const owned = await database
-    .prepare(
-      `SELECT s.id AS id, s.title AS title
-       FROM session_members sm JOIN sessions s ON s.id = sm.session_id
-       WHERE sm.user_id = ? AND sm.role = 'owner'`,
-    )
-    .bind(userId)
-    .all<{ id: string; title: string }>();
-
   // Same guards as deleteSession, run per owned session, before anything is
   // written — a live repository candidate or in-progress integration on any
   // one owned session blocks the entire account deletion rather than
   // silently losing that work.
-  const blocked: DeleteAccountBlockedSession[] = [];
-  for (const session of owned.results) {
-    const blocking = await getBlockingIntegrationRunId(session.id, database);
-    if (blocking) {
-      blocked.push({ id: session.id, title: session.title, reason: "integration_in_progress" });
-      continue;
-    }
-    const liveCandidate = await database
-      .prepare("SELECT 1 AS present FROM repository_candidates WHERE session_id = ? AND status IN ('creating', 'active') AND merged_at IS NULL")
-      .bind(session.id)
-      .first<{ present: number }>();
-    if (liveCandidate) blocked.push({ id: session.id, title: session.title, reason: "repository_state" });
-  }
+  const { ownedSessionIds, blocked } = await getAccountDeletionBlockers(userId, database);
   if (blocked.length > 0) return { blocked: "sessions", sessions: blocked };
 
   const now = Date.now();
   await database.batch([
-    ...owned.results.map((session) => database.prepare("DELETE FROM sessions WHERE id = ?").bind(session.id)),
+    ...ownedSessionIds.map((sessionId) => database.prepare("DELETE FROM sessions WHERE id = ?").bind(sessionId)),
     // Memberships (and assignments) in sessions this user did not own —
     // session_members would cascade on its own, but floor_assignments has no
     // FK action, same reason leaveSession deletes it explicitly.
@@ -838,6 +874,7 @@ export async function deleteAccount(
            avatar_key = NULL,
            do_not_disturb = 0,
            plan_status = 'canceled',
+           seat_limit = NULL,
            deleted_at = ?,
            updated_at = ?
          WHERE id = ?`,
@@ -904,13 +941,13 @@ export async function getUsageForUser(
 }> {
   const row = await database
     .prepare(
-      `SELECT u.plan AS plan, u.plan_status AS planStatus, COALESCE(um.seconds, 0) AS seconds
+      `SELECT u.plan AS plan, u.plan_status AS planStatus, u.seat_limit AS seatLimit, COALESCE(um.seconds, 0) AS seconds
        FROM users u
        LEFT JOIN usage_months um ON um.owner_user_id = u.id AND um.month = ?
        WHERE u.id = ?`,
     )
     .bind(currentMonth(), userId)
-    .first<{ plan: Plan; planStatus: PlanStatus; seconds: number }>();
+    .first<{ plan: Plan; planStatus: PlanStatus; seatLimit: number | null; seconds: number }>();
   const plan = row?.plan ?? "free";
   const planStatus = row?.planStatus ?? "inactive";
   const effective = effectivePlan(plan, planStatus);
@@ -920,7 +957,7 @@ export async function getUsageForUser(
     effectivePlan: effective,
     seconds: row?.seconds ?? 0,
     limitHours: PLAN_LIMITS[effective].hours,
-    limitSeats: PLAN_LIMITS[effective].seats,
+    limitSeats: effectiveSeatLimit(plan, planStatus, row?.seatLimit ?? null),
   };
 }
 

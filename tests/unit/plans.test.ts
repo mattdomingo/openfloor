@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { currentMonth, effectivePlan, PLAN_LIMITS, planLimitsSummary, UPGRADE_URL, type Plan, type PlanStatus } from "@/lib/plans";
+import { currentMonth, effectivePlan, effectiveSeatLimit, PAID_PLAN_CATALOG, PLAN_LIMITS, planLimitsSummary, validPaidSeatQuantity, type Plan, type PlanStatus } from "@/lib/plans";
 
 describe("PLAN_LIMITS", () => {
   it("gives each plan the documented seat and hour caps", () => {
@@ -58,9 +58,19 @@ describe("currentMonth", () => {
   });
 });
 
-describe("UPGRADE_URL", () => {
-  it("is the configured Stripe payment link", () => {
-    expect(UPGRADE_URL).toBe("https://buy.stripe.com/fZudR93OAaWMehu35t4F200");
+describe("paid seat pricing", () => {
+  it("defines monthly per-seat terms and quantity bounds", () => {
+    expect(PAID_PLAN_CATALOG.pro).toEqual({ unitAmountCents: 3000, currency: "usd", minimumSeats: 3, maximumSeats: 5 });
+    expect(PAID_PLAN_CATALOG.max).toEqual({ unitAmountCents: 5000, currency: "usd", minimumSeats: 3, maximumSeats: 10 });
+    expect(validPaidSeatQuantity("pro", 5)).toBe(true);
+    expect(validPaidSeatQuantity("pro", 6)).toBe(false);
+  });
+
+  it("uses purchased seats only for active paid plans and preserves legacy grants", () => {
+    expect(effectiveSeatLimit("pro", "active", 4)).toBe(4);
+    expect(effectiveSeatLimit("max", "past_due", 8)).toBe(3);
+    expect(effectiveSeatLimit("pro", "active", null)).toBe(5);
+    expect(effectiveSeatLimit("enterprise", "active", null)).toBe(Infinity);
   });
 });
 
