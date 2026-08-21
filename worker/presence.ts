@@ -60,7 +60,10 @@ export class SessionPresence extends DurableObject<PresenceEnv> {
         return new Response("Invalid session end", { status: 400 });
       }
       // Sockets stay open on purpose: ended sessions remain readable, and the
-      // server-side write guard is the enforcement.
+      // server-side write guard is the enforcement. Metering stops here,
+      // though — an ended session must not keep booking hours to the owner
+      // while people linger reading it.
+      await this.stopMetering();
       this.broadcast({ type: "session.ended", endedAt: body.endedAt, reason: body.reason });
       return new Response(null, { status: 204 });
     }
@@ -189,9 +192,29 @@ export class SessionPresence extends DurableObject<PresenceEnv> {
   // Books time for long-lived occupied sessions and for sockets that died
   // without a close event.
   async alarm(): Promise<void> {
+    // Backstop for the rare case the /session-ended fetch never reached this
+    // instance (a mid-request crash between the D1 write and the DO call):
+    // notice the session ended, stop the clock, and don't re-arm.
+    const meteredSessionId = await this.ctx.storage.get<string>("meterSessionId");
+    if (meteredSessionId) {
+      const row = await this.env.DB.prepare("SELECT ended_at AS endedAt FROM sessions WHERE id = ?")
+        .bind(meteredSessionId)
+        .first<{ endedAt: number | null }>();
+      if (row?.endedAt != null) {
+        await this.stopMetering();
+        return;
+      }
+    }
     const occupied = this.sockets().some((socket) => socket.readyState === WebSocket.OPEN);
     await this.flushUsage(occupied);
     if (occupied) await this.ctx.storage.setAlarm(Date.now() + USAGE_FLUSH_INTERVAL_MS);
+  }
+
+  // Books whatever is owed, then clears metering state so a later reconnect
+  // (which will not carry meter headers for an ended session) cannot revive it.
+  private async stopMetering(): Promise<void> {
+    await this.flushUsage(false);
+    await this.ctx.storage.delete(["meterOwnerId", "meterSessionId"]);
   }
 
   private async flushUsage(keepRunning: boolean): Promise<void> {

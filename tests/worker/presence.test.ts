@@ -1,9 +1,10 @@
 import { env } from "cloudflare:workers";
-import { evictDurableObject } from "cloudflare:test";
+import { evictDurableObject, runInDurableObject } from "cloudflare:test";
 import { describe, expect, it, vi } from "vitest";
 import { createSession, currentMonth, endSession, upsertUser } from "@/db/sessions";
 import worker from "./entry";
 import type { PresenceEvent } from "@/lib/session-types";
+import type { SessionPresence } from "@/worker/presence";
 
 function nextMessage(socket: WebSocket): Promise<PresenceEvent> {
   return new Promise((resolve, reject) => {
@@ -342,5 +343,88 @@ describe("authenticated presence upgrade", () => {
       .bind(impersonated.id, currentMonth())
       .first<{ seconds: number }>();
     expect(impersonatedUsage).toBeNull();
+  });
+});
+
+describe("metering stops when a session ends", () => {
+  it("books time once and clears the clock when /session-ended arrives", async () => {
+    const owner = await upsertUser({
+      providerUserId: "chatgpt-end-owner",
+      email: "end-owner@example.com",
+      displayName: "Owner",
+      fullName: "Owner",
+    }, env.DB);
+    const created = await createSession(owner.id, { title: "Ending", objective: null }, env.DB);
+    const stub = env.SESSION_PRESENCE.get(env.SESSION_PRESENCE.idFromName(created.session.id));
+    const response = await stub.fetch("https://presence.internal/connect", { headers: {
+      upgrade: "websocket",
+      "x-openfloor-user-id": owner.id,
+      "x-openfloor-display-name": "Owner",
+      "x-openfloor-meter-owner-id": owner.id,
+      "x-openfloor-meter-session-id": created.session.id,
+    } });
+    expect(response.status).toBe(101);
+    response.webSocket?.accept(); // stays open — occupancy does not hit zero on its own
+
+    const ended = await stub.fetch("https://presence.internal/session-ended", {
+      method: "POST",
+      body: JSON.stringify({ endedAt: Date.now(), reason: "owner" }),
+    });
+    expect(ended.status).toBe(204);
+
+    const usage = await env.DB.prepare("SELECT seconds FROM usage_months WHERE owner_user_id = ? AND month = ?")
+      .bind(owner.id, currentMonth())
+      .first<{ seconds: number }>();
+    expect(usage).not.toBeNull();
+    const bookedSeconds = usage!.seconds;
+
+    const clockStart = await runInDurableObject(stub as unknown as DurableObjectStub<SessionPresence>, (_instance, state) => state.storage.get("clockStart"));
+    expect(clockStart).toBeUndefined();
+    const meterOwnerId = await runInDurableObject(stub as unknown as DurableObjectStub<SessionPresence>, (_instance, state) => state.storage.get("meterOwnerId"));
+    expect(meterOwnerId).toBeUndefined();
+
+    // A subsequent alarm (simulating one that was already in flight, or a
+    // stray re-arm) must not book anything further: flushUsage's own
+    // !clockStart early return is the backstop once clockStart is gone.
+    await runInDurableObject(stub as unknown as DurableObjectStub<SessionPresence>, (instance) => instance.alarm());
+    const usageAfterAlarm = await env.DB.prepare("SELECT seconds FROM usage_months WHERE owner_user_id = ? AND month = ?")
+      .bind(owner.id, currentMonth())
+      .first<{ seconds: number }>();
+    expect(usageAfterAlarm!.seconds).toBe(bookedSeconds);
+  });
+
+  it("alarm backstop stops metering when the /session-ended fetch never arrived", async () => {
+    const owner = await upsertUser({
+      providerUserId: "chatgpt-backstop-owner",
+      email: "backstop-owner@example.com",
+      displayName: "Owner",
+      fullName: "Owner",
+    }, env.DB);
+    const created = await createSession(owner.id, { title: "Backstopped", objective: null }, env.DB);
+    const stub = env.SESSION_PRESENCE.get(env.SESSION_PRESENCE.idFromName(created.session.id));
+    const response = await stub.fetch("https://presence.internal/connect", { headers: {
+      upgrade: "websocket",
+      "x-openfloor-user-id": owner.id,
+      "x-openfloor-display-name": "Owner",
+      "x-openfloor-meter-owner-id": owner.id,
+      "x-openfloor-meter-session-id": created.session.id,
+    } });
+    expect(response.status).toBe(101);
+    response.webSocket?.accept();
+
+    // The session ends in D1, but (unlike the test above) the DO is never
+    // told — simulating the /session-ended fetch failing after the D1 write.
+    await endSession(created.session.id, owner.id, "owner", env.DB);
+
+    await runInDurableObject(stub as unknown as DurableObjectStub<SessionPresence>, (instance) => instance.alarm());
+
+    const usage = await env.DB.prepare("SELECT seconds FROM usage_months WHERE owner_user_id = ? AND month = ?")
+      .bind(owner.id, currentMonth())
+      .first<{ seconds: number }>();
+    expect(usage).not.toBeNull();
+    const clockStart = await runInDurableObject(stub as unknown as DurableObjectStub<SessionPresence>, (_instance, state) => state.storage.get("clockStart"));
+    expect(clockStart).toBeUndefined();
+    const alarmTime = await runInDurableObject(stub as unknown as DurableObjectStub<SessionPresence>, (_instance, state) => state.storage.getAlarm());
+    expect(alarmTime).toBeNull();
   });
 });
