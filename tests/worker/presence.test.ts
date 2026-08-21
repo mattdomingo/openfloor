@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import { evictDurableObject, runInDurableObject } from "cloudflare:test";
+import { evictDurableObject, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { describe, expect, it, vi } from "vitest";
 import { createSession, currentMonth, endSession, upsertUser } from "@/db/sessions";
 import worker from "./entry";
@@ -14,6 +14,80 @@ function nextMessage(socket: WebSocket): Promise<PresenceEvent> {
       resolve(JSON.parse(String(event.data)) as PresenceEvent);
     }, { once: true });
   });
+}
+
+function nextRawMessage(socket: WebSocket): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("Timed out waiting for raw message")), 2_000);
+    socket.addEventListener("message", (event) => {
+      clearTimeout(timer);
+      resolve(String(event.data));
+    }, { once: true });
+  });
+}
+
+function nextClose(socket: WebSocket): Promise<CloseEvent> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("Timed out waiting for close event")), 2_000);
+    socket.addEventListener("close", ((event: CloseEvent) => {
+      clearTimeout(timer);
+      resolve(event);
+    }) as EventListener, { once: true });
+  });
+}
+
+// Test-only access to the DO's internal metering state: real production code
+// never reaches in like this, but the alternative — waiting out real
+// 15/30-minute intervals — is not workable in a test suite.
+type MeteringAttachment = { lastActivityAt: number; [key: string]: unknown };
+type MeteredSocket = WebSocket & {
+  serializeAttachment(value: MeteringAttachment): void;
+  deserializeAttachment(): MeteringAttachment | null;
+};
+
+async function setClockStart(stub: DurableObjectStub, timestamp: number): Promise<void> {
+  await runInDurableObject(stub as unknown as DurableObjectStub<SessionPresence>, (_instance, state) => state.storage.put("clockStart", timestamp));
+}
+
+async function getClockStart(stub: DurableObjectStub): Promise<number | undefined> {
+  return runInDurableObject(stub as unknown as DurableObjectStub<SessionPresence>, (_instance, state) => state.storage.get<number>("clockStart"));
+}
+
+async function getScheduledAlarm(stub: DurableObjectStub): Promise<number | null> {
+  return runInDurableObject(stub as unknown as DurableObjectStub<SessionPresence>, (_instance, state) => state.storage.getAlarm());
+}
+
+async function backdateAllLastActivity(stub: DurableObjectStub, timestamp: number): Promise<void> {
+  await runInDurableObject(stub as unknown as DurableObjectStub<SessionPresence>, (_instance, state) => {
+    for (const socket of state.getWebSockets() as MeteredSocket[]) {
+      const attachment = socket.deserializeAttachment();
+      if (attachment) socket.serializeAttachment({ ...attachment, lastActivityAt: timestamp });
+    }
+  });
+}
+
+async function readUsageSeconds(ownerId: string): Promise<number> {
+  const row = await env.DB.prepare("SELECT seconds FROM usage_months WHERE owner_user_id = ? AND month = ?")
+    .bind(ownerId, currentMonth())
+    .first<{ seconds: number }>();
+  return row?.seconds ?? 0;
+}
+
+async function connectMetered(stub: DurableObjectStub, userId: string, ownerId: string, sessionId: string) {
+  const response = await stub.fetch("https://presence.internal/connect", {
+    headers: {
+      upgrade: "websocket",
+      "x-openfloor-user-id": userId,
+      "x-openfloor-display-name": userId,
+      "x-openfloor-meter-owner-id": ownerId,
+      "x-openfloor-meter-session-id": sessionId,
+    },
+  });
+  expect(response.status).toBe(101);
+  const socket = response.webSocket;
+  if (!socket) throw new Error("Missing WebSocket");
+  socket.accept();
+  return socket;
 }
 
 async function connect(stub: DurableObjectStub, userId: string, displayName: string) {
@@ -426,5 +500,209 @@ describe("metering stops when a session ends", () => {
     expect(clockStart).toBeUndefined();
     const alarmTime = await runInDurableObject(stub as unknown as DurableObjectStub<SessionPresence>, (_instance, state) => state.storage.getAlarm());
     expect(alarmTime).toBeNull();
+  });
+});
+
+describe("idle timeout and honest billing", () => {
+  it("a periodic alarm books elapsed time and re-arms while a socket is active", async () => {
+    const owner = await upsertUser({
+      providerUserId: "chatgpt-idle-active-owner",
+      email: "idle-active-owner@example.com",
+      displayName: "Owner",
+      fullName: "Owner",
+    }, env.DB);
+    const created = await createSession(owner.id, { title: "Active", objective: null }, env.DB);
+    const stub = env.SESSION_PRESENCE.get(env.SESSION_PRESENCE.idFromName(created.session.id));
+    const socket = await connectMetered(stub, owner.id, owner.id, created.session.id);
+
+    const fiveMinutesAgo = Date.now() - 5 * 60_000;
+    await setClockStart(stub, fiveMinutesAgo);
+
+    const ran = await runDurableObjectAlarm(stub as unknown as DurableObjectStub<SessionPresence>);
+    expect(ran).toBe(true);
+
+    const seconds = await readUsageSeconds(owner.id);
+    expect(seconds).toBeGreaterThanOrEqual(295);
+    expect(seconds).toBeLessThanOrEqual(305);
+
+    const newClockStart = await getClockStart(stub);
+    expect(newClockStart).toBeGreaterThan(fiveMinutesAgo);
+    const alarmAt = await getScheduledAlarm(stub);
+    expect(alarmAt).not.toBeNull();
+
+    socket.close(1000, "cleanup");
+  });
+
+  it("closes an idle socket with 4004 and books only up to its last real activity", async () => {
+    const owner = await upsertUser({
+      providerUserId: "chatgpt-idle-close-owner",
+      email: "idle-close-owner@example.com",
+      displayName: "Owner",
+      fullName: "Owner",
+    }, env.DB);
+    const created = await createSession(owner.id, { title: "Idle", objective: null }, env.DB);
+    const stub = env.SESSION_PRESENCE.get(env.SESSION_PRESENCE.idFromName(created.session.id));
+    const socket = await connectMetered(stub, owner.id, owner.id, created.session.id);
+    const closed = nextClose(socket);
+
+    const now = Date.now();
+    await setClockStart(stub, now - 40 * 60_000); // "connected" 40 minutes ago
+    await backdateAllLastActivity(stub, now - 35 * 60_000); // idle for the last 35 minutes
+
+    const ran = await runDurableObjectAlarm(stub as unknown as DurableObjectStub<SessionPresence>);
+    expect(ran).toBe(true);
+
+    const event = await closed;
+    expect(event.code).toBe(4004);
+
+    // Booked only the 5 minutes between clockStart and the last real
+    // activity — not the full 40 minutes the socket was technically open.
+    const seconds = await readUsageSeconds(owner.id);
+    expect(seconds).toBeGreaterThanOrEqual(295);
+    expect(seconds).toBeLessThanOrEqual(310);
+  });
+
+  it("a ping refreshes the idle deadline and keeps an active socket connected", async () => {
+    const owner = await upsertUser({
+      providerUserId: "chatgpt-idle-ping-owner",
+      email: "idle-ping-owner@example.com",
+      displayName: "Owner",
+      fullName: "Owner",
+    }, env.DB);
+    const created = await createSession(owner.id, { title: "Pinged", objective: null }, env.DB);
+    const stub = env.SESSION_PRESENCE.get(env.SESSION_PRESENCE.idFromName(created.session.id));
+    const socket = await connectMetered(stub, owner.id, owner.id, created.session.id);
+
+    await setClockStart(stub, Date.now() - 10 * 60_000);
+    // Refresh real activity right before the alarm fires, as the client's
+    // input-gated heartbeat does.
+    const pong = nextRawMessage(socket);
+    socket.send("ping");
+    expect(await pong).toBe("pong");
+
+    let closedEarly = false;
+    socket.addEventListener("close", () => { closedEarly = true; });
+
+    const ran = await runDurableObjectAlarm(stub as unknown as DurableObjectStub<SessionPresence>);
+    expect(ran).toBe(true);
+    expect(closedEarly).toBe(false);
+
+    const seconds = await readUsageSeconds(owner.id);
+    expect(seconds).toBeGreaterThanOrEqual(595);
+    expect(seconds).toBeLessThanOrEqual(610);
+    expect(await getScheduledAlarm(stub)).not.toBeNull();
+
+    socket.close(1000, "cleanup");
+  });
+
+  it("never decreases usage_months.seconds across an idle flush (clamps at clockStart)", async () => {
+    const owner = await upsertUser({
+      providerUserId: "chatgpt-idle-clamp-owner",
+      email: "idle-clamp-owner@example.com",
+      displayName: "Owner",
+      fullName: "Owner",
+    }, env.DB);
+    const created = await createSession(owner.id, { title: "Clamped", objective: null }, env.DB);
+    const stub = env.SESSION_PRESENCE.get(env.SESSION_PRESENCE.idFromName(created.session.id));
+    const socket = await connectMetered(stub, owner.id, owner.id, created.session.id);
+    const closed = nextClose(socket);
+
+    // First periodic flush: activity is still recent (from connect), so this
+    // takes the active branch and advances clockStart to "now".
+    await setClockStart(stub, Date.now() - 20 * 60_000);
+    const ran1 = await runDurableObjectAlarm(stub as unknown as DurableObjectStub<SessionPresence>);
+    expect(ran1).toBe(true);
+    const afterFirstFlush = await readUsageSeconds(owner.id);
+    expect(afterFirstFlush).toBeGreaterThanOrEqual(1195);
+    expect(afterFirstFlush).toBeLessThanOrEqual(1210);
+    const clockStartAfterFirstFlush = await getClockStart(stub);
+    expect(clockStartAfterFirstFlush).toBeDefined();
+
+    // Now staleness catches up: lastActivityAt predates the clockStart the
+    // first flush just advanced to. Without flushUsage's lower clamp,
+    // (lastActivityAt - clockStart) is negative and would *decrease*
+    // usage_months.seconds through `seconds = seconds + excluded.seconds`.
+    await backdateAllLastActivity(stub, clockStartAfterFirstFlush! - 35 * 60_000);
+    const ran2 = await runDurableObjectAlarm(stub as unknown as DurableObjectStub<SessionPresence>);
+    expect(ran2).toBe(true);
+
+    const event = await closed;
+    expect(event.code).toBe(4004);
+
+    const afterSecondFlush = await readUsageSeconds(owner.id);
+    expect(afterSecondFlush).toBe(afterFirstFlush); // unchanged, never decreased
+  });
+
+  it("books elapsed time once for a session regardless of how many sockets are connected", async () => {
+    const owner = await upsertUser({
+      providerUserId: "chatgpt-double-owner",
+      email: "double-owner@example.com",
+      displayName: "Owner",
+      fullName: "Owner",
+    }, env.DB);
+    const member = await upsertUser({
+      providerUserId: "chatgpt-double-member",
+      email: "double-member@example.com",
+      displayName: "Member",
+      fullName: "Member",
+    }, env.DB);
+    const created = await createSession(owner.id, { title: "Double", objective: null }, env.DB);
+    const stub = env.SESSION_PRESENCE.get(env.SESSION_PRESENCE.idFromName(created.session.id));
+    // Both connections meter to the same owner/session — matches production,
+    // where the meter headers come from the session owner, not the
+    // connecting member.
+    const socketA = await connectMetered(stub, owner.id, owner.id, created.session.id);
+    const socketB = await connectMetered(stub, member.id, owner.id, created.session.id);
+
+    await setClockStart(stub, Date.now() - 5 * 60_000);
+
+    // Client-initiated closes aren't awaited here — unlike the
+    // server-initiated 4003/4004 closes elsewhere in this file, nothing in
+    // this harness guarantees a client-close's own "close" event fires
+    // promptly, so the DO's occupancy state is the thing to poll instead.
+    socketA.close(1000, "tab A closed");
+    await vi.waitFor(async () => {
+      const openCount = await runInDurableObject(stub as unknown as DurableObjectStub<SessionPresence>, (_instance, state) =>
+        (state.getWebSockets() as MeteredSocket[]).filter((socket) => socket.readyState === WebSocket.OPEN).length);
+      expect(openCount).toBe(1); // socketB only — socketA has closed server-side
+    });
+    // socketB is still open — occupancy has not hit zero, so no flush yet.
+    expect(await readUsageSeconds(owner.id)).toBe(0);
+
+    socketB.close(1000, "tab B closed");
+    await vi.waitFor(async () => {
+      const seconds = await readUsageSeconds(owner.id);
+      expect(seconds).toBeGreaterThan(0);
+    });
+
+    const seconds = await readUsageSeconds(owner.id);
+    expect(seconds).toBeGreaterThanOrEqual(295);
+    expect(seconds).toBeLessThanOrEqual(310);
+  });
+
+  it("clockStart survives eviction, so billing is not lost or reset around a DO restart", async () => {
+    const owner = await upsertUser({
+      providerUserId: "chatgpt-evict-meter-owner",
+      email: "evict-meter-owner@example.com",
+      displayName: "Owner",
+      fullName: "Owner",
+    }, env.DB);
+    const created = await createSession(owner.id, { title: "Evicted", objective: null }, env.DB);
+    const stub = env.SESSION_PRESENCE.get(env.SESSION_PRESENCE.idFromName(created.session.id));
+    await connectMetered(stub, owner.id, owner.id, created.session.id);
+
+    const tenMinutesAgo = Date.now() - 10 * 60_000;
+    await setClockStart(stub, tenMinutesAgo);
+
+    await evictDurableObject(stub);
+
+    const preservedClockStart = await getClockStart(stub);
+    expect(preservedClockStart).toBe(tenMinutesAgo);
+
+    const ran = await runDurableObjectAlarm(stub as unknown as DurableObjectStub<SessionPresence>);
+    expect(ran).toBe(true);
+    const seconds = await readUsageSeconds(owner.id);
+    expect(seconds).toBeGreaterThanOrEqual(595);
+    expect(seconds).toBeLessThanOrEqual(610);
   });
 });

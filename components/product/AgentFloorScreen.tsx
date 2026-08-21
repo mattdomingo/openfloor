@@ -66,7 +66,28 @@ export function AgentFloorScreen({
   useEffect(() => {
     let socket: WebSocket | null = null;
     let retryTimer: number | null = null;
+    let heartbeatTimer: number | null = null;
     let disposed = false;
+    // Real presence, not merely an open socket: the DO's idle timeout (30
+    // min) trims billing to this, so an unattended-but-visible tab must not
+    // look active. Deliberately window-level and un-throttled — cost is a
+    // timestamp write per event, no re-render.
+    let lastInputAt = Date.now();
+
+    function tryReconnectAfterIdleClose() {
+      if (!disposed && document.visibilityState === "visible" && socketRef.current === null && retryTimer === null) {
+        connect();
+      }
+    }
+
+    function noteInput() {
+      lastInputAt = Date.now();
+      tryReconnectAfterIdleClose();
+    }
+
+    function handleVisibilityChange() {
+      if (document.visibilityState === "visible") noteInput();
+    }
 
     function connect() {
       if (disposed) return;
@@ -116,22 +137,56 @@ export function AgentFloorScreen({
           setFloorError(event.reason || "This session's host has used up their plan's monthly session hours.");
           return;
         }
+        if (event.code === 4001) {
+          // Membership ended: this connection is no longer valid. Leave
+          // instead of retrying — previously this fell into the backoff
+          // branch below, reconnected, got a bare 404 on the upgrade (opaque
+          // as code 1006 to the browser), and looped forever at one attempt
+          // per 10s.
+          router.replace("/home");
+          return;
+        }
+        if (event.code === 4004) {
+          // Idle timeout: paused, not terminal. Reconnect the instant the
+          // user is back (handled by noteInput/handleVisibilityChange)
+          // rather than backing off — there is nothing to back off from.
+          setFloorError(event.reason || "Disconnected after a period of inactivity.");
+          retryRef.current = 0;
+          return;
+        }
         retryRef.current += 1;
         const delay = Math.min(10_000, 500 * 2 ** Math.min(retryRef.current - 1, 5));
         retryTimer = window.setTimeout(connect, delay);
       });
     }
 
+    const inputEvents = ["pointermove", "keydown", "focus", "scroll"] as const;
+    for (const eventName of inputEvents) window.addEventListener(eventName, noteInput, { passive: true });
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    // Heartbeat: only while the tab is visible and there has been real user
+    // input recently, so an unattended tab (backgrounded or merely left
+    // open) stops refreshing lastActivityAt server-side and the DO's idle
+    // timeout can actually trim its billing.
+    heartbeatTimer = window.setInterval(() => {
+      if (document.visibilityState !== "visible") return;
+      if (Date.now() - lastInputAt > 5 * 60_000) return;
+      if (socketRef.current?.readyState === WebSocket.OPEN) socketRef.current.send("ping");
+    }, 30_000);
+
     connect();
     return () => {
       disposed = true;
       if (retryTimer) window.clearTimeout(retryTimer);
+      if (heartbeatTimer) window.clearInterval(heartbeatTimer);
+      for (const eventName of inputEvents) window.removeEventListener(eventName, noteInput);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
       if (socket?.readyState === WebSocket.OPEN) {
         socket.send(JSON.stringify({ type: "typing.update", text: "", typing: false } satisfies TypingUpdate));
       }
       socket?.close(1000, "Agent floor closed");
     };
-  }, [catchUpActivity, ingestActivity, refreshFloor, refreshMembers, session.id, setFloorError]);
+  }, [catchUpActivity, ingestActivity, refreshFloor, refreshMembers, router, session.id, setFloorError]);
 
   const visibleMembers = useMemo(
     () => members.map((member) => ({ ...member, online: onlineIds.has(member.id) })),

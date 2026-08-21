@@ -24,6 +24,12 @@ const MAX_DRAFT_LENGTH = 4_000;
 // How often an occupied session books its active time to D1. Also the bound
 // on how much time a DO crash can lose or double-count.
 const USAGE_FLUSH_INTERVAL_MS = 15 * 60_000;
+// A socket with no real user input (see lastActivityAt) for this long is
+// closed rather than left billing an unattended tab. Checked on the same
+// alarm as the usage flush, so detection lags the true idle moment by up to
+// USAGE_FLUSH_INTERVAL_MS — booking is still trimmed to the real last
+// activity, not to detection time.
+const IDLE_TIMEOUT_MS = 30 * 60_000;
 
 type SocketAttachment = {
   userId: string;
@@ -32,6 +38,9 @@ type SocketAttachment = {
   draft?: string;
   typing?: boolean;
   draftUpdatedAt?: number;
+  // Real client activity (typing, or an input-gated "ping" heartbeat), not
+  // merely an open socket — see IDLE_TIMEOUT_MS.
+  lastActivityAt: number;
 };
 type AttachedWebSocket = WebSocket & {
   serializeAttachment(value: SocketAttachment): void;
@@ -128,7 +137,7 @@ export class SessionPresence extends DurableObject<PresenceEnv> {
     const client = pair[0];
     const server = pair[1] as AttachedWebSocket;
     const wasOnline = this.socketsFor(userId).length > 0;
-    server.serializeAttachment({ userId, displayName, connectionId: crypto.randomUUID(), draft: "", typing: false, draftUpdatedAt: 0 });
+    server.serializeAttachment({ userId, displayName, connectionId: crypto.randomUUID(), draft: "", typing: false, draftUpdatedAt: 0, lastActivityAt: Date.now() });
     this.ctx.acceptWebSocket(server);
     server.send(JSON.stringify({
       type: "presence.snapshot",
@@ -141,6 +150,13 @@ export class SessionPresence extends DurableObject<PresenceEnv> {
 
   webSocketMessage(socket: AttachedWebSocket, message: string | ArrayBuffer): void {
     if (message === "ping") {
+      // The client only sends this while the tab is visible and the user has
+      // recently interacted with it — see AgentFloorScreen's heartbeat — so
+      // it is real evidence of presence, not just an open connection. Spread
+      // the existing attachment: constructing a fresh one would blank this
+      // user's in-flight typing draft for every other participant.
+      const attachment = socket.deserializeAttachment();
+      if (attachment) socket.serializeAttachment({ ...attachment, lastActivityAt: Date.now() });
       socket.send("pong");
       return;
     }
@@ -168,6 +184,7 @@ export class SessionPresence extends DurableObject<PresenceEnv> {
       draft: update.text,
       typing: update.text.length > 0 && update.typing,
       draftUpdatedAt: this.nextDraftUpdatedAt(),
+      lastActivityAt: Date.now(),
     });
     this.broadcastUserDraft(attachment.userId, attachment.displayName);
   }
@@ -181,7 +198,10 @@ export class SessionPresence extends DurableObject<PresenceEnv> {
       }
     }
     if (!this.sockets().some((open) => open !== socket && open.readyState === WebSocket.OPEN)) {
-      await this.flushUsage(false); // occupancy hit zero
+      // Book to this socket's own last activity, not to now: a socket that
+      // went idle and was later closed (by the client, not just by our idle
+      // timeout) must not bill the idle tail either.
+      await this.flushUsage(false, this.lastActivityAcross(socket)); // occupancy hit zero
     }
   }
 
@@ -205,9 +225,25 @@ export class SessionPresence extends DurableObject<PresenceEnv> {
         return;
       }
     }
-    const occupied = this.sockets().some((socket) => socket.readyState === WebSocket.OPEN);
-    await this.flushUsage(occupied);
-    if (occupied) await this.ctx.storage.setAlarm(Date.now() + USAGE_FLUSH_INTERVAL_MS);
+    const now = Date.now();
+    const open = this.sockets().filter((socket) => socket.readyState === WebSocket.OPEN);
+    const idle = open.filter((socket) => (socket.deserializeAttachment()?.lastActivityAt ?? 0) < now - IDLE_TIMEOUT_MS);
+    const active = open.filter((socket) => !idle.includes(socket));
+
+    // Flush before closing idle sockets, not after: closing can synchronously
+    // (or on the next turn) trigger webSocketClose, whose own flush must find
+    // no clockStart left to book — flushUsage's early return is what makes
+    // that safe — rather than racing to double-book the same interval.
+    if (active.length > 0) {
+      await this.flushUsage(true, now);
+      for (const socket of idle) socket.close(4004, "Disconnected for inactivity");
+      await this.ctx.storage.setAlarm(now + USAGE_FLUSH_INTERVAL_MS);
+    } else {
+      // Every open socket (if any) is idle: occupancy is effectively zero.
+      // Book only up to the last real activity, not up to this alarm firing.
+      await this.flushUsage(false, this.lastActivityAcross());
+      for (const socket of idle) socket.close(4004, "Disconnected for inactivity");
+    }
   }
 
   // Books whatever is owed, then clears metering state so a later reconnect
@@ -217,13 +253,20 @@ export class SessionPresence extends DurableObject<PresenceEnv> {
     await this.ctx.storage.delete(["meterOwnerId", "meterSessionId"]);
   }
 
-  private async flushUsage(keepRunning: boolean): Promise<void> {
+  // endAtHint lets a caller trim billing to real last activity instead of
+  // "now" (the idle-close paths). The clamp lives here, not in callers, so
+  // no call site can get the two edge cases wrong: an endAtHint in the
+  // future (clamped to now) or, the common 30-minute-idle case, an
+  // endAtHint before clockStart — without the lower clamp that would book
+  // negative seconds and *credit* usage_months via `seconds + excluded.seconds`.
+  private async flushUsage(keepRunning: boolean, endAtHint?: number): Promise<void> {
     const clockStart = await this.ctx.storage.get<number>("clockStart");
     const ownerId = await this.ctx.storage.get<string>("meterOwnerId");
     const sessionId = await this.ctx.storage.get<string>("meterSessionId");
     if (!clockStart || !ownerId || !sessionId) return;
     const now = Date.now();
-    const seconds = Math.round((now - clockStart) / 1000);
+    const endAt = Math.min(now, Math.max(clockStart, endAtHint ?? now));
+    const seconds = Math.round((endAt - clockStart) / 1000);
     // ponytail: an interval spanning a UTC month boundary books wholly to the
     // flush-time month, and a failed storage write after this D1 write can
     // double-count — both bounded by one flush interval.
@@ -236,11 +279,22 @@ export class SessionPresence extends DurableObject<PresenceEnv> {
         .bind(seconds, sessionId),
     ]);
     if (keepRunning) {
-      await this.ctx.storage.put("clockStart", now);
+      // Advance to endAt, not now: when endAt < now (an idle trim), the
+      // untrimmed remainder up to now has not been booked and must stay
+      // owed on the clock, not be silently dropped.
+      await this.ctx.storage.put("clockStart", endAt);
     } else {
       await this.ctx.storage.delete("clockStart");
       await this.ctx.storage.deleteAlarm();
     }
+  }
+
+  // Latest real-activity timestamp across currently attached sockets, plus
+  // an optional extra socket (webSocketClose's own socket may already be
+  // excluded from getWebSockets() by the time this runs).
+  private lastActivityAcross(extra?: AttachedWebSocket): number {
+    const all = extra ? [...this.sockets(), extra] : this.sockets();
+    return Math.max(0, ...all.map((socket) => socket.deserializeAttachment()?.lastActivityAt ?? 0));
   }
 
   private sockets(): AttachedWebSocket[] {
