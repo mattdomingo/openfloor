@@ -5,13 +5,22 @@ import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
 import { BASE_PATH } from "@/components/basePath";
 import { LocalDateTime } from "@/components/LocalDateTime";
+import { formatDuration } from "@/lib/date-format";
 import { SegmentedControl, useDialogDismiss } from "@/components/session/primitives";
 import type { AppUser, SessionSummary } from "@/lib/session-types";
 import { AppHeader } from "./AppHeader";
 
 type SessionTab = "active" | "archived" | "ended";
 
-export function HomeScreen({ user, sessions: initialSessions }: { user: AppUser; sessions: SessionSummary[] }) {
+export function HomeScreen({
+  user,
+  sessions: initialSessions,
+  usage,
+}: {
+  user: AppUser;
+  sessions: SessionSummary[];
+  usage: { plan: "pro" | "max" | "enterprise"; seconds: number; limitHours: number };
+}) {
   const router = useRouter();
   const [sessions, setSessions] = useState(initialSessions);
   // router.refresh() (after delete) re-renders this Server Component prop without
@@ -65,7 +74,14 @@ export function HomeScreen({ user, sessions: initialSessions }: { user: AppUser;
       <AppHeader user={user} />
       <section className="page-body">
         <div className="page-heading">
-          <div><p className="eyebrow">Sessions</p><h1>Your sessions</h1><p>Durable sessions for the people doing the work.</p></div>
+          <div>
+            <p className="eyebrow">Sessions</p><h1>Your sessions</h1><p>Durable sessions for the people doing the work.</p>
+            <p className="usage-line">
+              {Number.isFinite(usage.limitHours)
+                ? `${formatDuration(usage.seconds)} of ${usage.limitHours}h session time used this month`
+                : `${formatDuration(usage.seconds)} session time used this month`}
+            </p>
+          </div>
           <button className="button" data-variant="primary" onClick={() => setCreating((value) => !value)}>
             {creating ? "Cancel" : "New session"}
           </button>
@@ -134,7 +150,7 @@ function SessionGrid({
           </div>
           <p>{session.objective || "No objective has been written yet."}</p>
           <div className="session-card-foot">
-            <span>{session.memberCount} {session.memberCount === 1 ? "member" : "members"}</span>
+            <span>{session.memberCount} {session.memberCount === 1 ? "member" : "members"} · {formatDuration(session.activeSeconds)} active</span>
             <span className="session-card-foot-end">
               <button type="button" className="button" data-variant="quiet" data-size="sm" onClick={() => onSetArchived(session, !archived)}>{archived ? "Unarchive" : "Archive"}</button>
               {session.role === "owner" && <button type="button" className="button danger-button" data-size="sm" onClick={() => onDelete(session)}>Delete</button>}

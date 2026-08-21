@@ -1,5 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
-import { authorizePresence } from "../db/sessions";
+import { authorizePresence, currentMonth, getOwnerHourQuota, PLAN_LIMITS } from "../db/sessions";
 import type { D1DatabaseLike } from "../db";
 import {
   cloudflareAccessIdentity,
@@ -21,6 +21,9 @@ export interface PresenceEnv extends IdentityEnvironment {
 }
 
 const MAX_DRAFT_LENGTH = 4_000;
+// How often an occupied session books its active time to D1. Also the bound
+// on how much time a DO crash can lose or double-count.
+const USAGE_FLUSH_INTERVAL_MS = 15 * 60_000;
 
 type SocketAttachment = {
   userId: string;
@@ -35,7 +38,7 @@ type AttachedWebSocket = WebSocket & {
   deserializeAttachment(): SocketAttachment | null;
 };
 
-export class SessionPresence extends DurableObject {
+export class SessionPresence extends DurableObject<PresenceEnv> {
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
     if (url.pathname === "/connect") return this.acceptConnection(request);
@@ -97,13 +100,26 @@ export class SessionPresence extends DurableObject {
     return new Response("Not found", { status: 404 });
   }
 
-  private acceptConnection(request: Request): Response {
+  private async acceptConnection(request: Request): Promise<Response> {
     if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") {
       return new Response("WebSocket upgrade required", { status: 426 });
     }
     const userId = request.headers.get("x-openfloor-user-id");
     const displayName = request.headers.get("x-openfloor-display-name");
     if (!userId || !displayName) return new Response("Unauthorized", { status: 401 });
+
+    // Hour metering: the route only sends these for live (not ended) sessions.
+    // Keying the clock on stored state, not live socket count, means a
+    // wake-from-hibernation reconnect never resets a running clock.
+    const meterOwnerId = request.headers.get("x-openfloor-meter-owner-id");
+    const meterSessionId = request.headers.get("x-openfloor-meter-session-id");
+    if (meterOwnerId && meterSessionId) {
+      await this.ctx.storage.put({ meterOwnerId, meterSessionId });
+      if (!(await this.ctx.storage.get("clockStart"))) {
+        await this.ctx.storage.put("clockStart", Date.now());
+        await this.ctx.storage.setAlarm(Date.now() + USAGE_FLUSH_INTERVAL_MS);
+      }
+    }
 
     const pair = new WebSocketPair();
     const client = pair[0];
@@ -153,7 +169,7 @@ export class SessionPresence extends DurableObject {
     this.broadcastUserDraft(attachment.userId, attachment.displayName);
   }
 
-  webSocketClose(socket: AttachedWebSocket): void {
+  async webSocketClose(socket: AttachedWebSocket): Promise<void> {
     const attachment = socket.deserializeAttachment();
     if (attachment) {
       if (attachment.draft || attachment.typing) this.broadcastUserDraft(attachment.userId, attachment.displayName);
@@ -161,10 +177,47 @@ export class SessionPresence extends DurableObject {
         this.broadcast({ type: "presence.changed", userId: attachment.userId, online: false });
       }
     }
+    if (!this.sockets().some((open) => open !== socket && open.readyState === WebSocket.OPEN)) {
+      await this.flushUsage(false); // occupancy hit zero
+    }
   }
 
-  webSocketError(socket: AttachedWebSocket): void {
-    this.webSocketClose(socket);
+  async webSocketError(socket: AttachedWebSocket): Promise<void> {
+    await this.webSocketClose(socket);
+  }
+
+  // Books time for long-lived occupied sessions and for sockets that died
+  // without a close event.
+  async alarm(): Promise<void> {
+    const occupied = this.sockets().some((socket) => socket.readyState === WebSocket.OPEN);
+    await this.flushUsage(occupied);
+    if (occupied) await this.ctx.storage.setAlarm(Date.now() + USAGE_FLUSH_INTERVAL_MS);
+  }
+
+  private async flushUsage(keepRunning: boolean): Promise<void> {
+    const clockStart = await this.ctx.storage.get<number>("clockStart");
+    const ownerId = await this.ctx.storage.get<string>("meterOwnerId");
+    const sessionId = await this.ctx.storage.get<string>("meterSessionId");
+    if (!clockStart || !ownerId || !sessionId) return;
+    const now = Date.now();
+    const seconds = Math.round((now - clockStart) / 1000);
+    // ponytail: an interval spanning a UTC month boundary books wholly to the
+    // flush-time month, and a failed storage write after this D1 write can
+    // double-count — both bounded by one flush interval.
+    await this.env.DB.batch([
+      this.env.DB.prepare(
+        `INSERT INTO usage_months (owner_user_id, month, seconds) VALUES (?, ?, ?)
+         ON CONFLICT(owner_user_id, month) DO UPDATE SET seconds = seconds + excluded.seconds`,
+      ).bind(ownerId, currentMonth(), seconds),
+      this.env.DB.prepare("UPDATE sessions SET active_seconds = active_seconds + ? WHERE id = ?")
+        .bind(seconds, sessionId),
+    ]);
+    if (keepRunning) {
+      await this.ctx.storage.put("clockStart", now);
+    } else {
+      await this.ctx.storage.delete("clockStart");
+      await this.ctx.storage.deleteAlarm();
+    }
   }
 
   private sockets(): AttachedWebSocket[] {
@@ -234,12 +287,33 @@ export async function handlePresenceRequest(request: Request, env: PresenceEnv):
   const identity = localDevelopmentIdentity(request.headers, env)
     ?? await cloudflareAccessIdentity(request.headers, env);
   if (!identity) return new Response("Authentication required", { status: 401 });
-  const member = await authorizePresence(decodeURIComponent(presenceMatch[1]), identity.providerUserId, env.DB);
+  const sessionId = decodeURIComponent(presenceMatch[1]);
+  const member = await authorizePresence(sessionId, identity.providerUserId, env.DB);
   if (!member) return new Response("Session not found", { status: 404 });
 
   const headers = new Headers(request.headers);
   headers.set("x-openfloor-user-id", member.userId);
   headers.set("x-openfloor-display-name", member.displayName);
-  const stub = env.SESSION_PRESENCE.get(env.SESSION_PRESENCE.idFromName(decodeURIComponent(presenceMatch[1])));
+
+  // Hour-quota gate: the one point every floor WebSocket passes through.
+  // Ended sessions stay viewable for free; live ones are gated on the owner's
+  // plan and metered by the DO (already-connected users are never kicked —
+  // the DO's booked total lags real usage by at most one flush interval).
+  const quota = await getOwnerHourQuota(sessionId, env.DB);
+  if (quota && quota.endedAt == null) {
+    if (quota.seconds >= PLAN_LIMITS[quota.plan].hours * 3600) {
+      // Accept-then-close so the browser sees a close code; a 4xx upgrade
+      // failure is opaque to the WebSocket API.
+      const rejected = new WebSocketPair();
+      const server = rejected[1] as WebSocket & { accept(): void };
+      server.accept();
+      server.close(4003, "This session's host has used up their plan's monthly session hours.");
+      return new Response(null, { status: 101, webSocket: rejected[0] });
+    }
+    headers.set("x-openfloor-meter-owner-id", quota.ownerId);
+    headers.set("x-openfloor-meter-session-id", sessionId);
+  }
+
+  const stub = env.SESSION_PRESENCE.get(env.SESSION_PRESENCE.idFromName(sessionId));
   return stub.fetch(new Request("https://presence.internal/connect", { method: "GET", headers }));
 }

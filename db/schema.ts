@@ -14,10 +14,16 @@ export const users = sqliteTable(
     avatarKey: text("avatar_key"),
     onboardedAt: integer("onboarded_at"),
     doNotDisturb: integer("do_not_disturb", { mode: "boolean" }).notNull().default(false),
+    // Set manually (wrangler d1 execute) after a Stripe purchase until billing
+    // integration exists; every limit check keys off this.
+    plan: text("plan", { enum: ["pro", "max", "enterprise"] }).notNull().default("pro"),
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
   },
-  (table) => [uniqueIndex("idx_users_chatgpt_user_id").on(table.providerUserId)],
+  (table) => [
+    uniqueIndex("idx_users_chatgpt_user_id").on(table.providerUserId),
+    check("users_plan_check", sql`${table.plan} in ('pro', 'max', 'enterprise')`),
+  ],
 );
 
 export const sessions = sqliteTable("sessions", {
@@ -34,7 +40,23 @@ export const sessions = sqliteTable("sessions", {
   endedReason: text("ended_reason", { enum: ["owner", "merged"] }),
   floorRevision: integer("floor_revision").notNull().default(0),
   autoDispatch: integer("auto_dispatch", { mode: "boolean" }).notNull().default(false),
+  // Display counter: seconds this session had at least one connected
+  // participant. The billing ledger is usage_months; this one cascades away
+  // with the session and that is fine.
+  activeSeconds: integer("active_seconds").notNull().default(0),
 });
+
+// Monthly active-presence seconds per session owner, the hour-quota ledger.
+// Deliberately no foreign keys: usage must survive session (and user) purges.
+export const usageMonths = sqliteTable(
+  "usage_months",
+  {
+    ownerUserId: text("owner_user_id").notNull(),
+    month: text("month").notNull(), // "YYYY-MM", UTC
+    seconds: integer("seconds").notNull().default(0),
+  },
+  (table) => [primaryKey({ columns: [table.ownerUserId, table.month] })],
+);
 
 export const sessionMembers = sqliteTable(
   "session_members",

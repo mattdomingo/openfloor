@@ -29,6 +29,7 @@ export function AgentFloorScreen({
   const [session, setSession] = useState(initialSession);
   const [members, setMembers] = useState(initialMembers);
   const [onlineIds, setOnlineIds] = useState<Set<string>>(new Set());
+  const [presenceConnected, setPresenceConnected] = useState(false);
   const [typingDrafts, setTypingDrafts] = useState<Map<string, TypingDraft>>(new Map());
   const retryRef = useRef(0);
   const socketRef = useRef<WebSocket | null>(null);
@@ -37,6 +38,7 @@ export function AgentFloorScreen({
   const onMissing = useCallback(() => router.replace("/home"), [router]);
   const floorData = usePersistentFloorData(session.id, initialFloor, onMissing);
   const refreshFloor = floorData.refresh;
+  const setFloorError = floorData.setError;
   const activity = useRunActivity(session.id);
   // Only these two stable callbacks feed the socket effect; depending on the
   // whole `activity` object would reconnect the socket on every event batch.
@@ -73,6 +75,7 @@ export function AgentFloorScreen({
       socketRef.current = socket;
       socket.addEventListener("open", () => {
         retryRef.current = 0;
+        setPresenceConnected(true);
         if (latestTypingUpdateRef.current.text) socket?.send(JSON.stringify(latestTypingUpdateRef.current));
         void refreshFloor();
         catchUpActivity(activeRunIdsRef.current);
@@ -104,9 +107,15 @@ export function AgentFloorScreen({
         if (event.type === "floor.changed" && event.domains.includes("runs")) catchUpActivity(activeRunIdsRef.current);
         if (shouldRefreshFloor(revisionRef.current, event)) void refreshFloor();
       });
-      socket.addEventListener("close", () => {
+      socket.addEventListener("close", (event) => {
         if (socketRef.current === socket) socketRef.current = null;
+        setPresenceConnected(false);
         if (disposed) return;
+        if (event.code === 4003) {
+          // Hour quota exhausted: surface the reason and stop reconnecting.
+          setFloorError(event.reason || "This session's host has used up their plan's monthly session hours.");
+          return;
+        }
         retryRef.current += 1;
         const delay = Math.min(10_000, 500 * 2 ** Math.min(retryRef.current - 1, 5));
         retryTimer = window.setTimeout(connect, delay);
@@ -122,7 +131,7 @@ export function AgentFloorScreen({
       }
       socket?.close(1000, "Agent floor closed");
     };
-  }, [catchUpActivity, ingestActivity, refreshFloor, refreshMembers, session.id]);
+  }, [catchUpActivity, ingestActivity, refreshFloor, refreshMembers, session.id, setFloorError]);
 
   const visibleMembers = useMemo(
     () => members.map((member) => ({ ...member, online: onlineIds.has(member.id) })),
@@ -147,5 +156,5 @@ export function AgentFloorScreen({
     if (socketRef.current?.readyState === WebSocket.OPEN) socketRef.current.send(JSON.stringify(update));
   }, []);
 
-  return <Workspace user={user} session={session} members={visibleMembers} floorData={floorData} activity={activity} typingDrafts={typingDrafts} onTypingUpdate={sendTypingUpdate} onSaveObjective={saveObjective} agentRunEnabled={agentRunEnabled} />;
+  return <Workspace user={user} session={session} members={visibleMembers} floorData={floorData} activity={activity} typingDrafts={typingDrafts} onTypingUpdate={sendTypingUpdate} onSaveObjective={saveObjective} agentRunEnabled={agentRunEnabled} presenceConnected={presenceConnected} />;
 }

@@ -14,7 +14,22 @@ type SessionRecord = {
   endedAt: number | null;
   endedReason: "owner" | "merged" | null;
   archivedAt: number | null;
+  activeSeconds: number;
 };
+
+export type Plan = "pro" | "max" | "enterprise";
+
+// The whole entitlement model: seats cap session_members rows, hours cap
+// monthly active-presence time, both keyed to the session owner's plan.
+export const PLAN_LIMITS: Record<Plan, { seats: number; hours: number }> = {
+  pro: { seats: 5, hours: 30 },
+  max: { seats: 10, hours: 100 },
+  enterprise: { seats: Infinity, hours: Infinity },
+};
+
+export function currentMonth(): string {
+  return new Date().toISOString().slice(0, 7); // UTC "YYYY-MM"
+}
 
 export class SessionEndedError extends Error {
   constructor() {
@@ -33,7 +48,7 @@ export type InvitePreview = {
 const APP_USER_COLUMNS = `id, chatgpt_user_id AS providerUserId, email, display_name AS displayName,
               first_name AS firstName, last_name AS lastName, github_handle AS githubHandle,
               avatar_key AS avatarKey, onboarded_at AS onboardedAt, do_not_disturb AS doNotDisturb,
-              created_at AS createdAt, updated_at AS updatedAt`;
+              plan, created_at AS createdAt, updated_at AS updatedAt`;
 
 // D1 has no native boolean type, so RETURNING/SELECT come back with
 // doNotDisturb as 0/1 — normalize to a real boolean before handing out AppUser.
@@ -145,7 +160,7 @@ export async function listSessionsForUser(userId: string, database = getDb()): P
               COUNT(all_members.user_id) AS memberCount,
               s.created_at AS createdAt, s.updated_at AS updatedAt, s.objective_updated_at AS objectiveUpdatedAt,
               s.ended_at AS endedAt, s.ended_reason AS endedReason,
-              mine.archived_at AS archivedAt
+              mine.archived_at AS archivedAt, s.active_seconds AS activeSeconds
        FROM sessions s
        JOIN session_members mine ON mine.session_id = s.id AND mine.user_id = ?
        JOIN session_members all_members ON all_members.session_id = s.id
@@ -191,6 +206,7 @@ export async function createSession(
       endedAt: null,
       endedReason: null,
       archivedAt: null,
+      activeSeconds: 0,
     },
     inviteId,
   };
@@ -207,7 +223,7 @@ export async function getSessionForMember(
               COUNT(all_members.user_id) AS memberCount,
               s.created_at AS createdAt, s.updated_at AS updatedAt, s.objective_updated_at AS objectiveUpdatedAt,
               s.ended_at AS endedAt, s.ended_reason AS endedReason,
-              mine.archived_at AS archivedAt
+              mine.archived_at AS archivedAt, s.active_seconds AS activeSeconds
        FROM sessions s
        JOIN session_members mine ON mine.session_id = s.id AND mine.user_id = ?
        JOIN session_members all_members ON all_members.session_id = s.id
@@ -375,7 +391,26 @@ export async function acceptInvite(
   inviteId: string,
   userId: string,
   database = getDb(),
-): Promise<string | null> {
+): Promise<string | "full" | null> {
+  const gate = await database
+    .prepare(
+      `SELECT (SELECT COUNT(*) FROM session_members m WHERE m.session_id = i.session_id) AS memberCount,
+              (SELECT u.plan FROM session_members o JOIN users u ON u.id = o.user_id
+                 WHERE o.session_id = i.session_id AND o.role = 'owner') AS ownerPlan,
+              EXISTS(SELECT 1 FROM session_members m
+                 WHERE m.session_id = i.session_id AND m.user_id = ?1) AS alreadyMember
+       FROM session_invites i WHERE i.id = ?2 AND i.revoked_at IS NULL`,
+    )
+    .bind(userId, inviteId)
+    .first<{ memberCount: number; ownerPlan: Plan | null; alreadyMember: number }>();
+  if (!gate) return null;
+  // ponytail: check-then-insert; concurrent accepts can exceed the cap by the
+  // number of racers. Upgrade path if it matters: conditional INSERT...SELECT
+  // guarded by the count inside the batch.
+  if (!gate.alreadyMember && gate.memberCount >= PLAN_LIMITS[gate.ownerPlan ?? "pro"].seats) {
+    return "full";
+  }
+
   const now = Date.now();
   await database.batch([
     database.prepare(
@@ -542,6 +577,48 @@ export async function authorizePresence(
     )
     .bind(providerUserId, sessionId)
     .first<{ userId: string; displayName: string }>();
+}
+
+/* Hour-quota data for the presence gate: who owns the session, their plan,
+   and the seconds already booked to them this month. Ended sessions are
+   neither gated nor metered — they stay viewable for free. */
+export async function getOwnerHourQuota(
+  sessionId: string,
+  database: D1DatabaseLike,
+): Promise<{ ownerId: string; plan: Plan; seconds: number; endedAt: number | null } | null> {
+  return database
+    .prepare(
+      `SELECT o.user_id AS ownerId, u.plan AS plan, COALESCE(um.seconds, 0) AS seconds, s.ended_at AS endedAt
+       FROM session_members o
+       JOIN sessions s ON s.id = o.session_id
+       JOIN users u ON u.id = o.user_id
+       LEFT JOIN usage_months um ON um.owner_user_id = o.user_id AND um.month = ?
+       WHERE o.session_id = ? AND o.role = 'owner'`,
+    )
+    .bind(currentMonth(), sessionId)
+    .first<{ ownerId: string; plan: Plan; seconds: number; endedAt: number | null }>();
+}
+
+export async function getUsageForUser(
+  userId: string,
+  database = getDb(),
+): Promise<{ plan: Plan; seconds: number; limitHours: number }> {
+  const row = await database
+    .prepare(
+      `SELECT u.plan AS plan, COALESCE(um.seconds, 0) AS seconds
+       FROM users u
+       LEFT JOIN usage_months um ON um.owner_user_id = u.id AND um.month = ?
+       WHERE u.id = ?`,
+    )
+    .bind(currentMonth(), userId)
+    .first<{ plan: Plan; seconds: number }>();
+  const plan = row?.plan ?? "pro";
+  return { plan, seconds: row?.seconds ?? 0, limitHours: PLAN_LIMITS[plan].hours };
+}
+
+export async function hourQuotaExhausted(userId: string, database = getDb()): Promise<boolean> {
+  const usage = await getUsageForUser(userId, database);
+  return usage.seconds >= usage.limitHours * 3600;
 }
 
 function normalizeSession(record: SessionRecord): SessionSummary {

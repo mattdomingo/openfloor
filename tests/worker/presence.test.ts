@@ -1,7 +1,7 @@
 import { env } from "cloudflare:workers";
 import { evictDurableObject } from "cloudflare:test";
-import { describe, expect, it } from "vitest";
-import { createSession, upsertUser } from "@/db/sessions";
+import { describe, expect, it, vi } from "vitest";
+import { createSession, currentMonth, upsertUser } from "@/db/sessions";
 import worker from "./entry";
 import type { PresenceEvent } from "@/lib/session-types";
 
@@ -192,5 +192,69 @@ describe("authenticated presence upgrade", () => {
     expect(accepted.status).toBe(101);
     accepted.webSocket?.accept();
     accepted.webSocket?.close(1000, "done");
+  });
+
+  it("rejects the upgrade with close code 4003 once owner hours are exhausted", async () => {
+    const owner = await upsertUser({
+      providerUserId: "chatgpt-quota-owner",
+      email: "quota-owner@example.com",
+      displayName: "Owner",
+      fullName: "Owner",
+    }, env.DB);
+    const created = await createSession(owner.id, { title: "Metered", objective: null }, env.DB);
+    await env.DB.prepare("INSERT INTO usage_months (owner_user_id, month, seconds) VALUES (?, ?, ?)")
+      .bind(owner.id, currentMonth(), 30 * 3600)
+      .run();
+
+    const response = await worker.fetch(new Request(`http://localhost/app/api/sessions/${created.session.id}/presence`, { headers: {
+      host: "localhost",
+      upgrade: "websocket",
+      "x-openfloor-dev-user-id": "chatgpt-quota-owner",
+      "x-openfloor-dev-user-email": "quota-owner@example.com",
+    } }), env);
+    expect(response.status).toBe(101);
+    const socket = response.webSocket;
+    if (!socket) throw new Error("Missing WebSocket");
+    const closed = new Promise<CloseEvent>((resolve) => {
+      socket.addEventListener("close", ((event: CloseEvent) => resolve(event)) as EventListener, { once: true });
+    });
+    socket.accept();
+    const event = await closed;
+    expect(event.code).toBe(4003);
+  });
+
+  it("books active seconds to the owner and session when the last socket closes", async () => {
+    const owner = await upsertUser({
+      providerUserId: "chatgpt-meter-owner",
+      email: "meter-owner@example.com",
+      displayName: "Owner",
+      fullName: "Owner",
+    }, env.DB);
+    const created = await createSession(owner.id, { title: "Meter", objective: null }, env.DB);
+    const stub = env.SESSION_PRESENCE.get(env.SESSION_PRESENCE.idFromName(created.session.id));
+    const response = await stub.fetch("https://presence.internal/connect", { headers: {
+      upgrade: "websocket",
+      "x-openfloor-user-id": owner.id,
+      "x-openfloor-display-name": "Owner",
+      "x-openfloor-meter-owner-id": owner.id,
+      "x-openfloor-meter-session-id": created.session.id,
+    } });
+    expect(response.status).toBe(101);
+    const socket = response.webSocket;
+    if (!socket) throw new Error("Missing WebSocket");
+    socket.accept();
+    socket.close(1000, "done");
+
+    await vi.waitFor(async () => {
+      const usage = await env.DB.prepare("SELECT seconds FROM usage_months WHERE owner_user_id = ? AND month = ?")
+        .bind(owner.id, currentMonth())
+        .first<{ seconds: number }>();
+      expect(usage).not.toBeNull();
+      expect(usage!.seconds).toBeGreaterThanOrEqual(0);
+      const session = await env.DB.prepare("SELECT active_seconds AS activeSeconds FROM sessions WHERE id = ?")
+        .bind(created.session.id)
+        .first<{ activeSeconds: number }>();
+      expect(session!.activeSeconds).toBe(usage!.seconds);
+    });
   });
 });

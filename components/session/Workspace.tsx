@@ -22,7 +22,7 @@ const RAIL_COLLAPSED_WIDTH = 40;
 const RAIL_MIN_WIDTH = 250;
 const RAIL_MAX_WIDTH = 520;
 
-export function Workspace({ user, session, members, floorData, activity, typingDrafts, onTypingUpdate, onSaveObjective, agentRunEnabled }: {
+export function Workspace({ user, session, members, floorData, activity, typingDrafts, onTypingUpdate, onSaveObjective, agentRunEnabled, presenceConnected }: {
   user: AppUser;
   session: SessionSummary;
   members: SessionMember[];
@@ -32,6 +32,7 @@ export function Workspace({ user, session, members, floorData, activity, typingD
   onTypingUpdate: (text: string, typing: boolean) => void;
   onSaveObjective: (objective: string | null) => Promise<boolean>;
   agentRunEnabled: boolean;
+  presenceConnected: boolean;
 }) {
   const { agents, assignments, queue, messages, review, runs } = floorData.floor;
   const participants = useMemo(() => floorParticipants(members, user), [members, user]);
@@ -154,7 +155,7 @@ export function Workspace({ user, session, members, floorData, activity, typingD
   }
 
   return <main className="app-shell" data-screen={screen}>
-    <TopBar screen={screen} onScreen={setScreen} onNotice={setNotice} session={session} user={user} members={members} unreadTeamCount={unreadTeamCount} />
+    <TopBar screen={screen} onScreen={setScreen} onNotice={setNotice} session={session} user={user} members={members} unreadTeamCount={unreadTeamCount} presenceConnected={presenceConnected} />
     {session.endedAt != null && (
       /* Banner only: the server-side write guard is the enforcement, so a
          stale control just surfaces its 409 through the dock status line. */

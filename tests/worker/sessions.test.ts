@@ -3,9 +3,11 @@ import { describe, expect, it } from "vitest";
 import {
   acceptInvite,
   createSession,
+  currentMonth,
   deleteSession,
   ENDED_SESSION_RETENTION_MS,
   endSession,
+  hourQuotaExhausted,
   getActiveInviteId,
   getInvitePreview,
   getSessionForMember,
@@ -533,5 +535,39 @@ describe("D1 session persistence", () => {
     // refuses because the candidate itself remains live and unmerged.
     await expect(endSession(created.session.id, owner.id, "owner", env.DB)).resolves.toEqual({ endedAt: expect.any(Number), reason: "owner" });
     await expect(deleteSession(created.session.id, owner.id, env.DB)).resolves.toBe("repository_state");
+  });
+});
+
+describe("plan limits", () => {
+  it("stops invite accepts at the owner plan's seat cap", async () => {
+    const owner = await upsertUser(identity("cap-owner", "Owner"), env.DB);
+    const created = await createSession(owner.id, { title: "Full", objective: null }, env.DB);
+    const members = [];
+    for (let index = 0; index < 4; index += 1) {
+      const member = await upsertUser(identity(`cap-member-${index}`, `Member ${index}`), env.DB);
+      members.push(member);
+      await expect(acceptInvite(created.inviteId, member.id, env.DB)).resolves.toBe(created.session.id);
+    }
+
+    const sixth = await upsertUser(identity("cap-member-late", "Latecomer"), env.DB);
+    await expect(acceptInvite(created.inviteId, sixth.id, env.DB)).resolves.toBe("full");
+    // Re-accepting as an existing member stays idempotent past the cap.
+    await expect(acceptInvite(created.inviteId, members[0].id, env.DB)).resolves.toBe(created.session.id);
+    expect(await getSessionMembers(created.session.id, owner.id, env.DB)).toHaveLength(5);
+
+    await env.DB.prepare("UPDATE users SET plan = 'max' WHERE id = ?").bind(owner.id).run();
+    await expect(acceptInvite(created.inviteId, sixth.id, env.DB)).resolves.toBe(created.session.id);
+  });
+
+  it("reports hour quota exhaustion from usage_months", async () => {
+    const user = await upsertUser(identity("quota-user", "Quota"), env.DB);
+    await expect(hourQuotaExhausted(user.id, env.DB)).resolves.toBe(false);
+    await env.DB.prepare("INSERT INTO usage_months (owner_user_id, month, seconds) VALUES (?, ?, ?)")
+      .bind(user.id, currentMonth(), 30 * 3600)
+      .run();
+    await expect(hourQuotaExhausted(user.id, env.DB)).resolves.toBe(true);
+    // Same booked seconds sit under the Max ceiling.
+    await env.DB.prepare("UPDATE users SET plan = 'max' WHERE id = ?").bind(user.id).run();
+    await expect(hourQuotaExhausted(user.id, env.DB)).resolves.toBe(false);
   });
 });

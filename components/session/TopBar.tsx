@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { formatDuration } from "@/lib/date-format";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { initials } from "@/components/product/AppHeader";
 import { Brand } from "@/components/product/Brand";
@@ -12,6 +13,21 @@ import { SettingsDialog } from "./SettingsDialog";
 import { Avatar, Icon } from "./primitives";
 import type { WorkspaceScreen } from "./data";
 
+/* Active-session-time readout. The server value lags real usage by up to one
+   flush interval (ponytail: accepted); while this viewer is connected the
+   session is by definition occupied, so the client ticks the display forward
+   itself. Ticks re-render only this span, and it is plain text — no aria-live,
+   so screen readers are not spammed once a second. */
+function SessionTimer({ base, running }: { base: number; running: boolean }) {
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    if (!running) return;
+    const timer = window.setInterval(() => setElapsed((value) => value + 1), 1_000);
+    return () => window.clearInterval(timer);
+  }, [running]);
+  return <span className="session-timer" title="Session time used">{formatDuration(base + elapsed)}</span>;
+}
+
 export function TopBar({
   screen,
   onScreen,
@@ -20,6 +36,7 @@ export function TopBar({
   user,
   members,
   unreadTeamCount,
+  presenceConnected,
 }: {
   screen: WorkspaceScreen;
   onScreen: (screen: WorkspaceScreen) => void;
@@ -28,6 +45,7 @@ export function TopBar({
   user: AppUser;
   members: SessionMember[];
   unreadTeamCount: number;
+  presenceConnected: boolean;
 }) {
   const router = useRouter();
   const [inviting, setInviting] = useState(false);
@@ -68,6 +86,7 @@ export function TopBar({
       <nav className="session-path" aria-label="Session location">
         <Link href="/home">Sessions</Link><span aria-hidden="true">/</span><Link href={`/session/${session.id}`}><strong title={session.title}>{session.title}</strong></Link>
         <span className="live-pill"><Icon name="circle" size={7} />LIVE</span>
+        <SessionTimer base={session.activeSeconds} running={presenceConnected && session.endedAt == null} />
       </nav>
 
       <div className="topbar-actions">

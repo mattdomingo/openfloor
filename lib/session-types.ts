@@ -12,6 +12,7 @@ export type SessionSummary = {
   endedAt: number | null;
   endedReason: "owner" | "merged" | null;
   archivedAt: number | null;
+  activeSeconds: number;
 };
 
 export type SessionMember = {
@@ -58,6 +59,7 @@ export type AppUser = {
   avatarKey: string | null;
   onboardedAt: number | null;
   doNotDisturb: boolean;
+  plan: "pro" | "max" | "enterprise";
   createdAt: number;
   updatedAt: number;
 };

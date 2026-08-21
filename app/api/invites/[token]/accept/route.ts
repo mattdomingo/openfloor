@@ -11,6 +11,9 @@ export async function POST(_request: Request, { params }: { params: Promise<{ to
   if (!inviteId) return Response.json({ error: "Invite not found" }, { status: 404 });
   const sessionId = await acceptInvite(inviteId, user.id);
   if (!sessionId) return Response.json({ error: "Invite not found" }, { status: 404 });
+  if (sessionId === "full") {
+    return Response.json({ error: "This session has reached its seat limit." }, { status: 403 });
+  }
   await notifyMembersChanged(sessionId);
   return Response.json({ sessionId });
 }
