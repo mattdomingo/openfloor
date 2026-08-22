@@ -46,11 +46,14 @@ export function resolveRunModel(provider: CredentialProvider, agentModel: string
 
 export type RunCredentialResolution = { source: "owner" } | { source: "server" } | { source: "none" };
 
-// Per-run resolution order: the session owner's connected credential for the
-// run's provider, else the server-configured key, else refuse the run. Owner
-// rather than run initiator because the owner is who the plan quota bills.
-// Never falls back from a present-but-failing owner credential to the server
-// key — a broken key must surface as a run failure, not silently switch payer.
+// Per-run resolution order: the agent owner's connected credential for the
+// run's provider, else the server-configured key, else refuse the run. The
+// agent's owner (chosen in the create-agent dialog) rather than the session
+// owner or run initiator: whoever provisions an agent is whose API usage its
+// runs bill. Plan quota (session hours) still bills the session owner —
+// deliberately separate ledgers. Never falls back from a present-but-failing
+// owner credential to the server key — a broken key must surface as a run
+// failure, not silently switch payer.
 export function resolveRunCredentialSource(input: {
   ownerCredentialPresent: boolean;
   serverKeyPresent: boolean;

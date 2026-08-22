@@ -64,21 +64,30 @@ export async function deleteProviderCredential(
   return (result.meta?.changes ?? 0) > 0;
 }
 
-// Run-time resolution input: the session owner's stored credential for one
-// provider. The ciphertext stays server-side; callers decrypt with the
-// user+provider context (lib/credential-crypto.ts) and never return it.
-export async function getSessionOwnerCredential(
-  sessionId: string,
+// Run-time resolution input: the run's agent owner's stored credential for
+// one provider. Billing follows whoever owns the agent (the "Owner" chosen in
+// the create-agent dialog), not the session owner — the person whose name is
+// on the agent is the person whose key pays for its runs. removeMember
+// transfers a removed member's agents to the removing owner, so billing
+// follows the transfer; the removed_at guard here is defense-in-depth for
+// any path that leaves a removed user owning an agent — such a key is never
+// billed (null result, ladder falls to the server key / refusal).
+// The ciphertext stays server-side; callers decrypt with the user+provider
+// context (lib/credential-crypto.ts) and never return it.
+export async function getRunAgentOwnerCredential(
+  runId: string,
   provider: CredentialProvider,
   database: D1DatabaseLike = getDb(),
 ): Promise<{ ownerUserId: string; ciphertext: string } | null> {
   return await database
     .prepare(
-      `SELECT sm.user_id AS ownerUserId, c.ciphertext AS ciphertext
-       FROM session_members sm
-       JOIN user_provider_credentials c ON c.user_id = sm.user_id AND c.provider = ?
-       WHERE sm.session_id = ? AND sm.role = 'owner' AND sm.removed_at IS NULL`,
+      `SELECT fa.owner_user_id AS ownerUserId, c.ciphertext AS ciphertext
+       FROM agent_runs r
+       JOIN floor_agents fa ON fa.id = r.agent_id
+       JOIN session_members sm ON sm.session_id = r.session_id AND sm.user_id = fa.owner_user_id AND sm.removed_at IS NULL
+       JOIN user_provider_credentials c ON c.user_id = fa.owner_user_id AND c.provider = ?
+       WHERE r.id = ?`,
     )
-    .bind(provider, sessionId)
+    .bind(provider, runId)
     .first<{ ownerUserId: string; ciphertext: string }>();
 }
