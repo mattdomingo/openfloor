@@ -83,7 +83,7 @@
 		"AGENT_RUN_ENABLED": "true",
 		// Claude-runner rollout gate: keep false until the Agent SDK image,
 		// anthropic gateway, and a resolvable Anthropic credential are live.
-		"CLAUDE_RUN_ENABLED": "false"
+		"CLAUDE_RUN_ENABLED": "true"
 	},
 	"r2_buckets": [
 		{
