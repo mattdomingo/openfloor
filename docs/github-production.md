@@ -15,7 +15,17 @@ The application is served at `https://opnflr.com/app`. The existing Cloudflare A
 
 This list is per-path, dashboard-configured state (see `docs/cloudflare-access-branding.md` and AGENTS.md's "Authentication and identity") — every new protected page needs its path added to the Access application in Zero Trust, or visitors get bounced back to sign-in on that page even while authenticated everywhere else.
 
-Do not put `opnflr.com/app/webhooks/github` behind Access. It is public only so GitHub can reach it; the Worker rejects payloads without the configured HMAC signature.
+Do not put `opnflr.com/app/webhooks/github` or `opnflr.com/app/webhooks/stripe` behind Access. Both are public only so GitHub and Stripe can reach them; the Worker rejects payloads without the configured HMAC signature. Neither is `opnflr.com/app/runtime/*`, which run containers fetch with bearer tokens — an Access rule over those paths breaks every agent run.
+
+Verify all three stay reachable after any Zero Trust edit:
+
+```bash
+for p in /app/webhooks/github /app/webhooks/stripe /app/runtime/run/source; do
+  printf '%-32s ' "$p"; curl -sI "https://opnflr.com$p" | head -1
+done
+```
+
+A `302` to `*.cloudflareaccess.com` on any of them is a misconfiguration; the Worker itself returns `4xx`, never `302`.
 
 ## Create the GitHub App
 

@@ -81,8 +81,13 @@
 		"OPENFLOOR_RUNTIME_ORIGIN": "https://opnflr.com/app",
 		"PREFLIGHT_ENABLED": "true",
 		"AGENT_RUN_ENABLED": "true",
-		"STRIPE_CHECKOUT_ENABLED": "false",
-		// Claude-runner rollout gate: keep false until the Agent SDK image,
+		// Checkout rollout gate. Prices, Portal config, webhook, secrets, and
+		// migration 0024 are live; the docs/stripe-billing.md acceptance flow
+		// runs against production on test-mode Stripe keys, so the Worker's
+		// STRIPE_* secrets are test-mode until that passes. Swap them for live
+		// keys before real traffic.
+		"STRIPE_CHECKOUT_ENABLED": "true",
+		// Claude-runner rollout gate: enabled now that the Agent SDK image,
 		// anthropic gateway, and a resolvable Anthropic credential are live.
 		"CLAUDE_RUN_ENABLED": "true"
 	},
