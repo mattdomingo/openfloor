@@ -119,9 +119,10 @@ export function TopBar({
 
       <span className="topbar-divider" aria-hidden="true" />
 
-      {/* This session: which one, and whether it can still be joined. */}
+      {/* This session: which one, its live status, and whether it can still be joined. */}
       <nav className="session-path" aria-label="Session location">
         <Link href="/home">Sessions</Link><span aria-hidden="true">/</span><Link href={`/session/${session.id}`}><strong title={session.title}>{session.title}</strong></Link>
+        <LiveIndicator live={presenceConnected && session.endedAt == null} />
         {session.lockedAt != null && <span className="state-tag" data-tone="waiting" title="No new members can join">Locked</span>}
       </nav>
 
@@ -130,10 +131,8 @@ export function TopBar({
       {/* What this session is for, how long it's been live, and when that last changed. */}
       <div className="objective-inline">
         <button type="button" className="objective-edit" title="Edit session objective" onClick={beginEditingObjective}>
-          <Icon name="pencil" size={12} />
           <span>{session.objective || "Add a shared objective for this session"}</span>
         </button>
-        <LiveIndicator live={presenceConnected && session.endedAt == null} />
         <SessionTimer base={session.activeSeconds} running={presenceConnected && session.endedAt == null} />
         <span className="objective-fact"><Icon name="clock" size={12} />Updated <LocalDateTime timestamp={session.updatedAt} mode="time" /></span>
         {session.role === "owner" && !editingObjective && staleMessageCount >= OBJECTIVE_NUDGE_THRESHOLD && (

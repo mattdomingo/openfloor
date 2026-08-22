@@ -236,18 +236,9 @@
   text-overflow: ellipsis;
 }
 
-.objective-edit .icon {
-  flex: none;
-  color: var(--text-tertiary);
-}
-
 .objective-edit:hover {
   color: var(--accent);
   background: var(--surface-sunken);
-}
-
-.objective-edit:hover .icon {
-  color: var(--accent);
 }
 
 .objective-fact {
@@ -436,16 +427,20 @@
   box-shadow: 0 -6px 24px rgba(40, 32, 18, 0.08);
 }
 
-/* A reserved band across the top of the dock — a fixed slot so the status
-   line never floats over the workspace or shifts the layout when it changes. */
-.dock-rail {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  height: var(--dock-rail-height);
-  padding: 0 var(--space-6);
-  border-bottom: 1px solid var(--line-soft);
-  background: var(--surface-header);
+/* Floats above the dock on demand — no reserved band, so it costs nothing
+   in layout when there's nothing to say (unlike the old fixed-height rail). */
+.dock-toast {
+  position: absolute;
+  left: var(--space-6);
+  bottom: calc(100% + var(--space-3));
+  z-index: 25;
+  width: fit-content;
+  max-width: calc(100% - 2 * var(--space-6));
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  box-shadow: var(--elevation-2);
 }
 
 .dock-inner {

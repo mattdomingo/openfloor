@@ -46,6 +46,10 @@
   --accent-line: #e6b39c;
   --accent-contrast: #fffdf8;
 
+  /* Exact pink from the wordmark's third dot (public/openfloor-mark.png,
+     sampled #e0457f) — constant across themes since it's a fixed brand color. */
+  --logo-pink: #e0457f;
+
   /* Status. Reserved for agent, check, and file state. */
   --status-running: #3d7b61;
   --status-running-soft: #e3efe7;

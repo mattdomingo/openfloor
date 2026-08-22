@@ -85,7 +85,9 @@ export function FloorDock({ onSubmit, agents, queueTarget, onQueueTargetChange, 
   }
 
   return <section className="dock" aria-label="Open floor" data-mode={draftVisibility}>
-    {(notice || error) && <div className="dock-rail"><StatusLine notice={error ?? notice ?? ""} visible tone={error ? "error" : "notice"} /></div>}
+    {/* Floats above the dock instead of reserving a permanent band — only
+        takes space while there's something to say. */}
+    {(notice || error) && <div className="dock-toast"><StatusLine notice={error ?? notice ?? ""} visible tone={error ? "error" : "notice"} /></div>}
     <div className="dock-inner"><form className="composer" onSubmit={(event) => { event.preventDefault(); void submitPrompt(); }}>
       {teammates.length > 0 && <div className="composer-head"><div className="floor-presence"><span>Live drafts</span><div className="presence">{teammates.map((person) => <Avatar key={person.id} userId={person.id} initials={person.initials} tone={person.tone} online={person.online} typing={typingDrafts.get(person.id)?.typing} />)}</div></div></div>}
       <MentionComposer textareaRef={textareaRef} agents={agents} ariaLabel="Prompt to add to the queue" value={value} onValueChange={updateDraft} />
