@@ -33,6 +33,18 @@ function AgentRailItem({ agent, selected, onSelect }: { agent: FloorAgent; selec
   );
 }
 
+function AllAgentsButton({ active, onClick }: { active: boolean; onClick: () => void }) {
+  const tip = useHoverTip();
+  return (
+    <>
+      <button type="button" className="agent-rail-item agent-rail-all" data-selected={active ? "true" : "false"} aria-pressed={active} aria-label="All agents" onClick={onClick} {...tip.handlers}>
+        <Icon name="grid" size={13} />
+      </button>
+      <HoverTip position={tip.position}>All agents</HoverTip>
+    </>
+  );
+}
+
 export function AgentFloor({ chrome, sessionId, agents, runs, activity, selected, onSelect, agentLayout, onAgentLayout, onCreateAgent, onUpdateTask, queue, participants, currentUserId, claudeRunEnabled }: {
   chrome: PanelChrome;
   sessionId: string;
@@ -62,7 +74,14 @@ export function AgentFloor({ chrome, sessionId, agents, runs, activity, selected
 
   const headerActions = (
     <>
-      {agents.length > 0 && <button type="button" className="chip" aria-pressed={agentLayout === "all"} onClick={() => onAgentLayout("all")}>All agents</button>}
+      {agents.length > 0 && (
+        <div className="agent-header-rail" role="tablist" aria-label="Agents">
+          {agents.map((agent) => (
+            <AgentRailItem key={agent.id} agent={agent} selected={agentLayout === "focus" && selected?.id === agent.id} onSelect={() => focusAgent(agent.id)} />
+          ))}
+        </div>
+      )}
+      {agents.length > 0 && <AllAgentsButton active={agentLayout === "all"} onClick={() => onAgentLayout("all")} />}
       <button ref={createButtonRef} type="button" className="chip chip-create" onClick={() => setCreating(true)}><Icon name="plus" size={11} />New agent</button>
     </>
   );
@@ -71,22 +90,11 @@ export function AgentFloor({ chrome, sessionId, agents, runs, activity, selected
     <Panel chrome={chrome} title="Agent floor" actions={headerActions}>
       {agents.length === 0 ? (
         <div className="floor-empty"><strong>No agents yet</strong><p>Create an agent when the session has work to assign.</p><button type="button" className="button" data-variant="primary" onClick={() => setCreating(true)}>Create agent</button></div>
-      ) : (
-        <div className="agent-floor-body">
-          <div className="agent-rail" role="tablist" aria-label="Agents">
-            {agents.map((agent) => (
-              <AgentRailItem key={agent.id} agent={agent} selected={agentLayout === "focus" && selected?.id === agent.id} onSelect={() => focusAgent(agent.id)} />
-            ))}
-          </div>
-          <div className="agent-floor-main">
-            {agentLayout === "all" ? (
-              <div className="agent-grid">{agents.map((agent) => { const latestRun = runs.find((run) => run.agentId === agent.id) ?? null; return <AgentCard key={agent.id} agent={agent} latestRun={latestRun} activityEvents={latestRun ? activity.eventsFor(latestRun.id) : []} selected={selected?.id === agent.id} onFocus={() => focusAgent(agent.id)} onHistory={() => setHistoryAgentId(agent.id)} />; })}</div>
-            ) : selected ? (
-              <AgentSpotlight agent={selected} sessionId={sessionId} latestRun={runs.find((run) => run.agentId === selected.id) ?? null} activity={activity} onHistory={() => setHistoryAgentId(selected.id)} onUpdateTask={onUpdateTask} />
-            ) : null}
-          </div>
-        </div>
-      )}
+      ) : agentLayout === "all" ? (
+        <div className="agent-grid">{agents.map((agent) => { const latestRun = runs.find((run) => run.agentId === agent.id) ?? null; return <AgentCard key={agent.id} agent={agent} latestRun={latestRun} activityEvents={latestRun ? activity.eventsFor(latestRun.id) : []} selected={selected?.id === agent.id} onFocus={() => focusAgent(agent.id)} onHistory={() => setHistoryAgentId(agent.id)} />; })}</div>
+      ) : selected ? (
+        <AgentSpotlight agent={selected} sessionId={sessionId} latestRun={runs.find((run) => run.agentId === selected.id) ?? null} activity={activity} onHistory={() => setHistoryAgentId(selected.id)} onUpdateTask={onUpdateTask} />
+      ) : null}
     </Panel>
     {creating && <CreateAgentDialog participants={participants} currentUserId={currentUserId} claudeRunEnabled={claudeRunEnabled} onClose={() => { setCreating(false); createButtonRef.current?.focus(); }} onCreate={onCreateAgent} />}
     {historyAgent && <AgentChatHistory agent={historyAgent} queue={queue} onClose={() => setHistoryAgentId(null)} />}

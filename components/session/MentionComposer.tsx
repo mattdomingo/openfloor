@@ -1,6 +1,6 @@
 "use client";
 
-import { KeyboardEvent, ReactNode, RefObject, SyntheticEvent, useEffect, useMemo, useState } from "react";
+import { KeyboardEvent, ReactNode, RefObject, SyntheticEvent, useEffect, useMemo, useRef, useState } from "react";
 import type { FloorAgent } from "@/lib/floor-types";
 
 const FLOOR_PLACEHOLDERS = [
@@ -21,16 +21,18 @@ const FLOOR_PLACEHOLDERS = [
 ];
 
 // Placeholder only — it's already gone the instant the field has a value
-// (native <textarea> behavior). Rotates while empty so it reads as obviously
-// temporary, not a real default; starts at a fixed index so server and
-// client render the same text before hydration takes over.
-function useRotatingPlaceholder(active: boolean) {
+// (native <textarea> behavior). No timer: it advances exactly when the
+// current phrase disappears (the field goes from empty to non-empty), so
+// the next time it's empty again it's a different phrase, not the one you
+// just typed over. Starts at a fixed index so server and client agree
+// before hydration.
+function useRotatingPlaceholder(empty: boolean) {
   const [index, setIndex] = useState(0);
+  const wasEmptyRef = useRef(empty);
   useEffect(() => {
-    if (!active) return;
-    const timer = window.setInterval(() => setIndex((current) => (current + 1) % FLOOR_PLACEHOLDERS.length), 4_000);
-    return () => window.clearInterval(timer);
-  }, [active]);
+    if (wasEmptyRef.current && !empty) setIndex((current) => (current + 1) % FLOOR_PLACEHOLDERS.length);
+    wasEmptyRef.current = empty;
+  }, [empty]);
   return FLOOR_PLACEHOLDERS[index];
 }
 

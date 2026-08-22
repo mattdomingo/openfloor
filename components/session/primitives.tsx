@@ -83,7 +83,8 @@ export type IconName =
   | "message"
   | "sliders"
   | "eye"
-  | "eyeOff";
+  | "eyeOff"
+  | "grid";
 
 const glyphs: Record<IconName, ReactNode> = {
   grip: (
@@ -171,6 +172,14 @@ const glyphs: Record<IconName, ReactNode> = {
       <path d="M2 8s2.5-4.5 6-4.5S14 8 14 8s-2.5 4.5-6 4.5S2 8 2 8z" />
       <circle cx="8" cy="8" r="1.6" />
       <path d="M3 3l10 10" />
+    </>
+  ),
+  grid: (
+    <>
+      <rect x="2.5" y="2.5" width="4.5" height="4.5" rx="1" />
+      <rect x="9" y="2.5" width="4.5" height="4.5" rx="1" />
+      <rect x="2.5" y="9" width="4.5" height="4.5" rx="1" />
+      <rect x="9" y="9" width="4.5" height="4.5" rx="1" />
     </>
   ),
 };
