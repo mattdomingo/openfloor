@@ -1,7 +1,40 @@
 "use client";
 
-import { KeyboardEvent, ReactNode, RefObject, SyntheticEvent, useMemo, useState } from "react";
+import { KeyboardEvent, ReactNode, RefObject, SyntheticEvent, useEffect, useMemo, useRef, useState } from "react";
 import type { FloorAgent } from "@/lib/floor-types";
+
+const FLOOR_PLACEHOLDERS = [
+  "Floor it.",
+  "Open the floor.",
+  "Take the floor.",
+  "Raise the floor.",
+  "Floor is lava.",
+  "Floor-ward!",
+  "Floor the love of code.",
+  "Floor around and find out.",
+  "Get on the floor, nerd.",
+  "Floor the love of git.",
+  "Please floor responsibly.",
+  "Insert floor pun here.",
+  "Feed the floor.",
+  "The floor is yours.",
+];
+
+// Placeholder only — it's already gone the instant the field has a value
+// (native <textarea> behavior). No timer: it advances exactly when the
+// current phrase disappears (the field goes from empty to non-empty), so
+// the next time it's empty again it's a different phrase, not the one you
+// just typed over. Starts at a fixed index so server and client agree
+// before hydration.
+function useRotatingPlaceholder(empty: boolean) {
+  const [index, setIndex] = useState(0);
+  const wasEmptyRef = useRef(empty);
+  useEffect(() => {
+    if (wasEmptyRef.current && !empty) setIndex((current) => (current + 1) % FLOOR_PLACEHOLDERS.length);
+    wasEmptyRef.current = empty;
+  }, [empty]);
+  return FLOOR_PLACEHOLDERS[index];
+}
 
 function findMentionQuery(value: string, caret: number): { start: number; query: string } | null {
   const before = value.slice(0, caret);
@@ -51,6 +84,7 @@ export function MentionComposer({
   const [activeIndex, setActiveIndex] = useState(0);
   const [dismissedAt, setDismissedAt] = useState<number | null>(null);
   const mention = findMentionQuery(value, caret);
+  const placeholder = useRotatingPlaceholder(value.length === 0);
 
   const suggestions = useMemo(() => {
     if (!mention || mention.start === dismissedAt) return [];
@@ -114,6 +148,7 @@ export function MentionComposer({
         onClick={syncCaret}
         onKeyUp={syncCaret}
         maxLength={4_000}
+        placeholder={placeholder}
         aria-label={ariaLabel}
         aria-autocomplete="list"
       />

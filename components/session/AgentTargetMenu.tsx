@@ -10,7 +10,7 @@ export function AgentTargetMenu({ value, onChange, agents }: { value: string | n
       align="up"
       value={value ?? ""}
       onChange={(next) => onChange(next || null)}
-      options={[{ value: "", label: "Unassigned" }, ...agents.map((agent) => ({ value: agent.id, label: agent.name }))]}
+      options={[{ value: "", label: "Auto" }, ...agents.map((agent) => ({ value: agent.id, label: agent.name }))]}
     />
   );
 }

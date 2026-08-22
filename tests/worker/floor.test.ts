@@ -7,7 +7,6 @@ import {
   FloorConflictError,
   FloorTargetError,
   getFloorSnapshot,
-  mergeFloorQueue,
   reorderFloorQueue,
   updateFloorAssignment,
 } from "@/db/floor";
@@ -68,7 +67,7 @@ describe("D1 persistent floor", () => {
     expect(second?.agents.find((agent) => agent.name === "Codex")?.provider).toBe("openai");
   });
 
-  it("persists unassigned and targeted prompts, ordering, and merge authorship", async () => {
+  it("persists unassigned and targeted prompts and ordering", async () => {
     const room = await floorRoom("queue");
     let floor = await createFloorAgent(room.sessionId, room.owner.id, agentInput(room.owner.id), env.DB);
     const agentId = floor!.agents[0].id;
@@ -81,14 +80,6 @@ describe("D1 persistent floor", () => {
     floor = await reorderFloorQueue(room.sessionId, room.member.id, reversed, env.DB);
     expect(floor!.queue.map((item) => item.id)).toEqual(reversed);
 
-    const targetedIds = floor!.queue.filter((item) => item.agentId === agentId).map((item) => item.id);
-    floor = await mergeFloorQueue(room.sessionId, room.owner.id, targetedIds, env.DB);
-    const merged = floor!.queue.find((item) => item.agentId === agentId);
-    expect(merged?.prompts.map((prompt) => ({ author: prompt.authorUserId, text: prompt.text }))).toEqual(expect.arrayContaining([
-      { author: room.owner.id, text: "First targeted" },
-      { author: room.member.id, text: "Second targeted" },
-    ]));
-    expect(floor!.queue).toHaveLength(2);
     await expect(createFloorQueueItem(room.sessionId, room.owner.id, { prompt: "Wrong target", agentId: "missing" }, env.DB)).rejects.toBeInstanceOf(FloorTargetError);
   });
 

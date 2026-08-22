@@ -374,51 +374,9 @@ export async function reorderFloorQueue(
   return readFloorSnapshot(sessionId, userId, database);
 }
 
-export async function mergeFloorQueue(
-  sessionId: string,
-  userId: string,
-  itemIds: string[],
-  database = getDb(),
-): Promise<FloorSnapshot | null> {
-  if (!(await getActiveMembershipRole(sessionId, userId, database))) return null;
-  const selected = await database.prepare(
-    `SELECT id, agent_id AS agentId, position, status FROM floor_queue_items
-     WHERE session_id = ? AND id IN (${itemIds.map(() => "?").join(", ")})
-     ORDER BY position, created_at, id`,
-  ).bind(sessionId, ...itemIds).all<{ id: string; agentId: string | null; position: number; status: string }>();
-  if (selected.results.length !== itemIds.length) throw new FloorConflictError("One or more queue items no longer exist.");
-  if (selected.results.some((item) => item.status !== "queued")) throw new FloorConflictError("Only queued items can be merged.");
-  const target = selected.results[0]?.agentId ?? null;
-  if (selected.results.some((item) => (item.agentId ?? null) !== target)) {
-    throw new FloorTargetError("Only queue items with the same target can be merged.");
-  }
-  const survivor = selected.results[0].id;
-  const removed = new Set(selected.results.slice(1).map((item) => item.id));
-  const allIds = await queueIds(sessionId, database);
-  const remaining = allIds.filter((id) => !removed.has(id));
-  const now = Date.now();
-  const results = await database.batch([
-    ...selected.results.slice(1).map((item) => database.prepare(
-      `UPDATE floor_queue_prompts SET queue_item_id = ? WHERE queue_item_id = ?
-       AND EXISTS (SELECT 1 FROM sessions WHERE id = ? AND ended_at IS NULL)`,
-    ).bind(survivor, item.id, sessionId)),
-    ...selected.results.slice(1).map((item) => database.prepare(
-      `DELETE FROM floor_queue_items WHERE id = ? AND session_id = ?
-       AND EXISTS (SELECT 1 FROM sessions WHERE id = ? AND ended_at IS NULL)`,
-    ).bind(item.id, sessionId, sessionId)),
-    ...remaining.map((id, index) => database.prepare(
-      `UPDATE floor_queue_items SET position = ?, updated_at = ? WHERE id = ? AND session_id = ?
-       AND EXISTS (SELECT 1 FROM sessions WHERE id = ? AND ended_at IS NULL)`,
-    ).bind(index + 1, now, id, sessionId, sessionId)),
-    bumpFloorRevision(database, sessionId, now),
-  ]);
-  if (!(await activeBatchApplied(results, sessionId, userId, database))) return null;
-  return readFloorSnapshot(sessionId, userId, database);
-}
-
 /* Prompt-level write access: the session owner may act on any prompt, and any
    other member may only act on a queue item whose prompts are entirely their
-   own (a merged item combining other authors' prompts is off-limits to them). */
+   own. */
 async function canManageQueueItem(sessionId: string, userId: string, itemId: string, database: D1DatabaseLike): Promise<boolean> {
   const role = await getActiveMembershipRole(sessionId, userId, database);
   if (!role) return false;

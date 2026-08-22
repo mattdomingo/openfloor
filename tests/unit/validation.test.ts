@@ -7,7 +7,6 @@ import {
   parseMessageInput,
   parseObjectiveInput,
   parseProfileInput,
-  parseQueueMergeInput,
   parseQueueOrderInput,
   parseQueuePromptInput,
   parseRepositoryCandidateInput,
@@ -98,13 +97,11 @@ describe("floor input validation", () => {
     expect(parseAgentInput({ name: "A", role: "R", task: "T", ownerUserId: "o", provider: 7 })).toBeNull();
   });
 
-  it("validates assignments, messages, prompts, ordering, and merge lists", () => {
+  it("validates assignments, messages, prompts, and ordering", () => {
     expect(parseAssignmentInput({ task: "  " })).toEqual({ task: null });
     expect(parseMessageInput({ text: " Hello ", recipientUserId: "member" })).toEqual({ text: "Hello", recipientUserId: "member" });
     expect(parseQueuePromptInput({ prompt: " Do work " })).toEqual({ prompt: "Do work", agentId: null });
     expect(parseQueueOrderInput({ itemIds: [] })).toEqual({ itemIds: [] });
-    expect(parseQueueMergeInput({ itemIds: ["one", "two"] })).toEqual({ itemIds: ["one", "two"] });
-    expect(parseQueueMergeInput({ itemIds: ["one", "one"] })).toBeNull();
   });
 
   it("rejects empty and oversized floor values", () => {

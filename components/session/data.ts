@@ -4,7 +4,6 @@ export type AgentLayout = "focus" | "all";
 export type WorkspaceScreen = "workspace" | "review";
 export type QueueScope = "mine" | "team";
 export type QueueOrderMode = "auto" | "manual";
-export type QueueMergeMode = "auto" | "off";
 export type TeamPanelView = "goals" | "chat";
 export type ChatThread = "team" | string;
 

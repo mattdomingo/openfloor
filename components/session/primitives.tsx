@@ -1,7 +1,39 @@
 "use client";
 
-import { ReactNode, SyntheticEvent, useEffect, useRef, useState } from "react";
+import { MouseEvent as ReactMouseEvent, ReactNode, SyntheticEvent, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { BASE_PATH } from "@/components/basePath";
+
+/* Instant, mouse-following tooltip for any hoverable element. Native `title`
+   has a long, browser-controlled show delay and stays pinned where the
+   pointer entered rather than tracking it — this shows immediately and
+   follows the cursor instead. Portaled to <body> so it isn't clipped or
+   mispositioned by an ancestor with `backdrop-filter`/`transform` (both
+   create a containing block for `position: fixed`, e.g. the top bar's blur).
+   Usage: const tip = useHoverTip(); <span {...tip.handlers}>…</span>
+   <HoverTip position={tip.position}>label</HoverTip> */
+export function useHoverTip() {
+  const [position, setPosition] = useState<{ x: number; y: number } | null>(null);
+  const track = (event: ReactMouseEvent) => setPosition({ x: event.clientX, y: event.clientY });
+  return {
+    position,
+    handlers: {
+      onMouseEnter: track,
+      onMouseMove: track,
+      onMouseLeave: () => setPosition(null),
+    },
+  };
+}
+
+export function HoverTip({ position, children }: { position: { x: number; y: number } | null; children: ReactNode }) {
+  if (position == null || typeof document === "undefined") return null;
+  return createPortal(
+    <span className="hover-tip" role="tooltip" style={{ left: position.x + 14, top: position.y + 18 }}>
+      {children}
+    </span>,
+    document.body,
+  );
+}
 
 /* Native <dialog> unmounts the instant its parent drops it, which cuts off any exit
    transition. This opens the dialog on mount and turns dismissals into a short
@@ -49,7 +81,10 @@ export type IconName =
   | "more"
   | "pencil"
   | "message"
-  | "sliders";
+  | "sliders"
+  | "eye"
+  | "eyeOff"
+  | "grid";
 
 const glyphs: Record<IconName, ReactNode> = {
   grip: (
@@ -126,6 +161,27 @@ const glyphs: Record<IconName, ReactNode> = {
       <circle cx="12" cy="9.4" r="1.3" fill="currentColor" stroke="none" />
     </>
   ),
+  eye: (
+    <>
+      <path d="M2 8s2.5-4.5 6-4.5S14 8 14 8s-2.5 4.5-6 4.5S2 8 2 8z" />
+      <circle cx="8" cy="8" r="1.6" />
+    </>
+  ),
+  eyeOff: (
+    <>
+      <path d="M2 8s2.5-4.5 6-4.5S14 8 14 8s-2.5 4.5-6 4.5S2 8 2 8z" />
+      <circle cx="8" cy="8" r="1.6" />
+      <path d="M3 3l10 10" />
+    </>
+  ),
+  grid: (
+    <>
+      <rect x="2.5" y="2.5" width="4.5" height="4.5" rx="1" />
+      <rect x="9" y="2.5" width="4.5" height="4.5" rx="1" />
+      <rect x="2.5" y="9" width="4.5" height="4.5" rx="1" />
+      <rect x="9" y="9" width="4.5" height="4.5" rx="1" />
+    </>
+  ),
 };
 
 export function Icon({ name, size = 14, className }: { name: IconName; size?: number; className?: string }) {
@@ -196,6 +252,30 @@ export function Avatar({
   );
 }
 
+function SegmentedOption<T extends string>({ option, pressed, onClick }: {
+  option: { value: T; label: ReactNode; title?: string };
+  pressed: boolean;
+  onClick: () => void;
+}) {
+  // Always called (rules-of-hooks), only used when this option carries a
+  // title (the icon-only case) — see useHoverTip/HoverTip above.
+  const tip = useHoverTip();
+  return (
+    <>
+      <button
+        type="button"
+        aria-pressed={pressed}
+        aria-label={option.title}
+        onClick={onClick}
+        {...(option.title ? tip.handlers : undefined)}
+      >
+        {option.label}
+      </button>
+      {option.title && <HoverTip position={tip.position}>{option.title}</HoverTip>}
+    </>
+  );
+}
+
 export function SegmentedControl<T extends string>({
   label,
   value,
@@ -204,15 +284,17 @@ export function SegmentedControl<T extends string>({
 }: {
   label: string;
   value: T;
-  options: { value: T; label: ReactNode }[];
+  // `title` names an icon-only option for hover + accessibility (shown via
+  // the mouse-following HoverTip, not a native tooltip); a text `label`
+  // already serves as its own accessible name, so `title` stays optional and
+  // existing text-label callers are unaffected.
+  options: { value: T; label: ReactNode; title?: string }[];
   onChange: (value: T) => void;
 }) {
   return (
     <div className="segmented" role="group" aria-label={label}>
       {options.map((option) => (
-        <button key={option.value} type="button" aria-pressed={value === option.value} onClick={() => onChange(option.value)}>
-          {option.label}
-        </button>
+        <SegmentedOption key={option.value} option={option} pressed={value === option.value} onClick={() => onChange(option.value)} />
       ))}
     </div>
   );

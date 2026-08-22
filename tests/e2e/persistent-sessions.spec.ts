@@ -164,11 +164,6 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await owner.getByRole("button", { name: "Add to queue" }).click();
   await expect(owner.locator(".queue-item").getByText("Inspect the real session contract", { exact: true })).toBeVisible();
   await expect(member.locator(".queue-item").getByText("Inspect the real session contract", { exact: true })).toBeVisible();
-  await owner.getByLabel("Prompt to add to the queue").fill("Confirm the persisted contract");
-  await owner.getByRole("button", { name: "Add to queue" }).click();
-  await owner.getByLabel("Queue settings").click();
-  await owner.getByRole("button", { name: /Merge now/ }).click();
-  await expect(owner.getByText("2 prompts", { exact: true })).toBeVisible();
 
   const teamPanel = owner.getByRole("region", { name: "Team" });
   await teamPanel.getByRole("button", { name: "Chat" }).click();
