@@ -871,7 +871,6 @@
   min-width: 0;
   padding: var(--space-3);
   border: 1px solid var(--line-strong);
-  border-left: 2px solid var(--agent-color);
   border-radius: var(--radius-md);
   background: var(--surface-raised);
   text-align: left;
@@ -895,7 +894,6 @@
 
 .agent-card[data-selected="true"] {
   border-color: var(--line-strong);
-  border-left-color: var(--agent-color);
   box-shadow: var(--elevation-2);
 }
 
@@ -1348,7 +1346,6 @@
 }
 
 .chat-message[data-role="response"] .chat-bubble {
-  border-left: 3px solid var(--agent-color);
   background: var(--surface-panel);
 }
 
@@ -1380,7 +1377,6 @@
 .spotlight {
   margin: var(--space-4);
   border: 1px solid var(--line-strong);
-  border-left: 2px solid var(--agent-color);
   border-radius: var(--radius-md);
   background: var(--surface-raised);
   box-shadow: var(--elevation-1);
@@ -2011,7 +2007,6 @@
   flex-direction: column;
   min-width: 0;
   border: 1px solid var(--line-strong);
-  border-left: 2px solid var(--agent-color);
   border-radius: var(--radius-md);
   background: var(--surface-raised);
   box-shadow: var(--elevation-1);
@@ -2081,12 +2076,6 @@
   align-items: center;
   gap: var(--space-2);
   min-width: 0;
-}
-
-.composer-head .avatar {
-  width: 22px;
-  height: 22px;
-  font-size: 9px;
 }
 
 /* Attention lives in the dock rail: the trigger holds a fixed slot there and
@@ -2302,26 +2291,6 @@
   }
 }
 
-.composer-who {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-2);
-  min-width: 0;
-}
-
-.composer-head strong {
-  font-size: var(--text-sm);
-  font-weight: 650;
-}
-
-.composer-head span {
-  color: var(--text-tertiary);
-  font-size: var(--text-xs);
-}
-
-.queue-order-menu {
-  position: relative;
-}
 
 .queue-order-trigger {
   display: grid;
@@ -2347,11 +2316,12 @@
   color: var(--accent);
 }
 
+/* Portaled to <body> (see QueueOrderMenu.tsx) so a panel's own
+   `overflow: hidden` can't clip it — position comes from the trigger's
+   getBoundingClientRect() as inline top/left, not this ancestor's box. */
 .queue-order-list {
-  position: absolute;
-  top: calc(100% + var(--space-1));
-  left: 0;
-  z-index: 30;
+  position: fixed;
+  z-index: 50;
   min-width: 190px;
   margin: 0;
   padding: var(--space-1);
@@ -2361,7 +2331,7 @@
   box-shadow: var(--elevation-2);
   list-style: none;
   animation: popover-rise var(--dur-float) var(--ease-out);
-  transform-origin: top left;
+  transform-origin: top right;
 }
 
 .queue-order-list li {
@@ -2577,6 +2547,48 @@
 .mention-suggestions button[data-active="true"] .mention-suggestion-role {
   color: inherit;
   opacity: 0.75;
+}
+
+.composer-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-2);
+  padding: 0;
+  list-style: none;
+}
+
+.attachment-chip {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: 220px;
+  padding: 3px var(--space-2);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-pill);
+  background: var(--surface-sunken);
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+}
+
+.attachment-chip span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attachment-chip button {
+  display: grid;
+  place-items: center;
+  flex: none;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-tertiary);
+}
+
+.attachment-chip button:hover {
+  color: var(--status-blocked);
 }
 
 .composer-foot {
@@ -3119,7 +3131,6 @@
    distinct until the author or owner edits, resumes, or deletes it. */
 .queue-item[data-attention="true"] {
   border-color: color-mix(in srgb, var(--status-blocked) 55%, var(--line-strong));
-  box-shadow: inset 3px 0 0 var(--status-blocked);
 }
 
 .queue-edit-form {

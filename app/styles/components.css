@@ -188,11 +188,11 @@ input, textarea { width: 100%; padding: 11px 12px; border: 1px solid var(--line-
 .review-empty-state .icon { color: var(--text-tertiary); }
 .review-empty-state h2 { margin-top: var(--space-4); font: 400 28px var(--font-serif); }
 .review-empty-state p { max-width: 520px; margin-top: var(--space-3); color: var(--text-secondary); line-height: 1.55; }
-.agent-card[data-tone="agent-0"], .spotlight[data-tone="agent-0"], .review-attribution[data-tone="agent-0"], .review-attribution-row[data-tone="agent-0"] { --agent-color: #c9552f; }
-.agent-card[data-tone="agent-1"], .spotlight[data-tone="agent-1"], .review-attribution[data-tone="agent-1"], .review-attribution-row[data-tone="agent-1"] { --agent-color: #b8862a; }
-.agent-card[data-tone="agent-2"], .spotlight[data-tone="agent-2"], .review-attribution[data-tone="agent-2"], .review-attribution-row[data-tone="agent-2"] { --agent-color: #4a7d68; }
-.agent-card[data-tone="agent-3"], .spotlight[data-tone="agent-3"], .review-attribution[data-tone="agent-3"], .review-attribution-row[data-tone="agent-3"] { --agent-color: #4e6f8a; }
-.agent-card[data-tone="agent-4"], .spotlight[data-tone="agent-4"], .review-attribution[data-tone="agent-4"], .review-attribution-row[data-tone="agent-4"] { --agent-color: #8b6bb1; }
+.agent-card[data-tone="agent-0"], .spotlight[data-tone="agent-0"], .review-attribution[data-tone="agent-0"], .review-attribution-row[data-tone="agent-0"], .agent-rail-item[data-tone="agent-0"] { --agent-color: #c9552f; }
+.agent-card[data-tone="agent-1"], .spotlight[data-tone="agent-1"], .review-attribution[data-tone="agent-1"], .review-attribution-row[data-tone="agent-1"], .agent-rail-item[data-tone="agent-1"] { --agent-color: #b8862a; }
+.agent-card[data-tone="agent-2"], .spotlight[data-tone="agent-2"], .review-attribution[data-tone="agent-2"], .review-attribution-row[data-tone="agent-2"], .agent-rail-item[data-tone="agent-2"] { --agent-color: #4a7d68; }
+.agent-card[data-tone="agent-3"], .spotlight[data-tone="agent-3"], .review-attribution[data-tone="agent-3"], .review-attribution-row[data-tone="agent-3"], .agent-rail-item[data-tone="agent-3"] { --agent-color: #4e6f8a; }
+.agent-card[data-tone="agent-4"], .spotlight[data-tone="agent-4"], .review-attribution[data-tone="agent-4"], .review-attribution-row[data-tone="agent-4"], .agent-rail-item[data-tone="agent-4"] { --agent-color: #8b6bb1; }
 
 .join-card { width: min(540px, 100%); padding: clamp(28px, 6vw, 54px); text-align: center; }
 .join-objective { margin: var(--space-5) auto; color: var(--text-secondary); font-size: var(--text-lg); line-height: 1.55; }

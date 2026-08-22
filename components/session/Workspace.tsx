@@ -1,6 +1,6 @@
 "use client";
 
-import { CSSProperties, PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState } from "react";
+import { CSSProperties, PointerEvent as ReactPointerEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { LocalDateTime } from "@/components/LocalDateTime";
 import type { AppUser, SessionMember, SessionSummary, TypingDraft } from "@/lib/session-types";
@@ -57,6 +57,11 @@ export function Workspace({ user, session, members, floorData, activity, typingD
   const [teamPanelView, setTeamPanelView] = useState<TeamPanelView>("goals");
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const selectedAgent = agents.find((agent) => agent.id === selectedAgentId) ?? agents[0] ?? null;
+  // FLIP animation for panel swaps: dropPanel captures each slot's rect here
+  // right before reordering; the layout effect below then inverts and plays
+  // the transform so the swap reads as a smooth slide instead of a jump.
+  const panelSlotRefs = useRef<Map<PanelId, HTMLDivElement>>(new Map());
+  const prevPanelRectsRef = useRef<Map<PanelId, DOMRect> | null>(null);
 
   // Read state is a per-device, per-session mark (no server round trip): the
   // Review screen always renders team chat inline too, so it counts as "read"
@@ -121,18 +126,52 @@ export function Workspace({ user, session, members, floorData, activity, typingD
   // rightward drop (target after source) landed one slot short of the target
   // — dragging the leftmost panel onto its immediate right neighbor was a
   // silent no-op. Swapping the two indices directly has no such directional bug.
+  // Insert-and-shift, not a two-item swap: the dragged panel lands exactly
+  // where it's dropped and every panel between its old and new spot slides
+  // over by one — `to` is the target's index in the pre-removal array, so
+  // splice's own semantics place it correctly on either side without an
+  // off-by-one (that bias bit the old swap-by-index version too).
   function dropPanel(target: PanelId) {
     setDragOverPanel(null);
     if (!draggedPanel || draggedPanel === target) return;
+    const rects = new Map<PanelId, DOMRect>();
+    panelSlotRefs.current.forEach((element, id) => rects.set(id, element.getBoundingClientRect()));
+    prevPanelRectsRef.current = rects;
     setPanelOrder((current) => {
+      const from = current.indexOf(draggedPanel);
+      const to = current.indexOf(target);
       const next = [...current];
-      const from = next.indexOf(draggedPanel);
-      const to = next.indexOf(target);
-      [next[from], next[to]] = [next[to], next[from]];
+      next.splice(from, 1);
+      next.splice(to, 0, draggedPanel);
       return next;
     });
     setDraggedPanel(null);
   }
+
+  // FLIP: panelOrder just changed the DOM order (React moves the existing
+  // nodes since each keeps its `key`), which would otherwise jump instantly.
+  // Translate each slot back to where it was, force a reflow, then release
+  // the transform so .panel-slot's own transition animates it into place.
+  useLayoutEffect(() => {
+    const prevRects = prevPanelRectsRef.current;
+    if (!prevRects) return;
+    prevPanelRectsRef.current = null;
+    panelSlotRefs.current.forEach((element, id) => {
+      const prev = prevRects.get(id);
+      if (!prev) return;
+      const next = element.getBoundingClientRect();
+      const dx = prev.left - next.left;
+      const dy = prev.top - next.top;
+      if (!dx && !dy) return;
+      element.style.transition = "none";
+      element.style.transform = `translate(${dx}px, ${dy}px)`;
+      element.getBoundingClientRect();
+      requestAnimationFrame(() => {
+        element.style.transition = "";
+        element.style.transform = "";
+      });
+    });
+  }, [panelOrder]);
 
   function startResize(left: PanelId, right: PanelId, event: ReactPointerEvent<HTMLDivElement>) {
     const rail: RailId | null = left !== "floor" ? left : right !== "floor" ? right : null;
@@ -174,7 +213,7 @@ export function Workspace({ user, session, members, floorData, activity, typingD
         <Link href="/settings?section=plan">Upgrade for more session hours</Link>.
       </p>
     )}
-    {screen === "review" ? <ReviewScreen review={review} owner={session.role === "owner"} busy={floorData.busy} blockingRunId={floorData.blockingRunId} onReady={async () => { if (await floorData.readyReview()) setNotice("GitHub review status synchronized"); }} onMerge={async (deleteCandidateBranch) => { const result = await floorData.squashMergeReview(deleteCandidateBranch); if (result) setNotice(deleteCandidateBranch ? "Pull request squash merged and branches cleaned up" : "Pull request squash merged; candidate branch kept"); return Boolean(result); }} onDeleteBranch={async () => { const result = await floorData.deleteReviewBranch(); if (result) setNotice("Candidate branch deleted"); return Boolean(result); }} onCancelRun={async (runId) => { await floorData.cancelRun(runId); }} teamChat={messages} onSendTeamMessage={async (text, recipient) => Boolean(await floorData.sendMessage(text, recipient))} participants={participants} currentUserId={user.id} /> : <><div className="workspace" data-expanded={expandedPanel ? "true" : "false"} data-resizing={resizing ? "true" : "false"}>{panelOrder.map((panel, index) => { const next = panelOrder[index + 1]; const showHandle = !expandedPanel && next !== undefined && !(isCollapsed(panel) && panel !== "floor"); return <div key={panel} className="panel-slot" style={slotStyle(panel)} data-expanded={expandedPanel === panel ? "true" : "false"} data-collapsed={isCollapsed(panel) ? "true" : "false"} data-dragging={draggedPanel === panel ? "true" : "false"} data-drop-target={dragOverPanel === panel ? "true" : "false"} onDragOver={(event) => { event.preventDefault(); if (draggedPanel && draggedPanel !== panel) setDragOverPanel(panel); }} onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragOverPanel((current) => current === panel ? null : current); }} onDrop={() => dropPanel(panel)}>{renderPanel(panel, chromeFor(panel, index))}{showHandle && <div className="resize-handle" role="separator" aria-label={`Resize ${panel} panel`} onPointerDown={(event) => startResize(panel, next, event)} />}</div>; })}</div><FloorDock onSubmit={enqueuePrompt} agents={agents} queueTarget={queueTarget} onQueueTargetChange={setQueueTarget} textareaRef={composerRef} notice={notice} error={floorData.error} busy={floorData.busy} user={user} participants={participants} typingDrafts={typingDrafts} onTypingUpdate={onTypingUpdate} /></>}
+    {screen === "review" ? <ReviewScreen review={review} owner={session.role === "owner"} busy={floorData.busy} blockingRunId={floorData.blockingRunId} onReady={async () => { if (await floorData.readyReview()) setNotice("GitHub review status synchronized"); }} onMerge={async (deleteCandidateBranch) => { const result = await floorData.squashMergeReview(deleteCandidateBranch); if (result) setNotice(deleteCandidateBranch ? "Pull request squash merged and branches cleaned up" : "Pull request squash merged; candidate branch kept"); return Boolean(result); }} onDeleteBranch={async () => { const result = await floorData.deleteReviewBranch(); if (result) setNotice("Candidate branch deleted"); return Boolean(result); }} onCancelRun={async (runId) => { await floorData.cancelRun(runId); }} teamChat={messages} onSendTeamMessage={async (text, recipient) => Boolean(await floorData.sendMessage(text, recipient))} participants={participants} currentUserId={user.id} /> : <><div className="workspace" data-expanded={expandedPanel ? "true" : "false"} data-resizing={resizing ? "true" : "false"}>{panelOrder.map((panel, index) => { const next = panelOrder[index + 1]; const showHandle = !expandedPanel && next !== undefined && !(isCollapsed(panel) && panel !== "floor"); return <div key={panel} ref={(element) => { if (element) panelSlotRefs.current.set(panel, element); else panelSlotRefs.current.delete(panel); }} className="panel-slot" style={slotStyle(panel)} data-expanded={expandedPanel === panel ? "true" : "false"} data-collapsed={isCollapsed(panel) ? "true" : "false"} data-dragging={draggedPanel === panel ? "true" : "false"} data-drop-target={dragOverPanel === panel ? "true" : "false"} onDragOver={(event) => { event.preventDefault(); if (draggedPanel && draggedPanel !== panel) setDragOverPanel(panel); }} onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragOverPanel((current) => current === panel ? null : current); }} onDrop={() => dropPanel(panel)}>{renderPanel(panel, chromeFor(panel, index))}{showHandle && <div className="resize-handle" role="separator" aria-label={`Resize ${panel} panel`} onPointerDown={(event) => startResize(panel, next, event)} />}</div>; })}</div><FloorDock onSubmit={enqueuePrompt} agents={agents} queueTarget={queueTarget} onQueueTargetChange={setQueueTarget} textareaRef={composerRef} notice={notice} error={floorData.error} busy={floorData.busy} participants={participants} typingDrafts={typingDrafts} onTypingUpdate={onTypingUpdate} /></>}
     {screen === "review" && (notice || floorData.error) && <StatusBar notice={floorData.error ?? notice ?? ""} visible tone={floorData.error ? "error" : "notice"} />}
   </main>;
 }

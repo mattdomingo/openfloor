@@ -243,6 +243,30 @@ export function Avatar({
   );
 }
 
+function SegmentedOption<T extends string>({ option, pressed, onClick }: {
+  option: { value: T; label: ReactNode; title?: string };
+  pressed: boolean;
+  onClick: () => void;
+}) {
+  // Always called (rules-of-hooks), only used when this option carries a
+  // title (the icon-only case) — see useHoverTip/HoverTip above.
+  const tip = useHoverTip();
+  return (
+    <>
+      <button
+        type="button"
+        aria-pressed={pressed}
+        aria-label={option.title}
+        onClick={onClick}
+        {...(option.title ? tip.handlers : undefined)}
+      >
+        {option.label}
+      </button>
+      {option.title && <HoverTip position={tip.position}>{option.title}</HoverTip>}
+    </>
+  );
+}
+
 export function SegmentedControl<T extends string>({
   label,
   value,
@@ -251,18 +275,17 @@ export function SegmentedControl<T extends string>({
 }: {
   label: string;
   value: T;
-  // `title` names an icon-only option for hover + accessibility; a text
-  // `label` already serves as its own accessible name, so `title` stays
-  // optional and existing text-label callers are unaffected.
+  // `title` names an icon-only option for hover + accessibility (shown via
+  // the mouse-following HoverTip, not a native tooltip); a text `label`
+  // already serves as its own accessible name, so `title` stays optional and
+  // existing text-label callers are unaffected.
   options: { value: T; label: ReactNode; title?: string }[];
   onChange: (value: T) => void;
 }) {
   return (
     <div className="segmented" role="group" aria-label={label}>
       {options.map((option) => (
-        <button key={option.value} type="button" aria-pressed={value === option.value} title={option.title} aria-label={option.title} onClick={() => onChange(option.value)}>
-          {option.label}
-        </button>
+        <SegmentedOption key={option.value} option={option} pressed={value === option.value} onClick={() => onChange(option.value)} />
       ))}
     </div>
   );
