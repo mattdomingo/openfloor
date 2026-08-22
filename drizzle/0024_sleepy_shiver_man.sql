@@ -1,1 +1,0 @@
-ALTER TABLE `stripe_subscriptions` ADD `event_created` integer DEFAULT 0 NOT NULL;

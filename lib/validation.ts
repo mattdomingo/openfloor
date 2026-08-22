@@ -1,6 +1,6 @@
 export type SessionInput = { title: string; objective: string | null };
 export type ObjectiveInput = { objective: string | null };
-export type AgentInput = { name: string; nameKey: string; role: string; task: string; ownerUserId: string };
+export type AgentInput = { name: string; nameKey: string; role: string; task: string; ownerUserId: string; provider: "anthropic" | "openai" };
 export type AgentTaskInput = { task: string };
 export type AssignmentInput = { task: string | null };
 export type MessageInput = { text: string; recipientUserId: string | null };
@@ -13,9 +13,11 @@ export type QueueItemPauseInput = { paused: boolean };
 export type RepositoryConnectionInput = { repositoryId: string; baseBranch: string; checkCommands: string[] };
 export type RepositoryCandidateInput = { name: string; description: string };
 export type ProfileInput = { firstName: string; lastName: string; githubHandle: string | null };
+export type CredentialConnectInput = { apiKey: string };
 
 const MAX_PROFILE_NAME_LENGTH = 50;
 const MAX_GITHUB_HANDLE_LENGTH = 39;
+const MAX_API_KEY_LENGTH = 512;
 
 export function parseSessionInput(value: unknown): SessionInput | null {
   if (!value || typeof value !== "object") return null;
@@ -51,7 +53,9 @@ export function parseAgentInput(value: unknown): AgentInput | null {
   const task = input.task.trim();
   const ownerUserId = input.ownerUserId.trim();
   if (!name || name.length > 24 || !role || role.length > 80 || !task || task.length > 1000 || !ownerUserId || ownerUserId.length > 100) return null;
-  return { name, nameKey: normalizeAgentName(name), role, task, ownerUserId };
+  if (input.provider !== undefined && input.provider !== "anthropic" && input.provider !== "openai") return null;
+  const provider = (input.provider as "anthropic" | "openai" | undefined) ?? "openai";
+  return { name, nameKey: normalizeAgentName(name), role, task, ownerUserId, provider };
 }
 
 export function parseAgentTaskInput(value: unknown): AgentTaskInput | null {
@@ -166,6 +170,18 @@ export function parseProfileInput(value: unknown): ProfileInput | null {
   if (!lastName || lastName.length > MAX_PROFILE_NAME_LENGTH) return null;
   if (githubHandle.length > MAX_GITHUB_HANDLE_LENGTH) return null;
   return { firstName, lastName, githubHandle: githubHandle || null };
+}
+
+export function parseCredentialConnectInput(value: unknown): CredentialConnectInput | null {
+  if (!value || typeof value !== "object") return null;
+  const input = value as { apiKey?: unknown };
+  if (typeof input.apiKey !== "string") return null;
+  const apiKey = input.apiKey.trim();
+  if (!apiKey || apiKey.length > MAX_API_KEY_LENGTH) return null;
+  // API keys are single opaque tokens; embedded whitespace or control
+  // characters mean a paste error, not a longer key format.
+  if (/[\s\p{Cc}]/u.test(apiKey)) return null;
+  return { apiKey };
 }
 
 function parseIdList(value: unknown, key: string, minimum: number): { itemIds: string[] } | null {

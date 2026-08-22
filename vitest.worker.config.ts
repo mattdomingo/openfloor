@@ -36,6 +36,7 @@ export default defineConfig({
           STRIPE_CHECKOUT_ENABLED: "true",
           OPENFLOOR_TEST_ALLOW_IDENTITY_HEADERS: "true",
           RUNTIME_GATEWAY_SECRET: "worker-test-runtime-gateway-secret",
+          CREDENTIAL_ENCRYPTION_KEY: "worker-test-credential-encryption-key",
           TEST_MIGRATIONS: JSON.stringify(migrations),
           ACCOUNT_EMAIL_MERGE_QUERIES: JSON.stringify(accountEmailMergeMigration.queries),
         },

@@ -16,6 +16,11 @@ export default defineConfig({
         bindings: {
           INVITE_SIGNING_SECRET: "render-test-secret",
           OPENFLOOR_TEST_ALLOW_IDENTITY_HEADERS: "true",
+          CREDENTIAL_ENCRYPTION_KEY: "render-test-credential-encryption-key",
+          OPENFLOOR_TEST_PROVIDER_KEYS: JSON.stringify({
+            anthropic: ["sk-ant-render-accepted"],
+            openai: ["sk-openai-render-accepted"],
+          }),
           TEST_MIGRATIONS: JSON.stringify(migrations),
         },
       },

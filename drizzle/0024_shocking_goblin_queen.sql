@@ -17,6 +17,7 @@ CREATE TABLE `stripe_subscriptions` (
 	`status` text NOT NULL,
 	`current_period_end` integer,
 	`cancel_at_period_end` integer DEFAULT false NOT NULL,
+	`event_created` integer DEFAULT 0 NOT NULL,
 	`created_at` integer NOT NULL,
 	`updated_at` integer NOT NULL,
 	FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON UPDATE no action ON DELETE no action
