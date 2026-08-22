@@ -120,7 +120,8 @@
 }
 
 .panel-body > .workbench,
-.panel-body > .team-chat {
+.panel-body > .team-chat,
+.panel-body > .agent-floor-body {
   flex: 1 1 auto;
 }
 
@@ -320,21 +321,6 @@
   color: var(--text-tertiary);
   font-size: var(--text-xs);
   line-height: 1.4;
-}
-
-.chip-row {
-  position: sticky;
-  top: 0;
-  z-index: 2;
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
-  flex: none;
-  padding: var(--space-2) var(--space-4);
-  border-bottom: 1px solid var(--line-soft);
-  background: var(--surface-panel);
-  overflow-x: auto;
-  scrollbar-width: thin;
 }
 
 .chip {
@@ -857,11 +843,63 @@
   gap: var(--space-2);
 }
 
+/* Fixed 3-column grid: tile size tracks the panel's width only, never the
+   agent count — a 4th+ agent starts a new row instead of shrinking anyone. */
 .agent-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(272px, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: var(--space-3);
   padding: var(--space-4);
+}
+
+.agent-floor-body {
+  display: flex;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+.agent-rail {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  width: 52px;
+  padding: var(--space-3) var(--space-2);
+  border-right: 1px solid var(--line-soft);
+  overflow-y: auto;
+}
+
+.agent-rail-item {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  flex: none;
+  border: 2px solid transparent;
+  border-radius: 50%;
+  background: var(--agent-color);
+  color: var(--accent-contrast);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  font-weight: 700;
+  opacity: 0.6;
+}
+
+.agent-rail-item:hover {
+  opacity: 0.85;
+}
+
+.agent-rail-item[data-selected="true"] {
+  opacity: 1;
+  border-color: var(--text-primary);
+}
+
+.agent-floor-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .agent-card {
@@ -1433,39 +1471,6 @@
 
 .spotlight-head .agent-state {
   font-size: var(--text-sm);
-}
-
-.spotlight-switcher {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: 0 var(--space-4) var(--space-3);
-}
-
-.spotlight-switcher-chips {
-  display: flex;
-  flex: 1 1 auto;
-  gap: var(--space-1);
-  overflow-x: auto;
-  scrollbar-width: thin;
-}
-
-.spotlight-chip {
-  flex: none;
-  padding: 4px var(--space-3);
-  border: 1px solid var(--line-soft);
-  border-radius: var(--radius-pill);
-  background: var(--surface-sunken);
-  color: var(--text-secondary);
-  font-size: var(--text-xs);
-  font-weight: 600;
-  white-space: nowrap;
-}
-
-.spotlight-chip[aria-current="true"] {
-  border-color: var(--accent);
-  background: var(--accent-soft);
-  color: var(--accent);
 }
 
 .spotlight-progress {
@@ -2462,6 +2467,14 @@
 
 .mention-input::placeholder {
   color: var(--text-tertiary);
+}
+
+/* This box already shows focus by taking the keyboard's caret and the
+   surrounding .composer's border tint (see .composer:focus-within) — the
+   global input/textarea focus-visible ring would double up on top of that. */
+.mention-input:focus-visible {
+  box-shadow: none;
+  border-color: transparent;
 }
 
 .mention-suggestions {
