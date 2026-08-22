@@ -2061,12 +2061,22 @@
 
 /* Floor dock ------------------------------------------------------------ */
 
-/* No card of its own — it's just the text box sitting on .dock's surface. */
+/* Same shape as .panel (border, radius, surface-panel background, elevation)
+   so this reads as a fourth panel rather than a bare, boxless field. */
 .composer {
   display: flex;
   flex-direction: column;
   flex: 1 1 auto;
   min-width: 0;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface-panel);
+  box-shadow: var(--elevation-1);
+}
+
+.composer:focus-within {
+  border-color: color-mix(in srgb, var(--text-primary) 32%, transparent);
 }
 
 .composer-head {

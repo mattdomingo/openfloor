@@ -417,25 +417,25 @@
 /* Floor dock ------------------------------------------------------------ */
 
 /* The dock sits in the page flow, not over it: the workspace ends where the
-   dock begins, so nothing above is ever covered by the composer. */
+   dock begins, so nothing above is ever covered by the composer. Same page
+   background as .workspace (no border/shadow of its own) — the composer
+   card below is the only bordered shape here, exactly like a fourth panel. */
 .dock {
   position: relative;
   z-index: 20;
   flex: none;
-  border-top: 1px solid var(--line-strong);
-  background: var(--surface-raised);
-  box-shadow: 0 -6px 24px rgba(40, 32, 18, 0.08);
+  background: var(--surface-page);
 }
 
 /* Floats above the dock on demand — no reserved band, so it costs nothing
    in layout when there's nothing to say (unlike the old fixed-height rail). */
 .dock-toast {
   position: absolute;
-  left: var(--space-6);
+  left: var(--space-4);
   bottom: calc(100% + var(--space-3));
   z-index: 25;
   width: fit-content;
-  max-width: calc(100% - 2 * var(--space-6));
+  max-width: calc(100% - 2 * var(--space-4));
   padding: var(--space-2) var(--space-3);
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-md);
@@ -443,11 +443,13 @@
   box-shadow: var(--elevation-2);
 }
 
+/* Same horizontal inset as .workspace's own padding, so the composer's left
+   and right edges land exactly under the panel row's edges above it. */
 .dock-inner {
   display: flex;
   align-items: stretch;
   gap: var(--space-3);
-  padding: var(--space-2) var(--space-6);
+  padding: 0 var(--space-4) var(--space-3);
   /* No overflow here: the composer's dropdown must escape upward. The lanes
      carry their own horizontal scroller instead. */
 }
