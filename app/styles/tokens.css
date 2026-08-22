@@ -135,7 +135,7 @@
    they were born dark-safe. Keep this block and the [data-theme="dark"] block
    below byte-identical. */
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
+  :root:not([data-theme="light"]):not([data-theme="polar"]):not([data-theme="midnight"]) {
     color-scheme: dark;
 
     --surface-page: #171a17;
@@ -221,8 +221,18 @@
   --surface-raised: #ffffff;
   --surface-sunken: #ececea;
 
-  --line-strong: #d3d3ce;
-  --line-soft: #e6e6e2;
+  /* Text stays explicit (not inherited from the bare :root) so this theme
+     can never pick up the dark-preference block's near-white values by
+     accident — same reasoning as dark/midnight duplicating their own. */
+  --text-primary: #1f241f;
+  --text-secondary: #6a6961;
+  --text-tertiary: #928f86;
+
+  /* Darker than a literal near-white gray: against surfaces this pale, a
+     line needs real luminance separation to read at all, let alone as a
+     dashed 1px outline at avatar size. */
+  --line-strong: #b7b7ae;
+  --line-soft: #dcdcd6;
 }
 
 /* Midnight: dark, pushed past charcoal toward black. Same relationship to
