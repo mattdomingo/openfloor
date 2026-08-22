@@ -11,7 +11,7 @@ import { initials } from "@/lib/display-name";
 import { OBJECTIVE_NUDGE_THRESHOLD } from "@/lib/floor-state";
 import type { AppUser, SessionMember, SessionSummary } from "@/lib/session-types";
 import { InviteDialog } from "./InviteDialog";
-import { Avatar, HoverTip, Icon, useHoverTip } from "./primitives";
+import { Avatar, Icon } from "./primitives";
 import type { WorkspaceScreen } from "./data";
 
 type ObjectiveSaveState = "idle" | "saving" | "saved" | "error";
@@ -32,18 +32,6 @@ function SessionTimer({ base, running }: { base: number; running: boolean }) {
     <span className="objective-fact session-timer" title="Session time used">
       {formatDuration(base + elapsed)}
     </span>
-  );
-}
-
-/* Color alone (not a "Live" label) carries live/not-live — a mouse-following
-   tooltip still says it in words for anyone who hovers. */
-function LiveIndicator({ live }: { live: boolean }) {
-  const tip = useHoverTip();
-  return (
-    <>
-      <span className="live-dot" data-live={live ? "true" : "false"} {...tip.handlers} />
-      <HoverTip position={tip.position}>{live ? "Live" : "Not live"}</HoverTip>
-    </>
   );
 }
 
@@ -119,10 +107,9 @@ export function TopBar({
 
       <span className="topbar-divider" aria-hidden="true" />
 
-      {/* This session: which one, its live status, and whether it can still be joined. */}
+      {/* This session: which one, and whether it can still be joined. */}
       <nav className="session-path" aria-label="Session location">
         <Link href="/home">Sessions</Link><span aria-hidden="true">/</span><Link href={`/session/${session.id}`}><strong title={session.title}>{session.title}</strong></Link>
-        <LiveIndicator live={presenceConnected && session.endedAt == null} />
         {session.lockedAt != null && <span className="state-tag" data-tone="waiting" title="No new members can join">Locked</span>}
       </nav>
 
@@ -189,10 +176,17 @@ export function TopBar({
       </nav>
 
       <div className="topbar-actions">
+        {/* Offline members lead (left), online trail (right, nearest Invite) —
+            tone is computed from the unsorted list first so it stays stable
+            per person regardless of who else is online right now. */}
         <div className="presence" aria-label={`${members.filter((member) => member.online).length} people online`}>
-          {members.slice(0, 5).map((member, index) => (
-            <Avatar key={member.id} userId={member.id} initials={initials(member.displayName)} tone={member.id === user.id ? "you" : `member-${index}`} online={member.online} />
-          ))}
+          {members
+            .map((member, index) => ({ member, tone: member.id === user.id ? "you" : `member-${index}` }))
+            .slice(0, 5)
+            .sort((a, b) => Number(a.member.online) - Number(b.member.online))
+            .map(({ member, tone }) => (
+              <Avatar key={member.id} userId={member.id} initials={initials(member.displayName)} tone={tone} online={member.online} />
+            ))}
         </div>
         {session.role === "owner" && (
           <button type="button" ref={inviteButtonRef} className="button invite-button" onClick={() => setInviting(true)}>

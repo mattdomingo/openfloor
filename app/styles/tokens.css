@@ -207,3 +207,59 @@
   --elevation-1: 0 1px 2px rgba(0, 0, 0, 0.5), 0 1px 0 rgba(0, 0, 0, 0.3);
   --elevation-2: 0 16px 36px rgba(0, 0, 0, 0.55);
 }
+
+/* Polar: light, drained of the cream's warmth — crisp near-white surfaces.
+   Text/line/accent/status stay exactly the light theme's (still built and
+   tuned for a light background), only the surface stack shifts cooler and
+   brighter. Manual choice only, like dark — no system-preference tie-in. */
+:root[data-theme="polar"] {
+  color-scheme: light;
+
+  --surface-page: #f4f4f2;
+  --surface-header: #f9f9f7;
+  --surface-panel: #fdfdfc;
+  --surface-raised: #ffffff;
+  --surface-sunken: #ececea;
+
+  --line-strong: #d3d3ce;
+  --line-soft: #e6e6e2;
+}
+
+/* Midnight: dark, pushed past charcoal toward black. Same relationship to
+   dark that polar has to light — only the surface stack moves, text/accent/
+   status keep dark's already-tuned contrast against a darker floor. */
+:root[data-theme="midnight"] {
+  color-scheme: dark;
+
+  --surface-page: #060706;
+  --surface-header: #0a0b0a;
+  --surface-panel: #0f110f;
+  --surface-raised: #171a17;
+  --surface-sunken: #000000;
+
+  --text-primary: #e8ede8;
+  --text-secondary: #a7aca3;
+  --text-tertiary: #7b8078;
+
+  --line-strong: #33382f;
+  --line-soft: #202420;
+
+  --accent: #e06a45;
+  --accent-hover: #eb7f5c;
+  --accent-soft: #3d2a22;
+  --accent-line: #7c4936;
+
+  --status-running: #5fa886;
+  --status-running-soft: #22322a;
+  --status-blocked: #d96a5e;
+  --status-blocked-soft: #3a2622;
+  --status-review: #7da3c2;
+  --status-review-soft: #232e37;
+  --status-waiting: #9a958a;
+  --status-waiting-soft: #2b2b26;
+  --status-attention: #d09a4a;
+  --status-attention-soft: #362b1c;
+
+  --elevation-1: 0 1px 2px rgba(0, 0, 0, 0.7), 0 1px 0 rgba(0, 0, 0, 0.4);
+  --elevation-2: 0 16px 36px rgba(0, 0, 0, 0.75);
+}

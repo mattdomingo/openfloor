@@ -142,38 +142,6 @@
   pointer-events: none;
 }
 
-/* Live status: color alone on a small dot — status you observe, not a
-   control or a count, so it shouldn't carry badge or label weight. */
-.live-dot {
-  position: relative;
-  width: 7px;
-  height: 7px;
-  flex: none;
-  border-radius: 50%;
-  background: var(--status-blocked);
-}
-
-.live-dot[data-live="true"] {
-  background: var(--status-running);
-}
-
-@media (prefers-reduced-motion: no-preference) {
-  .live-dot[data-live="true"]::after {
-    content: "";
-    position: absolute;
-    inset: -4px;
-    border-radius: 50%;
-    background: var(--status-running);
-    opacity: 0.4;
-    animation: live-pulse 2s ease-out infinite;
-  }
-
-  @keyframes live-pulse {
-    0% { transform: scale(0.5); opacity: 0.45; }
-    100% { transform: scale(2.2); opacity: 0; }
-  }
-}
-
 .session-timer {
   font-variant-numeric: tabular-nums;
 }

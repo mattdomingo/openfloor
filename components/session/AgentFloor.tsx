@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import type { AgentRun, CreateFloorAgentInput, FloorAgent, FloorParticipant, FloorQueueItem } from "@/lib/floor-types";
 import type { AgentLayout } from "./data";
 import { agentTone } from "./data";
@@ -11,12 +11,13 @@ import type { RunActivitySource } from "./useRunActivity";
 import { AgentChatHistory } from "./AgentChatHistory";
 import { CreateAgentDialog } from "./CreateAgentDialog";
 
-function AgentRailItem({ agent, selected, onSelect }: { agent: FloorAgent; selected: boolean; onSelect: () => void }) {
+function AgentRailItem({ agent, selected, onSelect, railRef }: { agent: FloorAgent; selected: boolean; onSelect: () => void; railRef: (id: string, element: HTMLButtonElement | null) => void }) {
   const tip = useHoverTip();
   return (
     <>
       <button
         type="button"
+        ref={(element) => railRef(agent.id, element)}
         className="agent-rail-item"
         data-tone={agentTone(agent.id)}
         data-selected={selected ? "true" : "false"}
@@ -72,12 +73,46 @@ export function AgentFloor({ chrome, sessionId, agents, runs, activity, selected
     onAgentLayout("focus");
   }
 
+  // FLIP: a newly added agent just appears at the rail's left edge; every
+  // existing chip needs to visibly slide over to make room rather than jump.
+  // Rects are read fresh each render into a ref (not state, so this never
+  // itself triggers a render) — the layout effect below diffs this render's
+  // positions against the ones read last time, before the DOM settles into
+  // its final (already-shifted) layout, then plays the delta back as a
+  // transform so .agent-rail-item's own transition animates it away.
+  const railItemsRef = useRef<Map<string, HTMLButtonElement>>(new Map());
+  const prevRailRectsRef = useRef<Map<string, DOMRect> | null>(null);
+  function registerRailItem(id: string, element: HTMLButtonElement | null) {
+    if (element) railItemsRef.current.set(id, element);
+    else railItemsRef.current.delete(id);
+  }
+  useLayoutEffect(() => {
+    const prevRects = prevRailRectsRef.current;
+    const nextRects = new Map<string, DOMRect>();
+    railItemsRef.current.forEach((element, id) => {
+      const next = element.getBoundingClientRect();
+      nextRects.set(id, next);
+      const prev = prevRects?.get(id);
+      if (!prev) return;
+      const dx = prev.left - next.left;
+      if (!dx) return;
+      element.style.transition = "none";
+      element.style.transform = `translateX(${dx}px)`;
+      element.getBoundingClientRect();
+      requestAnimationFrame(() => {
+        element.style.transition = "";
+        element.style.transform = "";
+      });
+    });
+    prevRailRectsRef.current = nextRects;
+  }, [agents]);
+
   const headerActions = (
     <>
       {agents.length > 0 && (
         <div className="agent-header-rail" role="tablist" aria-label="Agents">
           {agents.map((agent) => (
-            <AgentRailItem key={agent.id} agent={agent} selected={agentLayout === "focus" && selected?.id === agent.id} onSelect={() => focusAgent(agent.id)} />
+            <AgentRailItem key={agent.id} agent={agent} selected={agentLayout === "focus" && selected?.id === agent.id} onSelect={() => focusAgent(agent.id)} railRef={registerRailItem} />
           ))}
         </div>
       )}
