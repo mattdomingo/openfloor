@@ -2319,6 +2319,10 @@
   font-size: var(--text-xs);
 }
 
+.queue-order-menu {
+  position: relative;
+}
+
 .queue-order-trigger {
   display: grid;
   place-items: center;
@@ -2346,7 +2350,7 @@
 .queue-order-list {
   position: absolute;
   top: calc(100% + var(--space-1));
-  right: var(--space-4);
+  left: 0;
   z-index: 30;
   min-width: 190px;
   margin: 0;
@@ -2357,7 +2361,7 @@
   box-shadow: var(--elevation-2);
   list-style: none;
   animation: popover-rise var(--dur-float) var(--ease-out);
-  transform-origin: top right;
+  transform-origin: top left;
 }
 
 .queue-order-list li {
@@ -2408,15 +2412,15 @@
 .queue-order-label {
   display: block;
   padding: var(--space-2) var(--space-2) var(--space-1);
-  color: var(--text-tertiary);
-  font-size: 9px;
+  color: var(--text-primary);
+  font-size: var(--text-xs);
   font-weight: 700;
-  letter-spacing: 0.03em;
-  text-transform: uppercase;
+  letter-spacing: 0.01em;
 }
 
-.queue-order-list .queue-order-action {
+.queue-order-label:not(:first-child) {
   margin-top: var(--space-1);
+  padding-top: var(--space-3);
   border-top: 1px solid var(--line-soft);
 }
 

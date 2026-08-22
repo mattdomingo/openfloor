@@ -7,7 +7,6 @@ export type MessageInput = { text: string; recipientUserId: string | null };
 export type QueuePromptInput = { prompt: string; agentId: string | null };
 export type AutoDispatchInput = { autoDispatch: boolean };
 export type QueueOrderInput = { itemIds: string[] };
-export type QueueMergeInput = { itemIds: string[] };
 export type QueuePromptTextInput = { text: string };
 export type QueueItemPauseInput = { paused: boolean };
 export type RepositoryConnectionInput = { repositoryId: string; baseBranch: string; checkCommands: string[] };
@@ -107,10 +106,6 @@ export function parseAutoDispatchInput(value: unknown): AutoDispatchInput | null
 
 export function parseQueueOrderInput(value: unknown): QueueOrderInput | null {
   return parseIdList(value, "itemIds", 0);
-}
-
-export function parseQueueMergeInput(value: unknown): QueueMergeInput | null {
-  return parseIdList(value, "itemIds", 2);
 }
 
 export function parseQueuePromptTextInput(value: unknown): QueuePromptTextInput | null {

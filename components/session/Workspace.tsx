@@ -5,8 +5,8 @@ import Link from "next/link";
 import { LocalDateTime } from "@/components/LocalDateTime";
 import type { AppUser, SessionMember, SessionSummary, TypingDraft } from "@/lib/session-types";
 import type { CreateFloorAgentInput } from "@/lib/floor-types";
-import { countMessagesSinceObjective, countUnreadTeamMessages, firstMergeableQueueGroup, latestTeamMessageAt, resolvePersistedAgentMention } from "@/lib/floor-state";
-import type { AgentLayout, ChatThread, PanelId, QueueMergeMode, QueueOrderMode, QueueScope, RailId, TeamPanelView, WorkspaceScreen } from "./data";
+import { countMessagesSinceObjective, countUnreadTeamMessages, latestTeamMessageAt, resolvePersistedAgentMention } from "@/lib/floor-state";
+import type { AgentLayout, ChatThread, PanelId, QueueOrderMode, QueueScope, RailId, TeamPanelView, WorkspaceScreen } from "./data";
 import { floorParticipants, type PersistentFloorDataSource } from "./usePersistentFloorData";
 import type { RunActivitySource } from "./useRunActivity";
 import { type PanelChrome } from "./Rail";
@@ -41,7 +41,6 @@ export function Workspace({ user, session, members, floorData, activity, typingD
   const [screen, setScreen] = useState<WorkspaceScreen>("workspace");
   const [queueScope, setQueueScope] = useState<QueueScope>("team");
   const [queueOrderMode, setQueueOrderMode] = useState<QueueOrderMode>("auto");
-  const [queueMergeMode, setQueueMergeMode] = useState<QueueMergeMode>("off");
   const [draggedQueueItem, setDraggedQueueItem] = useState<string | null>(null);
   const [selectedAgentId, setSelectedAgentId] = useState("");
   const [agentLayout, setAgentLayout] = useState<AgentLayout>("all");
@@ -99,20 +98,10 @@ export function Workspace({ user, session, members, floorData, activity, typingD
     const agentId = mentioned?.id ?? queueTarget;
     const floor = await floorData.addQueueItem(prompt, agentId);
     if (!floor) return false;
-    if (queueMergeMode === "auto") {
-      const matching = floor.queue.filter((item) => item.status === "queued" && item.agentId === agentId).map((item) => item.id);
-      if (matching.length > 1 && !(await floorData.mergeQueue(matching))) return false;
-    }
     setQueueScope("mine");
     setCollapsedRails((current) => ({ ...current, queue: false }));
     setNotice(agentId ? `Prompt queued for ${floor.agents.find((agent) => agent.id === agentId)?.name ?? "agent"}` : "Prompt queued without an agent");
     return true;
-  }
-
-  async function mergeQueueNow() {
-    const group = firstMergeableQueueGroup(queue);
-    if (group.length < 2) { setNotice("Nothing to merge · queue targets must match"); return; }
-    if (await floorData.mergeQueue(group)) setNotice(`${group.length} queue items merged`);
   }
 
   async function dropQueueItem(targetId: string) {
@@ -127,10 +116,21 @@ export function Workspace({ user, session, members, floorData, activity, typingD
     setPanelOrder((current) => { const next = [...current]; const index = next.indexOf(panel); const target = index + direction; if (target < 0 || target >= next.length) return current; [next[index], next[target]] = [next[target], next[index]]; return next; });
   }
 
+  // Swap, not insert-before: the previous filter+splice recomputed the
+  // target's index in the array with the dragged panel already removed, so a
+  // rightward drop (target after source) landed one slot short of the target
+  // — dragging the leftmost panel onto its immediate right neighbor was a
+  // silent no-op. Swapping the two indices directly has no such directional bug.
   function dropPanel(target: PanelId) {
     setDragOverPanel(null);
     if (!draggedPanel || draggedPanel === target) return;
-    setPanelOrder((current) => { const next = current.filter((id) => id !== draggedPanel); next.splice(next.indexOf(target), 0, draggedPanel); return next; });
+    setPanelOrder((current) => {
+      const next = [...current];
+      const from = next.indexOf(draggedPanel);
+      const to = next.indexOf(target);
+      [next[from], next[to]] = [next[to], next[from]];
+      return next;
+    });
     setDraggedPanel(null);
   }
 
@@ -152,7 +152,7 @@ export function Workspace({ user, session, members, floorData, activity, typingD
 
   function renderPanel(panel: PanelId, chrome: PanelChrome) {
     if (panel === "brief") return <BriefRail chrome={chrome} assignments={assignments} agents={agents} queue={queue} onAssignmentChange={async (id, task) => Boolean(await floorData.updateAssignment(id, task))} view={teamPanelView} onViewChange={setTeamPanelView} messages={messages} onSendMessage={async (text, recipient) => Boolean(await floorData.sendMessage(text, recipient))} chatThread={chatThread} onChatThreadChange={setChatThread} participants={participants} currentUserId={user.id} unreadTeamCount={unreadTeamCount} />;
-    if (panel === "queue") return <PromptQueue chrome={chrome} items={queue} runs={runs} owner={session.role === "owner"} runEnabled={agentRunEnabled} busy={floorData.busy} autoDispatch={floorData.floor.autoDispatch} onAutoDispatch={async (enabled) => { const result = await floorData.setAutoDispatch(enabled); if (result) setNotice(enabled ? "Auto-dispatch enabled" : "Auto-dispatch disabled"); }} onRun={async (id) => { const result = await floorData.runQueueItem(id); if (result) setNotice("Agent run started"); }} onCancel={async (id) => { const result = await floorData.cancelRun(id); if (result) setNotice("Cancellation requested"); }} onDiscard={async (id) => { const result = await floorData.discardRun(id); if (result) setNotice("Verified run branch discarded"); }} onRetry={async (id) => { const result = await floorData.retryRun(id); if (result) setNotice("Retry started against the latest candidate"); }} onEditPrompt={async (queueItemId, promptId, text) => { const result = await floorData.editQueuePrompt(queueItemId, promptId, text); if (result) setNotice("Prompt updated"); return Boolean(result); }} onPause={async (queueItemId, paused) => { const result = await floorData.setQueueItemPaused(queueItemId, paused); if (result) setNotice(paused ? "Prompt paused" : "Prompt resumed"); }} onDelete={async (queueItemId) => { const result = await floorData.deleteQueueItem(queueItemId); if (result) setNotice("Prompt removed"); }} currentUserId={user.id} scope={queueScope} onScope={setQueueScope} orderMode={queueOrderMode} onOrderMode={setQueueOrderMode} mergeMode={queueMergeMode} onMergeMode={setQueueMergeMode} onMergeNow={() => void mergeQueueNow()} draggedItemId={draggedQueueItem} onItemDragStart={setDraggedQueueItem} onItemDragEnd={() => setDraggedQueueItem(null)} onItemDrop={(id) => void dropQueueItem(id)} onFocusAgent={(agentId) => { setSelectedAgentId(agentId); setAgentLayout("focus"); }} />;
+    if (panel === "queue") return <PromptQueue chrome={chrome} items={queue} runs={runs} owner={session.role === "owner"} runEnabled={agentRunEnabled} busy={floorData.busy} autoDispatch={floorData.floor.autoDispatch} onAutoDispatch={async (enabled) => { const result = await floorData.setAutoDispatch(enabled); if (result) setNotice(enabled ? "Auto-dispatch enabled" : "Auto-dispatch disabled"); }} onRun={async (id) => { const result = await floorData.runQueueItem(id); if (result) setNotice("Agent run started"); }} onCancel={async (id) => { const result = await floorData.cancelRun(id); if (result) setNotice("Cancellation requested"); }} onDiscard={async (id) => { const result = await floorData.discardRun(id); if (result) setNotice("Verified run branch discarded"); }} onRetry={async (id) => { const result = await floorData.retryRun(id); if (result) setNotice("Retry started against the latest candidate"); }} onEditPrompt={async (queueItemId, promptId, text) => { const result = await floorData.editQueuePrompt(queueItemId, promptId, text); if (result) setNotice("Prompt updated"); return Boolean(result); }} onPause={async (queueItemId, paused) => { const result = await floorData.setQueueItemPaused(queueItemId, paused); if (result) setNotice(paused ? "Prompt paused" : "Prompt resumed"); }} onDelete={async (queueItemId) => { const result = await floorData.deleteQueueItem(queueItemId); if (result) setNotice("Prompt removed"); }} currentUserId={user.id} scope={queueScope} onScope={setQueueScope} orderMode={queueOrderMode} onOrderMode={setQueueOrderMode} draggedItemId={draggedQueueItem} onItemDragStart={setDraggedQueueItem} onItemDragEnd={() => setDraggedQueueItem(null)} onItemDrop={(id) => void dropQueueItem(id)} onFocusAgent={(agentId) => { setSelectedAgentId(agentId); setAgentLayout("focus"); }} />;
     return <AgentFloor chrome={chrome} sessionId={session.id} agents={agents} runs={runs} activity={activity} selected={selectedAgent} onSelect={setSelectedAgentId} agentLayout={agentLayout} onAgentLayout={setAgentLayout} onCreateAgent={createAgent} claudeRunEnabled={claudeRunEnabled} onUpdateTask={async (agentId, task) => Boolean(await floorData.updateAgentTask(agentId, task))} queue={queue} participants={participants} currentUserId={user.id} />;
   }
 

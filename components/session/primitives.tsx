@@ -81,7 +81,9 @@ export type IconName =
   | "more"
   | "pencil"
   | "message"
-  | "sliders";
+  | "sliders"
+  | "eye"
+  | "eyeOff";
 
 const glyphs: Record<IconName, ReactNode> = {
   grip: (
@@ -156,6 +158,19 @@ const glyphs: Record<IconName, ReactNode> = {
       <circle cx="8" cy="8.4" r="1.3" fill="currentColor" stroke="none" />
       <path d="M12 13V10.6M12 8.2V3" />
       <circle cx="12" cy="9.4" r="1.3" fill="currentColor" stroke="none" />
+    </>
+  ),
+  eye: (
+    <>
+      <path d="M2 8s2.5-4.5 6-4.5S14 8 14 8s-2.5 4.5-6 4.5S2 8 2 8z" />
+      <circle cx="8" cy="8" r="1.6" />
+    </>
+  ),
+  eyeOff: (
+    <>
+      <path d="M2 8s2.5-4.5 6-4.5S14 8 14 8s-2.5 4.5-6 4.5S2 8 2 8z" />
+      <circle cx="8" cy="8" r="1.6" />
+      <path d="M3 3l10 10" />
     </>
   ),
 };
@@ -236,13 +251,16 @@ export function SegmentedControl<T extends string>({
 }: {
   label: string;
   value: T;
-  options: { value: T; label: ReactNode }[];
+  // `title` names an icon-only option for hover + accessibility; a text
+  // `label` already serves as its own accessible name, so `title` stays
+  // optional and existing text-label callers are unaffected.
+  options: { value: T; label: ReactNode; title?: string }[];
   onChange: (value: T) => void;
 }) {
   return (
     <div className="segmented" role="group" aria-label={label}>
       {options.map((option) => (
-        <button key={option.value} type="button" aria-pressed={value === option.value} onClick={() => onChange(option.value)}>
+        <button key={option.value} type="button" aria-pressed={value === option.value} title={option.title} aria-label={option.title} onClick={() => onChange(option.value)}>
           {option.label}
         </button>
       ))}

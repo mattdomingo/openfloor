@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useId, useRef, useState } from "react";
-import { QueueMergeMode, QueueOrderMode } from "./data";
+import { QueueOrderMode } from "./data";
 import { Icon } from "./primitives";
 
 const orderOptions: { value: QueueOrderMode; label: string; hint: string }[] = [
@@ -9,17 +9,9 @@ const orderOptions: { value: QueueOrderMode; label: string; hint: string }[] = [
   { value: "manual", label: "Manual", hint: "Drag to reorder" },
 ];
 
-const mergeOptions: { value: QueueMergeMode; label: string; hint: string }[] = [
-  { value: "auto", label: "Auto-merge", hint: "New prompts fold into the agent's card" },
-  { value: "off", label: "Off", hint: "Every prompt keeps its own card" },
-];
-
 export function QueueOrderMenu({
   mode,
   onChange,
-  mergeMode,
-  onMergeMode,
-  onMergeNow,
   canReorder,
   owner,
   autoDispatch,
@@ -28,9 +20,6 @@ export function QueueOrderMenu({
 }: {
   mode: QueueOrderMode;
   onChange: (mode: QueueOrderMode) => void;
-  mergeMode: QueueMergeMode;
-  onMergeMode: (mode: QueueMergeMode) => void;
-  onMergeNow: () => void;
   canReorder: boolean;
   owner: boolean;
   autoDispatch: boolean;
@@ -65,11 +54,6 @@ export function QueueOrderMenu({
     setOpen(false);
   }
 
-  function chooseMerge(next: QueueMergeMode) {
-    onMergeMode(next);
-    setOpen(false);
-  }
-
   function chooseAutoDispatch(next: boolean) {
     void onAutoDispatch(next);
     setOpen(false);
@@ -83,10 +67,8 @@ export function QueueOrderMenu({
         aria-label="Queue settings"
         aria-expanded={open}
         aria-controls={listId}
-        title={`Queue settings · ${mode === "auto" ? "Auto order" : "Manual order"} · ${
-          mergeMode === "auto" ? "Auto-merge" : "No merging"
-        }${owner ? ` · Auto-dispatch ${autoDispatch ? "on" : "off"}` : ""}`}
-        data-active={mode === "manual" || mergeMode === "auto" || autoDispatch ? "true" : "false"}
+        title={`Queue settings · ${mode === "auto" ? "Auto order" : "Manual order"}${owner ? ` · Auto-dispatch ${autoDispatch ? "on" : "off"}` : ""}`}
+        data-active={mode === "manual" || autoDispatch ? "true" : "false"}
         onClick={() => setOpen((current) => !current)}
       >
         <Icon name="sliders" size={13} />
@@ -150,37 +132,6 @@ export function QueueOrderMenu({
               </ul>
             </>
           )}
-
-          <span className="queue-order-label" aria-hidden="true">
-            Merge prompts
-          </span>
-          <ul>
-            {mergeOptions.map((option) => (
-              <li key={option.value}>
-                <button
-                  type="button"
-                  data-selected={mergeMode === option.value ? "true" : "false"}
-                  aria-pressed={mergeMode === option.value}
-                  onClick={() => chooseMerge(option.value)}
-                >
-                  <span>{option.label}</span>
-                  <small>{option.hint}</small>
-                </button>
-              </li>
-            ))}
-          </ul>
-
-          <button
-            type="button"
-            className="queue-order-action"
-            onClick={() => {
-              onMergeNow();
-              setOpen(false);
-            }}
-          >
-            <span>Merge now</span>
-            <small>Fold adjacent prompts for the same agent</small>
-          </button>
         </div>
       )}
     </div>

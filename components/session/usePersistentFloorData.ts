@@ -75,7 +75,6 @@ export function usePersistentFloorData(sessionId: string, initialFloor: FloorSna
     sendMessage: (text: string, recipientUserId: string | null) => request("/messages", "POST", { text, recipientUserId }),
     addQueueItem: (prompt: string, agentId: string | null) => request("/queue", "POST", { prompt, agentId }),
     reorderQueue: (itemIds: string[]) => request("/queue/order", "PATCH", { itemIds }),
-    mergeQueue: (itemIds: string[]) => request("/queue/merge", "POST", { itemIds }),
     runQueueItem: (queueItemId: string) => request(`/queue/${encodeURIComponent(queueItemId)}/run`, "POST"),
     editQueuePrompt: (queueItemId: string, promptId: string, text: string) =>
       request(`/queue/${encodeURIComponent(queueItemId)}/prompts/${encodeURIComponent(promptId)}`, "PATCH", { text }),
