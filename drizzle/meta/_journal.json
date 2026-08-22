@@ -169,6 +169,13 @@
       "when": 1787346263724,
       "tag": "0023_public_the_phantom",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "6",
+      "when": 1787357646640,
+      "tag": "0024_shocking_goblin_queen",
+      "breakpoints": true
     }
   ]
 }

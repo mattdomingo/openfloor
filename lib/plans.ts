@@ -3,6 +3,7 @@
 // is reachable from tests/unit under plain node.
 
 export type Plan = "free" | "pro" | "max" | "enterprise";
+export type PaidPlan = "pro" | "max";
 export type PlanStatus = "inactive" | "active" | "past_due" | "canceled";
 
 // The whole entitlement model: seats cap session_members rows, hours cap
@@ -16,6 +17,16 @@ export const PLAN_LIMITS: Record<Plan, { seats: number; hours: number }> = {
   enterprise: { seats: Infinity, hours: Infinity },
 };
 
+export const PAID_PLAN_CATALOG: Record<PaidPlan, {
+  unitAmountCents: number;
+  currency: "usd";
+  minimumSeats: number;
+  maximumSeats: number;
+}> = {
+  pro: { unitAmountCents: 3_000, currency: "usd", minimumSeats: 3, maximumSeats: 5 },
+  max: { unitAmountCents: 5_000, currency: "usd", minimumSeats: 3, maximumSeats: 10 },
+};
+
 // A purchased plan only grants its limits while status is "active";
 // inactive (never purchased), past_due, and canceled all fall back to free
 // rather than locking the owner out entirely.
@@ -23,15 +34,34 @@ export function effectivePlan(plan: Plan, status: PlanStatus): Plan {
   return status === "active" ? plan : "free";
 }
 
+// Stripe-managed Pro/Max accounts store their purchased per-session seat
+// quantity. Legacy/manual grants have no quantity and retain the historical
+// tier cap. Free and lapsed accounts always get Free's three seats.
+export function effectiveSeatLimit(plan: Plan, status: PlanStatus, purchasedSeats: number | null): number {
+  const effective = effectivePlan(plan, status);
+  if (effective === "free" || effective === "enterprise") return PLAN_LIMITS[effective].seats;
+  const catalog = PAID_PLAN_CATALOG[effective];
+  return purchasedSeats != null
+    && Number.isInteger(purchasedSeats)
+    && purchasedSeats >= catalog.minimumSeats
+    && purchasedSeats <= catalog.maximumSeats
+    ? purchasedSeats
+    : PLAN_LIMITS[effective].seats;
+}
+
+export function isPaidPlan(value: unknown): value is PaidPlan {
+  return value === "pro" || value === "max";
+}
+
+export function validPaidSeatQuantity(plan: PaidPlan, value: unknown): value is number {
+  const limits = PAID_PLAN_CATALOG[plan];
+  return typeof value === "number" && Number.isInteger(value)
+    && value >= limits.minimumSeats && value <= limits.maximumSeats;
+}
+
 export function currentMonth(at: number = Date.now()): string {
   return new Date(at).toISOString().slice(0, 7); // UTC "YYYY-MM"
 }
-
-// Stripe payment link. Paying here does not automatically grant an
-// entitlement — see the "Grant a plan after purchase" runbook in
-// README.md. One link can only sell one tier; a second product (e.g. Max)
-// needs a second link and a way to tell them apart at grant time.
-export const UPGRADE_URL = "https://buy.stripe.com/fZudR93OAaWMehu35t4F200";
 
 const PLAN_LABELS: Record<Plan, string> = { free: "Free", pro: "Pro", max: "Max", enterprise: "Enterprise" };
 

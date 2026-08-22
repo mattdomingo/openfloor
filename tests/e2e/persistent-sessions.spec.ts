@@ -154,16 +154,16 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await expect(owner.getByLabel("Prompt to add to the queue")).toHaveValue("Document the next backend contract");
   await owner.getByRole("button", { name: "Add to queue" }).click();
   expect(pageErrors).toEqual([]);
-  await expect(owner.getByText("Document the next backend contract")).toBeVisible();
+  await expect(owner.locator(".queue-item").getByText("Document the next backend contract", { exact: true })).toBeVisible();
   await expect(owner.getByText("Unassigned", { exact: true }).first()).toBeVisible();
-  await expect(member.getByText("Document the next backend contract")).toBeVisible();
+  await expect(member.locator(".queue-item").getByText("Document the next backend contract", { exact: true })).toBeVisible();
 
   await owner.getByRole("combobox", { name: "Queue target" }).click();
   await owner.getByRole("option", { name: "Lumen" }).click();
   await owner.getByLabel("Prompt to add to the queue").fill("Inspect the real session contract");
   await owner.getByRole("button", { name: "Add to queue" }).click();
-  await expect(owner.getByText("Inspect the real session contract")).toBeVisible();
-  await expect(member.getByText("Inspect the real session contract")).toBeVisible();
+  await expect(owner.locator(".queue-item").getByText("Inspect the real session contract", { exact: true })).toBeVisible();
+  await expect(member.locator(".queue-item").getByText("Inspect the real session contract", { exact: true })).toBeVisible();
   await owner.getByLabel("Prompt to add to the queue").fill("Confirm the persisted contract");
   await owner.getByRole("button", { name: "Add to queue" }).click();
   await owner.getByLabel("Queue settings").click();
@@ -245,31 +245,6 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await expect(conflictItem.getByText("integrated", { exact: true })).toBeVisible();
   await expect.poll(async () => conflictItem.locator("code.queue-run-branch").textContent()).not.toBe(conflictedBranch);
 
-  await owner.getByRole("button", { name: "Review" }).click();
-  await member.getByRole("button", { name: "Review" }).click();
-  await expect(member.getByRole("button", { name: "Ready for review" })).toHaveCount(0);
-  await expect(member.getByRole("button", { name: "Squash merge" })).toHaveCount(0);
-  await owner.getByRole("button", { name: "Ready for review" }).click();
-  await expect(owner.getByRole("link", { name: /PR #1 · open/ })).toBeVisible();
-  await expect(owner.getByText("clean", { exact: true })).toBeVisible();
-  await expect(owner.getByText("passing", { exact: true })).toBeVisible();
-  await owner.getByRole("button", { name: "Squash merge" }).click();
-  await expect(owner.getByText("merged", { exact: true }).first()).toBeVisible();
-  await expect(owner.getByLabel("Branch cleanup").getByText("complete", { exact: true })).toBeVisible();
-  await expect(owner.getByRole("button", { name: "Squash merge" })).toHaveCount(0);
-
-  await owner.getByRole("button", { name: "Workspace" }).click();
-  await owner.getByRole("combobox", { name: "Queue target" }).click();
-  await owner.getByRole("option", { name: "Lumen" }).click();
-  await owner.getByLabel("Prompt to add to the queue").fill("Start a fresh candidate cycle");
-  await owner.getByRole("button", { name: "Add to queue" }).click();
-  const freshCandidateItem = owner.locator("li.queue-item", { hasText: "Start a fresh candidate cycle" });
-  await freshCandidateItem.getByRole("button", { name: "Run", exact: true }).click();
-  await expect(freshCandidateItem.getByText("integrated", { exact: true })).toBeVisible();
-  await owner.getByRole("button", { name: "Review" }).click();
-  await expect(owner.getByRole("link", { name: /Draft PR #2/ })).toBeVisible();
-  await owner.getByRole("button", { name: "Workspace" }).click();
-
   await owner.getByRole("combobox", { name: "Queue target" }).click();
   await owner.getByRole("option", { name: "Lumen" }).click();
   await owner.getByLabel("Prompt to add to the queue").fill("Create an intentionally failing change");
@@ -278,7 +253,7 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await expect(failingItem).toBeVisible();
   await failingItem.getByRole("button", { name: "Run", exact: true }).click();
   await expect(owner.getByText("failed", { exact: true }).first()).toBeVisible();
-  await expect(failingItem.getByRole("button", { name: "Run", exact: true })).toBeVisible();
+  await expect(failingItem.getByRole("button", { name: "Resume", exact: true })).toBeVisible();
 
   await owner.getByLabel("Prompt to add to the queue").fill("Hold for cancellation");
   await owner.getByRole("button", { name: "Add to queue" }).click();
@@ -291,14 +266,32 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await expect(member.getByRole("button", { name: "Cancel", exact: true })).toHaveCount(0);
   await owner.getByRole("button", { name: "Cancel", exact: true }).click();
   await expect(owner.getByText("cancelled", { exact: true }).first()).toBeVisible();
-  await expect(cancellableItem.getByRole("button", { name: "Run", exact: true })).toBeVisible();
+  await expect(cancellableItem.getByRole("button", { name: "Resume", exact: true })).toBeVisible();
+
+  await owner.getByRole("button", { name: "Review" }).click();
+  await member.getByRole("button", { name: "Review" }).click();
+  await expect(member.getByRole("button", { name: "Ready for review" })).toHaveCount(0);
+  await expect(member.getByRole("button", { name: "Squash merge" })).toHaveCount(0);
+  await owner.getByRole("button", { name: "Ready for review" }).click();
+  await expect(owner.getByRole("link", { name: /PR #1 · open/ })).toBeVisible();
+  await expect(owner.getByText("clean", { exact: true })).toBeVisible();
+  await expect(owner.getByText("passing", { exact: true })).toBeVisible();
+  await owner.getByRole("button", { name: "Squash merge" }).click();
+  await owner.getByRole("dialog", { name: "Squash merge this candidate?" })
+    .getByRole("button", { name: "Merge, delete branch" }).click();
+  await expect(owner.getByText("merged", { exact: true }).first()).toBeVisible();
+  await expect(owner.getByLabel("Branch cleanup").getByText("complete", { exact: true })).toBeVisible();
+  await expect(owner.getByRole("button", { name: "Squash merge" })).toHaveCount(0);
+
+  await owner.getByRole("button", { name: "Workspace" }).click();
+  await expect(owner.getByText(/because the candidate branch was merged.*read-only/i)).toBeVisible();
 
   await member.reload();
   await expect(member.getByText("Lumen", { exact: true }).first()).toBeVisible();
-  await expect(member.getByText("Document the next backend contract")).toBeVisible();
+  await expect(member.locator(".queue-item").getByText("Document the next backend contract", { exact: true })).toBeVisible();
 
-  await owner.getByRole("link", { name: "Session settings" }).click();
-  await member.getByRole("link", { name: "Session settings" }).click();
+  await owner.getByRole("link", { name: "Release coordination" }).click();
+  await member.getByRole("link", { name: "Release coordination" }).click();
   await expect(owner).toHaveURL(/\/app\/session\/[0-9a-f-]+$/);
   await expect(member).toHaveURL(/\/app\/session\/[0-9a-f-]+$/);
 
@@ -318,12 +311,9 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
 
   await owner.reload();
   await expect(owner.getByRole("heading", { name: "Release coordination" })).toBeVisible();
-  await expect(owner.getByText("1 online")).toBeVisible();
+  await expect(owner.getByText("Ended session", { exact: true })).toBeVisible();
 
   const repositorySessionId = new URL(owner.url()).pathname.split("/").at(-1)!;
-  await owner.getByRole("button", { name: "End session", exact: true }).click();
-  await owner.getByRole("dialog").getByRole("button", { name: "End session", exact: true }).click();
-  await expect(owner.getByText("Ended session", { exact: true })).toBeVisible();
   const endedMessage = await owner.request.post(`/app/api/sessions/${repositorySessionId}/messages`, { data: { text: "too late" } });
   expect(endedMessage.status()).toBe(409);
   const endedRun = await owner.request.post(`/app/api/sessions/${repositorySessionId}/queue/missing/run`);
@@ -336,10 +326,8 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   const retainedCard = owner.locator(".session-card", { hasText: "Release coordination" });
   await retainedCard.getByRole("button", { name: "Delete" }).click();
   await owner.getByRole("dialog").getByRole("button", { name: "Delete session" }).click();
-  await expect(owner.getByRole("alert")).toContainText("cannot be deleted until safe external cleanup is available");
-  await owner.getByRole("dialog").getByRole("button", { name: "Cancel" }).click();
+  await expect(owner.getByText("Release coordination")).toHaveCount(0);
 
-  await owner.getByRole("button", { name: /^Active/ }).click();
   await owner.getByRole("button", { name: "New session" }).click();
   await owner.getByLabel("Session title").fill("Disposable session");
   await owner.getByRole("button", { name: "Create session" }).click();

@@ -1,6 +1,7 @@
-import { deleteAccount } from "@/db/sessions";
+import { deleteAccount, getAccountDeletionBlockers } from "@/db/sessions";
 import { deleteAvatar } from "@/lib/account-avatar";
 import { isApiError, requireApiUser } from "@/lib/server-auth";
+import { cancelStripeSubscriptionsForAccount } from "@/lib/stripe-billing";
 
 export async function DELETE(request: Request) {
   const user = await requireApiUser();
@@ -11,6 +12,18 @@ export async function DELETE(request: Request) {
     return Response.json({ error: "Type DELETE to confirm account deletion." }, { status: 400 });
   }
 
+  const before = await getAccountDeletionBlockers(user.id);
+  if (before.blocked.length > 0) {
+    return Response.json(
+      { error: "Finish or disconnect the repository work in these sessions first.", code: "sessions_blocked", sessions: before.blocked },
+      { status: 409 },
+    );
+  }
+  try {
+    await cancelStripeSubscriptionsForAccount(user.id);
+  } catch {
+    return Response.json({ error: "Unable to cancel billing. Your account was not deleted." }, { status: 502 });
+  }
   const result = await deleteAccount(user.id);
   if ("blocked" in result) {
     return Response.json(

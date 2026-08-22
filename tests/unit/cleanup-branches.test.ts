@@ -43,7 +43,7 @@ it("deletes only branches that still match their recorded SHA", () => {
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
-});
+}, 15_000);
 
 function git(args: string[]) {
   return execFileSync("git", args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });

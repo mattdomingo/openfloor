@@ -71,12 +71,14 @@ describe("server rendering", () => {
     const onboardingForm = new FormData();
     onboardingForm.set("firstName", "Render");
     onboardingForm.set("lastName", "Owner");
+    onboardingForm.set("plan", "free");
+    onboardingForm.set("returnTo", "/app/home");
     const onboarded = await SELF.fetch("http://localhost/app/api/account/onboarding", {
       method: "POST",
       headers: authenticatedHeaders,
       body: onboardingForm,
     });
-    expect(onboarded.status).toBe(204);
+    expect(onboarded.status).toBe(200);
 
     const created = await SELF.fetch("http://localhost/app/api/sessions", {
       method: "POST",
@@ -85,6 +87,29 @@ describe("server rendering", () => {
     });
     expect(created.status).toBe(201);
     const { session } = await created.json() as { session: { id: string } };
+    const owner = await env.DB.prepare("SELECT id FROM users WHERE chatgpt_user_id = ?")
+      .bind("render-owner").first<{ id: string }>();
+    if (!owner) throw new Error("Render owner was not persisted");
+    const now = Date.now();
+    const connectionId = crypto.randomUUID();
+    const candidateId = crypto.randomUUID();
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO repository_connections
+           (id, session_id, installation_id, repository_id, repository_node_id, repository_owner,
+            repository_name, repository_full_name, repository_private, default_branch, base_branch,
+            status, connected_by, connected_at, updated_at)
+         VALUES (?, ?, 'render-installation', 'render-repository', 'render-node', 'openfloor-test',
+                 'empty-floor', 'openfloor-test/empty-floor', 1, 'main', 'main', 'ready', ?, ?, ?)`,
+      ).bind(connectionId, session.id, owner.id, now, now),
+      env.DB.prepare(
+        `INSERT INTO repository_candidates
+           (id, session_id, connection_id, branch_name, base_branch, base_sha, candidate_sha,
+            status, created_by, created_at, updated_at)
+         VALUES (?, ?, ?, 'openfloor/render/candidate/empty', 'main', 'render-sha', 'render-sha',
+                 'active', ?, ?, ?)`,
+      ).bind(candidateId, session.id, connectionId, owner.id, now, now),
+    ]);
     const response = await SELF.fetch(`http://localhost/app/session/${session.id}/floor`, { headers: authenticatedHeaders });
     expect(response.status).toBe(200);
     const html = await response.text();
@@ -115,8 +140,10 @@ async function onboardedUser(providerUserId: string, firstName: string, lastName
   const form = new FormData();
   form.set("firstName", firstName);
   form.set("lastName", lastName);
+  form.set("plan", "free");
+  form.set("returnTo", "/app/home");
   const onboarded = await SELF.fetch("http://localhost/app/api/account/onboarding", { method: "POST", headers, body: form });
-  expect(onboarded.status).toBe(204);
+  expect(onboarded.status).toBe(200);
   const row = await env.DB.prepare("SELECT id FROM users WHERE chatgpt_user_id = ?").bind(providerUserId).first<{ id: string }>();
   if (!row) throw new Error("Onboarded user was not persisted");
   return { userId: row.id, headers };
@@ -200,7 +227,8 @@ describe("plan-limits UI", () => {
     expect(response.status).toBe(200);
     const html = await response.text();
     expect(html).toContain("2h of monthly session time is used up");
-    expect(html).toContain("https://buy.stripe.com/fZudR93OAaWMehu35t4F200");
+    expect(html).toContain('href="/app/settings?section=plan"');
+    expect(html).not.toContain("buy.stripe.com");
   });
 
   it("POST /app/api/sessions returns 403 with code quota_exhausted once the free cap is spent", async () => {
@@ -248,6 +276,19 @@ describe("settings page", () => {
     expect(html).toContain('\\"limitHours\\":2');
   });
 
+  it("renders self-serve Pro, Max, and Enterprise billing from the Plan tab", async () => {
+    const { headers } = await onboardedUser("billing-settings-user", "Billing", "User");
+    const response = await SELF.fetch("http://localhost/app/settings?section=plan", { headers });
+    expect(response.status).toBe(200);
+    const html = await response.text();
+    expect(html).toContain("$30/seat/month");
+    expect(html).toContain("$50/seat/month");
+    expect(html).toContain("Paid plans");
+    expect(html).toContain("Contact sales");
+    expect(html).not.toContain("activated manually");
+    expect(html).not.toContain("buy.stripe.com");
+  });
+
   it("an authenticated but not-yet-onboarded user is redirected to /app/onboarding", async () => {
     const headers = {
       accept: "text/html",
@@ -260,5 +301,81 @@ describe("settings page", () => {
     expect(response.status).toBeGreaterThanOrEqual(300);
     expect(response.status).toBeLessThan(400);
     expect(response.headers.get("location")).toContain("/app/onboarding?return_to=%2Fapp%2Fsettings");
+  });
+});
+
+describe("plan-selection onboarding", () => {
+  it("requires direct signups to choose Free, Pro, or Max and displays Enterprise", async () => {
+    const headers = {
+      accept: "text/html", host: "localhost",
+      "x-openfloor-dev-user-id": "plan-choice-new",
+      "x-openfloor-dev-user-email": "plan-choice-new@example.com",
+      "x-openfloor-dev-user-name": "Plan Choice",
+    };
+    const response = await SELF.fetch("http://localhost/app/onboarding?return_to=%2Fapp%2Fhome", { headers });
+    expect(response.status).toBe(200);
+    const html = await response.text();
+    expect(html).toContain("Choose your plan");
+    expect(html).toMatch(/\$<!-- -->30<!-- -->\/seat\/month|\$30\/seat\/month/);
+    expect(html).toMatch(/\$<!-- -->50<!-- -->\/seat\/month|\$50\/seat\/month/);
+    expect(html).toContain("Contact sales");
+  });
+
+  it("rejects a direct signup until a plan is explicitly selected", async () => {
+    const headers = {
+      accept: "application/json", host: "localhost",
+      "x-openfloor-dev-user-id": "plan-choice-missing",
+      "x-openfloor-dev-user-email": "plan-choice-missing@example.com",
+      "x-openfloor-dev-user-name": "Plan Missing",
+    };
+    const form = new FormData();
+    form.set("firstName", "Plan");
+    form.set("lastName", "Missing");
+    form.set("returnTo", "/app/home");
+    const response = await SELF.fetch("http://localhost/app/api/account/onboarding", { method: "POST", headers, body: form });
+    expect(response.status).toBe(400);
+  });
+
+  it("does not treat a fabricated invite return path as an automatic Free selection", async () => {
+    const headers = {
+      accept: "application/json", host: "localhost",
+      "x-openfloor-dev-user-id": "plan-choice-fake-invite",
+      "x-openfloor-dev-user-email": "plan-choice-fake-invite@example.com",
+      "x-openfloor-dev-user-name": "Fake Invite",
+    };
+    const form = new FormData();
+    form.set("firstName", "Fake");
+    form.set("lastName", "Invite");
+    form.set("returnTo", "/app/join/fabricated.signature");
+    const response = await SELF.fetch("http://localhost/app/api/account/onboarding", { method: "POST", headers, body: form });
+    expect(response.status).toBe(400);
+  });
+
+  it("gives a valid-invite signup Free automatically before explicit join", async () => {
+    const owner = await onboardedUser("invite-plan-owner", "Invite", "Owner");
+    const created = await SELF.fetch("http://localhost/app/api/sessions", {
+      method: "POST", headers: { ...owner.headers, "content-type": "application/json" },
+      body: JSON.stringify({ title: "Invite plan room" }),
+    });
+    const payload = await created.json() as { inviteUrl: string };
+    const invitePath = new URL(payload.inviteUrl).pathname;
+    const headers = {
+      accept: "text/html", host: "localhost",
+      "x-openfloor-dev-user-id": "invite-plan-new",
+      "x-openfloor-dev-user-email": "invite-plan-new@example.com",
+      "x-openfloor-dev-user-name": "Invite New",
+    };
+    const onboardingUrl = `http://localhost/app/onboarding?return_to=${encodeURIComponent(invitePath)}`;
+    const page = await SELF.fetch(onboardingUrl, { headers });
+    expect(await page.text()).toContain("This invite includes a Free openfloor account");
+
+    const form = new FormData();
+    form.set("firstName", "Invite");
+    form.set("lastName", "New");
+    form.set("returnTo", invitePath);
+    const completed = await SELF.fetch("http://localhost/app/api/account/onboarding", { method: "POST", headers, body: form });
+    expect(completed.status).toBe(200);
+    expect(await completed.json()).toEqual({ url: invitePath });
+    expect((await SELF.fetch(`http://localhost${invitePath}`, { headers })).status).toBe(200);
   });
 });

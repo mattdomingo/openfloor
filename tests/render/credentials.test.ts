@@ -18,8 +18,10 @@ async function onboardedUser(providerUserId: string, firstName: string, lastName
   const form = new FormData();
   form.set("firstName", firstName);
   form.set("lastName", lastName);
+  form.set("plan", "free");
+  form.set("returnTo", "/app/home");
   const onboarded = await SELF.fetch("http://localhost/app/api/account/onboarding", { method: "POST", headers, body: form });
-  expect(onboarded.status).toBe(204);
+  expect(onboarded.status).toBe(200);
   const row = await env.DB.prepare("SELECT id FROM users WHERE chatgpt_user_id = ?").bind(providerUserId).first<{ id: string }>();
   if (!row) throw new Error("Onboarded user was not persisted");
   return { userId: row.id, headers };

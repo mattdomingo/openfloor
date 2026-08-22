@@ -100,7 +100,7 @@ Production code must not seed, fabricate, or animate agents, prompts, messages, 
 
 openfloor has three intentionally separate state classes:
 
-1. **D1-authoritative collaboration state**: users, sessions, memberships, invites, objective, agents, assignments, messages, queue items, queue prompts, ordering, and floor revision.
+1. **D1-authoritative application state**: users, Stripe entitlement projections, sessions, memberships, invites, objective, agents, assignments, messages, queue items, queue prompts, ordering, and floor revision. Stripe remains authoritative for the external subscription lifecycle; D1 owns the product-facing projection.
 2. **Durable Object-coordinated ephemeral state**: online connections and teammate prompt drafts. This state is realtime but is not D1 history.
 3. **Local UI state**: selected tabs, panel order and size, collapsed or expanded panels, queue filters, menus, dialogs, and the local visibility choice for teammate drafts.
 
@@ -135,6 +135,8 @@ WebSocket events notify clients about presence or changed domains. D1 remains au
 - Cloudflare Access authentication using Google or One-time PIN as configured by the production Access application.
 - Server-only loopback development identity from `.dev.vars`.
 - Internal user records keyed by the stable external provider subject.
+- Explicit first-login Free/Pro/Max selection for direct signups; valid signed-invite signups receive Free automatically, while Enterprise remains sales-managed.
+- Stripe Checkout for monthly Pro/Max subscriptions, exact purchased seat quantities, Customer Portal management and prorated plan changes, signed replay-safe entitlement webhooks, and immediate no-refund cancellation during account deletion.
 - Session creation, listing, objective editing, membership, roles, and leaving.
 - Owner-only session ending: `ended_at` marks the session read-only for everyone, revokes the active invite, and broadcasts `session.ended`; ended sessions stay readable and members can still leave.
 - Owner-only session deletion (immediate and cascading for repository-free sessions) and a daily cron that purges repository-free sessions ended more than 30 days ago. Sessions with repository state fail closed until durable external cleanup exists. The home screen groups Active and Ended sessions.
@@ -209,6 +211,7 @@ Production is mounted under `/app` on `opnflr.com`. Local `npm run dev` is mount
 | `/app/api/...` | `/api/...` | Protected | Authenticated application interfaces. |
 | `/app/api/sessions/[id]/presence` | `/api/sessions/[id]/presence` | Protected/member-only | WebSocket upgrade. |
 | `/app/webhooks/github` | `/webhooks/github` | Public/signed | GitHub delivery boundary; verifies payload size and HMAC before acknowledging. |
+| `/app/webhooks/stripe` | `/webhooks/stripe` | Public/signed | Stripe delivery boundary; caps the raw body, verifies Stripe's signature, and reconciles subscription entitlement. |
 
 Important behavior:
 
@@ -224,7 +227,7 @@ Important behavior:
 - An owner can end the session instead. Ending is final in v1 (no un-end), idempotent, revokes the active invite in the same batch, and leaves all data readable. Collaboration, repository, preflight, run, and review mutations on an ended session return `409` with "This session has ended." — never `404`, which clients treat as "kicked from the session". Run cancellation remains available so already-running work can be stopped. Presence sockets stay open on ended sessions by design.
 - Repository details are visible to session members, but only the owner can connect, configure, disconnect, or reconnect.
 - The GitHub installation callback is protected by Access, signed, expires after 30 minutes, is bound to the initiating owner and session, and can be consumed once.
-- The webhook path must remain outside Cloudflare Access so GitHub can deliver events; signature verification is its authentication boundary.
+- The GitHub and Stripe webhook paths must remain outside Cloudflare Access so their providers can deliver events; raw-body signature verification is each route's authentication boundary.
 
 ## System architecture
 
@@ -358,16 +361,16 @@ Do not hand-edit Drizzle metadata. If a generated migration is wrong, correct th
 - Email updates on authentication (`upsertUser`). `display_name`, `first_name`, `last_name`, `github_handle`, and `avatar_key` are owned by onboarding and account settings, not the IdP — `upsertUser` never touches them.
 - `first_name`/`last_name`/`github_handle`/`avatar_key` are set once by onboarding (`completeOnboarding`, `POST /api/account/onboarding`) and are editable afterward through account settings (`updateProfile`, `PATCH /api/account/profile`). `display_name` is always derived as `"First L."` (`lib/display-name.ts`'s `displayNameFrom`) by both writers, so it can never drift out of that format. Unlike onboarding's `COALESCE`-based avatar write (which can only add a picture, never remove one), `updateProfile`'s `avatarKey` is a genuine three-state argument — omitted keeps the existing key, `null` clears it — so account settings is the only place a picture can be removed.
 - Creation and update timestamps are epoch milliseconds.
-- `plan` (`pro`/`max`/`enterprise`, default `pro`) and `plan_status` (`inactive`/`active`/`past_due`/`canceled`, default `inactive`) together decide entitlement — see "Plan limits and metering" below for the full model. Neither column is written by `upsertUser`; both are set only by a manual grant (`wrangler d1 execute`) until billing integration exists.
+- `plan` (`pro`/`max`/`enterprise`, default `pro`), `plan_status` (`inactive`/`active`/`past_due`/`canceled`, default `inactive`), and nullable `seat_limit` decide entitlement — see "Plan limits and metering" below. `upsertUser` writes none of them. Stripe subscription reconciliation projects Pro/Max status and purchased quantity; active Enterprise remains a sales-managed override. A legacy/manual active Pro/Max row with null `seat_limit` keeps the historical 5/10-seat cap.
 - `deleted_at` is a tombstone, not a soft-delete filter — no read path queries against it. Set only by `deleteAccount` (`DELETE /api/account`), it marks a row that account deletion scrubbed and released rather than one currently in use; see "Account deletion" below for the full contract.
 - **`users` must never be recreated via a Drizzle table-swap migration once it holds real rows.** It has four inbound `ON DELETE CASCADE` foreign keys (`session_members.user_id`, `session_invites.created_by`, `github_connection_states.user_id`, `user_provider_credentials.user_id`); a `DROP TABLE users` cascade-deletes all four even inside the standard `PRAGMA foreign_keys=OFF` migration wrapper drizzle-kit generates for a table with a named CHECK constraint — confirmed by rehearsing the generated migration for `plan_status` against seeded local data during the plan-limits work (`drizzle/0019_redundant_may_parker.sql` was hand-fixed to a plain `ALTER TABLE ADD COLUMN` instead, the same technique `0018` already used for `plan` itself). `deleted_at` (`drizzle/0020_regular_cardiac.sql`) is a nullable, unconstrained column, so drizzle-kit generated a plain `ALTER TABLE ADD COLUMN` on its own — no hand-fix needed. Any future change to this table's CHECK-constrained columns still needs the same hand-fix, or a genuinely different migration strategy (backfill into a new table, dual-write, swap) — never a bare `db:generate` accept.
 
-**Account deletion.** `deleteAccount` (`db/sessions.ts`) cannot issue a hard `DELETE FROM users`: roughly a dozen columns across `floor_messages`, `floor_agents`, `floor_queue_prompts`, `repository_candidates`, and other tables reference `users.id` with no cascade action, and the invariant above rules out adding one via a table recreate. Instead it, in one D1 batch:
+**Account deletion.** `deleteAccount` (`db/sessions.ts`) cannot issue a hard `DELETE FROM users`: roughly a dozen columns across `floor_messages`, `floor_agents`, `floor_queue_prompts`, `repository_candidates`, and other tables reference `users.id` with no cascade action, and the invariant above rules out adding one via a table recreate. `DELETE /api/account` first checks every repository blocker, immediately cancels all known non-terminal Stripe subscriptions without refund, then calls `deleteAccount`, which rechecks blockers before writing. A Stripe failure leaves the account intact. After successful cancellation, `deleteAccount` performs this D1 batch:
 
 1. Pre-checks every session the user owns with the same guards `deleteSession` uses (`getBlockingIntegrationRunId`, live `repository_candidates`). Any blocked session refuses the *entire* deletion and nothing is written — the account and every session stay exactly as they were.
 2. Hard-deletes every session the user owns (children cascade with the session, same as `deleteSession`).
 3. Drops the user's membership and `floor_assignments` rows in sessions *other* people own (`session_members` would cascade on its own; `floor_assignments` has no FK action, the same reason `leaveSession` deletes it explicitly), and the user's `user_provider_credentials` rows — that table's cascade FK never fires because step 4 scrubs the users row instead of deleting it.
-4. Scrubs and releases the identity: `chatgpt_user_id` and `email` are rewritten to values the IdP can never present again (`'deleted:' || id`, `'deleted+' || id || '@invalid'`), name/handle/avatar are cleared, `display_name` becomes `"Deleted user"`, `plan_status` becomes `canceled`, and `deleted_at` is stamped. `upsertUser`'s two identity lookups both add `AND deleted_at IS NULL`, so the next sign-in with the same Access identity creates a brand-new row rather than resurrecting the tombstone.
+4. Scrubs and releases the identity: `chatgpt_user_id` and `email` are rewritten to values the IdP can never present again (`'deleted:' || id`, `'deleted+' || id || '@invalid'`), name/handle/avatar are cleared, `display_name` becomes `"Deleted user"`, `plan_status` becomes `canceled`, `seat_limit` becomes null, and `deleted_at` is stamped. `upsertUser`'s two identity lookups both add `AND deleted_at IS NULL`, so the next sign-in with the same Access identity creates a brand-new row rather than resurrecting the tombstone.
 
 Deliberately left alone: `usage_months` rows survive (see that table's own no-FK note — "future account deletion" is this), and authored `floor_messages`/`floor_agents`/`floor_queue_prompts`/`repository_*` rows in sessions the user did not own survive too, now attributed to the scrubbed `"Deleted user"` display name — the tombstone row exists specifically to keep those foreign keys valid.
 
@@ -402,6 +405,15 @@ Deliberately left alone: `usage_months` rows survive (see that table's own no-FK
 - Composite primary key `(owner_user_id, month)`, `month` a UTC `"YYYY-MM"` string (`lib/plans.ts`'s `currentMonth()`). One row per owner per calendar month; `seconds` accumulates presence time across every session that owner owns, live and ended alike.
 - **Deliberately has no foreign keys.** The ledger must outlive both `purgeExpiredSessions` (a session's `active_seconds` cascades away with it; the owner's `usage_months` total must not) and, if it is ever added, account deletion. Do not add a `references()` here without re-deriving this from scratch.
 - Written only by `SessionPresence.flushUsage` (`worker/presence.ts`), via `INSERT ... ON CONFLICT DO UPDATE SET seconds = seconds + excluded.seconds`. Never written from an HTTP route.
+
+#### `stripe_customers`, `stripe_subscriptions`, and `stripe_webhook_events`
+
+- `stripe_customers` binds one internal `users.id` to one unique Stripe customer ID. Email is display metadata sent to Stripe, never the purchase-to-account key.
+- `stripe_subscriptions` stores bounded subscription snapshots: Stripe customer/subscription/price IDs, mapped Pro/Max plan, quantity, status, current-period end, cancel-at-period-end flag, and Stripe event creation time. The latest valid active or trialing snapshot projects `users.plan`, `plan_status = active`, and exact `seat_limit`; past-due/unpaid/paused projects `past_due`; terminal state projects `canceled`.
+- `event_created` prevents an older subscription delivery from overwriting a newer snapshot. Subscription projection still reads every subscription for the user so one stale row cannot arbitrarily become authoritative.
+- Unknown prices and invalid quantities are stored for audit but fail entitlement closed and make the webhook return `500` for retry. Active Enterprise is never downgraded by Stripe.
+- `stripe_webhook_events` deduplicates Stripe event IDs and records processing/processed/failed state plus a bounded error. Failed events may be retried; processed replays are acknowledged without reapplying.
+- These rows deliberately keep their foreign keys to the scrubbed user tombstone after account deletion. A terminal cancellation delivery after tombstoning is acknowledged; any non-terminal subscription against a deleted account remains an error because billing is still live.
 
 #### `session_mcp_servers`
 
@@ -622,11 +634,15 @@ All paths below are shown without the production `/app` prefix.
 
 | Method and path | Authorization | Behavior |
 | --- | --- | --- |
-| `POST /api/account/onboarding` | Authenticated user | `multipart/form-data` `{ firstName, lastName, githubHandle?, avatar? }`; first-login profile setup, sets `onboarded_at`. |
+| `POST /api/account/onboarding` | Authenticated user | `multipart/form-data` `{ firstName, lastName, githubHandle?, avatar?, plan?, quantity?, returnTo }`. A valid signed-invite return forces Free and completes onboarding. Direct Free completes onboarding; direct Pro/Max saves the profile without `onboarded_at` and returns a Stripe Checkout URL. Missing/invalid direct selection is `400`. |
 | `PATCH /api/account/profile` | Authenticated user | `multipart/form-data` `{ firstName, lastName, githubHandle?, avatar?, removeAvatar? }`; account-settings profile edit. `avatar` and `removeAvatar` are mutually exclusive (`400` if both are sent); omitting both keeps the existing picture. Never touches `onboarded_at`. Returns `{ user }`. |
 | `PATCH /api/account/settings` | Authenticated user | Update `{ doNotDisturb: boolean }`. |
 | `GET /api/account/avatar/[userId]` | Authenticated user | Stream the target user's avatar from R2, or `404` if none is set; `cache-control: private, max-age=300`. |
-| `DELETE /api/account` | Authenticated user | Body `{ confirm: "DELETE" }` (`400` otherwise). Scrubs and releases the account — see "Account deletion" in the Persistence model above. `409 { code: "sessions_blocked", sessions }` when an owned session has live repository state; nothing is written in that case. |
+| `DELETE /api/account` | Authenticated user | Body `{ confirm: "DELETE" }` (`400` otherwise). Checks repository blockers, cancels known Stripe subscriptions immediately without refund, rechecks blockers, then scrubs/releases the account. `409 { code: "sessions_blocked", sessions }` for repository state; `502` when Stripe cancellation fails and the account remains intact. |
+| `POST /api/billing/checkout` | Onboarded authenticated user | Validate `{ plan: "pro" \| "max", quantity, returnTo? }`, bind Checkout to the internal user ID, and return `{ url }`. Refuses duplicate non-terminal subscriptions, active Enterprise, invalid quantities, mismatched configured prices, or a disabled rollout gate. |
+| `POST /api/billing/change` | Authenticated user with Stripe subscription | Validate the requested Pro/Max plan and quantity, then return a Customer Portal confirmation deep-link for an immediate prorated update. |
+| `POST /api/billing/portal` | Authenticated user | Return a Customer Portal URL for the account-bound Stripe customer. Portal configuration owns immediate cancellation and the allowed products/proration contract. |
+| `GET /api/billing/checkout/return` | Authenticated Checkout owner | Retrieve the bounded Checkout session ID, verify its internal user binding and paid subscription, reconcile current Stripe state, then redirect to the safe app return path. |
 | `GET /api/account/credentials` | Authenticated user | List the caller's provider-credential summaries (provider, kind, last-four fingerprint, validation time). Never returns a stored value. |
 | `PUT /api/account/credentials/[provider]` | Authenticated user | Body `{ apiKey }`. Validates against the provider's models endpoint, encrypts, and upserts. `404` unknown provider, `400` invalid input or provider-rejected key, `502` provider unreachable. Returns `{ credential }` (summary only — write-only contract). |
 | `DELETE /api/account/credentials/[provider]` | Authenticated user | Disconnect the caller's credential for that provider; `204`. |
@@ -683,6 +699,7 @@ All paths below are shown without the production `/app` prefix.
 | `POST /runtime/openai/v1/responses` | Short-lived run OpenAI JWT | Forward one active run's Codex request, injecting the session owner's connected OpenAI key when present, else the server credential, outside the repository process. `503` with a clear message when neither exists or the owner's key cannot be decrypted — never a silent fallback. |
 | `POST /runtime/anthropic/v1/messages` (+ `/count_tokens`) | Short-lived run Anthropic JWT | Forward one Claude run's model request with the same owner-else-server-else-`503` resolution, translating the run JWT to upstream `x-api-key` auth. Any other path is logged and concealed so the allowlist is finalized from observed traffic. |
 | `POST /webhooks/github` | Valid GitHub HMAC | Deduplicate and process bounded installation, access, repository, push, PR, check, and status deliveries. |
+| `POST /webhooks/stripe` | Valid Stripe signature | Cap the raw body at 256 KB; deduplicate and reconcile supported Checkout, subscription, and invoice lifecycle deliveries into D1 entitlement. Invalid signature is `401`; reconciliation failure is `500` so Stripe retries. |
 
 Response conventions:
 
@@ -722,12 +739,14 @@ Seats are sold but not assigned. The product enforces two limits per session own
 
 | Plan | Seats / session | Session hours / month |
 | --- | --- | --- |
-| free (default until a plan is granted) | 3 | 2 |
-| pro | 5 | 30 |
-| max | 10 | 100 |
+| free (explicit direct selection, signed-invite default, or lapsed paid plan) | 3 | 2 |
+| pro ($30 USD/seat/month) | purchased quantity, 3–5 | 30 |
+| max ($50 USD/seat/month) | purchased quantity, 3–10 | 100 |
 | enterprise | unlimited | unlimited |
 
-Granting a plan is manual (`README.md`'s "Grant a plan after purchase") until Stripe webhook integration exists; the Stripe payment link linked from the product (`lib/plans.ts`'s `UPGRADE_URL`) does not itself change any `users` row.
+`lib/plans.ts` owns these exact catalog terms. Checkout and Portal changes retrieve the configured Stripe Price and require USD, the exact unit amount, monthly recurrence, and licensed usage before proceeding. Active or trialing Stripe state grants the mapped Pro/Max quantity; past-due, unpaid, paused, canceled, incomplete, unsupported-price, and invalid-quantity states never grant paid limits. Existing active manual Pro/Max grants with null `seat_limit` remain compatible at 5/10 seats; active Enterprise overrides self-serve Stripe.
+
+Direct signups must explicitly select Free, Pro, or Max. Paid signup saves the profile but keeps `onboarded_at` null until Stripe reports an active/trialing subscription; Checkout return also performs an account-bound reconciliation so the buyer need not wait for webhook delivery. A user entering through a currently valid signed invite receives Free automatically and joins only after the existing explicit invite-acceptance action. A forged, revoked, or expired invite return path cannot bypass direct plan selection.
 
 ### Enforcement points — spend initiators only
 
@@ -753,11 +772,13 @@ Instead, the quota gate sits at exactly four points, all "this is about to spend
 - Close codes in use: `4001` membership ended (terminal — client navigates to `/home`, does not retry), `4003` quota exhausted (terminal, no retry, shows the upgrade banner), `4004` idle (paused, not terminal — client reconnects on the next real input or `visibilitychange`, not on the exponential-backoff schedule the other close paths use).
 - Accepted, bounded imprecision (see `// ponytail:` comments in `worker/presence.ts`): a flush interval spanning a UTC month boundary books wholly to the flush-time month; a DO crash around a flush can lose or double-count up to one `USAGE_FLUSH_INTERVAL_MS`. Hours are metered per session and summed onto one monthly total — an owner running two sessions concurrently burns the month at 2x wall-clock; `HomeScreen`'s usage line says so explicitly when it detects more than one live owned session, rather than let it read as a billing bug.
 
-### Known gap: purchases don't self-serve
+### Stripe billing lifecycle
 
-The Stripe payment link is not backed by a webhook. A customer can pay and nothing in the product changes until someone runs the manual grant in `README.md`. Before that link was added to product UI (this work), that manual step only ever needed to happen for people the operator already knew about; now it is reachable by anyone. The entitlement webhook is the top item in "Roadmap guidance" below — do not treat the current manual process as adequate once real payment volume exists.
+Stripe is authoritative for external subscription state; D1 is the authoritative product entitlement projection. Checkout/customer/subscription metadata and `client_reference_id` bind the purchase to the already-authenticated internal user ID, so there is never an email lookup or a silent zero-row grant. The public webhook verifies Stripe's raw-body signature, claims each event ID once, persists a subscription snapshot, applies event-time ordering, and then projects `users.plan`, `plan_status`, and `seat_limit`.
 
-`/settings`'s Plan & usage tab (`components/product/SettingsScreen.tsx`) is now the single place plan management lives — current plan, usage against the hour/seat limits, and the Upgrade link all read from `getUsageForUser`/`lib/plans.ts`, the same functions `HomeScreen` and the (now-removed) floor `SettingsDialog` used. It states the manual-activation gap in-product ("Upgrades are activated manually today — it can take a little while after you pay.") rather than implying self-serve billing exists. `HomeScreen`'s usage line and quota-exhausted banner, and `Workspace`'s quota banner, are deliberately unchanged — they are enforcement feedback at the moment a limit is hit, not plan management, so they stay where the limit actually bites.
+`/settings`'s Plan & usage tab (`components/product/SettingsScreen.tsx`) is the single plan-management surface: current effective limits, status, billing period, Pro/Max selection and quantity, confirmed prorated change, general Portal management, and Enterprise contact. `HomeScreen` and `Workspace` quota banners link there because they are enforcement feedback at the point a limit bites.
+
+Normal Portal cancellation is immediate. Account deletion performs immediate Stripe cancellation with no refund before scrubbing D1. The Portal configuration is external dashboard state and must restrict changes to the two configured prices, enforce their quantity ranges, apply prorations immediately, and cancel immediately; see `docs/stripe-billing.md`. `STRIPE_CHECKOUT_ENABLED` stays false until all Stripe configuration, secrets, migrations, webhook delivery, and acceptance checks are ready.
 
 ## Frontend architecture
 
@@ -827,6 +848,7 @@ components/session/          Agent Floor workspace components and client data so
 db/
   schema.ts                  Drizzle schema source
   sessions.ts                Prepared D1 user/session/member/invite queries
+  billing.ts                 Stripe customer/subscription/event persistence and entitlement projection
   provider-credentials.ts    Encrypted per-user provider credential rows and owner resolution
   skills.ts                  Owner-gated session skill imports and run materialization reads
   mcp-servers.ts             Owner-gated MCP server config with encrypted headers and run reads
@@ -843,6 +865,8 @@ lib/
   validation.ts              Bounded input parsing and normalization
   identity.ts                Access verification and local identity isolation
   invites.ts                 HMAC signing and constant-time verification
+  stripe.ts                  Stripe client, bindings, and webhook signature verification
+  stripe-billing.ts          Checkout, Portal, reconciliation, and account-cancellation orchestration
   credential-crypto.ts       AES-GCM encryption at rest for provider credentials
   provider-credentials.ts    Pure provider/credential types, per-provider default models, run resolution order
   provider-validation.ts     Connect-time key validation against provider models endpoints
@@ -955,6 +979,7 @@ Use the Cloudflare Vitest worker pool and local migrations to test:
 - Revision increments and persistence after reread.
 - Owner-only repository setup/disconnect, member reads, outsider concealment, and ordered required-check persistence.
 - Candidate uniqueness, webhook delivery deduplication, behind-base reconciliation, and external candidate mutation detection.
+- Stripe signature rejection, event replay/order behavior, plan/status/quantity projection, paid-onboarding completion, and dynamic invite seat enforcement.
 - Preflight uniqueness, ordered state recovery, terminal failure/timeout state, gateway-token binding, and R2 log authorization.
 
 ### Durable Object tests
@@ -1028,6 +1053,8 @@ Cloudflare Containers requires a Workers Paid account. `PREFLIGHT_ENABLED` is th
 
 `AGENT_RUN_ENABLED` independently gates Phase 4. Production is enabled only after the updated image and Workflow deploy and `OPENAI_API_KEY` is configured; while false the UI omits **Run** and direct starts return `503`. Tests enable only the deterministic test adapter.
 
+`STRIPE_CHECKOUT_ENABLED` gates new Checkout and plan-change flows. Keep it false until both exact monthly prices, the restricted Portal configuration, all Stripe secrets, D1 migrations, public webhook delivery, and test-mode acceptance in `docs/stripe-billing.md` are complete. Existing entitlement reads and signed webhook reconciliation do not depend on this gate.
+
 `CLAUDE_RUN_ENABLED` independently gates the Claude runner. Keep it `false` until the Agent SDK image deploys, the anthropic gateway is reachable, and an Anthropic credential resolves (owner-connected or server). While false, a *manual* start of a Claude-provider item refuses as `disabled` at the `startQueueItemRun` seam, and *auto-dispatch* skips those items per-item (`RoutingDeps.disabledProviders`) so they never hold the rest of a mixed queue; Codex runs are unaffected either way.
 
 Durable Object migration `v1` registers `SessionPresence`; `v2` registers `Sandbox`. Keep migration syntax compatible with the pinned Wrangler version.
@@ -1044,6 +1071,11 @@ Durable Object migration `v1` registers `SessionPresence`; `v2` registers `Sandb
 - `GITHUB_WEBHOOK_SECRET`
 - `RUNTIME_GATEWAY_SECRET`
 - `OPENAI_API_KEY`
+- `STRIPE_SECRET_KEY`
+- `STRIPE_WEBHOOK_SECRET`
+- `STRIPE_PRO_PRICE_ID`
+- `STRIPE_MAX_PRICE_ID`
+- `STRIPE_PORTAL_CONFIGURATION_ID`
 - `CREDENTIAL_ENCRYPTION_KEY`
 - `ANTHROPIC_API_KEY` (optional: the server-side fallback for Claude runs; without it, a Claude run requires the session owner's connected key)
 
@@ -1148,6 +1180,8 @@ Pushes to `main` run this exact sequence automatically via `.github/workflows/de
 - The Worker route `opnflr.com/app*` is intentionally broader than `/app/*` due query-string routing behavior.
 - Access protects the app at the edge, but the Worker still verifies JWTs. Do not remove defense in depth.
 - `/app/webhooks/github` is deliberately public and must never process a payload before its raw-body HMAC and size are verified.
+- `/app/webhooks/stripe` is deliberately public and must never process a payload before its 256 KB limit and raw-body Stripe signature are verified. Cloudflare Access must not protect it.
+- Stripe Portal behavior is dashboard state: the configured Portal must allow only the two exact monthly prices and their seat quantities, prorate changes immediately, and cancel immediately. A permissive Portal configuration weakens application-side validation.
 - Candidate naming never accepts a complete Git ref. Contents write creates only the server-generated `openfloor/<session-short>/candidate/<safe-name>-<candidate-short>` ref; no generic branch CRUD, force push, base write, protection change, or arbitrary deletion is exposed.
 - Phase 3 source checkout proxies an exact GitHub archive through `/runtime/preflight/source`; the Sandbox receives only a short-lived source-only JWT, never the GitHub installation token.
 - `@cloudflare/sandbox` and `cloudflare/sandbox` are pinned together at `0.12.7`. Docker must be running for local development and deploys that build the container image.
@@ -1165,8 +1199,6 @@ Pushes to `main` run this exact sequence automatically via `.github/workflows/de
 - This `AGENTS.md` is the comprehensive context source; keep shorter README and focused docs consistent with it.
 
 ## Roadmap guidance
-
-**A Stripe webhook that grants/revokes `users.plan`/`plan_status` automatically is the top priority billing item.** "Plan limits and metering" above documents the current manual-grant posture (`README.md`'s "Grant a plan after purchase"); a payment link now lives in product UI with nothing behind it that changes entitlement. Land the webhook before real payment volume exists, not after someone notices they paid and got nothing.
 
 Repository execution Phases 1–7 are implemented. Future milestones should focus on deployment integrations, resolving the separately tracked manual-discard issue without weakening its lease, and broader agent lifecycle/product work rather than expanding GitHub permissions casually.
 
@@ -1452,7 +1484,7 @@ An owner cannot remove a member from a session today — `leaveSession` is self-
 
 **Rationale:** The header-stripping bug mirrors exactly the convention `lib/identity.ts` already states for its own trusted headers — the fix generalizes an existing pattern rather than inventing one. The quota-gate placement (spend initiators, not `getActiveMembershipRole`) was a live design fork: folding quota into the general write guard was tried first and rejected after tracing it against all 22 `getActiveMembershipRole` call sites — it would have blocked an out-of-hours owner from revoking a leaked invite, disabling their own auto-dispatch loop, or landing already-finished review work, and would have turned a persistent "out of hours" condition into a 60-second hot retry loop in `worker/session-router.ts`'s bare catch. The free-tier schema question was a similar fork, discovered empirically: the original plan called for recreating `users` with a literal `'free'` value (justified as safe because production was believed to have no rows yet); rehearsing that migration locally against seeded data — before ever touching remote — showed it cascade-deletes `session_members`/`session_invites`/`github_connection_states` despite the generated `PRAGMA foreign_keys=OFF` wrapper, and a remote row-count check found production already has 5 users, 9 sessions, 12 session_members. The synthetic-value approach (mirroring how `0018` was already hand-fixed for the same reason) gets the identical entitlement behavior with zero migration risk.
 
-**Consequences:** `lib/plans.ts` is now the single source for `Plan`/`PlanStatus`/`PLAN_LIMITS`/`effectivePlan`/`currentMonth`, re-exported from `db/sessions.ts` for existing importers; it has no `cloudflare:workers` import specifically so it stays reachable from `tests/unit`. `getOwnerHourQuota` returns the *effective* plan, not the raw purchased one — a caller that indexes `PLAN_LIMITS` by a raw `plan` field again would hand a lapsed Max owner 100h. `getOwnerHourQuota` and the presence gate now fail closed (throw) on a missing owner row rather than silently connecting ungated; `lib/agent-run-start.ts`'s use of the same function deliberately does not, because it runs before any existence check and a throw there would turn an ordinary "unknown session" into an unhandled 500 instead of the existing 404. Migration `0019` is a two-statement `ALTER TABLE ADD` plus an `UPDATE` backfilling existing rows to `plan_status = 'active'`; do not attempt to consolidate a future `plan`-column change into a recreate without re-rehearsing against seeded data first. The Stripe payment link now live in product UI has no webhook behind it — see "Roadmap guidance" above.
+**Consequences:** `lib/plans.ts` is now the single source for `Plan`/`PlanStatus`/`PLAN_LIMITS`/`effectivePlan`/`currentMonth`, re-exported from `db/sessions.ts` for existing importers; it has no `cloudflare:workers` import specifically so it stays reachable from `tests/unit`. `getOwnerHourQuota` returns the *effective* plan, not the raw purchased one — a caller that indexes `PLAN_LIMITS` by a raw `plan` field again would hand a lapsed Max owner 100h. `getOwnerHourQuota` and the presence gate now fail closed (throw) on a missing owner row rather than silently connecting ungated; `lib/agent-run-start.ts`'s use of the same function deliberately does not, because it runs before any existence check and a throw there would turn an ordinary "unknown session" into an unhandled 500 instead of the existing 404. Migration `0019` is a two-statement `ALTER TABLE ADD` plus an `UPDATE` backfilling existing rows to `plan_status = 'active'`; do not attempt to consolidate a future `plan`-column change into a recreate without re-rehearsing against seeded data first. The payment-link/manual-grant consequence was superseded by the 2026-08-21 Stripe billing decision below.
 
 ### 2026-08-21 — Build a complete account settings surface, consolidating every scattered settings affordance into it
 
@@ -1464,7 +1496,15 @@ An owner cannot remove a member from a session today — `leaveSession` is self-
 
 **Rationale:** Each fork picked the option that added zero migration/authorization risk over one that would have required either a schema change disallowed by an existing invariant, a new backend capability (a customer portal, an email-change flow) with no product need yet, or bypassing a safety guard another code path already established for the same class of state. The consolidation (one `AccountMenu`, one `/settings`) removes duplicated controls that had drifted apart (the floor `TopBar` had Theme/DND/sign-out; `AppHeader` had the same three independently) rather than adding a fourth copy.
 
-**Consequences:** `lib/display-name.ts` is now the single source for `displayNameFrom`/`initials`/`initialsFromParts`, used by onboarding, account settings, and every avatar label — the three previous ad hoc copies (`completeOnboarding`'s inline template literal, `AppHeader.tsx`'s exported `initials`, `OnboardingScreen.tsx`'s inline initials math) are gone. `lib/account-avatar.ts` (server, R2-bound) and `lib/avatar-constraints.ts` (client-safe constants, split out specifically because `account-avatar.ts` imports `cloudflare:workers` and cannot enter a `"use client"` bundle) are the only place avatar size/type limits and the R2 key layout are defined; onboarding's upload route was rewritten to call them instead of inlining the logic a second time. `Avatar` (`components/session/primitives.tsx`) gained `version` (cache-busts the 5-minute R2 response against `user.updatedAt` after an edit) and `previewSrc` (a local object URL for an unsaved picker selection) — roster avatars that only have a `SessionMember`, not a full `AppUser`, still accept up to 5 minutes of staleness for other people. `usage_months` and other users' authored floor content are untouched by deletion by design; anything that later changes that must re-read the "Account deletion" contract in Persistence model first. No Stripe SDK, checkout, or webhook was added — `/settings`'s Plan tab still points at the same manual-grant runbook, now stated in-product.
+**Consequences:** `lib/display-name.ts` is now the single source for `displayNameFrom`/`initials`/`initialsFromParts`, used by onboarding, account settings, and every avatar label — the three previous ad hoc copies (`completeOnboarding`'s inline template literal, `AppHeader.tsx`'s exported `initials`, `OnboardingScreen.tsx`'s inline initials math) are gone. `lib/account-avatar.ts` (server, R2-bound) and `lib/avatar-constraints.ts` (client-safe constants, split out specifically because `account-avatar.ts` imports `cloudflare:workers` and cannot enter a `"use client"` bundle) are the only place avatar size/type limits and the R2 key layout are defined; onboarding's upload route was rewritten to call them instead of inlining the logic a second time. `Avatar` (`components/session/primitives.tsx`) gained `version` (cache-busts the 5-minute R2 response against `user.updatedAt` after an edit) and `previewSrc` (a local object URL for an unsaved picker selection) — roster avatars that only have a `SessionMember`, not a full `AppUser`, still accept up to 5 minutes of staleness for other people. `usage_months` and other users' authored floor content are untouched by deletion by design; anything that later changes that must re-read the "Account deletion" contract in Persistence model first. The no-Stripe/manual-grant consequence was superseded by the 2026-08-21 Stripe billing decision below.
+
+### 2026-08-21 — Make paid onboarding and entitlement fully Stripe-backed
+
+**Decision:** Direct first-login onboarding requires an explicit Free, Pro, or Max selection; a currently valid signed-invite return receives Free automatically, while Enterprise remains sales-managed. Pro is USD $30 per seat per month for 3–5 seats and 30 session-hours per month; Max is USD $50 per seat per month for 3–10 seats and 100 hours. Stripe Checkout creates monthly subscriptions bound to the authenticated internal user ID, Customer Portal owns billing management and confirmed immediate prorated plan/quantity changes, and a public raw-body-signed webhook projects subscription lifecycle into `users.plan`, `plan_status`, and `seat_limit`. Purchased quantity caps every session the buyer owns independently.
+
+**Rationale:** A public Payment Link plus manual email-based SQL could accept money without changing the product, could not grant a buyer who had no user row, and could sell only one indistinguishable tier. Starting Checkout only after authenticated profile submission guarantees a row and a stable internal binding; separate configured Price IDs distinguish Pro/Max; Stripe remains authoritative for billing while a bounded D1 projection keeps quota and seat checks local and reload-safe. A rollout gate keeps paid CTAs from accepting payment before prices, Portal policy, webhook, secrets, migrations, and deployment are complete.
+
+**Consequences:** Added `stripe_customers`, `stripe_subscriptions`, `stripe_webhook_events`, and nullable `users.seat_limit` through migration `0024` (renumbered after `main` added provider migration `0023`); `users` is never recreated. Webhook event IDs deduplicate replay, `event_created` rejects stale subscription rollback, and unknown price/quantity fails entitlement closed. Active/trialing paid state completes a pending profile; paid cancellation or delinquency falls back to Free. Existing manual active Pro/Max grants with null quantity remain at 5/10 seats and active Enterprise wins over Stripe. Normal Portal cancellation is immediate; account deletion cancels known subscriptions immediately without refund and refuses to scrub the account if Stripe cancellation fails. The external Portal configuration must restrict products/quantities, apply immediate prorations, and cancel immediately. Production must keep `STRIPE_CHECKOUT_ENABLED=false` until `docs/stripe-billing.md` acceptance is complete.
 
 ### 2026-08-21 — Store user provider credentials encrypted under a Worker secret, resolved per run as owner-else-server
 
