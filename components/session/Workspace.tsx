@@ -11,7 +11,6 @@ import { floorParticipants, type PersistentFloorDataSource } from "./usePersiste
 import type { RunActivitySource } from "./useRunActivity";
 import { type PanelChrome } from "./Rail";
 import { TopBar } from "./TopBar";
-import { ObjectiveBar } from "./ObjectiveBar";
 import { BriefRail } from "./BriefRail";
 import { AgentFloor } from "./AgentFloor";
 import { PromptQueue } from "./PromptQueue";
@@ -158,7 +157,7 @@ export function Workspace({ user, session, members, floorData, activity, typingD
   }
 
   return <main className="app-shell" data-screen={screen}>
-    <TopBar screen={screen} onScreen={setScreen} onNotice={setNotice} session={session} user={user} members={members} unreadTeamCount={unreadTeamCount} presenceConnected={presenceConnected} />
+    <TopBar screen={screen} onScreen={setScreen} onNotice={setNotice} session={session} user={user} members={members} unreadTeamCount={unreadTeamCount} presenceConnected={presenceConnected} staleMessageCount={countMessagesSinceObjective(messages, session.objectiveUpdatedAt)} onSaveObjective={onSaveObjective} />
     {session.endedAt != null && (
       /* Banner only: the server-side write guard is the enforcement, so a
          stale control just surfaces its 409 through the dock status line. */
@@ -175,7 +174,6 @@ export function Workspace({ user, session, members, floorData, activity, typingD
         <Link href="/settings?section=plan">Upgrade for more session hours</Link>.
       </p>
     )}
-    <ObjectiveBar objective={session.objective} updatedAt={session.updatedAt} staleMessageCount={countMessagesSinceObjective(messages, session.objectiveUpdatedAt)} isOwner={session.role === "owner"} onSave={onSaveObjective} />
     {screen === "review" ? <ReviewScreen review={review} owner={session.role === "owner"} busy={floorData.busy} blockingRunId={floorData.blockingRunId} onReady={async () => { if (await floorData.readyReview()) setNotice("GitHub review status synchronized"); }} onMerge={async (deleteCandidateBranch) => { const result = await floorData.squashMergeReview(deleteCandidateBranch); if (result) setNotice(deleteCandidateBranch ? "Pull request squash merged and branches cleaned up" : "Pull request squash merged; candidate branch kept"); return Boolean(result); }} onDeleteBranch={async () => { const result = await floorData.deleteReviewBranch(); if (result) setNotice("Candidate branch deleted"); return Boolean(result); }} onCancelRun={async (runId) => { await floorData.cancelRun(runId); }} teamChat={messages} onSendTeamMessage={async (text, recipient) => Boolean(await floorData.sendMessage(text, recipient))} participants={participants} currentUserId={user.id} /> : <><div className="workspace" data-expanded={expandedPanel ? "true" : "false"} data-resizing={resizing ? "true" : "false"}>{panelOrder.map((panel, index) => { const next = panelOrder[index + 1]; const showHandle = !expandedPanel && next !== undefined && !(isCollapsed(panel) && panel !== "floor"); return <div key={panel} className="panel-slot" style={slotStyle(panel)} data-expanded={expandedPanel === panel ? "true" : "false"} data-collapsed={isCollapsed(panel) ? "true" : "false"} data-dragging={draggedPanel === panel ? "true" : "false"} data-drop-target={dragOverPanel === panel ? "true" : "false"} onDragOver={(event) => { event.preventDefault(); if (draggedPanel && draggedPanel !== panel) setDragOverPanel(panel); }} onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragOverPanel((current) => current === panel ? null : current); }} onDrop={() => dropPanel(panel)}>{renderPanel(panel, chromeFor(panel, index))}{showHandle && <div className="resize-handle" role="separator" aria-label={`Resize ${panel} panel`} onPointerDown={(event) => startResize(panel, next, event)} />}</div>; })}</div><FloorDock onSubmit={enqueuePrompt} agents={agents} queueTarget={queueTarget} onQueueTargetChange={setQueueTarget} textareaRef={composerRef} notice={notice} error={floorData.error} busy={floorData.busy} user={user} participants={participants} typingDrafts={typingDrafts} onTypingUpdate={onTypingUpdate} /></>}
     {screen === "review" && (notice || floorData.error) && <StatusBar notice={floorData.error ?? notice ?? ""} visible tone={floorData.error ? "error" : "notice"} />}
   </main>;
