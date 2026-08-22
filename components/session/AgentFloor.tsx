@@ -34,7 +34,7 @@ export function AgentFloor({ chrome, sessionId, agents, runs, activity, selected
   const controls = agents.length > 0 ? <SegmentedControl label="Agent layout" value={agentLayout} onChange={onAgentLayout} options={[{ value: "focus", label: "Focused" }, { value: "all", label: "All agents" }]} /> : undefined;
 
   return <>
-    <Panel chrome={chrome} title="Agent floor" badge={`${agents.length}`} actions={controls}>
+    <Panel chrome={chrome} title="Agent floor" actions={controls}>
       <div className="chip-row"><button ref={createButtonRef} type="button" className="chip chip-create" onClick={() => setCreating(true)}><Icon name="plus" size={11} />New agent</button></div>
       {agents.length === 0 ? (
         <div className="floor-empty"><strong>No agents yet</strong><p>Create an agent when the session has work to assign.</p><button type="button" className="button" data-variant="primary" onClick={() => setCreating(true)}>Create agent</button></div>

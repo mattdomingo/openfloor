@@ -131,85 +131,8 @@
   background: var(--surface-header);
 }
 
-/* Panel chrome is revealed on hover or keyboard focus. */
-.panel-chrome {
-  display: flex;
-  align-items: center;
-  gap: 1px;
-  padding-left: var(--space-2);
-  border-left: 1px solid var(--line-strong);
-  opacity: 0;
-  transition: opacity var(--dur-snap) var(--ease-standard);
-}
-
-.panel-head:hover .panel-chrome,
-.panel-chrome:focus-within {
-  opacity: 1;
-}
-
-.panel-chrome button {
-  display: grid;
-  place-items: center;
-  width: 24px;
-  height: 24px;
-  padding: 0;
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: none;
-  color: var(--text-tertiary);
-}
-
-.panel-chrome button:hover:not(:disabled) {
-  background: var(--surface-sunken);
-  color: var(--text-primary);
-}
-
-.panel-chrome button:disabled {
-  opacity: 0.25;
-  cursor: default;
-}
-
-.panel-chrome .grip {
-  cursor: grab;
-}
-
 .panel-head[draggable="true"] {
   cursor: grab;
-}
-
-/* Collapsed rail -------------------------------------------------------- */
-
-.rail-collapsed {
-  display: flex;
-  flex: 1 1 auto;
-  flex-direction: column;
-  align-items: center;
-  gap: var(--space-3);
-  width: 100%;
-  padding: var(--space-3) 0;
-  border: 0;
-  background: var(--surface-header);
-  color: var(--text-secondary);
-}
-
-.rail-collapsed:hover {
-  background: var(--surface-raised);
-  color: var(--text-primary);
-}
-
-.rail-collapsed .rail-label {
-  writing-mode: vertical-rl;
-  font-size: var(--text-sm);
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  white-space: nowrap;
-}
-
-.rail-collapsed .rail-badge {
-  writing-mode: vertical-rl;
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
-  color: var(--text-tertiary);
 }
 
 /* Buttons and controls -------------------------------------------------- */
@@ -3135,22 +3058,6 @@
 }
 
 /* Queue ----------------------------------------------------------------- */
-
-.queue-toolbar {
-  display: flex;
-  align-items: center;
-  flex: none;
-  padding: var(--space-3) var(--space-4) 0;
-}
-
-.queue-toolbar .segmented {
-  width: 100%;
-}
-
-.queue-toolbar .segmented button {
-  flex: 1 1 0;
-  justify-content: center;
-}
 
 .queue-list {
   display: flex;

@@ -1,7 +1,39 @@
 "use client";
 
-import { ReactNode, SyntheticEvent, useEffect, useRef, useState } from "react";
+import { MouseEvent as ReactMouseEvent, ReactNode, SyntheticEvent, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { BASE_PATH } from "@/components/basePath";
+
+/* Instant, mouse-following tooltip for any hoverable element. Native `title`
+   has a long, browser-controlled show delay and stays pinned where the
+   pointer entered rather than tracking it — this shows immediately and
+   follows the cursor instead. Portaled to <body> so it isn't clipped or
+   mispositioned by an ancestor with `backdrop-filter`/`transform` (both
+   create a containing block for `position: fixed`, e.g. the top bar's blur).
+   Usage: const tip = useHoverTip(); <span {...tip.handlers}>…</span>
+   <HoverTip position={tip.position}>label</HoverTip> */
+export function useHoverTip() {
+  const [position, setPosition] = useState<{ x: number; y: number } | null>(null);
+  const track = (event: ReactMouseEvent) => setPosition({ x: event.clientX, y: event.clientY });
+  return {
+    position,
+    handlers: {
+      onMouseEnter: track,
+      onMouseMove: track,
+      onMouseLeave: () => setPosition(null),
+    },
+  };
+}
+
+export function HoverTip({ position, children }: { position: { x: number; y: number } | null; children: ReactNode }) {
+  if (position == null || typeof document === "undefined") return null;
+  return createPortal(
+    <span className="hover-tip" role="tooltip" style={{ left: position.x + 14, top: position.y + 18 }}>
+      {children}
+    </span>,
+    document.body,
+  );
+}
 
 /* Native <dialog> unmounts the instant its parent drops it, which cuts off any exit
    transition. This opens the dialog on mount and turns dismissals into a short

@@ -21,6 +21,10 @@ export function QueueOrderMenu({
   onMergeMode,
   onMergeNow,
   canReorder,
+  owner,
+  autoDispatch,
+  onAutoDispatch,
+  busy,
 }: {
   mode: QueueOrderMode;
   onChange: (mode: QueueOrderMode) => void;
@@ -28,6 +32,10 @@ export function QueueOrderMenu({
   onMergeMode: (mode: QueueMergeMode) => void;
   onMergeNow: () => void;
   canReorder: boolean;
+  owner: boolean;
+  autoDispatch: boolean;
+  onAutoDispatch: (enabled: boolean) => Promise<void>;
+  busy: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -62,6 +70,11 @@ export function QueueOrderMenu({
     setOpen(false);
   }
 
+  function chooseAutoDispatch(next: boolean) {
+    void onAutoDispatch(next);
+    setOpen(false);
+  }
+
   return (
     <div className="queue-order-menu" ref={rootRef}>
       <button
@@ -72,8 +85,8 @@ export function QueueOrderMenu({
         aria-controls={listId}
         title={`Queue settings · ${mode === "auto" ? "Auto order" : "Manual order"} · ${
           mergeMode === "auto" ? "Auto-merge" : "No merging"
-        }`}
-        data-active={mode === "manual" || mergeMode === "auto" ? "true" : "false"}
+        }${owner ? ` · Auto-dispatch ${autoDispatch ? "on" : "off"}` : ""}`}
+        data-active={mode === "manual" || mergeMode === "auto" || autoDispatch ? "true" : "false"}
         onClick={() => setOpen((current) => !current)}
       >
         <Icon name="sliders" size={13} />
@@ -81,6 +94,40 @@ export function QueueOrderMenu({
 
       {open && (
         <div className="queue-order-list" id={listId} role="group" aria-label="Queue settings">
+          {owner && (
+            <>
+              <span className="queue-order-label" aria-hidden="true">
+                Auto-dispatch
+              </span>
+              <ul>
+                <li>
+                  <button
+                    type="button"
+                    data-selected={autoDispatch ? "true" : "false"}
+                    aria-pressed={autoDispatch}
+                    disabled={busy}
+                    onClick={() => chooseAutoDispatch(true)}
+                  >
+                    <span>On</span>
+                    <small>openfloor assigns and runs queued prompts automatically</small>
+                  </button>
+                </li>
+                <li>
+                  <button
+                    type="button"
+                    data-selected={!autoDispatch ? "true" : "false"}
+                    aria-pressed={!autoDispatch}
+                    disabled={busy}
+                    onClick={() => chooseAutoDispatch(false)}
+                  >
+                    <span>Off</span>
+                    <small>Assign and run queued prompts yourself</small>
+                  </button>
+                </li>
+              </ul>
+            </>
+          )}
+
           {canReorder && (
             <>
               <span className="queue-order-label" aria-hidden="true">

@@ -11,7 +11,7 @@ import { initials } from "@/lib/display-name";
 import { OBJECTIVE_NUDGE_THRESHOLD } from "@/lib/floor-state";
 import type { AppUser, SessionMember, SessionSummary } from "@/lib/session-types";
 import { InviteDialog } from "./InviteDialog";
-import { Avatar, Icon } from "./primitives";
+import { Avatar, HoverTip, Icon, useHoverTip } from "./primitives";
 import type { WorkspaceScreen } from "./data";
 
 type ObjectiveSaveState = "idle" | "saving" | "saved" | "error";
@@ -35,10 +35,16 @@ function SessionTimer({ base, running }: { base: number; running: boolean }) {
   );
 }
 
-/* Color alone (not a "Live" label) carries live/not-live — the hover title
-   still says it in words for anyone who needs that. */
+/* Color alone (not a "Live" label) carries live/not-live — a mouse-following
+   tooltip still says it in words for anyone who hovers. */
 function LiveIndicator({ live }: { live: boolean }) {
-  return <span className="live-dot" data-live={live ? "true" : "false"} title={live ? "Live" : "Not live"} />;
+  const tip = useHoverTip();
+  return (
+    <>
+      <span className="live-dot" data-live={live ? "true" : "false"} {...tip.handlers} />
+      <HoverTip position={tip.position}>{live ? "Live" : "Not live"}</HoverTip>
+    </>
+  );
 }
 
 export function TopBar({

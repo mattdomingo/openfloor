@@ -38,7 +38,7 @@ export function BriefRail(props: BriefRailProps) {
   );
 
   return (
-    <Panel chrome={props.chrome} title="Team" badge={`${props.assignments.length}`} actions={controls}>
+    <Panel chrome={props.chrome} title="Team" actions={controls}>
       {props.view === "chat" ? (
         <TeamChat
           messages={props.messages}

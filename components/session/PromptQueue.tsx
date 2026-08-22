@@ -53,8 +53,10 @@ export function PromptQueue({ chrome, items, runs, owner, runEnabled, busy, auto
   };
   const visible = [...scoped].sort((a, b) => Number(isDone(a)) - Number(isDone(b)));
 
-  return <Panel chrome={chrome} title="Queue" meta={`${visible.length} waiting`} badge={`${visible.length}`} actions={<QueueOrderMenu mode={orderMode} onChange={onOrderMode} mergeMode={mergeMode} onMergeMode={onMergeMode} onMergeNow={onMergeNow} canReorder={canReorder} />}>
-    <div className="queue-toolbar"><SegmentedControl label="Queue scope" value={scope} onChange={onScope} options={scopeOptions} />{owner && <button type="button" className="button" data-size="sm" aria-pressed={autoDispatch} disabled={busy} title={autoDispatch ? "openfloor assigns and runs queued prompts automatically" : "Assign and run queued prompts automatically"} onClick={() => void onAutoDispatch(!autoDispatch)}>{autoDispatch ? "Auto: on" : "Auto: off"}</button>}</div>
+  return <Panel chrome={chrome} title="Queue" meta={`${visible.length} waiting`} actions={<>
+    <SegmentedControl label="Queue scope" value={scope} onChange={onScope} options={scopeOptions} />
+    <QueueOrderMenu mode={orderMode} onChange={onOrderMode} mergeMode={mergeMode} onMergeMode={onMergeMode} onMergeNow={onMergeNow} canReorder={canReorder} owner={owner} autoDispatch={autoDispatch} onAutoDispatch={onAutoDispatch} busy={busy} />
+  </>}>
     {visible.length === 0 ? <div className="queue-empty"><strong>No prompts waiting</strong><p>Submit a prompt below with an agent target or leave it unassigned.</p></div> : <ul className="queue-list">{visible.map((item) => {
       const open = expanded[item.id] === true;
       const long = item.prompts.length > 3 || item.prompts.some((prompt) => prompt.text.length > 110);
