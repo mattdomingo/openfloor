@@ -5,11 +5,11 @@ import { POST as postOpenAiGateway } from "@/app/runtime/openai/[...path]/route"
 import { createFloorAgent } from "@/db/floor";
 import {
   deleteProviderCredential,
-  getSessionOwnerCredential,
+  getRunAgentOwnerCredential,
   listProviderCredentials,
   upsertProviderCredential,
 } from "@/db/provider-credentials";
-import { acceptInvite, createSession, deleteAccount, upsertUser } from "@/db/sessions";
+import { acceptInvite, createSession, deleteAccount, removeMember, upsertUser } from "@/db/sessions";
 import { encryptCredential } from "@/lib/credential-crypto";
 import { signRunGatewayToken } from "@/lib/runtime-token";
 import { parseAgentInput } from "@/lib/validation";
@@ -67,9 +67,10 @@ async function insertRunRow(sessionId: string, agentId: string, userId: string, 
   return runId;
 }
 
-async function runningRun(suffix: string) {
+async function runningRun(suffix: string, agentOwner?: "member") {
   const { sessionId, owner, member } = await room(suffix);
-  const input = parseAgentInput({ name: "Builder", role: "Engineer", task: "Implement changes", ownerUserId: owner.id });
+  const agentOwnerId = agentOwner === "member" ? member.id : owner.id;
+  const input = parseAgentInput({ name: "Builder", role: "Engineer", task: "Implement changes", ownerUserId: agentOwnerId });
   if (!input) throw new Error("Invalid test agent");
   const floor = await createFloorAgent(sessionId, owner.id, input, env.DB);
   const agent = floor?.agents.find((candidate) => candidate.name === "Builder");
@@ -119,18 +120,26 @@ describe("provider credential persistence", () => {
     expect(await listProviderCredentials(user.id, env.DB)).toHaveLength(0);
   });
 
-  it("resolves only the session owner's credential for a provider", async () => {
-    const { sessionId, owner, member } = await room("resolve");
-    expect(await getSessionOwnerCredential(sessionId, "openai", env.DB)).toBeNull();
-    // A member's credential must never be picked up — the owner is billed.
-    await connectOpenAiKey(member.id, "sk-openai-member-key1");
-    expect(await getSessionOwnerCredential(sessionId, "openai", env.DB)).toBeNull();
+  it("resolves only the agent owner's credential for a provider", async () => {
+    const { sessionId, owner, member, runId } = await runningRun("resolve", "member");
+    expect(await getRunAgentOwnerCredential(runId, "openai", env.DB)).toBeNull();
+    // The session owner's credential must never be picked up — billing
+    // follows whoever owns the agent, not who owns the session.
     await connectOpenAiKey(owner.id, "sk-openai-owner-key2");
-    const resolved = await getSessionOwnerCredential(sessionId, "openai", env.DB);
-    expect(resolved?.ownerUserId).toBe(owner.id);
+    expect(await getRunAgentOwnerCredential(runId, "openai", env.DB)).toBeNull();
+    await connectOpenAiKey(member.id, "sk-openai-member-key1");
+    const resolved = await getRunAgentOwnerCredential(runId, "openai", env.DB);
+    expect(resolved?.ownerUserId).toBe(member.id);
     expect(resolved?.ciphertext).toBeTruthy();
     // Provider is part of the key: no anthropic credential exists yet.
-    expect(await getSessionOwnerCredential(sessionId, "anthropic", env.DB)).toBeNull();
+    expect(await getRunAgentOwnerCredential(runId, "anthropic", env.DB)).toBeNull();
+    // Removing the member transfers their agents to the removing owner
+    // (removeMember, PR #75) — billing follows the transfer, so the removed
+    // member's key is never billed and the new owner's key resolves instead.
+    const removal = await removeMember(sessionId, owner.id, member.id, env.DB);
+    expect(typeof removal).toBe("object");
+    const transferred = await getRunAgentOwnerCredential(runId, "openai", env.DB);
+    expect(transferred?.ownerUserId).toBe(owner.id);
   });
 
   it("a cross-method re-key (account merge path) preserves the user id, so credentials stay decryptable", async () => {
@@ -183,7 +192,7 @@ describe("OpenAI gateway credential resolution", () => {
     });
   }
 
-  it("uses the session owner's connected key for the run", async () => {
+  it("uses the agent owner's connected key for the run", async () => {
     const { sessionId, owner, runId } = await runningRun("gw-owner");
     await connectOpenAiKey(owner.id, "sk-openai-owner-gwkey");
     const capture = { authorization: null as string | null };
@@ -191,6 +200,17 @@ describe("OpenAI gateway credential resolution", () => {
     const response = await postOpenAiGateway(gatewayRequest(await signedRunToken(runId, sessionId)), gatewayParams());
     expect(response.status).toBe(200);
     expect(capture.authorization).toBe("Bearer sk-openai-owner-gwkey");
+  });
+
+  it("bills the member who owns the agent, not the session owner", async () => {
+    const { sessionId, owner, member, runId } = await runningRun("gw-member-owned", "member");
+    await connectOpenAiKey(owner.id, "sk-openai-session-owner");
+    await connectOpenAiKey(member.id, "sk-openai-agent-owner");
+    const capture = { authorization: null as string | null };
+    stubUpstream(capture);
+    const response = await postOpenAiGateway(gatewayRequest(await signedRunToken(runId, sessionId)), gatewayParams());
+    expect(response.status).toBe(200);
+    expect(capture.authorization).toBe("Bearer sk-openai-agent-owner");
   });
 
   it("uses the server key only when the owner has no credential", async () => {

@@ -1,4 +1,4 @@
-import { getSessionOwnerCredential } from "@/db/provider-credentials";
+import { getRunAgentOwnerCredential } from "@/db/provider-credentials";
 import { getRunGatewayContext } from "@/db/runs";
 import { decryptCredential } from "@/lib/credential-crypto";
 import { resolveRunCredentialSource } from "@/lib/provider-credentials";
@@ -32,10 +32,10 @@ export async function POST(request: Request, { params }: { params: Promise<{ pat
     return new Response("Not found", { status: 404 });
   }
   // Same resolution order as the OpenAI gateway, decided by
-  // resolveRunCredentialSource: session owner's connected key, else the server
-  // key, else refuse — and a present-but-unreadable owner credential refuses
-  // rather than switching payer.
-  const ownerCredential = await getSessionOwnerCredential(claims.sessionId, "anthropic");
+  // resolveRunCredentialSource: the agent owner's connected key, else the
+  // server key, else refuse — and a present-but-unreadable owner credential
+  // refuses rather than switching payer.
+  const ownerCredential = await getRunAgentOwnerCredential(claims.runId, "anthropic");
   const resolution = resolveRunCredentialSource({
     ownerCredentialPresent: Boolean(ownerCredential),
     serverKeyPresent: Boolean(bindings.ANTHROPIC_API_KEY),
@@ -46,7 +46,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ pat
       ? await decryptCredential(ownerCredential.ciphertext, bindings.CREDENTIAL_ENCRYPTION_KEY, `${ownerCredential.ownerUserId}:anthropic`)
       : null;
     if (!decrypted) {
-      return new Response("The session owner's connected Anthropic key could not be read. Reconnect it in Settings.", { status: 503 });
+      return new Response("The agent owner's connected Anthropic key could not be read. Reconnect it in Settings.", { status: 503 });
     }
     apiKey = decrypted;
   } else if (resolution.source === "server" && bindings.ANTHROPIC_API_KEY) {
