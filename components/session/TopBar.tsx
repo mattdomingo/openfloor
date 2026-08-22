@@ -9,7 +9,7 @@ import { LocalDateTime } from "@/components/LocalDateTime";
 import { formatDuration } from "@/lib/date-format";
 import { initials } from "@/lib/display-name";
 import { OBJECTIVE_NUDGE_THRESHOLD } from "@/lib/floor-state";
-import type { AppUser, SessionMember, SessionSummary } from "@/lib/session-types";
+import type { AppUser, RepositoryConnection, SessionMember, SessionSummary } from "@/lib/session-types";
 import { InviteDialog } from "./InviteDialog";
 import { Avatar, Icon } from "./primitives";
 import type { WorkspaceScreen } from "./data";
@@ -46,6 +46,8 @@ export function TopBar({
   presenceConnected,
   staleMessageCount,
   onSaveObjective,
+  repository,
+  branch,
 }: {
   screen: WorkspaceScreen;
   onScreen: (screen: WorkspaceScreen) => void;
@@ -57,6 +59,8 @@ export function TopBar({
   presenceConnected: boolean;
   staleMessageCount: number;
   onSaveObjective: (objective: string | null) => Promise<boolean>;
+  repository: RepositoryConnection | null;
+  branch: string | null;
 }) {
   const router = useRouter();
   const [inviting, setInviting] = useState(false);
@@ -112,6 +116,22 @@ export function TopBar({
         <Link href="/home">Sessions</Link><span aria-hidden="true">/</span><Link href={`/session/${session.id}`}><strong title={session.title}>{session.title}</strong></Link>
         {session.lockedAt != null && <span className="state-tag" data-tone="waiting" title="No new members can join">Locked</span>}
       </nav>
+
+      {/* Where the work actually lands: the connected repo, and the branch
+          agents are committing to right now (falls back to the base branch
+          before a candidate branch exists). */}
+      {repository && (
+        <div className="repo-branch" title={`${repository.repositoryFullName}${branch ? ` @ ${branch}` : ""}`}>
+          <Icon name="file" size={12} />
+          <span>{repository.repositoryFullName}</span>
+          {branch && (
+            <>
+              <Icon name="branch" size={12} />
+              <code>{branch}</code>
+            </>
+          )}
+        </div>
+      )}
 
       <span className="topbar-divider" aria-hidden="true" />
 

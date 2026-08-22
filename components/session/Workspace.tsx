@@ -36,7 +36,7 @@ export function Workspace({ user, session, members, floorData, activity, typingD
   presenceConnected: boolean;
   quotaExhausted: boolean;
 }) {
-  const { agents, assignments, queue, messages, review, runs } = floorData.floor;
+  const { agents, assignments, queue, messages, review, runs, repository, activeCandidate } = floorData.floor;
   const participants = useMemo(() => floorParticipants(members, user), [members, user]);
   const [screen, setScreen] = useState<WorkspaceScreen>("workspace");
   const [queueScope, setQueueScope] = useState<QueueScope>("team");
@@ -196,7 +196,7 @@ export function Workspace({ user, session, members, floorData, activity, typingD
   }
 
   return <main className="app-shell" data-screen={screen}>
-    <TopBar screen={screen} onScreen={setScreen} onNotice={setNotice} session={session} user={user} members={members} unreadTeamCount={unreadTeamCount} presenceConnected={presenceConnected} staleMessageCount={countMessagesSinceObjective(messages, session.objectiveUpdatedAt)} onSaveObjective={onSaveObjective} />
+    <TopBar screen={screen} onScreen={setScreen} onNotice={setNotice} session={session} user={user} members={members} unreadTeamCount={unreadTeamCount} presenceConnected={presenceConnected} staleMessageCount={countMessagesSinceObjective(messages, session.objectiveUpdatedAt)} onSaveObjective={onSaveObjective} repository={repository} branch={activeCandidate?.branchName ?? repository?.baseBranch ?? null} />
     {session.endedAt != null && (
       /* Banner only: the server-side write guard is the enforcement, so a
          stale control just surfaces its 409 through the dock status line. */

@@ -220,6 +220,33 @@
   white-space: nowrap;
 }
 
+/* The repo + branch the session is working against — same small-meta
+   treatment as .objective-fact, just with two icon+text pairs instead of
+   one. min-width:0 + ellipsis on the repo name lets a long "owner/repo" get
+   clipped before it starts squeezing the objective next to it; the branch
+   segment (usually short) stays uncut. */
+.repo-branch {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex: 0 1 auto;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+
+.repo-branch span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.repo-branch code {
+  flex: none;
+  color: var(--text-primary);
+}
+
 .objective-nudge {
   display: flex;
   align-items: center;
@@ -572,7 +599,8 @@
     padding: 0 var(--space-4);
   }
 
-  .session-path {
+  .session-path,
+  .repo-branch {
     display: none;
   }
 
