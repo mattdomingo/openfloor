@@ -20,6 +20,16 @@
   background: #000;
 }
 
+/* Everything behind the card fades in together as one scene, rather than
+   popping in fully-formed. Absolutely positioned so it stays out of the
+   grid flow, same as its children used to be as direct entry-shell
+   siblings — just one wrapper now instead of three. */
+.entry-backdrop { position: absolute; inset: 0; animation: entry-fade-in .9s ease-out backwards; }
+@keyframes entry-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
 /* One fixed glow, not a drifting mesh — depth without the generic
    AI-gradient-blob look this same page used to reach for. */
 .entry-glow {
@@ -32,6 +42,7 @@
    panels + connector lines) — just enough structure that the black canvas
    reads as engineered depth, not a void. Low-opacity and off to one side so
    it never competes with the centered card. */
+.entry-parallax { position: absolute; inset: 0; --parallax-x: 0; --parallax-y: 0; }
 .entry-texture {
   position: absolute;
   inset: 0;
@@ -39,6 +50,8 @@
   height: 100%;
   opacity: .07;
   color: var(--entry-ink);
+  transform: translate3d(calc(var(--parallax-x) * 14px), calc(var(--parallax-y) * 10px), 0);
+  transition: transform .3s ease-out;
 }
 .entry-texture rect { fill: none; stroke: currentColor; stroke-width: 1.5; }
 .entry-texture path { fill: none; stroke: currentColor; stroke-width: 1; }
@@ -64,16 +77,33 @@
 }
 
 .entry-mark { display: block; width: 168px; height: auto; overflow: visible; color: #fff; }
+/* Brackets pop in with the first dot, so the whole mark arrives as one
+   unit — then the dots stagger past it and settle into a slow, quiet
+   breathing pulse, the page's one ongoing motion. */
+.entry-mark-bracket { transform-box: fill-box; transform-origin: center; animation: entry-dot-in .5s cubic-bezier(.2, .8, .3, 1) backwards; }
 .entry-mark-dot {
   transform-box: fill-box;
   transform-origin: center;
-  animation: entry-dot-in .5s cubic-bezier(.2, .8, .3, 1) backwards;
+  animation:
+    entry-dot-in .5s cubic-bezier(.2, .8, .3, 1) backwards,
+    entry-dot-pulse 2.8s ease-in-out .5s infinite;
 }
-.entry-mark-dot:nth-of-type(2) { animation-delay: .08s; }
-.entry-mark-dot:nth-of-type(3) { animation-delay: .16s; }
+.entry-mark-dot:nth-of-type(2) { animation-delay: .08s, .9s; }
+.entry-mark-dot:nth-of-type(3) { animation-delay: .16s, 1.3s; }
 @keyframes entry-dot-in {
   from { opacity: 0; transform: scale(.2); }
   to { opacity: 1; transform: scale(1); }
+}
+@keyframes entry-dot-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: .6; transform: scale(.82); }
+}
+
+/* Rest of the card cascades in underneath the mark, each element a beat
+   behind the last. */
+@keyframes entry-rise-in {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 /* Lowercase Archivo-bold — the same logotype treatment opnflr.com uses; the
@@ -85,27 +115,39 @@
   font-family: var(--font-brand-sans);
   font-size: 26px;
   font-weight: 700;
+  animation: entry-rise-in .5s cubic-bezier(.16, .8, .24, 1) .22s backwards;
 }
 
+/* Shape/interaction (radius, hover lift) stays the app's standard .button —
+   only the color swaps to the marketing site's CTA blue, in place of the
+   app's own terracotta --accent. */
 .entry-card .button[data-variant="primary"] {
   margin-top: 10px;
   width: 100%;
-  border: none;
-  border-radius: 0;
+  border-color: var(--entry-accent);
   background: var(--entry-accent);
   color: #fff;
   font-family: var(--font-brand-sans);
   font-weight: 600;
   font-size: 14px;
-  transition: background-color .15s ease;
+  animation: entry-rise-in .5s cubic-bezier(.16, .8, .24, 1) .34s backwards;
 }
-.entry-card .button[data-variant="primary"]:hover { background: var(--entry-accent-hover); transform: none; box-shadow: none; }
+.entry-card .button[data-variant="primary"]:hover { background: var(--entry-accent-hover); border-color: var(--entry-accent-hover); }
 
-.entry-hint { color: var(--entry-ink-muted); font-family: var(--font-brand-sans); font-size: 13px; line-height: 1.5; }
-.entry-note { padding: var(--space-3) var(--space-4); border-left: 2px solid var(--entry-accent); background: rgba(27, 69, 184, .14); color: var(--entry-ink-muted); font-family: var(--font-brand-sans); font-size: 13px; text-align: left; }
+.entry-hint { color: var(--entry-ink-muted); font-family: var(--font-brand-sans); font-size: 13px; line-height: 1.5; animation: entry-rise-in .5s cubic-bezier(.16, .8, .24, 1) .4s backwards; }
+.entry-note { padding: var(--space-3) var(--space-4); border-left: 2px solid var(--entry-accent); background: rgba(27, 69, 184, .14); color: var(--entry-ink-muted); font-family: var(--font-brand-sans); font-size: 13px; text-align: left; animation: entry-rise-in .5s cubic-bezier(.16, .8, .24, 1) .28s backwards; }
 
 @media (prefers-reduced-motion: reduce) {
-  .entry-mark-dot { animation: none; }
+  .entry-mark-dot,
+  .entry-mark-bracket,
+  .entry-backdrop,
+  .entry-wordmark,
+  .entry-card .button[data-variant="primary"],
+  .entry-hint,
+  .entry-note {
+    animation: none;
+  }
+  .entry-texture { transition: none; }
 }
 
 .app-header {

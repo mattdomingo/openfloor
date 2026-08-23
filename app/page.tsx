@@ -1,5 +1,6 @@
 import { accessSignInPath, getAccessUser, safeAppReturnPath } from "./access-auth";
 import { BASE_PATH } from "@/components/basePath";
+import { ParallaxLayer } from "./entry-parallax";
 
 export const dynamic = "force-dynamic";
 
@@ -9,8 +10,8 @@ export const dynamic = "force-dynamic";
 function BrandMark() {
   return (
     <svg className="entry-mark" viewBox="0 0 23 8" aria-hidden="true">
-      <path fill="currentColor" d="M0 0h1v7h2v1H0Z" />
-      <path fill="currentColor" d="M23 0h-1v7h-2v1h3Z" />
+      <path className="entry-mark-bracket" fill="currentColor" d="M0 0h1v7h2v1H0Z" />
+      <path className="entry-mark-bracket" fill="currentColor" d="M23 0h-1v7h-2v1h3Z" />
       <circle className="entry-mark-dot" cx="6.5" cy="5.5" r="1.5" fill="#2F6DF0" />
       <circle className="entry-mark-dot" cx="11.5" cy="5.5" r="1.5" fill="#12A594" />
       <circle className="entry-mark-dot" cx="16.5" cy="5.5" r="1.5" fill="#E0457F" />
@@ -41,9 +42,13 @@ export default async function LandingPage({ searchParams }: { searchParams: Prom
   const primaryHref = user ? `${BASE_PATH}/home` : returnTo ?? accessSignInPath("/home");
   return (
     <main className="entry-shell">
-      <div className="entry-glow" aria-hidden="true" />
-      <EntryTexture />
-      <div className="entry-grain" aria-hidden="true" />
+      <div className="entry-backdrop">
+        <div className="entry-glow" aria-hidden="true" />
+        <ParallaxLayer>
+          <EntryTexture />
+        </ParallaxLayer>
+        <div className="entry-grain" aria-hidden="true" />
+      </div>
       <div className="entry-card">
         <BrandMark />
         <p className="entry-wordmark">openfloor</p>
