@@ -11,13 +11,33 @@
   --entry-ink-muted: #9aa0a8;
   --entry-accent: #1b45b8;
   --entry-accent-hover: #2a56d1;
+  --entry-bg: #000;
+  --entry-glow-tint: rgba(27, 69, 184, .28);
+  --entry-wave: 190, 200, 214;
 
   position: relative;
   display: grid;
   place-items: center;
   min-height: 100vh;
   overflow: hidden;
-  background: #000;
+  background: var(--entry-bg);
+}
+
+/* opnflr.com's own light mode: the CTA blue is unchanged, but ink flips
+   dark-on-light and the canvas becomes the same light gray the real site's
+   nav strip uses (confirmed live — the hero itself barely lightens between
+   the site's own toggle states, so that nav gray is the one genuinely
+   "light" surface the brand actually uses). System-driven only, per the
+   OS's prefers-color-scheme — this page still ignores the app's own manual
+   theme toggle. */
+@media (prefers-color-scheme: light) {
+  .entry-shell {
+    --entry-ink: #12181f;
+    --entry-ink-muted: #565f6b;
+    --entry-bg: #c6ccd4;
+    --entry-glow-tint: rgba(27, 69, 184, .12);
+    --entry-wave: 30, 38, 47;
+  }
 }
 
 /* Everything behind the card fades in together as one scene, rather than
@@ -35,26 +55,22 @@
 .entry-glow {
   position: absolute;
   inset: 0;
-  background: radial-gradient(ellipse 640px 420px at 50% 42%, rgba(27, 69, 184, .28), transparent 70%);
+  background: radial-gradient(ellipse 640px 420px at 50% 42%, var(--entry-glow-tint), transparent 70%);
 }
 
-/* A faint, static echo of the marketing hero's own animated diagram (glass
-   panels + connector lines) — just enough structure that the black canvas
-   reads as engineered depth, not a void. Low-opacity and off to one side so
-   it never competes with the centered card. */
+/* opnflr.com's own "wave field" (site.js waveField(), ported in
+   entry-wave.tsx): nine horizontal sine lines whose phase slowly drifts —
+   the real moving-strand background, not an invented diagram. */
 .entry-parallax { position: absolute; inset: 0; --parallax-x: 0; --parallax-y: 0; }
-.entry-texture {
+.entry-wave {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
-  opacity: .07;
-  color: var(--entry-ink);
+  opacity: .5;
   transform: translate3d(calc(var(--parallax-x) * 14px), calc(var(--parallax-y) * 10px), 0);
   transition: transform .3s ease-out;
 }
-.entry-texture rect { fill: none; stroke: currentColor; stroke-width: 1.5; }
-.entry-texture path { fill: none; stroke: currentColor; stroke-width: 1; }
 
 /* fine grain, kept extremely subtle so a large flat black field doesn't band */
 .entry-grain {
@@ -76,20 +92,80 @@
   text-align: center;
 }
 
-.entry-mark { display: block; width: 168px; height: auto; overflow: visible; color: #fff; }
-/* Brackets pop in with the first dot, so the whole mark arrives as one
-   unit — then the dots stagger past it and settle into a slow, quiet
-   breathing pulse, the page's one ongoing motion. */
-.entry-mark-bracket { transform-box: fill-box; transform-origin: center; animation: entry-dot-in .5s cubic-bezier(.2, .8, .3, 1) backwards; }
-.entry-mark-dot {
+/* The mark doubles as the sign-in control (see SignInMark in page.tsx) —
+   brackets pop in with the first dot on load, same as the static mark
+   elsewhere, then settle into a slow breathing pulse. On hover/focus the
+   middle spacer widens, pushing the brackets apart, while the dots fade out
+   and "open the floor" fades in to fill the gap they left. */
+.entry-signin { position: relative; display: flex; align-items: center; color: var(--entry-ink); text-decoration: none; }
+
+.entry-signin-bracket {
+  display: block;
+  flex: none;
+  height: 44px;
+  width: auto;
   transform-box: fill-box;
   transform-origin: center;
+  animation: entry-dot-in .5s cubic-bezier(.2, .8, .3, 1) backwards;
+}
+
+.entry-signin-gap {
+  position: relative;
+  display: block;
+  height: 44px;
+  width: 40px;
+  transition: width .4s cubic-bezier(.2, .8, .2, 1);
+}
+.entry-signin:hover .entry-signin-gap,
+.entry-signin:focus-visible .entry-signin-gap {
+  width: 176px;
+}
+
+.entry-signin-dots {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  opacity: 1;
+  transition: opacity .2s ease;
+}
+.entry-signin:hover .entry-signin-dots,
+.entry-signin:focus-visible .entry-signin-dots {
+  opacity: 0;
+}
+.entry-signin-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
   animation:
     entry-dot-in .5s cubic-bezier(.2, .8, .3, 1) backwards,
     entry-dot-pulse 2.8s ease-in-out .5s infinite;
 }
-.entry-mark-dot:nth-of-type(2) { animation-delay: .08s, .9s; }
-.entry-mark-dot:nth-of-type(3) { animation-delay: .16s, 1.3s; }
+.entry-signin-dot:nth-of-type(2) { animation-delay: .08s, .9s; }
+.entry-signin-dot:nth-of-type(3) { animation-delay: .16s, 1.3s; }
+
+.entry-signin-text {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
+  color: var(--entry-ink);
+  font-family: var(--font-brand-sans);
+  font-weight: 600;
+  font-size: 15px;
+  opacity: 0;
+  transition: opacity .25s ease .08s;
+}
+.entry-signin:hover .entry-signin-text,
+.entry-signin:focus-visible .entry-signin-text {
+  opacity: 1;
+}
+
 @keyframes entry-dot-in {
   from { opacity: 0; transform: scale(.2); }
   to { opacity: 1; transform: scale(1); }
@@ -118,36 +194,22 @@
   animation: entry-rise-in .5s cubic-bezier(.16, .8, .24, 1) .22s backwards;
 }
 
-/* Shape/interaction (radius, hover lift) stays the app's standard .button —
-   only the color swaps to the marketing site's CTA blue, in place of the
-   app's own terracotta --accent. */
-.entry-card .button[data-variant="primary"] {
-  margin-top: 10px;
-  width: 100%;
-  border-color: var(--entry-accent);
-  background: var(--entry-accent);
-  color: #fff;
-  font-family: var(--font-brand-sans);
-  font-weight: 600;
-  font-size: 14px;
-  animation: entry-rise-in .5s cubic-bezier(.16, .8, .24, 1) .34s backwards;
-}
-.entry-card .button[data-variant="primary"]:hover { background: var(--entry-accent-hover); border-color: var(--entry-accent-hover); }
-
-.entry-hint { color: var(--entry-ink-muted); font-family: var(--font-brand-sans); font-size: 13px; line-height: 1.5; animation: entry-rise-in .5s cubic-bezier(.16, .8, .24, 1) .4s backwards; }
 .entry-note { padding: var(--space-3) var(--space-4); border-left: 2px solid var(--entry-accent); background: rgba(27, 69, 184, .14); color: var(--entry-ink-muted); font-family: var(--font-brand-sans); font-size: 13px; text-align: left; animation: entry-rise-in .5s cubic-bezier(.16, .8, .24, 1) .28s backwards; }
 
 @media (prefers-reduced-motion: reduce) {
-  .entry-mark-dot,
-  .entry-mark-bracket,
+  .entry-signin-dot,
+  .entry-signin-bracket,
   .entry-backdrop,
   .entry-wordmark,
-  .entry-card .button[data-variant="primary"],
-  .entry-hint,
   .entry-note {
     animation: none;
   }
-  .entry-texture { transition: none; }
+  .entry-signin-gap,
+  .entry-signin-dots,
+  .entry-signin-text,
+  .entry-wave {
+    transition: none;
+  }
 }
 
 .app-header {
