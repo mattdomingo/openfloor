@@ -1,5 +1,6 @@
 import { accessSignInPath, getAccessUser, safeAppReturnPath } from "./access-auth";
 import { BASE_PATH } from "@/components/basePath";
+import { EntryReplay } from "./entry-replay";
 import { ParallaxLayer } from "./entry-parallax";
 import { WaveField } from "./entry-wave";
 
@@ -14,18 +15,18 @@ export const dynamic = "force-dynamic";
 function SignInMark({ href, label }: { href: string; label: string }) {
   return (
     <a className="entry-signin" href={href} aria-label={label}>
-      <svg className="entry-signin-bracket" viewBox="0 0 3 8" aria-hidden="true">
+      <svg className="entry-signin-bracket entry-anim" viewBox="0 0 3 8" aria-hidden="true">
         <path fill="currentColor" d="M0 0h1v7h2v1H0Z" />
       </svg>
       <span className="entry-signin-gap">
         <span className="entry-signin-dots" aria-hidden="true">
-          <span className="entry-signin-dot" style={{ background: "#2F6DF0" }} />
-          <span className="entry-signin-dot" style={{ background: "#12A594" }} />
-          <span className="entry-signin-dot" style={{ background: "#E0457F" }} />
+          <span className="entry-signin-dot entry-anim" style={{ background: "#2F6DF0" }} />
+          <span className="entry-signin-dot entry-anim" style={{ background: "#12A594" }} />
+          <span className="entry-signin-dot entry-anim" style={{ background: "#E0457F" }} />
         </span>
         <span className="entry-signin-text" aria-hidden="true">open the floor</span>
       </span>
-      <svg className="entry-signin-bracket" viewBox="0 0 3 8" aria-hidden="true">
+      <svg className="entry-signin-bracket entry-anim" viewBox="0 0 3 8" aria-hidden="true">
         <path fill="currentColor" d="M3 0h-1v7h-2v1h3Z" />
       </svg>
     </a>
@@ -40,7 +41,8 @@ export default async function LandingPage({ searchParams }: { searchParams: Prom
   const primaryHref = user ? `${BASE_PATH}/home` : returnTo ?? accessSignInPath("/home");
   return (
     <main className="entry-shell">
-      <div className="entry-backdrop">
+      <EntryReplay />
+      <div className="entry-backdrop entry-anim">
         <div className="entry-glow" aria-hidden="true" />
         <ParallaxLayer>
           <WaveField />
@@ -50,7 +52,7 @@ export default async function LandingPage({ searchParams }: { searchParams: Prom
       <div className="entry-card">
         <SignInMark href={primaryHref} label={user ? "Open your sessions" : "Sign in"} />
         {authRequired && (
-          <p className="entry-note" role="status">
+          <p className="entry-note entry-anim" role="status">
             Sign in to continue. You will be sent back to what you were opening.
           </p>
         )}
