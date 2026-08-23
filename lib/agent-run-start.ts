@@ -2,6 +2,7 @@ import {
   AgentRunConflictError,
   AgentRunNotReadyError,
   beginRunIntegration,
+  bumpAgentRunRevision,
   createAgentRun,
   finishAgentRun,
   finishRunCheck,
@@ -28,13 +29,35 @@ import {
   reserveRepositoryCandidate,
 } from "@/db/repositories";
 import { getMembershipRole, getOwnerHourQuota, getSessionForMember, PLAN_LIMITS } from "@/db/sessions";
+import { renderRunBrief } from "@/db/session-context";
 import { createDraftPullRequest, createRepositoryBranch, getInstallationRepository, getRepositoryRefSha, GitHubApiError, mergeRepositoryBranch, setTestRepositoryMergeConflict } from "@/lib/github";
 import { openFloorBranchName } from "@/lib/repository-refs";
-import { notifyRunActivity } from "@/lib/presence-server";
+import { notifyFloorChanged, notifyRunActivity } from "@/lib/presence-server";
 import { env } from "cloudflare:workers";
 
 type WorkflowBinding = { create(options: { id: string; params: { runId: string } }): Promise<unknown> };
 type R2BucketLike = { put(key: string, value: string, options?: unknown): Promise<unknown> };
+type TestRunFile = {
+  path: string;
+  changeKind?: "add" | "update" | "delete";
+  additions: number;
+  deletions: number;
+  summary: string;
+  diff: string;
+};
+type TestAgentRunData = {
+  holdPrompts?: string[];
+  failPrompts?: string[];
+  conflictFirstAttemptPrompts?: string[];
+  changedPath?: string;
+  pathByPrompt?: Record<string, string>;
+  diff?: string;
+  filesByPrompt?: Record<string, TestRunFile[]>;
+  activityEvents?: Array<{ kind: string; detail: string }>;
+  activityEventsByPrompt?: Record<string, Array<{ kind: string; detail: string }>>;
+  log?: string;
+  stageDelayMs?: number;
+};
 
 export type StartRunResult =
   | { ok: true; runId: string }
@@ -142,30 +165,50 @@ async function ensureNextCandidateCycle(sessionId: string, userId: string): Prom
 }
 
 async function runTestAgent(runId: string, encoded: string, bucket: R2BucketLike): Promise<"hold" | "failed" | "ready"> {
-  const data = JSON.parse(encoded) as { holdPrompts?: string[]; failPrompts?: string[]; changedPath?: string; pathByPrompt?: Record<string, string>; diff?: string; activityEvents?: Array<{ kind: string; detail: string }> };
+  const data = JSON.parse(encoded) as TestAgentRunData;
   const context = await getRunExecutionContext(runId);
   if (!context) throw new Error("Test run context is missing");
+  await holdTestRunStage(runId, data);
+  const brief = await renderRunBrief(runId);
+  if (!brief) throw new Error("Test run session brief is missing");
+  const promptKey = `runs/${runId}/prompt.txt`;
+  await bucket.put(promptKey, brief.text, { httpMetadata: { contentType: "text/plain; charset=utf-8" } });
+  await recordRunArtifact(runId, "prompt", promptKey, "text/plain; charset=utf-8", brief.text.length);
   await markRunRunning(runId, `test-${runId}`);
+  await holdTestRunStage(runId, data);
   if (data.holdPrompts?.some((value) => context.prompts.some((prompt) => prompt.text.includes(value)))) return "hold";
   const shouldFail = data.failPrompts?.some((value) => context.prompts.some((prompt) => prompt.text.includes(value))) ?? false;
   const matchedPath = Object.entries(data.pathByPrompt ?? {}).find(([prompt]) => context.prompts.some((item) => item.text.includes(prompt)))?.[1];
   const path = matchedPath ?? data.changedPath ?? "src/agent-change.ts";
-  const activitySource = data.activityEvents ?? [
+  const matchedFiles = Object.entries(data.filesByPrompt ?? {}).find(([prompt]) => context.prompts.some((item) => item.text.includes(prompt)))?.[1];
+  const fallbackDiff = data.diff ?? `diff --git a/${path} b/${path}\nnew file mode 100644\n--- /dev/null\n+++ b/${path}\n@@ -0,0 +1 @@\n+export const implemented = true;\n`;
+  const files = matchedFiles?.length ? matchedFiles : [{ path, changeKind: "add" as const, additions: 1, deletions: 0, summary: "Agent-created test change", diff: fallbackDiff }];
+  const matchedActivity = Object.entries(data.activityEventsByPrompt ?? {}).find(([prompt]) => context.prompts.some((item) => item.text.includes(prompt)))?.[1];
+  const activitySource = matchedActivity ?? data.activityEvents ?? [
     { kind: "reasoning", detail: "Reviewing the requested change before editing." },
     { kind: "command", detail: "$ git status --short" },
-    { kind: "file_edit", detail: `edited ${path}` },
-    { kind: "agent_message", detail: "Implemented the requested focused change." },
+    ...files.map((file) => ({ kind: "file_edit", detail: `edited ${file.path}` })),
+    { kind: "agent_message", detail: `Implemented the requested change across ${files.length} files.` },
   ];
   const inserted = await insertRunActivityEvents(runId, activitySource.map((event, index) => ({
     sequence: RUNNER_SEQUENCE_BASE + index + 1, kind: event.kind, detail: event.detail,
   })));
   if (inserted.length > 0) await notifyRunActivity(context.sessionId, { runId, agentId: context.agentId, events: inserted });
-  const diff = data.diff ?? `diff --git a/${path} b/${path}\nnew file mode 100644\n--- /dev/null\n+++ b/${path}\n@@ -0,0 +1 @@\n+export const implemented = true;\n`;
   const codexLogKey = `runs/${runId}/codex.log`;
-  await bucket.put(codexLogKey, "Codex test adapter completed a real deterministic run contract.\n");
-  await recordRunArtifact(runId, "codex_log", codexLogKey, "text/plain", 63);
-  await markRunChecking(runId, `thread-${runId}`, "Implemented the requested focused change.");
-  await replaceRunFiles(runId, [{ path, changeKind: "add", additions: 1, deletions: 0, summary: "Agent-created test change", diffPreview: diff }]);
+  const codexLog = data.log ?? "Codex test adapter completed a real deterministic run contract.\n";
+  await bucket.put(codexLogKey, codexLog);
+  await recordRunArtifact(runId, "codex_log", codexLogKey, "text/plain", codexLog.length);
+  await markRunChecking(runId, `thread-${runId}`, `Implemented the requested change across ${files.length} files.`);
+  await replaceRunFiles(runId, files.map((file) => ({
+    path: file.path,
+    changeKind: file.changeKind ?? "add",
+    additions: file.additions,
+    deletions: file.deletions,
+    summary: file.summary,
+    diffPreview: file.diff,
+  })));
+  await holdTestRunStage(runId, data);
+  const diff = files.map((file) => file.diff).join("\n");
   const diffKey = `runs/${runId}/changes.diff`;
   await bucket.put(diffKey, diff);
   await recordRunArtifact(runId, "diff", diffKey, "text/x-diff", diff.length);
@@ -178,28 +221,32 @@ async function runTestAgent(runId: string, encoded: string, bucket: R2BucketLike
     if (shouldFail) break;
   }
   const readySummary = context.checks.length > 0
-    ? "Codex changed 1 file; all required checks passed. Changes remain local to openfloor."
-    : "Codex changed 1 file; no check commands were configured. Changes remain local to openfloor.";
+    ? `Codex changed ${files.length} files; all required checks passed. Changes remain local to openfloor.`
+    : `Codex changed ${files.length} files; no check commands were configured. Changes remain local to openfloor.`;
   await finishAgentRun(runId, shouldFail ? "failed" : "ready", shouldFail ? "A required check failed." : readySummary);
+  await holdTestRunStage(runId, data);
   return shouldFail ? "failed" : "ready";
 }
 
 async function publishTestRun(runId: string, encoded: string) {
+  const data = JSON.parse(encoded) as TestAgentRunData;
   const context = await getRunExecutionContext(runId);
   if (!context?.runBranch) throw new Error("Test run branch is missing");
   const bytes = new TextEncoder().encode(`${runId}:${context.runBranch}`);
   const digest = new Uint8Array(await crypto.subtle.digest("SHA-1", bytes));
   const commitSha = Array.from(digest, (value) => value.toString(16).padStart(2, "0")).join("");
   await markRunPublishing(runId, { bundleKey: `runs/${runId}/result.bundle`, bundleSizeBytes: bytes.length, localCommitSha: commitSha });
+  await holdTestRunStage(runId, data);
   const config = getGitHubAppConfig();
   const repository = await getInstallationRepository(config, context.installationId, context.repositoryId);
   const remoteSha = await createRepositoryBranch(config, context.installationId, repository, context.runBranch, commitSha);
   await finishRunPublished(runId, commitSha, remoteSha);
-  const data = JSON.parse(encoded) as { conflictFirstAttemptPrompts?: string[] };
+  await holdTestRunStage(runId, data);
   if (context.attempt === 1 && data.conflictFirstAttemptPrompts?.some((value) => context.prompts.some((prompt) => prompt.text.includes(value)))) {
     setTestRepositoryMergeConflict(repository.id, commitSha);
   }
   const integration = await beginRunIntegration(runId);
+  await holdTestRunStage(runId, data);
   try {
     const merged = await mergeRepositoryBranch(config, integration.installationId, repository, integration.candidateBranch, commitSha, `Integrate openfloor run ${runId.slice(0, 8)}`);
     const pullRequest = integration.pullRequestNumber ? null : await createDraftPullRequest(config, integration.installationId, repository, {
@@ -207,6 +254,7 @@ async function publishTestRun(runId: string, encoded: string) {
       head: integration.candidateBranch, base: integration.baseBranch,
     });
     await finishRunIntegrated(runId, merged.sha, pullRequest);
+    await holdTestRunStage(runId, data);
   } catch (error) {
     if (error instanceof GitHubApiError && error.status === 409) {
       await markRunIntegrationConflicted(runId, error.message);
@@ -214,4 +262,12 @@ async function publishTestRun(runId: string, encoded: string) {
     }
     throw error;
   }
+}
+
+async function holdTestRunStage(runId: string, data: TestAgentRunData): Promise<void> {
+  const delayMs = Math.max(0, Math.min(Number(data.stageDelayMs ?? 0), 5_000));
+  if (delayMs === 0) return;
+  const change = await bumpAgentRunRevision(runId);
+  if (change) await notifyFloorChanged(change.sessionId, change.revision, ["queue", "runs"]);
+  await new Promise((resolve) => setTimeout(resolve, delayMs));
 }

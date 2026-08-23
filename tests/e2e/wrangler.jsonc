@@ -8,8 +8,14 @@
   "rules": [{ "type": "ESModule", "globs": ["**/*.js", "**/*.mjs"] }],
   "assets": { "directory": "../../dist/client", "not_found_handling": "none", "binding": "ASSETS" },
   "images": { "binding": "IMAGES" },
-  "durable_objects": { "bindings": [{ "name": "SESSION_PRESENCE", "class_name": "SessionPresence" }] },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["SessionPresence"] }],
+  "durable_objects": { "bindings": [
+    { "name": "SESSION_PRESENCE", "class_name": "SessionPresence" },
+    { "name": "SESSION_ROUTER", "class_name": "SessionRouter" }
+  ] },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["SessionPresence"] },
+    { "tag": "v2", "new_sqlite_classes": ["SessionRouter"] }
+  ],
   "r2_buckets": [{ "binding": "PREFLIGHT_LOGS", "bucket_name": "openfloor-e2e-artifacts" }],
   "d1_databases": [{
     "binding": "DB",

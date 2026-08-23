@@ -108,6 +108,8 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await member.getByRole("link", { name: "Enter agent floor" }).click();
   await expect(owner).toHaveURL(/\/app\/session\/[0-9a-f-]+\/floor$/);
   await expect(owner.getByRole("heading", { name: "Agent floor" })).toBeVisible();
+  await expect(owner.getByRole("region", { name: "Team" }).locator(".avatar").filter({ hasText: "OE" })).toBeVisible();
+  await expect(owner.getByRole("region", { name: "Team" }).locator(".avatar").filter({ hasText: "ME" })).toBeVisible();
   await expect(owner.getByRole("navigation", { name: "Session location" }).getByRole("link", { name: "Release coordination" })).toBeVisible();
   await expect(owner.getByText("Member E.").first()).toBeVisible();
   await expect(owner.getByText("No agents yet")).toBeVisible();
@@ -146,8 +148,8 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await owner.getByLabel("Task").fill("Map the persistent agent API");
   await owner.getByRole("dialog").getByRole("button", { name: "Create agent" }).click();
   await expect(owner.getByRole("dialog")).toBeHidden();
-  await expect(agentFloor.getByText("Lumen", { exact: true }).first()).toBeVisible();
-  await expect(member.getByText("Lumen", { exact: true }).first()).toBeVisible();
+  await expect(agentFloor.getByRole("tab", { name: "Lumen" })).toBeVisible();
+  await expect(member.getByRole("region", { name: "Agent floor" }).getByRole("tab", { name: "Lumen" })).toBeVisible();
   await expect(agentFloor.getByText(/server\/|app\/|tests\//)).toHaveCount(0);
 
   await owner.getByLabel("Prompt to add to the queue").fill("Document the next backend contract");
@@ -207,7 +209,11 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await owner.reload();
   await expect(owner.getByText("integrated", { exact: true }).first()).toBeVisible();
   await owner.getByRole("button", { name: "Review" }).click();
+  await expect(owner.getByRole("heading", { name: "Review", exact: true })).toBeVisible();
   await expect(owner.getByRole("heading", { name: /openfloor\// })).toBeVisible();
+  const commitFact = owner.locator(".review-hero-facts > div", { hasText: "Commit" });
+  await expect(commitFact.locator("strong")).toHaveText(/^[0-9a-f]{8}$/);
+  await expect(commitFact.locator("strong")).toHaveAttribute("title", /^[0-9a-f]{40}$/);
   await expect(owner.getByText("agent-change.ts", { exact: true })).toBeVisible();
   await expect(owner.getByText("export const implemented = true;", { exact: true })).toBeVisible();
   await expect(owner.getByText("npm test", { exact: true })).toBeVisible();
@@ -282,7 +288,7 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await expect(owner.getByText(/because the candidate branch was merged.*read-only/i)).toBeVisible();
 
   await member.reload();
-  await expect(member.getByText("Lumen", { exact: true }).first()).toBeVisible();
+  await expect(member.getByRole("region", { name: "Agent floor" }).getByRole("tab", { name: "Lumen" })).toBeVisible();
   await expect(member.locator(".queue-item").getByText("Document the next backend contract", { exact: true })).toBeVisible();
 
   await owner.getByRole("link", { name: "Release coordination" }).click();

@@ -103,7 +103,6 @@ export function Workspace({ user, session, members, floorData, activity, typingD
     const agentId = mentioned?.id ?? queueTarget;
     const floor = await floorData.addQueueItem(prompt, agentId);
     if (!floor) return false;
-    setQueueScope("mine");
     setCollapsedRails((current) => ({ ...current, queue: false }));
     setNotice(agentId ? `Prompt queued for ${floor.agents.find((agent) => agent.id === agentId)?.name ?? "agent"}` : "Prompt queued without an agent");
     return true;

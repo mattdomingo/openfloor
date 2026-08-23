@@ -27,6 +27,7 @@
 .brand {
   display: flex;
   align-items: center;
+  flex: none;
   gap: var(--space-2);
   font-size: var(--text-sm);
   font-weight: 700;
@@ -220,11 +221,9 @@
   white-space: nowrap;
 }
 
-/* The repo + branch the session is working against — same small-meta
-   treatment as .objective-fact, just with two icon+text pairs instead of
-   one. min-width:0 + ellipsis on the repo name lets a long "owner/repo" get
-   clipped before it starts squeezing the objective next to it; the branch
-   segment (usually short) stays uncut. */
+/* The repo + abbreviated branch the session is working against — same
+   small-meta treatment as .objective-fact, with full values retained in
+   titles. Both segments remain bounded so objective space stays intact. */
 .repo-branch {
   display: flex;
   align-items: center;
@@ -244,7 +243,11 @@
 
 .repo-branch code {
   flex: none;
+  max-width: 28ch;
+  overflow: hidden;
   color: var(--text-primary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .objective-nudge {

@@ -11,7 +11,8 @@ export function initials(name: string) {
   return name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join("").toUpperCase() || "?";
 }
 
-export function agentTone(id: string) {
+export function agentTone(id: string, floorIndex?: number) {
+  if (floorIndex !== undefined) return `agent-${floorIndex % 5}`;
   let hash = 0;
   for (const character of id) hash = (hash * 31 + character.charCodeAt(0)) >>> 0;
   return `agent-${hash % 5}`;

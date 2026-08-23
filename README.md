@@ -50,6 +50,13 @@ Run every check with:
 npm test
 ```
 
+## Record the website demo
+
+Generate the matched Agent Floor cuts in Polar and Midnight with
+`npm run demo:record`. The isolated recording workflow never touches
+production or GitHub. See [`docs/website-demo-video.md`](docs/website-demo-video.md)
+for the capture boundary, outputs, and voiceover.
+
 ## Cloudflare Access
 
 Production authentication is provided by one Cloudflare Access self-hosted application. Keep the public landing page and assets outside Access, and add these protected public hostnames to the same application so they share one audience tag:

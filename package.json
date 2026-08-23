@@ -15,6 +15,7 @@
     "test:worker": "vitest run --config vitest.worker.config.ts tests/worker/presence.test.ts tests/worker/run-activity.test.ts tests/worker/credentials.test.ts tests/worker/skills.test.ts tests/worker/mcp-servers.test.ts",
     "test:render": "npm run build && vitest run --config vitest.render.config.ts",
     "test:e2e": "npm run build && playwright test",
+    "demo:record": "npm run build && node scripts/record-website-demo.mjs",
     "typecheck": "tsc --noEmit",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "db:generate": "drizzle-kit generate"

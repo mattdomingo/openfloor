@@ -55,6 +55,7 @@ input:focus-visible, textarea:focus-visible { box-shadow: 0 0 0 3px var(--accent
 .danger-button { color: var(--status-blocked); border-color: color-mix(in srgb, var(--status-blocked) 30%, var(--line-soft)); }
 
 .avatar {
+  position: relative;
   display: grid;
   place-items: center;
   width: 34px;

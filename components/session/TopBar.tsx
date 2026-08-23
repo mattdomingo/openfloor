@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { AccountMenu } from "@/components/product/AccountMenu";
 import { Brand } from "@/components/product/Brand";
@@ -15,6 +14,14 @@ import { Avatar, Icon } from "./primitives";
 import type { WorkspaceScreen } from "./data";
 
 type ObjectiveSaveState = "idle" | "saving" | "saved" | "error";
+
+function abbreviatedBranch(branch: string): string {
+  if (branch.length <= 24) return branch;
+  const leaf = branch.split("/").at(-1) || branch;
+  const scopedLeaf = leaf === branch ? leaf : `…/${leaf}`;
+  if (scopedLeaf.length <= 28) return scopedLeaf;
+  return `${scopedLeaf.slice(0, 18)}…${scopedLeaf.slice(-8)}`;
+}
 
 /* Active-session-time readout. The server value lags real usage by up to one
    flush interval (ponytail: accepted); while this viewer is connected the
@@ -62,7 +69,6 @@ export function TopBar({
   repository: RepositoryConnection | null;
   branch: string | null;
 }) {
-  const router = useRouter();
   const [inviting, setInviting] = useState(false);
   const inviteButtonRef = useRef<HTMLButtonElement>(null);
 
@@ -105,9 +111,6 @@ export function TopBar({
     <header className="topbar">
       {/* Identity: brand + where-you-are navigation. */}
       <Brand />
-      <button type="button" className="icon-button" aria-label="Go back" title="Go back" onClick={() => router.back()}>
-        <Icon name="arrowLeft" />
-      </button>
 
       <span className="topbar-divider" aria-hidden="true" />
 
@@ -127,7 +130,7 @@ export function TopBar({
           {branch && (
             <>
               <Icon name="branch" size={12} />
-              <code>{branch}</code>
+              <code title={branch}>{abbreviatedBranch(branch)}</code>
             </>
           )}
         </div>

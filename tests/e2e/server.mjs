@@ -19,6 +19,7 @@ const githubTestData = JSON.stringify({
   }],
 });
 const wranglerConfig = "tests/e2e/wrangler.jsonc";
+const agentRunTestData = process.env.OPENFLOOR_TEST_AGENT_RUN_DATA ?? "{\"holdPrompts\":[\"Hold for cancellation\"],\"failPrompts\":[\"intentionally failing\"],\"conflictFirstAttemptPrompts\":[\"deliberate integration conflict\"],\"changedPath\":\"src/agent-change.ts\",\"pathByPrompt\":{\"second published\":\"src/second-change.ts\"}}";
 const migration = spawnSync(
   "npx",
   ["wrangler", "d1", "migrations", "apply", "DB", "--local", "--config", wranglerConfig, "--persist-to", statePath],
@@ -56,7 +57,7 @@ const server = spawn("npx", [
   "PREFLIGHT_ENABLED:true",
   "AGENT_RUN_ENABLED:true",
   "OPENFLOOR_TEST_PREFLIGHT_DATA:{\"checks\":[{\"exitCode\":0,\"stdout\":\"preflight check passed\\n\"},{\"exitCode\":0,\"stdout\":\"build check passed\\n\"}],\"failCommands\":[\"false\"]}",
-  "OPENFLOOR_TEST_AGENT_RUN_DATA:{\"holdPrompts\":[\"Hold for cancellation\"],\"failPrompts\":[\"intentionally failing\"],\"conflictFirstAttemptPrompts\":[\"deliberate integration conflict\"],\"changedPath\":\"src/agent-change.ts\",\"pathByPrompt\":{\"second published\":\"src/second-change.ts\"}}",
+  `OPENFLOOR_TEST_AGENT_RUN_DATA:${agentRunTestData}`,
   "--var",
   "OPENFLOOR_TEST_ALLOW_IDENTITY_HEADERS:true",
   "--show-interactive-dev-session=false",

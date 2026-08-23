@@ -11,7 +11,7 @@ import type { RunActivitySource } from "./useRunActivity";
 import { AgentChatHistory } from "./AgentChatHistory";
 import { CreateAgentDialog } from "./CreateAgentDialog";
 
-function AgentRailItem({ agent, selected, onSelect, railRef }: { agent: FloorAgent; selected: boolean; onSelect: () => void; railRef: (id: string, element: HTMLButtonElement | null) => void }) {
+function AgentRailItem({ agent, tone, selected, onSelect, railRef }: { agent: FloorAgent; tone: string; selected: boolean; onSelect: () => void; railRef: (id: string, element: HTMLButtonElement | null) => void }) {
   const tip = useHoverTip();
   return (
     <>
@@ -19,7 +19,7 @@ function AgentRailItem({ agent, selected, onSelect, railRef }: { agent: FloorAge
         type="button"
         ref={(element) => railRef(agent.id, element)}
         className="agent-rail-item"
-        data-tone={agentTone(agent.id)}
+        data-tone={tone}
         data-selected={selected ? "true" : "false"}
         role="tab"
         aria-selected={selected}
@@ -111,8 +111,8 @@ export function AgentFloor({ chrome, sessionId, agents, runs, activity, selected
     <>
       {agents.length > 0 && (
         <div className="agent-header-rail" role="tablist" aria-label="Agents">
-          {agents.map((agent) => (
-            <AgentRailItem key={agent.id} agent={agent} selected={agentLayout === "focus" && selected?.id === agent.id} onSelect={() => focusAgent(agent.id)} railRef={registerRailItem} />
+          {agents.map((agent, index) => (
+            <AgentRailItem key={agent.id} agent={agent} tone={agentTone(agent.id, index)} selected={agentLayout === "focus" && selected?.id === agent.id} onSelect={() => focusAgent(agent.id)} railRef={registerRailItem} />
           ))}
         </div>
       )}
@@ -126,9 +126,9 @@ export function AgentFloor({ chrome, sessionId, agents, runs, activity, selected
       {agents.length === 0 ? (
         <div className="floor-empty"><strong>No agents yet</strong><p>Create an agent when the session has work to assign.</p><button type="button" className="button" data-variant="primary" onClick={() => setCreating(true)}>Create agent</button></div>
       ) : agentLayout === "all" ? (
-        <div className="agent-grid">{agents.map((agent) => { const latestRun = runs.find((run) => run.agentId === agent.id) ?? null; return <AgentCard key={agent.id} agent={agent} latestRun={latestRun} activityEvents={latestRun ? activity.eventsFor(latestRun.id) : []} selected={selected?.id === agent.id} onFocus={() => focusAgent(agent.id)} onHistory={() => setHistoryAgentId(agent.id)} />; })}</div>
+        <div className="agent-grid">{agents.map((agent, index) => { const latestRun = runs.find((run) => run.agentId === agent.id) ?? null; return <AgentCard key={agent.id} agent={agent} tone={agentTone(agent.id, index)} latestRun={latestRun} activityEvents={latestRun ? activity.eventsFor(latestRun.id) : []} selected={selected?.id === agent.id} onFocus={() => focusAgent(agent.id)} onHistory={() => setHistoryAgentId(agent.id)} />; })}</div>
       ) : selected ? (
-        <AgentSpotlight agent={selected} sessionId={sessionId} latestRun={runs.find((run) => run.agentId === selected.id) ?? null} activity={activity} onHistory={() => setHistoryAgentId(selected.id)} onUpdateTask={onUpdateTask} />
+        <AgentSpotlight agent={selected} tone={agentTone(selected.id, agents.findIndex((agent) => agent.id === selected.id))} sessionId={sessionId} latestRun={runs.find((run) => run.agentId === selected.id) ?? null} activity={activity} onHistory={() => setHistoryAgentId(selected.id)} onUpdateTask={onUpdateTask} />
       ) : null}
     </Panel>
     {creating && <CreateAgentDialog participants={participants} currentUserId={currentUserId} claudeRunEnabled={claudeRunEnabled} onClose={() => { setCreating(false); createButtonRef.current?.focus(); }} onCreate={onCreateAgent} />}

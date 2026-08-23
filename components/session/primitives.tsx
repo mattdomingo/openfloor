@@ -229,6 +229,7 @@ export function Avatar({
   previewSrc?: string;
 }) {
   const [imageFailed, setImageFailed] = useState(false);
+  const [imageLoaded, setImageLoaded] = useState(false);
   const src = previewSrc ?? `${BASE_PATH}/api/account/avatar/${userId}${version != null ? `?v=${version}` : ""}`;
   // A version bump (fresh upload/removal) deserves a fresh attempt even if
   // an earlier version 404'd — without this, removing a picture and
@@ -240,14 +241,13 @@ export function Avatar({
   if (trackedSrc !== src) {
     setTrackedSrc(src);
     setImageFailed(false);
+    setImageLoaded(false);
   }
+  const hasImage = Boolean(previewSrc || userId) && !imageFailed;
   return (
     <span className="avatar" data-tone={tone} data-online={online ? "true" : undefined} data-typing={typing ? "true" : undefined} aria-hidden="true">
-      {previewSrc || (userId && !imageFailed) ? (
-        <img src={src} alt="" className="onboarding-avatar-preview" onError={() => setImageFailed(true)} />
-      ) : (
-        initials
-      )}
+      {initials}
+      {hasImage && <img src={src} alt="" className="onboarding-avatar-preview" data-loaded={imageLoaded ? "true" : undefined} onLoad={() => setImageLoaded(true)} onError={() => setImageFailed(true)} />}
     </span>
   );
 }

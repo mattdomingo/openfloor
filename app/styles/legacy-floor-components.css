@@ -864,11 +864,12 @@
   gap: var(--space-2);
 }
 
-/* Fixed 3-column grid: tile size tracks the panel's width only, never the
-   agent count — a 4th+ agent starts a new row instead of shrinking anyone. */
+/* Let the panel's actual width choose the column count. The Team and Queue
+   rails can leave the floor narrower than a production-sized center panel;
+   cards wrap before their identity, status, or timestamp has to compress. */
 .agent-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr));
   gap: var(--space-3);
   padding: var(--space-4);
 }
@@ -925,6 +926,7 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
+  height: 156px;
   min-width: 0;
   padding: var(--space-3);
   border: 1px solid var(--line-strong);
@@ -1089,6 +1091,7 @@
   display: flex;
   align-items: center;
   gap: var(--space-2);
+  min-width: 0;
 }
 
 /* Per-agent-tinted chat history button, shared by activity cards, the
@@ -1110,15 +1113,21 @@
 
 .agent-identity strong {
   display: block;
+  overflow: hidden;
   font-size: var(--text-md);
   font-weight: 650;
   line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .agent-identity span {
   display: block;
+  overflow: hidden;
   color: var(--text-tertiary);
   font-size: var(--text-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* The keyboard handle on a codebase-mode card: reads as the plain agent name,
@@ -1263,6 +1272,20 @@
   border-top: 1px solid var(--line-soft);
   color: var(--text-tertiary);
   font-size: var(--text-xs);
+}
+
+.agent-foot > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-foot > span:last-child,
+.agent-head-trailing,
+.agent-state {
+  flex: none;
+  white-space: nowrap;
 }
 
 /* Run activity feed ---------------------------------------------------- */
@@ -3533,7 +3556,22 @@
   text-align: right;
 }
 
-.review-hero-copy h2 {
+.review-hero-copy {
+  display: flex;
+  flex-direction: column;
+  align-self: stretch;
+  min-width: 0;
+}
+
+.review-title {
+  font: 400 19px var(--font-serif);
+}
+
+.review-branch-summary {
+  margin-top: auto;
+}
+
+.review-branch-summary h3 {
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
@@ -3543,7 +3581,7 @@
   font-weight: 650;
 }
 
-.review-hero-copy p {
+.review-branch-summary p {
   margin-top: var(--space-2);
   max-width: 52ch;
   color: var(--text-secondary);

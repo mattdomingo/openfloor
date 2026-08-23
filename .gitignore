@@ -44,6 +44,7 @@ tsconfig.tsbuildinfo
 /dist/
 /.wrangler/
 /outputs/
+/artifacts/demo/
 /work/
 
 .playwright-mcp/

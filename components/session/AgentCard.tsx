@@ -5,7 +5,6 @@ import type { AgentRun, FloorAgent, RunActivityEvent } from "@/lib/floor-types";
 import { BASE_PATH } from "@/components/basePath";
 import { LocalDateTime } from "@/components/LocalDateTime";
 import { Icon } from "./primitives";
-import { agentTone } from "./data";
 import type { RunActivitySource } from "./useRunActivity";
 
 const ACTIVE_RUN_STATUSES = new Set(["provisioning", "running", "checking", "publishing", "integrating", "cancel_requested"]);
@@ -24,10 +23,10 @@ function glyphFor(kind: string): string {
   return KIND_GLYPHS[kind] ?? "•";
 }
 
-export function AgentCard({ agent, latestRun, activityEvents, selected, onFocus, onHistory }: { agent: FloorAgent; latestRun: AgentRun | null; activityEvents: RunActivityEvent[]; selected: boolean; onFocus: () => void; onHistory: () => void }) {
+export function AgentCard({ agent, tone, latestRun, activityEvents, selected, onFocus, onHistory }: { agent: FloorAgent; tone: string; latestRun: AgentRun | null; activityEvents: RunActivityEvent[]; selected: boolean; onFocus: () => void; onHistory: () => void }) {
   const latestEvent = latestRun && ACTIVE_RUN_STATUSES.has(latestRun.status) ? activityEvents[activityEvents.length - 1] ?? null : null;
   return (
-    <article className="agent-card" data-selected={selected ? "true" : "false"} data-status={latestRun?.status ?? "idle"} data-tone={agentTone(agent.id)} role="button" tabIndex={0} onClick={onFocus} onKeyDown={(event) => {
+    <article className="agent-card" data-selected={selected ? "true" : "false"} data-status={latestRun?.status ?? "idle"} data-tone={tone} role="button" tabIndex={0} onClick={onFocus} onKeyDown={(event) => {
       if (event.target === event.currentTarget && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); onFocus(); }
     }}>
       <div className="agent-head">
@@ -47,9 +46,9 @@ export function AgentCard({ agent, latestRun, activityEvents, selected, onFocus,
   );
 }
 
-export function AgentSpotlight({ agent, sessionId, latestRun, activity, onHistory, onUpdateTask }: { agent: FloorAgent; sessionId: string; latestRun: AgentRun | null; activity: RunActivitySource; onHistory: () => void; onUpdateTask: (agentId: string, task: string) => Promise<boolean> }) {
+export function AgentSpotlight({ agent, tone, sessionId, latestRun, activity, onHistory, onUpdateTask }: { agent: FloorAgent; tone: string; sessionId: string; latestRun: AgentRun | null; activity: RunActivitySource; onHistory: () => void; onUpdateTask: (agentId: string, task: string) => Promise<boolean> }) {
   return (
-    <article className="spotlight" data-status={latestRun?.status ?? "idle"} data-tone={agentTone(agent.id)}>
+    <article className="spotlight" data-status={latestRun?.status ?? "idle"} data-tone={tone}>
       <div className="spotlight-head">
         <span className="agent-glyph" data-size="lg" aria-hidden="true">{agent.name.slice(0, 1)}</span>
         <div className="agent-identity"><h3>{agent.name}</h3><span>{agent.role} · {agent.provider === "anthropic" ? "Claude" : "Codex"} · owned by {agent.ownerName}</span></div>
