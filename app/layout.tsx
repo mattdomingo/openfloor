@@ -1,11 +1,14 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Archivo, Geist, Geist_Mono } from "next/font/google";
 import { headers } from "next/headers";
 import { BASE_PATH } from "@/components/basePath";
 import "./globals.css";
 
 const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
 const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
+// opnflr.com's own logotype face, loaded only for the pre-auth entry screen
+// (app/page.tsx) — the rest of the app keeps Geist.
+const brandSans = Archivo({ variable: "--font-brand-sans", subsets: ["latin"] });
 
 export async function generateMetadata(): Promise<Metadata> {
   const requestHeaders = await headers();
@@ -48,7 +51,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
   return (
     <html lang="en">
       <head><script dangerouslySetInnerHTML={{ __html: themeScript }} /></head>
-      <body className={`${geistSans.variable} ${geistMono.variable}`}>{children}</body>
+      <body className={`${geistSans.variable} ${geistMono.variable} ${brandSans.variable}`}>{children}</body>
     </html>
   );
 }
