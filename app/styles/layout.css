@@ -97,7 +97,7 @@
    elsewhere, then settle into a slow breathing pulse. On hover/focus the
    middle spacer widens, pushing the brackets apart, while the dots fade out
    and "open the floor" fades in to fill the gap they left. */
-.entry-signin { position: relative; display: flex; align-items: center; color: var(--entry-ink); text-decoration: none; }
+.entry-signin { display: flex; align-items: center; color: var(--entry-ink); text-decoration: none; }
 
 .entry-signin-bracket {
   display: block;
@@ -106,7 +106,7 @@
   width: auto;
   transform-box: fill-box;
   transform-origin: center;
-  animation: entry-dot-in .5s cubic-bezier(.2, .8, .3, 1) backwards;
+  animation: entry-dot-in .9s cubic-bezier(.34, 1.7, .5, 1) backwards;
 }
 
 .entry-signin-gap {
@@ -135,17 +135,14 @@
 .entry-signin:focus-visible .entry-signin-dots {
   opacity: 0;
 }
-.entry-signin-dot {
-  flex: none;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  animation:
-    entry-dot-in .5s cubic-bezier(.2, .8, .3, 1) backwards,
-    entry-dot-pulse 2.8s ease-in-out .5s infinite;
-}
-.entry-signin-dot:nth-of-type(2) { animation-delay: .08s, .9s; }
-.entry-signin-dot:nth-of-type(3) { animation-delay: .16s, 1.3s; }
+/* Each dot pulses on its own mismatched duration and start point rather than
+   a shared period with a fixed left-to-right delay — three equal loops in
+   sequence reads as a loading spinner; these drift in and out of sync with
+   each other instead. */
+.entry-signin-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; }
+.entry-signin-dot:nth-of-type(1) { animation: entry-dot-in .9s cubic-bezier(.34, 1.7, .5, 1) .1s backwards, entry-dot-pulse 3.4s ease-in-out .6s infinite; }
+.entry-signin-dot:nth-of-type(2) { animation: entry-dot-in .9s cubic-bezier(.34, 1.7, .5, 1) .3s backwards, entry-dot-pulse 2.6s ease-in-out 1.7s infinite; }
+.entry-signin-dot:nth-of-type(3) { animation: entry-dot-in .9s cubic-bezier(.34, 1.7, .5, 1) .5s backwards, entry-dot-pulse 3.9s ease-in-out .2s infinite; }
 
 .entry-signin-text {
   position: absolute;
@@ -178,29 +175,16 @@
 /* Rest of the card cascades in underneath the mark, each element a beat
    behind the last. */
 @keyframes entry-rise-in {
-  from { opacity: 0; transform: translateY(10px); }
+  from { opacity: 0; transform: translateY(18px); }
   to { opacity: 1; transform: translateY(0); }
 }
 
-/* Lowercase Archivo-bold — the same logotype treatment opnflr.com uses; the
-   real brand never sets "openfloor" itself in the Anton display face, only
-   headline copy. */
-.entry-wordmark {
-  margin-top: 2px;
-  color: var(--entry-ink);
-  font-family: var(--font-brand-sans);
-  font-size: 26px;
-  font-weight: 700;
-  animation: entry-rise-in .5s cubic-bezier(.16, .8, .24, 1) .22s backwards;
-}
-
-.entry-note { padding: var(--space-3) var(--space-4); border-left: 2px solid var(--entry-accent); background: rgba(27, 69, 184, .14); color: var(--entry-ink-muted); font-family: var(--font-brand-sans); font-size: 13px; text-align: left; animation: entry-rise-in .5s cubic-bezier(.16, .8, .24, 1) .28s backwards; }
+.entry-note { padding: var(--space-3) var(--space-4); border-left: 2px solid var(--entry-accent); background: rgba(27, 69, 184, .14); color: var(--entry-ink-muted); font-family: var(--font-brand-sans); font-size: 13px; text-align: left; animation: entry-rise-in .8s cubic-bezier(.16, .8, .24, 1) .55s backwards; }
 
 @media (prefers-reduced-motion: reduce) {
   .entry-signin-dot,
   .entry-signin-bracket,
   .entry-backdrop,
-  .entry-wordmark,
   .entry-note {
     animation: none;
   }

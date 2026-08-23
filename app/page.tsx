@@ -5,12 +5,12 @@ import { WaveField } from "./entry-wave";
 
 export const dynamic = "force-dynamic";
 
-// The mark IS the sign-in control — no separate button, so the brand mark
-// never duplicates itself on the page. At rest it's the same brackets +
+// The mark IS the sign-in control — the only brand mark and the only text
+// on the page, so nothing duplicates. At rest it's the same brackets +
 // three dots as everywhere else (each bracket its own small SVG, split from
 // the single viewBox="0 0 23 8" mark so the two halves can move
-// independently). On hover/focus they separate and "open the floor" fades
-// in where the dots were.
+// independently). On hover/focus they separate, the dots fade, and
+// "open the floor" fades into the gap they left.
 function SignInMark({ href, label }: { href: string; label: string }) {
   return (
     <a className="entry-signin" href={href} aria-label={label}>
@@ -49,7 +49,6 @@ export default async function LandingPage({ searchParams }: { searchParams: Prom
       </div>
       <div className="entry-card">
         <SignInMark href={primaryHref} label={user ? "Open your sessions" : "Sign in"} />
-        <p className="entry-wordmark">openfloor</p>
         {authRequired && (
           <p className="entry-note" role="status">
             Sign in to continue. You will be sent back to what you were opening.
