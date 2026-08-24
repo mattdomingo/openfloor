@@ -93,7 +93,9 @@ describe("floor input validation", () => {
   it("accepts a known provider and rejects unknown ones", () => {
     expect(parseAgentInput({ name: "A", role: "R", task: "T", ownerUserId: "o", provider: "anthropic" })?.provider).toBe("anthropic");
     expect(parseAgentInput({ name: "A", role: "R", task: "T", ownerUserId: "o", provider: "openai" })?.provider).toBe("openai");
-    expect(parseAgentInput({ name: "A", role: "R", task: "T", ownerUserId: "o", provider: "gemini" })).toBeNull();
+    expect(parseAgentInput({ name: "A", role: "R", task: "T", ownerUserId: "o", provider: "kimi" })?.provider).toBe("kimi");
+    expect(parseAgentInput({ name: "A", role: "R", task: "T", ownerUserId: "o", provider: "gemini" })?.provider).toBe("gemini");
+    expect(parseAgentInput({ name: "A", role: "R", task: "T", ownerUserId: "o", provider: "mistral" })).toBeNull();
     expect(parseAgentInput({ name: "A", role: "R", task: "T", ownerUserId: "o", provider: 7 })).toBeNull();
   });
 

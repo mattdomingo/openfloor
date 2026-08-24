@@ -89,7 +89,13 @@
 		"STRIPE_CHECKOUT_ENABLED": "true",
 		// Claude-runner rollout gate: enabled now that the Agent SDK image,
 		// anthropic gateway, and a resolvable Anthropic credential are live.
-		"CLAUDE_RUN_ENABLED": "true"
+		"CLAUDE_RUN_ENABLED": "true",
+		// Kimi rollout gate: stays false until the kimi gateway route is live
+		// and a Moonshot credential resolves (AGENTS.md flag-flip runbook).
+		"KIMI_RUN_ENABLED": "false",
+		// Gemini rollout gate: stays false until the v3 image (Gemini CLI +
+		// runner), gemini gateway route, and a Google credential are live.
+		"GEMINI_RUN_ENABLED": "false"
 	},
 	"r2_buckets": [
 		{

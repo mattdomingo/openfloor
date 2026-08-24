@@ -1,3 +1,4 @@
+import type { CredentialProvider } from "./provider-credentials";
 import type { RepositoryCandidate, RepositoryConnection, RepositoryPreflight } from "./session-types";
 
 export type FloorDomain = "agents" | "assignments" | "messages" | "queue" | "repository" | "runs" | "review";
@@ -26,7 +27,7 @@ export type FloorAgent = {
   // Which agent provider runs for this agent execute on, and an optional
   // model override (null = the provider's default). Creation currently
   // always writes provider "openai" — selection UI is a later milestone.
-  provider: "anthropic" | "openai";
+  provider: CredentialProvider;
   model: string | null;
   createdAt: number;
   updatedAt: number;
@@ -200,5 +201,5 @@ export type CreateFloorAgentInput = {
   ownerUserId: string;
   // Omitted means "openai" (the historical behavior); the dialog only offers
   // a choice while the Claude rollout gate is on.
-  provider?: "anthropic" | "openai";
+  provider?: CredentialProvider;
 };

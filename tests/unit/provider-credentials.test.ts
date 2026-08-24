@@ -1,11 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  AGENT_PROVIDER_LABELS,
   credentialFingerprint,
   DEFAULT_PROVIDER_MODELS,
   parseCredentialProvider,
   providerLabel,
   resolveRunCredentialSource,
   resolveRunModel,
+  usesClaudeRunner,
 } from "@/lib/provider-credentials";
 import { validateProviderApiKey } from "@/lib/provider-validation";
 
@@ -13,7 +15,10 @@ describe("provider parsing and labels", () => {
   it("accepts only known providers", () => {
     expect(parseCredentialProvider("anthropic")).toBe("anthropic");
     expect(parseCredentialProvider("openai")).toBe("openai");
-    expect(parseCredentialProvider("gemini")).toBeNull();
+    expect(parseCredentialProvider("kimi")).toBe("kimi");
+    expect(parseCredentialProvider("gemini")).toBe("gemini");
+    expect(parseCredentialProvider("mistral")).toBeNull();
+    expect(parseCredentialProvider("grok")).toBeNull();
     expect(parseCredentialProvider("")).toBeNull();
     expect(parseCredentialProvider(undefined)).toBeNull();
   });
@@ -21,6 +26,19 @@ describe("provider parsing and labels", () => {
   it("labels providers for people", () => {
     expect(providerLabel("anthropic")).toBe("Anthropic");
     expect(providerLabel("openai")).toBe("OpenAI");
+    expect(providerLabel("kimi")).toBe("Moonshot");
+    expect(providerLabel("gemini")).toBe("Google");
+  });
+
+  it("names agents per provider and routes kimi through the Claude runner", () => {
+    expect(AGENT_PROVIDER_LABELS.anthropic).toBe("Claude");
+    expect(AGENT_PROVIDER_LABELS.openai).toBe("Codex");
+    expect(AGENT_PROVIDER_LABELS.kimi).toBe("Kimi");
+    expect(AGENT_PROVIDER_LABELS.gemini).toBe("Gemini");
+    expect(usesClaudeRunner("anthropic")).toBe(true);
+    expect(usesClaudeRunner("kimi")).toBe(true);
+    expect(usesClaudeRunner("openai")).toBe(false);
+    expect(usesClaudeRunner("gemini")).toBe(false);
   });
 
   it("fingerprints as the last four characters", () => {
@@ -34,6 +52,10 @@ describe("per-provider run models", () => {
     expect(resolveRunModel("anthropic", null)).toBe("claude-opus-5");
     expect(resolveRunModel("anthropic", "  ")).toBe("claude-opus-5");
     expect(resolveRunModel("anthropic", "claude-sonnet-5")).toBe("claude-sonnet-5");
+    // Spike-verified ids: bare kimi-k3 (the "[1m]" alias 404s at the API) and
+    // gemini-3.5-flash (what the pinned CLI actually sends on the wire).
+    expect(resolveRunModel("kimi", null)).toBe("kimi-k3");
+    expect(resolveRunModel("gemini", null)).toBe("gemini-3.5-flash");
   });
 
   it("keeps the Codex default the historical AGENT_RUN_MODEL value", () => {

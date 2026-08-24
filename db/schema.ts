@@ -201,7 +201,7 @@ export const floorAgents = sqliteTable(
     // Open enum, TS-only, no SQL CHECK (agent_run_artifacts.kind convention);
     // existing rows keep current behavior via the default. `model` null means
     // "use the provider's default" (lib/provider-credentials.ts).
-    provider: text("provider", { enum: ["anthropic", "openai"] }).notNull().default("openai"),
+    provider: text("provider", { enum: ["anthropic", "openai", "kimi", "gemini"] }).notNull().default("openai"),
     model: text("model"),
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
@@ -695,7 +695,7 @@ export const userProviderCredentials = sqliteTable(
   "user_provider_credentials",
   {
     userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
-    provider: text("provider", { enum: ["anthropic", "openai"] }).notNull(),
+    provider: text("provider", { enum: ["anthropic", "openai", "kimi", "gemini"] }).notNull(),
     // ponytail: kind stays "api_key" until Anthropic approves third-party
     // OAuth for openfloor (claude.ai/Max/Pro login is disallowed for
     // third-party products). If that approval lands, a kind:"oauth" row slots

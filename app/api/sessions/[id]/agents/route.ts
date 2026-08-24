@@ -1,6 +1,7 @@
 import { createFloorAgent } from "@/db/floor";
 import { disabledRunProviders } from "@/lib/agent-run-start";
 import { floorMutationResponse, mutationErrorResponse, readJson } from "@/lib/floor-api";
+import { providerLabel } from "@/lib/provider-credentials";
 import { pokeSessionRouter } from "@/lib/router-server";
 import { isApiError, requireApiUser } from "@/lib/server-auth";
 import { parseAgentInput } from "@/lib/validation";
@@ -16,7 +17,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   // on persist through a rollback by design and degrade correctly: routing
   // skips them, manual runs return disabled.
   if (disabledRunProviders().has(input.provider)) {
-    return Response.json({ error: "Claude execution is not enabled" }, { status: 503 });
+    return Response.json({ error: `${providerLabel(input.provider)} execution is not enabled` }, { status: 503 });
   }
   const { id } = await params;
   try {
