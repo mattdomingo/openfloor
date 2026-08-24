@@ -1,6 +1,7 @@
 import { env } from "cloudflare:workers";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { POST as postAnthropicGateway } from "@/app/runtime/anthropic/[...path]/route";
+import { POST as postGeminiGateway } from "@/app/runtime/gemini/[...path]/route";
 import { GET as getKimiGateway, POST as postKimiGateway } from "@/app/runtime/kimi/[...path]/route";
 import { POST as postOpenAiGateway } from "@/app/runtime/openai/[...path]/route";
 import { createFloorAgent } from "@/db/floor";
@@ -390,6 +391,91 @@ describe("OpenAI gateway credential resolution", () => {
       { params: Promise.resolve({ path: ["v1", "messages"] }) },
     );
     expect(crossed.status).toBe(404);
+  });
+
+  it("gemini gateway reads the JWT from x-goog-api-key, patterns paths, and filters the query string", async () => {
+    const { sessionId, owner, runId } = await runningRun("gemini-owner");
+    await connectKey(owner.id, "gemini", "AIza-owner-gwkey");
+    const captured: Array<{ url: string; googKey: string | null }> = [];
+    vi.stubGlobal("fetch", async (url: string, init: { headers: Headers }) => {
+      captured.push({ url, googKey: init.headers.get("x-goog-api-key") });
+      return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+    });
+    const token = await signRunGatewayToken(
+      { runId, sessionId, repositoryId: "repo", candidateSha: "sha-run", operation: "gemini" },
+      GATEWAY_SECRET,
+    );
+    function geminiRequest(path: string, query: string, headers: Record<string, string>) {
+      return postGeminiGateway(
+        new Request(`https://opnflr.com/app/runtime/gemini/${path}${query}`, {
+          method: "POST",
+          headers: { "content-type": "application/json", ...headers },
+          body: JSON.stringify({ contents: [] }),
+        }),
+        { params: Promise.resolve({ path: path.split("/") }) },
+      );
+    }
+    // The CLI's own header carries the run JWT; alt=sse is forwarded and
+    // every other query parameter is stripped.
+    const streamed = await geminiRequest(
+      "v1beta/models/gemini-3.5-flash:streamGenerateContent",
+      "?alt=sse&key=should-be-stripped",
+      { "x-goog-api-key": token },
+    );
+    expect(streamed.status).toBe(200);
+    expect(captured[0].url).toBe("https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:streamGenerateContent?alt=sse");
+    expect(captured[0].googKey).toBe("AIza-owner-gwkey");
+    // Bearer fallback works too.
+    expect((await geminiRequest("v1beta/models/gemini-3.5-flash:countTokens", "", { authorization: `Bearer ${token}` })).status).toBe(200);
+    expect(captured[1].url).toBe("https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:countTokens");
+    // Outside the pattern is concealed: a bare models listing, another verb,
+    // and a traversal-shaped model id all 404.
+    expect((await geminiRequest("v1beta/models", "", { "x-goog-api-key": token })).status).toBe(404);
+    expect((await geminiRequest("v1beta/models/gemini-3.5-flash:embedContent", "", { "x-goog-api-key": token })).status).toBe(404);
+    expect((await geminiRequest("upload/v1beta/files", "", { "x-goog-api-key": token })).status).toBe(404);
+    // A kimi-operation token must not open the gemini gateway.
+    const kimiOperation = await signRunGatewayToken(
+      { runId, sessionId, repositoryId: "repo", candidateSha: "sha-run", operation: "kimi" },
+      GATEWAY_SECRET,
+    );
+    expect((await geminiRequest("v1beta/models/gemini-3.5-flash:streamGenerateContent", "?alt=sse", { "x-goog-api-key": kimiOperation })).status).toBe(404);
+  });
+
+  it("gemini gateway refuses without a resolvable credential", async () => {
+    const { sessionId, runId } = await runningRun("gemini-none");
+    delete (env as unknown as Record<string, unknown>).GEMINI_API_KEY;
+    const token = await signRunGatewayToken(
+      { runId, sessionId, repositoryId: "repo", candidateSha: "sha-run", operation: "gemini" },
+      GATEWAY_SECRET,
+    );
+    const refused = await postGeminiGateway(
+      new Request("https://opnflr.com/app/runtime/gemini/v1beta/models/gemini-3.5-flash:generateContent", {
+        method: "POST",
+        headers: { "x-goog-api-key": token, "content-type": "application/json" },
+        body: "{}",
+      }),
+      { params: Promise.resolve({ path: ["v1beta", "models", "gemini-3.5-flash:generateContent"] }) },
+    );
+    expect(refused.status).toBe(503);
+    expect(await refused.text()).toContain("No Google credential");
+    // The server key resolves when set.
+    (env as unknown as Record<string, unknown>).GEMINI_API_KEY = "AIza-server-key";
+    const captured: string[] = [];
+    vi.stubGlobal("fetch", async (_url: string, init: { headers: Headers }) => {
+      captured.push(init.headers.get("x-goog-api-key") ?? "");
+      return new Response("{}", { status: 200 });
+    });
+    const served = await postGeminiGateway(
+      new Request("https://opnflr.com/app/runtime/gemini/v1beta/models/gemini-3.5-flash:generateContent", {
+        method: "POST",
+        headers: { "x-goog-api-key": token, "content-type": "application/json" },
+        body: "{}",
+      }),
+      { params: Promise.resolve({ path: ["v1beta", "models", "gemini-3.5-flash:generateContent"] }) },
+    );
+    expect(served.status).toBe(200);
+    expect(captured).toEqual(["AIza-server-key"]);
+    delete (env as unknown as Record<string, unknown>).GEMINI_API_KEY;
   });
 
   it("keeps the existing rejection paths", async () => {

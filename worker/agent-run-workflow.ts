@@ -34,6 +34,7 @@ import { renderSessionContext } from "../lib/session-context";
 import { getEnabledMcpServersForRun } from "../db/mcp-servers";
 import { getSessionSkillsForRun } from "../db/skills";
 import { serializeMcpServersForClaude } from "../lib/mcp-config";
+import { buildGeminiSrtSettings, buildGeminiSystemSettings } from "../lib/gemini-settings";
 import { usesClaudeRunner } from "../lib/provider-credentials";
 import { buildClaudeSandboxSettings } from "../lib/claude-sandbox-settings";
 import { notifyFloorChanged } from "../lib/presence-server";
@@ -64,13 +65,13 @@ const PUBLISHER_SANDBOX_IMAGE_VERSION = "v2";
 // Namespacing the pool key by image version makes old-image entries
 // unreachable immediately; the existing idle sweep reclaims them.
 // Bump this whenever Dockerfile.sandbox's run-sandbox contents change.
-const RUN_SANDBOX_IMAGE_VERSION = "v2";
-// Claude runs get a fresh HOME per run, inside the per-run scratch tree that
-// prepare wipes and the release reset removes. Pool sandboxes outlive
-// sessions, so everything the CLI persists under its home — transcripts,
-// todos, ~/.claude.json, whatever the next SDK version adds — must die with
-// the run by construction, not by enumerating state paths.
-const CLAUDE_AGENT_HOME = "/tmp/openfloor/agent-home";
+const RUN_SANDBOX_IMAGE_VERSION = "v3";
+// Non-Codex runs get a fresh HOME per run, inside the per-run scratch tree
+// that prepare wipes and the release reset removes. Pool sandboxes outlive
+// sessions, so everything a CLI persists under its home — transcripts, todos,
+// ~/.claude.json, ~/.gemini state, whatever the next version adds — must die
+// with the run by construction, not by enumerating state paths.
+const RUN_AGENT_HOME = "/tmp/openfloor/agent-home";
 
 export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Params> {
   async run(event: Readonly<WorkflowEvent<Params>>, step: WorkflowStep): Promise<{ status: string }> {
@@ -179,11 +180,11 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
           // workspace and result paths become agent-owned, and root's git
           // needs safe.directory once ownership differs.
           await sandbox.exec(
-            `id -u openfloor-agent >/dev/null 2>&1 || useradd -m openfloor-agent; mkdir -p ${CLAUDE_AGENT_HOME}/.claude`,
+            `id -u openfloor-agent >/dev/null 2>&1 || useradd -m openfloor-agent; mkdir -p ${RUN_AGENT_HOME}/.claude`,
             { timeout: 30_000 },
           );
           await sandbox.writeFile(
-            `${CLAUDE_AGENT_HOME}/.claude/settings.json`,
+            `${RUN_AGENT_HOME}/.claude/settings.json`,
             buildClaudeSandboxSettings({ gatewayHost: new URL(this.env.OPENFLOOR_RUNTIME_ORIGIN).host }),
           );
           // Imported session skills materialize into the agent user's home
@@ -193,8 +194,8 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
           // even against a hand-edited row.
           for (const skill of await getSessionSkillsForRun(context.sessionId, this.env.DB)) {
             if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(skill.name)) continue;
-            await sandbox.exec(`mkdir -p ${CLAUDE_AGENT_HOME}/.claude/skills/${skill.name}`, { timeout: 30_000 });
-            await sandbox.writeFile(`${CLAUDE_AGENT_HOME}/.claude/skills/${skill.name}/SKILL.md`, skill.content);
+            await sandbox.exec(`mkdir -p ${RUN_AGENT_HOME}/.claude/skills/${skill.name}`, { timeout: 30_000 });
+            await sandbox.writeFile(`${RUN_AGENT_HOME}/.claude/skills/${skill.name}/SKILL.md`, skill.content);
             materializedSkills.push(skill.name);
           }
           const prepared = await sandbox.exec(
@@ -202,6 +203,46 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
             { timeout: 60_000 },
           );
           if (!prepared.success) throw new Error(`Claude runtime preparation failed with exit code ${prepared.exitCode}`);
+        }
+        if (context.provider === "gemini") {
+          // Same non-root posture as the Claude runner, with the CLI's pinned
+          // configuration in a SYSTEM-scope settings file (beats the target
+          // repository's own .gemini/settings.json in the CLI's merge order)
+          // and an srt settings file for wrapping the whole runner — see
+          // lib/gemini-settings.ts for why each value is pinned. No skills
+          // and no CLAUDE.md append: skills are a Claude-runner feature, and
+          // the Gemini CLI natively reads the repository's GEMINI.md context
+          // files. The context token is signed here so the settings file is
+          // complete at write time; it has the same 60-minute TTL as the
+          // start step's tokens.
+          await sandbox.exec(
+            `id -u openfloor-agent >/dev/null 2>&1 || useradd -m openfloor-agent; mkdir -p ${RUN_AGENT_HOME}/.gemini`,
+            { timeout: 30_000 },
+          );
+          const contextToken = await signRunGatewayToken({
+            runId, sessionId: context.sessionId, repositoryId: context.repositoryId,
+            candidateSha: context.candidateSha, operation: "context",
+          }, this.env.RUNTIME_GATEWAY_SECRET);
+          await sandbox.writeFile(
+            `${RUN_AGENT_HOME}/.gemini/system-settings.json`,
+            buildGeminiSystemSettings({
+              contextUrl: `${this.env.OPENFLOOR_RUNTIME_ORIGIN}/runtime/run/context`,
+              contextToken,
+              mcpServerPath: "/opt/openfloor/openfloor-mcp.mjs",
+            }),
+          );
+          await sandbox.writeFile(
+            `${RUN_AGENT_HOME}/srt-settings.json`,
+            buildGeminiSrtSettings({
+              gatewayHost: new URL(this.env.OPENFLOOR_RUNTIME_ORIGIN).host,
+              workspace: "/workspace/repository",
+            }),
+          );
+          const prepared = await sandbox.exec(
+            "chown -R openfloor-agent:openfloor-agent /workspace/repository /tmp/openfloor && git config --global --add safe.directory /workspace/repository",
+            { timeout: 60_000 },
+          );
+          if (!prepared.success) throw new Error(`Gemini runtime preparation failed with exit code ${prepared.exitCode}`);
         }
         return materializedSkills;
       });
@@ -215,7 +256,8 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
           // everything else is Codex against the OpenAI gateway.
           const providerToken = await signRunGatewayToken({
             runId, sessionId: context.sessionId, repositoryId: context.repositoryId,
-            candidateSha: context.candidateSha, operation: usesClaudeRunner(context.provider) ? context.provider : "openai",
+            candidateSha: context.candidateSha,
+            operation: usesClaudeRunner(context.provider) || context.provider === "gemini" ? context.provider : "openai",
           }, this.env.RUNTIME_GATEWAY_SECRET);
           const eventsToken = await signRunGatewayToken({
             runId, sessionId: context.sessionId, repositoryId: context.repositoryId,
@@ -228,14 +270,21 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
           // runuser -p preserves the startProcess env (including the HOME set
           // below, which is where the pinned sandbox settings live) while
           // dropping to the non-root user the Claude sandbox requires.
+          // Gemini's start command is Plan A from the Spike-C posture gate:
+          // srt wraps the ENTIRE runner + CLI (the CLI has no built-in
+          // sandbox, unlike the Agent SDK), with the gateway host as the only
+          // egress; the runner's fetch preload keeps the CLI's own model
+          // traffic working through srt's proxy on the image's Node 22.
           const command = usesClaudeRunner(context.provider)
             ? "runuser -p -u openfloor-agent -- node /opt/openfloor/claude-runner.mjs"
-            : "node /opt/openfloor/codex-runner.mjs";
+            : context.provider === "gemini"
+              ? `runuser -p -u openfloor-agent -- /opt/openfloor/node_modules/.bin/srt -s ${RUN_AGENT_HOME}/srt-settings.json -c "node /opt/openfloor/gemini-runner.mjs"`
+              : "node /opt/openfloor/codex-runner.mjs";
           const providerEnv = usesClaudeRunner(context.provider)
             ? {
                 OPENFLOOR_ANTHROPIC_BASE_URL: `${this.env.OPENFLOOR_RUNTIME_ORIGIN}/runtime/${context.provider}`,
                 OPENFLOOR_ANTHROPIC_TOKEN: providerToken,
-                HOME: CLAUDE_AGENT_HOME,
+                HOME: RUN_AGENT_HOME,
                 // Names of the materialized skills; the runner passes them as
                 // the SDK's explicit `skills` list ([] disables CLI skill
                 // defaults — omitted is NOT off). The prepare step's snapshot,
@@ -250,10 +299,17 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
                   await getEnabledMcpServersForRun(context.sessionId, this.env.CREDENTIAL_ENCRYPTION_KEY ?? "", this.env.DB),
                 )),
               }
-            : {
-                OPENFLOOR_OPENAI_BASE_URL: `${this.env.OPENFLOOR_RUNTIME_ORIGIN}/runtime/openai/v1`,
-                OPENFLOOR_OPENAI_TOKEN: providerToken,
-              };
+            : context.provider === "gemini"
+              ? {
+                  OPENFLOOR_GEMINI_BASE_URL: `${this.env.OPENFLOOR_RUNTIME_ORIGIN}/runtime/gemini`,
+                  OPENFLOOR_GEMINI_TOKEN: providerToken,
+                  HOME: RUN_AGENT_HOME,
+                  GEMINI_CLI_SYSTEM_SETTINGS_PATH: `${RUN_AGENT_HOME}/.gemini/system-settings.json`,
+                }
+              : {
+                  OPENFLOOR_OPENAI_BASE_URL: `${this.env.OPENFLOOR_RUNTIME_ORIGIN}/runtime/openai/v1`,
+                  OPENFLOOR_OPENAI_TOKEN: providerToken,
+                };
           await sandbox.startProcess(command, {
             processId,
             autoCleanup: false,
