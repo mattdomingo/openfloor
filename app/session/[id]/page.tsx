@@ -6,6 +6,8 @@ import { getLatestRepositoryPreflightForMember } from "@/db/preflights";
 import { listSessionMcpServersForMember } from "@/db/mcp-servers";
 import { listSessionSkillsForMember } from "@/db/skills";
 import { SessionScreen } from "@/components/product/SessionScreen";
+import { disabledRunProviders } from "@/lib/agent-run-start";
+import { CREDENTIAL_PROVIDERS } from "@/lib/provider-credentials";
 import { env } from "cloudflare:workers";
 
 export const dynamic = "force-dynamic";
@@ -36,6 +38,7 @@ async function AuthenticatedSession({ id, githubSetup, repoGateRequested }: { id
   ]);
   if (!session || !members) notFound();
   const preflightEnabled = (env as unknown as { PREFLIGHT_ENABLED?: string }).PREFLIGHT_ENABLED === "true";
-  const claudeRunEnabled = (env as unknown as { CLAUDE_RUN_ENABLED?: string }).CLAUDE_RUN_ENABLED === "true";
-  return <SessionScreen user={user} session={session} initialMembers={members} initialRemovedMembers={removedMembers ?? []} initialRepository={repository} initialCandidate={candidate} initialPreflight={preflight} preflightEnabled={preflightEnabled} claudeRunEnabled={claudeRunEnabled} initialSkills={skills ?? []} initialMcpServers={mcpServers ?? []} githubSetup={githubSetup} repoGateRequested={repoGateRequested} />;
+  const disabled = disabledRunProviders();
+  const enabledProviders = CREDENTIAL_PROVIDERS.filter((provider) => !disabled.has(provider));
+  return <SessionScreen user={user} session={session} initialMembers={members} initialRemovedMembers={removedMembers ?? []} initialRepository={repository} initialCandidate={candidate} initialPreflight={preflight} preflightEnabled={preflightEnabled} enabledProviders={enabledProviders} initialSkills={skills ?? []} initialMcpServers={mcpServers ?? []} githubSetup={githubSetup} repoGateRequested={repoGateRequested} />;
 }

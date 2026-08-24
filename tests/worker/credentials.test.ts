@@ -1,6 +1,7 @@
 import { env } from "cloudflare:workers";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { POST as postAnthropicGateway } from "@/app/runtime/anthropic/[...path]/route";
+import { GET as getKimiGateway, POST as postKimiGateway } from "@/app/runtime/kimi/[...path]/route";
 import { POST as postOpenAiGateway } from "@/app/runtime/openai/[...path]/route";
 import { createFloorAgent } from "@/db/floor";
 import {
@@ -29,7 +30,7 @@ async function room(suffix: string) {
   return { sessionId: created.session.id, owner, member };
 }
 
-async function connectKey(userId: string, provider: "anthropic" | "openai", apiKey: string) {
+async function connectKey(userId: string, provider: "anthropic" | "openai" | "kimi" | "gemini", apiKey: string) {
   const ciphertext = await encryptCredential(apiKey, ENCRYPTION_SECRET, `${userId}:${provider}`);
   return upsertProviderCredential(userId, provider, {
     kind: "api_key",
@@ -305,6 +306,85 @@ describe("OpenAI gateway credential resolution", () => {
       new Request("https://opnflr.com/app/runtime/anthropic/v1/messages", {
         method: "POST",
         headers: { authorization: `Bearer ${openaiOperation}`, "content-type": "application/json" },
+        body: "{}",
+      }),
+      { params: Promise.resolve({ path: ["v1", "messages"] }) },
+    );
+    expect(crossed.status).toBe(404);
+  });
+
+  it("kimi gateway forwards to Moonshot with Bearer auth, resolving owner before server key", async () => {
+    const { sessionId, owner, runId } = await runningRun("kimi-owner");
+    const captured: Array<{ url: string; bearer: string | null; apiKey: string | null }> = [];
+    vi.stubGlobal("fetch", async (url: string, init: { headers: Headers }) => {
+      captured.push({ url, bearer: init.headers.get("authorization"), apiKey: init.headers.get("x-api-key") });
+      return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+    });
+    const token = await signRunGatewayToken(
+      { runId, sessionId, repositoryId: "repo", candidateSha: "sha-run", operation: "kimi" },
+      GATEWAY_SECRET,
+    );
+    function kimiRequest(path: string) {
+      return postKimiGateway(
+        new Request(`https://opnflr.com/app/runtime/kimi/${path}`, {
+          method: "POST",
+          headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+          body: JSON.stringify({ model: "kimi-k3" }),
+        }),
+        { params: Promise.resolve({ path: path.split("/") }) },
+      );
+    }
+    // Server key resolves while the owner has no kimi credential.
+    (env as unknown as Record<string, unknown>).MOONSHOT_API_KEY = "sk-kimi-server-key";
+    expect((await kimiRequest("v1/messages")).status).toBe(200);
+    // A connected owner key takes over from the server key.
+    await connectKey(owner.id, "kimi", "sk-kimi-owner-gwkey");
+    expect((await kimiRequest("v1/messages")).status).toBe(200);
+    expect((await kimiRequest("v1/messages/count_tokens")).status).toBe(200);
+    expect(captured.map((call) => call.url)).toEqual([
+      "https://api.moonshot.ai/anthropic/v1/messages",
+      "https://api.moonshot.ai/anthropic/v1/messages",
+      "https://api.moonshot.ai/anthropic/v1/messages/count_tokens",
+    ]);
+    // Spike-A-verified auth shape: Bearer with the resolved key, never x-api-key.
+    expect(captured.map((call) => call.bearer)).toEqual([
+      "Bearer sk-kimi-server-key",
+      "Bearer sk-kimi-owner-gwkey",
+      "Bearer sk-kimi-owner-gwkey",
+    ]);
+    expect(captured.every((call) => call.apiKey === null)).toBe(true);
+    // Outside the allowlist stays concealed; GET probes are concealed too.
+    expect((await kimiRequest("v1/models")).status).toBe(404);
+    expect((await getKimiGateway(new Request("https://opnflr.com/app/runtime/kimi/v1/models"), { params: Promise.resolve({ path: ["v1", "models"] }) })).status).toBe(404);
+    delete (env as unknown as Record<string, unknown>).MOONSHOT_API_KEY;
+  });
+
+  it("kimi gateway refuses without a credential and rejects wrong-operation tokens", async () => {
+    const { sessionId, runId } = await runningRun("kimi-none");
+    delete (env as unknown as Record<string, unknown>).MOONSHOT_API_KEY;
+    const token = await signRunGatewayToken(
+      { runId, sessionId, repositoryId: "repo", candidateSha: "sha-run", operation: "kimi" },
+      GATEWAY_SECRET,
+    );
+    const refused = await postKimiGateway(
+      new Request("https://opnflr.com/app/runtime/kimi/v1/messages", {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+        body: "{}",
+      }),
+      { params: Promise.resolve({ path: ["v1", "messages"] }) },
+    );
+    expect(refused.status).toBe(503);
+    expect(await refused.text()).toContain("No Moonshot credential");
+    // An anthropic-operation token must not open the kimi gateway.
+    const anthropicOperation = await signRunGatewayToken(
+      { runId, sessionId, repositoryId: "repo", candidateSha: "sha-run", operation: "anthropic" },
+      GATEWAY_SECRET,
+    );
+    const crossed = await postKimiGateway(
+      new Request("https://opnflr.com/app/runtime/kimi/v1/messages", {
+        method: "POST",
+        headers: { authorization: `Bearer ${anthropicOperation}`, "content-type": "application/json" },
         body: "{}",
       }),
       { params: Promise.resolve({ path: ["v1", "messages"] }) },

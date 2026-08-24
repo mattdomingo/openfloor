@@ -9,6 +9,7 @@ import { useDialogDismiss } from "@/components/session/primitives";
 import { initials } from "@/lib/display-name";
 import { reducePresence } from "@/lib/presence";
 import { isRepositoryReadyForFloor } from "@/lib/repository-gate";
+import { usesClaudeRunner, type CredentialProvider } from "@/lib/provider-credentials";
 import type { AppUser, PresenceEvent, RemovedSessionMember, RepositoryCandidate, RepositoryConnection, RepositoryPreflight, SessionMember, SessionSummary } from "@/lib/session-types";
 import { AppHeader } from "./AppHeader";
 import { RepositoryCard } from "./RepositoryCard";
@@ -28,7 +29,7 @@ export function SessionScreen({
   initialCandidate,
   initialPreflight,
   preflightEnabled,
-  claudeRunEnabled,
+  enabledProviders,
   initialSkills,
   initialMcpServers,
   githubSetup,
@@ -42,7 +43,7 @@ export function SessionScreen({
   initialCandidate: RepositoryCandidate | null;
   initialPreflight: RepositoryPreflight | null;
   preflightEnabled: boolean;
-  claudeRunEnabled: boolean;
+  enabledProviders: CredentialProvider[];
   initialSkills: SessionSkillSummary[];
   initialMcpServers: SessionMcpServerSummary[];
   githubSetup: boolean;
@@ -305,8 +306,8 @@ export function SessionScreen({
           {endedAt == null && (
             <div ref={repositoryCardRef} className="repository-card-slot" data-highlighted={repositoryHighlighted}>
               <RepositoryCard sessionId={session.id} sessionTitle={session.title} sessionObjective={session.objective} role={session.role} initialRepository={initialRepository} initialCandidate={initialCandidate} initialPreflight={initialPreflight} preflightEnabled={preflightEnabled} beginSetup={githubSetup} />
-              {claudeRunEnabled && <SkillsCard sessionId={session.id} role={session.role} initialSkills={initialSkills} />}
-              {claudeRunEnabled && <McpServersCard sessionId={session.id} role={session.role} initialServers={initialMcpServers} />}
+              {enabledProviders.some(usesClaudeRunner) && <SkillsCard sessionId={session.id} role={session.role} initialSkills={initialSkills} />}
+              {enabledProviders.some(usesClaudeRunner) && <McpServersCard sessionId={session.id} role={session.role} initialServers={initialMcpServers} />}
             </div>
           )}
           <section className="action-card quiet-card"><p className="eyebrow">Saved automatically</p><p>The session, its objective, members, and invite state are stored. Presence shows who is connected right now.</p></section>

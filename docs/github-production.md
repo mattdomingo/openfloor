@@ -83,7 +83,13 @@ openssl rand -hex 32 | npx wrangler secret put CREDENTIAL_ENCRYPTION_KEY
 
 Rotating this value invalidates every stored user credential — users must reconnect their keys in `/settings`.
 
-An optional `ANTHROPIC_API_KEY` secret is the server-side fallback for Claude runs; without it, a Claude run requires the session owner's connected key. Keep `CLAUDE_RUN_ENABLED` set to `false` until the Agent SDK image deploys and an Anthropic credential resolves — while false, Claude-provider runs refuse as disabled and Codex runs are unaffected.
+Optional server-side fallback keys, one per provider; without one, that provider's runs require the agent owner's connected key. Keep each provider's rollout flag (`CLAUDE_RUN_ENABLED`, `KIMI_RUN_ENABLED`, `GEMINI_RUN_ENABLED`) set to `false` until its code (and any bumped sandbox image) deploys and a credential resolves — while false, that provider's runs refuse as disabled and other providers are unaffected.
+
+```bash
+npx wrangler secret put ANTHROPIC_API_KEY
+npx wrangler secret put MOONSHOT_API_KEY
+npx wrangler secret put GEMINI_API_KEY
+```
 
 Add an OpenAI project API key for server-side Codex execution:
 

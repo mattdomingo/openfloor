@@ -34,6 +34,7 @@ import { renderSessionContext } from "../lib/session-context";
 import { getEnabledMcpServersForRun } from "../db/mcp-servers";
 import { getSessionSkillsForRun } from "../db/skills";
 import { serializeMcpServersForClaude } from "../lib/mcp-config";
+import { usesClaudeRunner } from "../lib/provider-credentials";
 import { buildClaudeSandboxSettings } from "../lib/claude-sandbox-settings";
 import { notifyFloorChanged } from "../lib/presence-server";
 import { pokeSessionRouter } from "../lib/router-server";
@@ -148,7 +149,7 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
         );
         if (!result.success) throw new Error(`Candidate workspace preparation failed with exit code ${result.exitCode}`);
         let prompt = await buildRunPrompt(context, this.env.DB);
-        if (context.provider === "anthropic") {
+        if (usesClaudeRunner(context.provider)) {
           // The target repository's CLAUDE.md is useful context, but it is
           // deliberately NOT loaded as a settings source — user-scope keeps
           // the repo's .claude/ out of the session — so read it as text into
@@ -170,7 +171,7 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
         const promptKey = `runs/${runId}/prompt.txt`;
         await this.env.PREFLIGHT_LOGS.put(promptKey, prompt, { httpMetadata: { contentType: "text/plain; charset=utf-8" } });
         await recordRunArtifact(runId, "prompt", promptKey, "text/plain; charset=utf-8", prompt.length, this.env.DB);
-        if (context.provider === "anthropic") {
+        if (usesClaudeRunner(context.provider)) {
           // Claude runs execute as a dedicated non-root user: the SDK's
           // kernel sandbox (bubblewrap via sandbox-runtime) cannot initialize
           // as root, and it is what keeps the two-layer isolation posture
@@ -209,9 +210,12 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
       await step.do("start Codex", { retries: { limit: 1, delay: "5 seconds" }, timeout: "2 minutes" }, async () => {
         const existing = await sandbox.getProcess(processId);
         if (!existing) {
+          // Claude-runner providers get a token bound to their own gateway
+          // operation (anthropic → /runtime/anthropic, kimi → /runtime/kimi);
+          // everything else is Codex against the OpenAI gateway.
           const providerToken = await signRunGatewayToken({
             runId, sessionId: context.sessionId, repositoryId: context.repositoryId,
-            candidateSha: context.candidateSha, operation: context.provider === "anthropic" ? "anthropic" : "openai",
+            candidateSha: context.candidateSha, operation: usesClaudeRunner(context.provider) ? context.provider : "openai",
           }, this.env.RUNTIME_GATEWAY_SECRET);
           const eventsToken = await signRunGatewayToken({
             runId, sessionId: context.sessionId, repositoryId: context.repositoryId,
@@ -224,12 +228,12 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
           // runuser -p preserves the startProcess env (including the HOME set
           // below, which is where the pinned sandbox settings live) while
           // dropping to the non-root user the Claude sandbox requires.
-          const command = context.provider === "anthropic"
+          const command = usesClaudeRunner(context.provider)
             ? "runuser -p -u openfloor-agent -- node /opt/openfloor/claude-runner.mjs"
             : "node /opt/openfloor/codex-runner.mjs";
-          const providerEnv = context.provider === "anthropic"
+          const providerEnv = usesClaudeRunner(context.provider)
             ? {
-                OPENFLOOR_ANTHROPIC_BASE_URL: `${this.env.OPENFLOOR_RUNTIME_ORIGIN}/runtime/anthropic`,
+                OPENFLOOR_ANTHROPIC_BASE_URL: `${this.env.OPENFLOOR_RUNTIME_ORIGIN}/runtime/${context.provider}`,
                 OPENFLOOR_ANTHROPIC_TOKEN: providerToken,
                 HOME: CLAUDE_AGENT_HOME,
                 // Names of the materialized skills; the runner passes them as
