@@ -872,6 +872,14 @@
   grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr));
   gap: var(--space-3);
   padding: var(--space-4);
+  transition: padding-top var(--dur-base) var(--ease-standard);
+}
+
+/* .panel-body is a scroll box, so a bubble popping above a top-row tile
+   would otherwise clip against it. Reserved only while at least one tile
+   actually has a reply to show (AgentFloor.tsx sets this from agentReplyText). */
+.agent-grid[data-has-reply="true"] {
+  padding-top: calc(var(--space-4) + 80px);
 }
 
 /* Per-agent switcher, in the panel header (left of "All agents") rather than
@@ -926,9 +934,9 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
-  /* min- not fixed height: the reply bubble below clamps itself to 3 lines,
-     but a taller clamp still needs the card to grow rather than clip it. */
-  min-height: 156px;
+  /* Fixed again: the reply bubble is absolutely positioned above the card
+     (see .agent-reply-bubble) so it no longer participates in this height. */
+  height: 156px;
   min-width: 0;
   padding: var(--space-3);
   border: 1px solid var(--line-strong);
@@ -1404,20 +1412,29 @@
 }
 
 /* Agent reply bubble ---------------------------------------------------- */
-/* Confined to a fixed clamp so a long answer can never grow the card past
-   its grid row; click moves focus to the spotlight, where the same text
-   renders in full inside .spotlight-response. */
+/* A real speech bubble popped above the tile, not an in-flow panel: it lifts
+   out of .agent-card's layout (the card returned to a fixed height once this
+   left the flow) and floats over whatever sits above it in the grid — hence
+   .agent-grid[data-has-reply] reserving headroom so a top-row bubble never
+   clips against .panel-body's own scroll box. Confined to a fixed clamp so a
+   long answer never grows past a few lines; click moves focus to the
+   spotlight, where the same text renders in full inside .spotlight-response. */
 
 .agent-reply-bubble {
   display: -webkit-box;
-  width: 100%;
+  position: absolute;
+  bottom: calc(100% + 10px);
+  left: var(--space-3);
+  right: var(--space-3);
+  z-index: 3;
+  width: auto;
   max-height: 4.6em;
   margin: 0;
   padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--line-soft);
-  border-radius: var(--radius-sm);
-  background: var(--surface-sunken);
-  color: var(--text-secondary);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  color: var(--text-primary);
   font: inherit;
   font-size: var(--text-xs);
   line-height: 1.5;
@@ -1427,11 +1444,45 @@
   overflow-wrap: anywhere;
   -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
+  box-shadow: var(--elevation-2);
+}
+
+/* The tail: a rotated square sharing the bubble's own background/border,
+   half-hidden behind the bubble so only its bottom-right edge (rotated to
+   point down) shows as a triangle pointing at the tile underneath. */
+.agent-reply-bubble::after {
+  content: "";
+  position: absolute;
+  bottom: -6px;
+  left: 22px;
+  width: 12px;
+  height: 12px;
+  border-right: 1px solid var(--line-strong);
+  border-bottom: 1px solid var(--line-strong);
+  border-radius: 0 0 2px 0;
+  background: var(--surface-raised);
+  transform: rotate(45deg);
 }
 
 .agent-reply-bubble:hover {
-  border-color: var(--agent-color, var(--line-soft));
+  border-color: var(--agent-color, var(--line-strong));
   background: var(--surface-panel);
+}
+
+.agent-reply-bubble:hover::after {
+  border-color: var(--agent-color, var(--line-strong));
+  background: var(--surface-panel);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .agent-reply-bubble {
+    animation: agent-reply-in var(--dur-float) var(--ease-out);
+  }
+
+  @keyframes agent-reply-in {
+    0% { opacity: 0; transform: scale(0.92) translateY(6px); }
+    100% { opacity: 1; transform: scale(1) translateY(0); }
+  }
 }
 
 .spotlight-response {

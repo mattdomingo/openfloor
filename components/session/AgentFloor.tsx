@@ -4,7 +4,7 @@ import { useLayoutEffect, useRef, useState } from "react";
 import type { CredentialProvider } from "@/lib/provider-credentials";
 import type { AgentRun, CreateFloorAgentInput, FloorAgent, FloorParticipant, FloorQueueItem } from "@/lib/floor-types";
 import type { AgentLayout } from "./data";
-import { agentTone } from "./data";
+import { agentReplyText, agentTone } from "./data";
 import { HoverTip, Icon, useHoverTip } from "./primitives";
 import { Panel, type PanelChrome } from "./Rail";
 import { AgentCard, AgentSpotlight } from "./AgentCard";
@@ -127,7 +127,11 @@ export function AgentFloor({ chrome, sessionId, agents, runs, activity, selected
       {agents.length === 0 ? (
         <div className="floor-empty"><strong>No agents yet</strong><p>Create an agent when the session has work to assign.</p><button type="button" className="button" data-variant="primary" onClick={() => setCreating(true)}>Create agent</button></div>
       ) : agentLayout === "all" ? (
-        <div className="agent-grid">{agents.map((agent, index) => { const latestRun = runs.find((run) => run.agentId === agent.id) ?? null; return <AgentCard key={agent.id} agent={agent} tone={agentTone(agent.id, index)} latestRun={latestRun} activityEvents={latestRun ? activity.eventsFor(latestRun.id) : []} selected={selected?.id === agent.id} onFocus={() => focusAgent(agent.id)} onHistory={() => setHistoryAgentId(agent.id)} />; })}</div>
+        // Reserves headroom above the grid only while at least one tile has
+        // a reply bubble to pop up over it — the bubble is absolutely
+        // positioned and would otherwise clip against the panel's own
+        // scroll box (.panel-body) on the top row.
+        <div className="agent-grid" data-has-reply={agents.some((agent) => agentReplyText(runs.find((run) => run.agentId === agent.id) ?? null)) ? "true" : "false"}>{agents.map((agent, index) => { const latestRun = runs.find((run) => run.agentId === agent.id) ?? null; return <AgentCard key={agent.id} agent={agent} tone={agentTone(agent.id, index)} latestRun={latestRun} activityEvents={latestRun ? activity.eventsFor(latestRun.id) : []} selected={selected?.id === agent.id} onFocus={() => focusAgent(agent.id)} onHistory={() => setHistoryAgentId(agent.id)} />; })}</div>
       ) : selected ? (
         <AgentSpotlight agent={selected} tone={agentTone(selected.id, agents.findIndex((agent) => agent.id === selected.id))} sessionId={sessionId} latestRun={runs.find((run) => run.agentId === selected.id) ?? null} activity={activity} onHistory={() => setHistoryAgentId(selected.id)} onUpdateTask={onUpdateTask} />
       ) : null}
