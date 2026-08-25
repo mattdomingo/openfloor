@@ -1,9 +1,11 @@
 import { env } from "cloudflare:workers";
 import { afterEach, describe, expect, it } from "vitest";
 import { createFloorAgent, createFloorQueueItem } from "@/db/floor";
-import { runRoutingTick, SESSION_RUN_CAP, type RoutingDeps } from "@/db/routing";
+import { classifyPrompt, runRoutingTick, SESSION_RUN_CAP, type RoutingDeps } from "@/db/routing";
+import { finishAgentReply } from "@/db/runs";
 import { acceptInvite, createSession, setSessionAutoDispatch, upsertUser } from "@/db/sessions";
 import type { StartRunResult } from "@/lib/agent-run-start";
+import type { PromptIntent } from "@/lib/floor-types";
 import { parseAgentInput } from "@/lib/validation";
 
 function identity(id: string, name: string) {
@@ -29,13 +31,20 @@ async function addAgent(sessionId: string, ownerUserId: string, name: string, ro
 }
 
 /** Default dispatch stub: create a real running agent_runs row and flip the item, like createAgentRun does. */
-function startRunStub(results: StartRunResult[] = []): { calls: Array<{ queueItemId: string; userId: string }>; deps: RoutingDeps } {
+function startRunStub(results: StartRunResult[] = []): {
+  calls: Array<{ queueItemId: string; userId: string }>;
+  kinds: Array<{ queueItemId: string; kind: "task" | "reply" }>;
+  deps: RoutingDeps;
+} {
   const calls: Array<{ queueItemId: string; userId: string }> = [];
+  const kinds: Array<{ queueItemId: string; kind: "task" | "reply" }> = [];
   return {
     calls,
+    kinds,
     deps: {
-      startRun: async (sessionId, queueItemId, userId) => {
+      startRun: async (sessionId, queueItemId, userId, kind) => {
         calls.push({ queueItemId, userId });
+        kinds.push({ queueItemId, kind });
         const scripted = results.shift();
         if (scripted) return scripted;
         const item = await env.DB.prepare("SELECT agent_id AS agentId FROM floor_queue_items WHERE id = ?")
@@ -58,8 +67,12 @@ async function decisions(sessionId: string) {
 
 async function queueItem(id: string) {
   return env.DB.prepare(
-    "SELECT agent_id AS agentId, status, assigned_by AS assignedBy, assigned_reason AS assignedReason FROM floor_queue_items WHERE id = ?",
-  ).bind(id).first<{ agentId: string | null; status: string; assignedBy: string | null; assignedReason: string | null }>();
+    "SELECT agent_id AS agentId, status, assigned_by AS assignedBy, assigned_reason AS assignedReason, intent FROM floor_queue_items WHERE id = ?",
+  ).bind(id).first<{ agentId: string | null; status: string; assignedBy: string | null; assignedReason: string | null; intent: string | null }>();
+}
+
+async function agentRow(id: string) {
+  return env.DB.prepare("SELECT id, name, kind FROM floor_agents WHERE id = ?").bind(id).first<{ id: string; name: string; kind: string | null }>();
 }
 
 /** Insert a run row, creating connection/candidate scaffolding on first use. Without a queueItemId a backing running item is created. */
@@ -329,5 +342,111 @@ describe("agent router tick", () => {
     const stub = startRunStub();
     await runRoutingTick(room.sessionId, "enqueue", { ...stub.deps, disabledProviders: new Set(["anthropic"]) }, env.DB);
     expect((await queueItem(itemId))?.agentId).toBe(codexAgentId);
+  });
+
+  it("routes an untargeted question to a lazily-created answer agent and dispatches a reply run", async () => {
+    const room = await routingRoom("question");
+    await addAgent(room.sessionId, room.owner.id, "Nova", "Frontend", "Own the login screen styling");
+    const floor = await createFloorQueueItem(room.sessionId, room.member.id, { prompt: "What does the auth module do?", agentId: null }, env.DB);
+    const itemId = floor!.queue[0].id;
+    const stub = startRunStub();
+    const outcome = await runRoutingTick(room.sessionId, "enqueue", stub.deps, env.DB);
+    expect(outcome.acted).toBe(true);
+
+    const item = await queueItem(itemId);
+    expect(item?.intent).toBe("question");
+    expect(item?.assignedBy).toBe("router");
+    expect(item?.assignedReason).toContain("Question");
+    const agent = await agentRow(item!.agentId!);
+    expect(agent?.kind).toBe("answer");
+    expect(agent?.name).toBe("Concierge");
+    expect(stub.kinds).toEqual([{ queueItemId: itemId, kind: "reply" }]);
+
+    const recorded = await decisions(room.sessionId);
+    expect(recorded.find((decision) => decision.queueItemId === itemId && decision.decision === "assigned")?.reason).toContain("Question");
+  });
+
+  it("routes a noise prompt (ping) to the same answer agent across the session, created only once", async () => {
+    const room = await routingRoom("noise");
+    const first = await createFloorQueueItem(room.sessionId, room.member.id, { prompt: "ping", agentId: null }, env.DB);
+    const firstItemId = first!.queue[0].id;
+    const firstStub = startRunStub();
+    await runRoutingTick(room.sessionId, "enqueue", firstStub.deps, env.DB);
+    const firstItem = await queueItem(firstItemId);
+    expect(firstItem?.intent).toBe("noise");
+    const answerAgentId = firstItem!.agentId!;
+
+    const second = await createFloorQueueItem(room.sessionId, room.member.id, { prompt: "thanks!", agentId: null }, env.DB);
+    const secondItemId = second!.queue.find((entry) => entry.id !== firstItemId)!.id;
+    const secondStub = startRunStub();
+    await runRoutingTick(room.sessionId, "enqueue", secondStub.deps, env.DB);
+    const secondItem = await queueItem(secondItemId);
+    expect(secondItem?.intent).toBe("noise");
+    expect(secondItem?.agentId).toBe(answerAgentId);
+
+    const answerAgents = await env.DB.prepare("SELECT COUNT(*) AS count FROM floor_agents WHERE session_id = ? AND kind = 'answer'")
+      .bind(room.sessionId).first<{ count: number }>();
+    expect(Number(answerAgents?.count)).toBe(1);
+  });
+
+  it("keeps a targeted question with its named agent instead of the concierge, and still dispatches a reply", async () => {
+    const room = await routingRoom("targeted-question");
+    const rexId = await addAgent(room.sessionId, room.owner.id, "Rex", "Backend", "Own the auth api");
+    const floor = await createFloorQueueItem(room.sessionId, room.member.id, { prompt: "@Rex what's the status of the auth work?", agentId: rexId }, env.DB);
+    const itemId = floor!.queue[0].id;
+    const stub = startRunStub();
+    await runRoutingTick(room.sessionId, "enqueue", stub.deps, env.DB);
+    const item = await queueItem(itemId);
+    expect(item?.agentId).toBe(rexId);
+    expect(item?.assignedBy).toBe("user");
+    expect(item?.intent).toBe("question");
+    expect(stub.kinds).toEqual([{ queueItemId: itemId, kind: "reply" }]);
+    const answerAgents = await env.DB.prepare("SELECT COUNT(*) AS count FROM floor_agents WHERE session_id = ? AND kind = 'answer'")
+      .bind(room.sessionId).first<{ count: number }>();
+    expect(Number(answerAgents?.count)).toBe(0);
+  });
+
+  it("a finished reply completes its queue item outright, not blocked", async () => {
+    const room = await routingRoom("reply-complete");
+    const floor = await createFloorQueueItem(room.sessionId, room.member.id, { prompt: "hello", agentId: null }, env.DB);
+    const itemId = floor!.queue[0].id;
+    const stub = startRunStub();
+    await runRoutingTick(room.sessionId, "enqueue", stub.deps, env.DB);
+    const item = await queueItem(itemId);
+    expect(item?.status).toBe("running");
+    const run = await env.DB.prepare("SELECT id FROM agent_runs WHERE queue_item_id = ?").bind(itemId).first<{ id: string }>();
+    const outcome = await finishAgentReply(run!.id, "ready", "Hi! How can I help?", "Answered the prompt.", env.DB);
+    expect(outcome).not.toBeNull();
+    const finished = await queueItem(itemId);
+    expect(finished?.status).toBe("completed");
+  });
+});
+
+describe("classifyPrompt", () => {
+  it.each<[string, PromptIntent]>([
+    ["ping", "noise"],
+    ["hi", "noise"],
+    ["hello!", "noise"],
+    ["thanks", "noise"],
+    ["thank you", "noise"],
+    ["ty", "noise"],
+    ["ok", "noise"],
+    ["test", "noise"],
+    ["👋", "noise"],
+    ["what does auth.ts do?", "question"],
+    ["Why is the deploy failing?", "question"],
+    ["can you fix the login bug?", "task"],
+    ["ping the health endpoint", "task"],
+    ["test the login flow end to end", "task"],
+    ["Add a logout button", "task"],
+    ["Refactor the auth middleware validation", "task"],
+    ["Zzz unrelated wording entirely", "task"],
+    ["", "task"],
+  ])("classifies %j as %s", (text, expected) => {
+    expect(classifyPrompt(text)).toBe(expected);
+  });
+
+  it("treats a very long prompt the same as a normal one (no special-casing on length)", () => {
+    expect(classifyPrompt(`fix ${"the bug ".repeat(2000)}`)).toBe("task");
   });
 });

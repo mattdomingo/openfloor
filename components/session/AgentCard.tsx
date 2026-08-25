@@ -25,7 +25,12 @@ function glyphFor(kind: string): string {
 }
 
 export function AgentCard({ agent, tone, latestRun, activityEvents, selected, onFocus, onHistory }: { agent: FloorAgent; tone: string; latestRun: AgentRun | null; activityEvents: RunActivityEvent[]; selected: boolean; onFocus: () => void; onHistory: () => void }) {
-  const latestEvent = latestRun && ACTIVE_RUN_STATUSES.has(latestRun.status) ? activityEvents[activityEvents.length - 1] ?? null : null;
+  const live = latestRun && ACTIVE_RUN_STATUSES.has(latestRun.status);
+  const latestEvent = live ? activityEvents[activityEvents.length - 1] ?? null : null;
+  // Every finished run — reply or task — records finalResponse; the card
+  // shows it as a clamped bubble whenever there's no live ticker to show
+  // instead, so an ordinary code run's own final message surfaces here too.
+  const reply = !live && latestRun?.finalResponse ? latestRun.finalResponse : null;
   return (
     <article className="agent-card" data-selected={selected ? "true" : "false"} data-status={latestRun?.status ?? "idle"} data-tone={tone} role="button" tabIndex={0} onClick={onFocus} onKeyDown={(event) => {
       if (event.target === event.currentTarget && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); onFocus(); }
@@ -42,6 +47,11 @@ export function AgentCard({ agent, tone, latestRun, activityEvents, selected, on
           <span className="agent-activity-detail">{latestEvent.detail}</span>
         </div>
       )}
+      {reply && (
+        <button type="button" className="agent-reply-bubble" aria-label={`${agent.name}'s response — open to read in full`} onClick={(event) => { event.stopPropagation(); onFocus(); }}>
+          {reply}
+        </button>
+      )}
       <div className="agent-foot"><span>Owned by {agent.ownerName}</span><span><LocalDateTime timestamp={agent.createdAt} /></span></div>
     </article>
   );
@@ -56,6 +66,9 @@ export function AgentSpotlight({ agent, tone, sessionId, latestRun, activity, on
         <span className="agent-state">{latestRun?.status.replace("_", " ") ?? "Created"}</span>
       </div>
       <div className="spotlight-row"><span className="label">Task</span><AgentTaskEditor key={`${agent.id}-${agent.updatedAt}`} agent={agent} onSave={onUpdateTask} /></div>
+      {latestRun?.finalResponse && (
+        <div className="spotlight-row"><span className="label">Response</span><div className="spotlight-response">{latestRun.finalResponse}</div></div>
+      )}
       <div className="spotlight-row"><span className="label">Execution</span>{latestRun ? <div className="spotlight-execution"><ActivityTimeline run={latestRun} activity={activity} /><p className="review-empty">{latestRun.files.length} changed file{latestRun.files.length === 1 ? "" : "s"} · {latestRun.checks.filter((check) => check.status === "passed").length}/{latestRun.checks.length} checks passed</p>{latestRun.runBranch && <p className="review-empty"><code>{latestRun.runBranch}</code>{latestRun.discardedAt ? " · discarded" : ""}</p>}<ArtifactToggle sessionId={sessionId} run={latestRun} label="Open raw log" closeLabel="Hide raw log" emptyText="The raw log becomes available when the run finishes." /><ArtifactToggle sessionId={sessionId} run={latestRun} kind="prompt" label="Session brief sent to this agent" closeLabel="Hide session brief" emptyText="The session brief becomes available once the run starts." /></div> : <p className="review-empty">No agent run has started.</p>}</div>
       <div className="spotlight-foot"><span><LocalDateTime timestamp={agent.createdAt} /></span><button type="button" className="button agent-chat-button" data-size="sm" onClick={onHistory}><Icon name="message" size={12} />Prompt history</button></div>
     </article>

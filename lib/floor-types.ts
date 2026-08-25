@@ -15,6 +15,11 @@ export type FloorParticipant = {
 
 export type FloorAgentState = "created";
 
+// The one built-in per-session agent kind. Null means an ordinary
+// user-created agent. "answer" marks the lazily-created agent that answers
+// questions and non-actionable prompts (db/floor.ts's ensureAnswerAgent).
+export type FloorAgentKind = "answer" | null;
+
 export type FloorAgent = {
   id: string;
   name: string;
@@ -24,6 +29,7 @@ export type FloorAgent = {
   ownerName: string;
   createdByUserId: string;
   state: FloorAgentState;
+  kind: FloorAgentKind;
   // Which agent provider runs for this agent execute on, and an optional
   // model override (null = the provider's default). The create-agent dialog
   // writes the selected provider; model selection is a later milestone.
@@ -58,6 +64,10 @@ export type FloorQueuePrompt = {
   createdAt: number;
 };
 
+// Classified by db/routing.ts's classifyPrompt. Null means classified before
+// this column existed, or not yet visited by a routing tick; treat as "task".
+export type PromptIntent = "task" | "question" | "noise";
+
 export type FloorQueueItem = {
   id: string;
   agentId: string | null;
@@ -66,12 +76,18 @@ export type FloorQueueItem = {
   status: "queued" | "running" | "blocked" | "completed" | "paused" | "failed" | "cancelled";
   assignedBy: "user" | "router" | null;
   assignedReason: string | null;
+  intent: PromptIntent | null;
   prompts: FloorQueuePrompt[];
   createdAt: number;
   updatedAt: number;
 };
 
 export type AgentRunStatus = "provisioning" | "running" | "checking" | "ready" | "publishing" | "published" | "integrating" | "integrated" | "conflicted" | "failed" | "cancel_requested" | "cancelled";
+
+// Null means an ordinary task run that publishes and integrates. "reply" is a
+// read-only run that answers a question/non-actionable prompt — see
+// agent_runs.kind in db/schema.ts for the full invariant.
+export type AgentRunKind = "reply" | null;
 
 export type RunActivityKind = "reasoning" | "command" | "file_edit" | "agent_message" | "tool_call" | "error" | "truncated";
 
@@ -120,6 +136,7 @@ export type AgentRun = {
   remoteRunSha: string | null;
   attempt: number;
   status: AgentRunStatus;
+  kind: AgentRunKind;
   model: string;
   summary: string | null;
   finalResponse: string | null;

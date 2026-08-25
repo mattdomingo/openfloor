@@ -1,6 +1,8 @@
 import { getDb, type D1DatabaseLike } from "./index";
+import { ensureAnswerAgent } from "./floor";
 import type { StartRunResult } from "@/lib/agent-run-start";
 import { getPendingConflict, type PendingConflict } from "./conflicts";
+import type { PromptIntent } from "@/lib/floor-types";
 
 export const GLOBAL_RUN_BUDGET = 5;
 export const SESSION_RUN_CAP = 2;
@@ -12,7 +14,7 @@ export type RoutingTrigger = "enqueue" | "run_completed" | "toggle" | "agent_cha
 export type TickOutcome = { acted: boolean; held: boolean; revision: number | null };
 
 export type RoutingDeps = {
-  startRun: (sessionId: string, queueItemId: string, userId: string) => Promise<StartRunResult>;
+  startRun: (sessionId: string, queueItemId: string, userId: string, kind: "task" | "reply") => Promise<StartRunResult>;
   startConflictResolution?: (conflict: PendingConflict) => Promise<StartRunResult>;
   // Providers whose runs cannot start right now (rollout gates, e.g.
   // CLAUDE_RUN_ENABLED=false). Items targeting these agents are SKIPPED like
@@ -36,6 +38,7 @@ type QueueRow = {
   id: string;
   agentId: string | null;
   assignedBy: "user" | "router" | null;
+  intent: PromptIntent | null;
   position: number;
 };
 
@@ -64,6 +67,40 @@ export function tokenize(text: string): Set<string> {
   return tokens;
 }
 
+// Whole-string only, checked before task verbs so a real request that
+// happens to contain one of these words ("ping the health endpoint") never
+// gets misread as noise — only a bare greeting/acknowledgement does.
+const NOISE_PHRASES = new Set([
+  "ping", "hi", "hello", "hey", "yo", "thanks", "thank you", "ty", "ok", "okay", "test", "👋",
+]);
+
+// Checked before the question test: "can you fix the login bug?" has both an
+// interrogative opener and a trailing "?", but the verb makes it a task.
+const TASK_VERBS = new Set([
+  "add", "fix", "implement", "refactor", "write", "create", "update", "remove", "delete",
+  "rename", "migrate", "build", "bump", "upgrade",
+]);
+
+const INTERROGATIVES = new Set([
+  "what", "why", "how", "who", "when", "where", "which", "is", "are", "do", "does", "did",
+  "can", "could", "should", "would", "will",
+]);
+
+export function classifyPrompt(text: string): PromptIntent {
+  const normalized = text.normalize("NFKC").trim().replace(/\s+/g, " ").toLowerCase();
+  if (normalized.length === 0) return "task";
+
+  const strippedOfPunctuation = normalized.replace(/[.,!?;:]+$/, "");
+  if (NOISE_PHRASES.has(strippedOfPunctuation)) return "noise";
+
+  const words = normalized.split(/[^a-z0-9]+/).filter(Boolean);
+  if (words.some((word) => TASK_VERBS.has(word))) return "task";
+
+  if (normalized.endsWith("?") || INTERROGATIVES.has(words[0] ?? "")) return "question";
+
+  return "task";
+}
+
 export async function runRoutingTick(
   sessionId: string,
   trigger: RoutingTrigger,
@@ -80,6 +117,7 @@ export async function runRoutingTick(
     "SELECT user_id AS userId FROM session_members WHERE session_id = ? AND role = 'owner' AND removed_at IS NULL ORDER BY joined_at, user_id LIMIT 1",
   ).bind(sessionId).first<{ userId: string }>();
   if (!owner) return { acted: false, held: false, revision: null };
+  const ownerUserId = owner.userId;
 
   // Conflict resolution is a separate automation from ordinary dispatch.
   // An eligible case gets the next available slot, but a busy inherited
@@ -115,7 +153,7 @@ export async function runRoutingTick(
 
   const [queueResult, promptResult, agentResult, activityResult, globalCount] = await Promise.all([
     database.prepare(
-      `SELECT id, agent_id AS agentId, assigned_by AS assignedBy, position
+      `SELECT id, agent_id AS agentId, assigned_by AS assignedBy, intent, position
        FROM floor_queue_items WHERE session_id = ? AND status = 'queued'
        ORDER BY position, created_at, id`,
     ).bind(sessionId).all<QueueRow>(),
@@ -171,14 +209,51 @@ export async function runRoutingTick(
   let changedQueueOrRuns = false;
   let held = false;
 
+  // Every queued item's intent, computed once whether or not it was already
+  // assigned — a targeted item ("@Rex what's the status?") still needs an
+  // intent so the dispatch phase below can pick a reply run over a task run.
+  const intentByItem = new Map<string, PromptIntent>();
+  for (const item of queue) {
+    intentByItem.set(item.id, item.intent ?? classifyPrompt((promptsByItem.get(item.id) ?? []).join(" ")));
+  }
+  let answerAgentId: string | null = null;
+  async function resolveAnswerAgent(): Promise<string> {
+    if (!answerAgentId) answerAgentId = await ensureAnswerAgent(sessionId, ownerUserId, database);
+    return answerAgentId;
+  }
+
   // --- Assign phase: give every unassigned queued item an agent. ---
   const unassigned = queue.filter((item) => item.agentId === null);
-  if (unassigned.length > 0 && agents.length === 0) {
+  const unassignedTaskItems = unassigned.filter((item) => intentByItem.get(item.id) === "task");
+  if (unassignedTaskItems.length > 0 && agents.length === 0) {
     decisions.push({ queueItemId: null, agentId: null, runId: null, decision: "held", reason: "No agents exist in this session", candidates: [] });
     held = true;
-  } else if (unassigned.length > 0) {
+  }
+  if (unassigned.length > 0) {
     const claimedThisTick = new Set<string>();
     for (const item of unassigned) {
+      const intent = intentByItem.get(item.id) ?? "task";
+
+      if (intent !== "task") {
+        const agentId = await resolveAnswerAgent();
+        const reason = intent === "question"
+          ? "Question — routed to the session answer agent"
+          : "Not a task — routed to the session answer agent";
+        const update = await database.prepare(
+          `UPDATE floor_queue_items SET agent_id = ?, assigned_by = 'router', assigned_reason = ?, intent = ?, updated_at = ?
+           WHERE id = ? AND session_id = ? AND status = 'queued' AND agent_id IS NULL`,
+        ).bind(agentId, reason, intent, now, item.id, sessionId).run();
+        if (Number(update.meta?.changes ?? 0) === 0) continue; // a human raced us
+        item.agentId = agentId;
+        item.assignedBy = "router";
+        item.intent = intent;
+        changedQueueOrRuns = true;
+        decisions.push({ queueItemId: item.id, agentId, runId: null, decision: "assigned", reason, candidates: [] });
+        continue;
+      }
+
+      if (agents.length === 0) continue; // already recorded as held above
+
       const promptTokens = tokenize((promptsByItem.get(item.id) ?? []).join(" "));
       const candidates: CandidateSnapshot[] = agents.map((agent) => {
         const agentTokens = tokenize(`${agent.role} ${agent.task}`);
@@ -219,16 +294,31 @@ export async function runRoutingTick(
           ? "No keyword match; only idle agent"
           : "No keyword match; least recently used agent";
       const update = await database.prepare(
-        `UPDATE floor_queue_items SET agent_id = ?, assigned_by = 'router', assigned_reason = ?, updated_at = ?
+        `UPDATE floor_queue_items SET agent_id = ?, assigned_by = 'router', assigned_reason = ?, intent = ?, updated_at = ?
          WHERE id = ? AND session_id = ? AND status = 'queued' AND agent_id IS NULL`,
-      ).bind(chosen.agentId, reason, now, item.id, sessionId).run();
+      ).bind(chosen.agentId, reason, intent, now, item.id, sessionId).run();
       if (Number(update.meta?.changes ?? 0) === 0) continue; // a human raced us
       claimedThisTick.add(chosen.agentId);
       item.agentId = chosen.agentId;
       item.assignedBy = "router";
+      item.intent = intent;
       changedQueueOrRuns = true;
       decisions.push({ queueItemId: item.id, agentId: chosen.agentId, runId: null, decision: "assigned", reason, candidates });
     }
+  }
+
+  // --- Intent backfill: a user-targeted item skips the assign phase above
+  // (its agent choice is never overridden — "that agent answers in its own
+  // voice") but still needs intent recorded before dispatch decides task vs
+  // reply run. Covers items targeted at creation and pre-existing rows from
+  // before this column existed. ---
+  for (const item of queue) {
+    if (item.agentId === null || item.intent !== null) continue;
+    const intent = intentByItem.get(item.id) ?? "task";
+    await database.prepare(
+      `UPDATE floor_queue_items SET intent = ?, updated_at = ? WHERE id = ? AND session_id = ? AND intent IS NULL`,
+    ).bind(intent, now, item.id, sessionId).run();
+    item.intent = intent;
   }
 
   // --- Dispatch phase: start runs for assigned queued items while capacity allows. ---
@@ -267,7 +357,8 @@ export async function runRoutingTick(
         });
         continue;
       }
-      const result = await deps.startRun(sessionId, item.id, owner.userId);
+      const runKind = item.intent === "task" || item.intent === null ? "task" : "reply";
+      const result = await deps.startRun(sessionId, item.id, owner.userId, runKind);
       if (result.ok) {
         dispatchedAgents.add(item.agentId);
         capacity -= 1;

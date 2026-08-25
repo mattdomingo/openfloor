@@ -10,6 +10,7 @@ import type {
   ReviewContributor,
 } from "@/lib/floor-types";
 import type { AgentInput, AgentTaskInput, AssignmentInput, MessageInput, QueuePromptInput } from "@/lib/validation";
+import { normalizeAgentName } from "@/lib/validation";
 import { getDb, type D1DatabaseLike } from "./index";
 import {
   getActiveRepositoryCandidate,
@@ -46,7 +47,7 @@ async function readFloorSnapshot(sessionId: string, userId: string, database: D1
     database.prepare(
       `SELECT a.id, a.name, a.role, a.task, a.owner_user_id AS ownerUserId,
               owner.display_name AS ownerName, a.created_by AS createdByUserId,
-              a.state, a.provider, a.model, a.created_at AS createdAt, a.updated_at AS updatedAt
+              a.state, a.kind, a.provider, a.model, a.created_at AS createdAt, a.updated_at AS updatedAt
        FROM floor_agents a
        JOIN users owner ON owner.id = a.owner_user_id
        WHERE a.session_id = ?
@@ -72,7 +73,7 @@ async function readFloorSnapshot(sessionId: string, userId: string, database: D1
     ).bind(sessionId, userId, userId).all<MessageRecord>(),
     database.prepare(
       `SELECT q.id, q.agent_id AS agentId, a.name AS agentName, q.position, q.status,
-              q.assigned_by AS assignedBy, q.assigned_reason AS assignedReason,
+              q.assigned_by AS assignedBy, q.assigned_reason AS assignedReason, q.intent,
               q.created_at AS createdAt, q.updated_at AS updatedAt
        FROM floor_queue_items q
        LEFT JOIN floor_agents a ON a.id = q.agent_id
@@ -261,6 +262,53 @@ export async function createFloorAgent(
     throw error;
   }
   return readFloorSnapshot(sessionId, userId, database);
+}
+
+const ANSWER_AGENT_NAME = "Concierge";
+const ANSWER_AGENT_ROLE = "Session answers";
+const ANSWER_AGENT_TASK = "Answer questions about this session and its repository.";
+const ANSWER_AGENT_NAME_ATTEMPTS = 20;
+
+// The built-in per-session agent that answers questions and non-actionable
+// prompts (db/routing.ts's classifyPrompt). Created lazily on first use, not
+// seeded at session creation, so a floor that never gets a question never
+// gains an agent it didn't need. Identified by `kind = 'answer'`, never by
+// name, so a user agent named "Concierge" can never shadow it — on a name
+// collision this suffixes (Concierge 2, …) instead of failing.
+//
+// Callers are the per-session SessionRouter Durable Object's alarm(), which
+// never overlaps itself, so concurrent creation within one session is not a
+// practical race; the loop below is defensive, not load-bearing.
+export async function ensureAnswerAgent(
+  sessionId: string,
+  ownerUserId: string,
+  database: D1DatabaseLike = getDb(),
+): Promise<string> {
+  const existing = await database.prepare(
+    "SELECT id FROM floor_agents WHERE session_id = ? AND kind = 'answer' LIMIT 1",
+  ).bind(sessionId).first<{ id: string }>();
+  if (existing) return existing.id;
+
+  for (let attempt = 0; attempt < ANSWER_AGENT_NAME_ATTEMPTS; attempt += 1) {
+    const name = attempt === 0 ? ANSWER_AGENT_NAME : `${ANSWER_AGENT_NAME} ${attempt + 1}`;
+    const id = crypto.randomUUID();
+    const now = Date.now();
+    try {
+      const result = await database.prepare(
+        `INSERT INTO floor_agents
+           (id, session_id, created_by, owner_user_id, name, name_key, role, task, state, provider, kind, created_at, updated_at)
+         SELECT ?, ?, ?, ?, ?, ?, ?, ?, 'created', 'openai', 'answer', ?, ?
+         WHERE EXISTS (SELECT 1 FROM sessions WHERE id = ? AND ended_at IS NULL)`,
+      ).bind(id, sessionId, ownerUserId, ownerUserId, name, normalizeAgentName(name), ANSWER_AGENT_ROLE, ANSWER_AGENT_TASK, now, now, sessionId).run();
+      if (Number(result.meta?.changes ?? 0) > 0) return id;
+      // The session ended between the check above and here; nothing to create.
+      throw new FloorTargetError("Session has ended.");
+    } catch (error) {
+      if (String(error).toLowerCase().includes("unique")) continue; // name collision, try the next suffix
+      throw error;
+    }
+  }
+  throw new Error("Could not create the session answer agent: no available name.");
 }
 
 export async function updateFloorAgentTask(

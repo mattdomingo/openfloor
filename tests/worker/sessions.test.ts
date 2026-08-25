@@ -483,7 +483,7 @@ describe("D1 session persistence", () => {
       fullName: "openfloor-test/ended", private: true, defaultBranch: "main",
     }, "main", [], env.DB)).rejects.toBeInstanceOf(SessionEndedError);
     await expect(createRepositoryPreflight(created.session.id, owner.id, env.DB)).rejects.toBeInstanceOf(SessionEndedError);
-    await expect(createAgentRun(created.session.id, "missing-queue-item", owner.id, env.DB)).rejects.toBeInstanceOf(SessionEndedError);
+    await expect(createAgentRun(created.session.id, "missing-queue-item", owner.id, "task", env.DB)).rejects.toBeInstanceOf(SessionEndedError);
     // Outsiders keep getting concealment, not the ended error.
     await expect(updateSessionObjective(created.session.id, outsider.id, "Hidden", env.DB)).resolves.toBeNull();
 
@@ -662,8 +662,8 @@ describe("D1 session persistence", () => {
     let floor = await createFloorAgent(created.session.id, owner.id, parsed, env.DB);
     floor = await createFloorQueueItem(created.session.id, owner.id, { prompt: "Add a real file", agentId: floor!.agents[0].id }, env.DB);
     const queueItemId = floor!.queue[0].id;
-    await expect(createAgentRun(created.session.id, queueItemId, member.id, env.DB)).rejects.toBeInstanceOf(AgentRunNotReadyError);
-    const run = await createAgentRun(created.session.id, queueItemId, owner.id, env.DB);
+    await expect(createAgentRun(created.session.id, queueItemId, member.id, "task", env.DB)).rejects.toBeInstanceOf(AgentRunNotReadyError);
+    const run = await createAgentRun(created.session.id, queueItemId, owner.id, "task", env.DB);
     expect(run).toEqual(expect.objectContaining({ status: "provisioning", model: "gpt-5.6-terra", attempt: 1 }));
     const context = await getRunExecutionContext(run.id, env.DB);
     expect(context).toEqual(expect.objectContaining({ candidateSha: "d".repeat(40), agentName: "Builder" }));
@@ -696,7 +696,7 @@ describe("D1 session persistence", () => {
     expect(floor?.runs[0].status).toBe("integrated");
 
     await env.DB.prepare("UPDATE floor_queue_items SET status = 'queued' WHERE id = ?").bind(queueItemId).run();
-    const conflict = await createAgentRun(created.session.id, queueItemId, owner.id, env.DB);
+    const conflict = await createAgentRun(created.session.id, queueItemId, owner.id, "task", env.DB);
     const conflictContext = await getRunExecutionContext(conflict.id, env.DB);
     await markRunRunning(conflict.id, "process-conflict", env.DB);
     await markRunChecking(conflict.id, "thread-conflict", "Conflicting change", env.DB);
@@ -710,7 +710,7 @@ describe("D1 session persistence", () => {
     await markRunIntegrationConflicted(conflict.id, "Both runs changed src/conflict.ts", env.DB);
     expect(await prepareConflictedRunRetry(created.session.id, conflict.id, member.id, env.DB)).toBeNull();
     expect(await prepareConflictedRunRetry(created.session.id, conflict.id, owner.id, env.DB)).toBe(queueItemId);
-    const retry = await createAgentRun(created.session.id, queueItemId, owner.id, env.DB);
+    const retry = await createAgentRun(created.session.id, queueItemId, owner.id, "task", env.DB);
     expect(retry.attempt).toBe(3);
     await expect(requestAgentRunCancellation(created.session.id, retry.id, member.id, env.DB)).resolves.toBeNull();
     await expect(requestAgentRunCancellation(created.session.id, retry.id, owner.id, env.DB)).resolves.toBe(true);
@@ -758,7 +758,7 @@ describe("D1 session persistence", () => {
     if (!parsed) throw new Error("Invalid agent fixture");
     let floor = await createFloorAgent(created.session.id, owner.id, parsed, env.DB);
     floor = await createFloorQueueItem(created.session.id, owner.id, { prompt: "Add a real file", agentId: floor!.agents[0].id }, env.DB);
-    const run = await createAgentRun(created.session.id, floor!.queue[0].id, owner.id, env.DB);
+    const run = await createAgentRun(created.session.id, floor!.queue[0].id, owner.id, "task", env.DB);
     await markRunRunning(run.id, "process-1", env.DB);
     await markRunChecking(run.id, "thread-1", "Implemented", env.DB);
     const context = await getRunExecutionContext(run.id, env.DB);

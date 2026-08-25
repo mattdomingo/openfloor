@@ -183,6 +183,13 @@
       "when": 1787676953472,
       "tag": "0025_cute_moon_knight",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "6",
+      "when": 1787684618823,
+      "tag": "0026_round_the_executioner",
+      "breakpoints": true
     }
   ]
 }
