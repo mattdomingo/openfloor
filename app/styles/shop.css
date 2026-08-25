@@ -168,12 +168,15 @@
    a bar underneath it. Position/width come from HomeScreen.tsx measuring
    the real button (label lengths vary), written as an inline transform so
    the slide is a compositor-only animation. */
+/* Matches the selected tab's own text color (.shop-tab[aria-pressed="true"]
+   is var(--ink); the Usage tab is var(--usage-tone)) rather than a fixed
+   accent — the brackets read as part of that label, not a separate mark. */
 .shop-shell .shop-tab-indicator {
   position: absolute;
   top: 50%;
   left: 0;
   height: 26px;
-  color: var(--accent-ink);
+  color: var(--ink);
   transition: transform .32s cubic-bezier(.2, .8, .2, 1), width .32s cubic-bezier(.2, .8, .2, 1);
   pointer-events: none;
 }
@@ -250,16 +253,18 @@
    label sits between two floor brackets — the exact glyph from that mark
    (viewBox 0 0 3 8, a stroke with a foot flared out at the bottom only,
    the mathematical ⌊⌋ "floor" shape the product is named for), not a
-   generic square-cornered box. Drawn with mask-image + currentColor so it
-   recolors for free across variants/themes. No fill anywhere — hierarchy
-   comes from color and weight, and the brackets widen slightly on hover
-   the way the sign-in mark's gap does. */
+   generic square-cornered box. At rest it's just the word, same as the
+   session lobby's own buttons — the brackets scale in from the text's
+   edges on hover/focus instead of sitting there permanently, so the page
+   isn't wall-to-wall brackets. Drawn with mask-image + currentColor, so
+   each variant's own color (quiet/primary/danger) carries through for
+   free — never forced to one shared tone. */
 .shop-shell .button {
   position: relative;
   display: inline-flex;
   align-items: center;
   min-height: 0;
-  gap: 9px;
+  gap: 0;
   padding: 3px 1px;
   border: 0;
   border-radius: 0;
@@ -268,40 +273,56 @@
   font: 600 13px var(--sans);
   letter-spacing: .01em;
   box-shadow: none;
-  transition: gap .16s ease, color .16s ease;
+  cursor: pointer;
+  transition: gap .18s ease, color .16s ease;
 }
 .shop-shell .button::before,
 .shop-shell .button::after {
   content: "";
   flex: none;
-  width: .5em;
+  width: 0;
   height: 1.3em;
+  opacity: 0;
   background-color: currentColor;
   -webkit-mask-repeat: no-repeat;
   mask-repeat: no-repeat;
   -webkit-mask-size: 100% 100%;
   mask-size: 100% 100%;
+  transition: width .18s ease, opacity .12s ease, transform .18s ease;
 }
 .shop-shell .button::before {
+  transform: scaleX(0);
+  transform-origin: right center;
   -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 3 8'%3E%3Cpath d='M0 0h1v7h2v1H0Z'/%3E%3C/svg%3E");
   mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 3 8'%3E%3Cpath d='M0 0h1v7h2v1H0Z'/%3E%3C/svg%3E");
 }
 .shop-shell .button::after {
+  transform: scaleX(0);
+  transform-origin: left center;
   -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 3 8'%3E%3Cpath d='M3 0h-1v7h-2v1h3Z'/%3E%3C/svg%3E");
   mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 3 8'%3E%3Cpath d='M3 0h-1v7h-2v1h3Z'/%3E%3C/svg%3E");
 }
 .shop-shell .button:hover,
-.shop-shell .button[data-variant="primary"]:hover {
-  gap: 13px;
+.shop-shell .button:focus-visible,
+.shop-shell .button:active,
+.shop-shell .button[data-variant="primary"]:hover,
+.shop-shell .button[data-variant="primary"]:focus-visible,
+.shop-shell .button[data-variant="primary"]:active {
+  gap: 9px;
   color: var(--ink);
   background: none;
   transform: none;
   box-shadow: none;
 }
-.shop-shell .button:active,
-.shop-shell .button[data-variant="primary"]:active {
-  gap: 9px;
-  background: none;
+.shop-shell .button:hover::before,
+.shop-shell .button:hover::after,
+.shop-shell .button:focus-visible::before,
+.shop-shell .button:focus-visible::after,
+.shop-shell .button:active::before,
+.shop-shell .button:active::after {
+  width: .5em;
+  opacity: 1;
+  transform: scaleX(1);
 }
 
 .shop-shell .button[data-variant="primary"] { color: var(--accent-ink); font-weight: 700; }
