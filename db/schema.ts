@@ -207,6 +207,12 @@ export const floorAgents = sqliteTable(
     // "use the provider's default" (lib/provider-credentials.ts).
     provider: text("provider", { enum: ["anthropic", "openai", "kimi", "gemini"] }).notNull().default("openai"),
     model: text("model"),
+    // Open enum, TS-only, no SQL CHECK, same convention as `provider` above.
+    // Null means an ordinary user-created agent. "answer" marks the one
+    // built-in per-session agent that answers questions/non-actionable
+    // prompts; identified by kind (not name) so a user agent named the same
+    // thing can never shadow it. See db/floor.ts's ensureAnswerAgent.
+    kind: text("kind", { enum: ["answer"] }),
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
   },
@@ -214,6 +220,7 @@ export const floorAgents = sqliteTable(
     uniqueIndex("idx_floor_agents_session_name").on(table.sessionId, table.nameKey),
     index("idx_floor_agents_session_created").on(table.sessionId, table.createdAt),
     index("idx_floor_agents_owner").on(table.ownerUserId),
+    index("idx_floor_agents_session_kind").on(table.sessionId, table.kind),
     check("floor_agents_state_check", sql`${table.state} in ('created')`),
   ],
 );
@@ -259,6 +266,11 @@ export const floorQueueItems = sqliteTable(
     status: text("status", { enum: ["queued", "running", "blocked", "completed", "paused", "failed", "cancelled"] }).notNull(),
     assignedBy: text("assigned_by", { enum: ["user", "router"] }),
     assignedReason: text("assigned_reason"),
+    // Open enum, TS-only, no SQL CHECK (same convention as floor_agents.provider).
+    // Null means classified before this column existed; treated as "task".
+    // Set once by the router's classifyPrompt (db/routing.ts) in the same
+    // guarded assignment UPDATE that sets agentId/assignedBy/assignedReason.
+    intent: text("intent", { enum: ["task", "question", "noise"] }),
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
   },
@@ -491,6 +503,16 @@ export const agentRuns = sqliteTable(
     providerThreadId: text("codex_thread_id"),
     summary: text("summary"),
     finalResponse: text("final_response"),
+    // Open enum, TS-only, no SQL CHECK (same convention as floor_agents.provider
+    // and agent_run_artifacts.kind — a CHECK on `status` already forces a
+    // recreate that cascade-deletes children, so no run field gets a new one).
+    // Null means an ordinary task run that publishes and integrates. "reply"
+    // is a read-only run that answers a question/non-actionable prompt: it
+    // still checks out the candidate and calls the provider, but skips
+    // checks, bundle export, publication, and integration — runBranch stays
+    // null (idx_agent_runs_branch is unaffected; SQLite treats NULLs as
+    // distinct) and finalResponse is the whole point.
+    kind: text("kind", { enum: ["reply"] }),
     createdBy: text("created_by").notNull().references(() => users.id),
     createdAt: integer("created_at").notNull(),
     startedAt: integer("started_at"),

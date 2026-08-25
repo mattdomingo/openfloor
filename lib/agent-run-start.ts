@@ -4,6 +4,7 @@ import {
   beginRunIntegration,
   bumpAgentRunRevision,
   createAgentRun,
+  finishAgentReply,
   finishAgentRun,
   finishRunCheck,
   finishRunPublished,
@@ -74,6 +75,9 @@ type TestAgentRunData = {
   activityEventsByPrompt?: Record<string, Array<{ kind: string; detail: string }>>;
   log?: string;
   stageDelayMs?: number;
+  // Reply-run only (kind: "reply"): the text a test reply run answers with.
+  replyByPrompt?: Record<string, string>;
+  replyText?: string;
 };
 
 export type StartRunResult =
@@ -112,7 +116,7 @@ export function disabledRunProviders(): ReadonlySet<import("@/lib/provider-crede
 // throw would instead hit the router DO's bare catch and retry every 60s
 // forever, since "owner is out of hours" doesn't resolve until the month
 // rolls over.
-export async function startQueueItemRun(sessionId: string, queueItemId: string, userId: string): Promise<StartRunResult> {
+export async function startQueueItemRun(sessionId: string, queueItemId: string, userId: string, kind: "task" | "reply" = "task"): Promise<StartRunResult> {
   const bindings = env as unknown as {
     AGENT_RUN_WORKFLOW?: WorkflowBinding;
     AGENT_RUN_ENABLED?: string;
@@ -149,10 +153,12 @@ export async function startQueueItemRun(sessionId: string, queueItemId: string, 
   }
   try {
     await ensureNextCandidateCycle(sessionId, userId);
-    const run = await createAgentRun(sessionId, queueItemId, userId);
+    const run = await createAgentRun(sessionId, queueItemId, userId, kind);
     if (bindings.OPENFLOOR_TEST_ALLOW_IDENTITY_HEADERS === "true" && bindings.OPENFLOOR_TEST_AGENT_RUN_DATA && bindings.PREFLIGHT_LOGS) {
-      const result = await runTestAgent(run.id, bindings.OPENFLOOR_TEST_AGENT_RUN_DATA, bindings.PREFLIGHT_LOGS);
-      if (result === "ready") await publishTestRun(run.id, bindings.OPENFLOOR_TEST_AGENT_RUN_DATA);
+      const result = kind === "reply"
+        ? await runTestAgentReply(run.id, bindings.OPENFLOOR_TEST_AGENT_RUN_DATA, bindings.PREFLIGHT_LOGS)
+        : await runTestAgent(run.id, bindings.OPENFLOOR_TEST_AGENT_RUN_DATA, bindings.PREFLIGHT_LOGS);
+      if (result === "ready" && kind !== "reply") await publishTestRun(run.id, bindings.OPENFLOOR_TEST_AGENT_RUN_DATA);
     } else {
       if (!bindings.AGENT_RUN_WORKFLOW) throw new Error("Agent run Workflow binding is unavailable");
       await bindings.AGENT_RUN_WORKFLOW.create({ id: run.id, params: { runId: run.id } });
@@ -313,6 +319,38 @@ async function runTestAgent(runId: string, encoded: string, bucket: R2BucketLike
     ? `Codex changed ${files.length} files; all required checks passed. Changes remain local to openfloor.`
     : `Codex changed ${files.length} files; no check commands were configured. Changes remain local to openfloor.`;
   await finishAgentRun(runId, shouldFail ? "failed" : "ready", shouldFail ? "A required check failed." : readySummary);
+  await holdTestRunStage(runId, data);
+  return shouldFail ? "failed" : "ready";
+}
+
+// Reply-run counterpart of runTestAgent: same brief-rendering and prompt
+// artifact, but no files/checks/log — a reply run answers, it doesn't edit.
+async function runTestAgentReply(runId: string, encoded: string, bucket: R2BucketLike): Promise<"hold" | "failed" | "ready"> {
+  const data = JSON.parse(encoded) as TestAgentRunData;
+  const context = await getRunExecutionContext(runId);
+  if (!context) throw new Error("Test run context is missing");
+  await holdTestRunStage(runId, data);
+  const brief = await renderRunBrief(runId);
+  if (!brief) throw new Error("Test run session brief is missing");
+  const promptKey = `runs/${runId}/prompt.txt`;
+  await bucket.put(promptKey, brief.text, { httpMetadata: { contentType: "text/plain; charset=utf-8" } });
+  await recordRunArtifact(runId, "prompt", promptKey, "text/plain; charset=utf-8", brief.text.length);
+  await markRunRunning(runId, `test-${runId}`);
+  await holdTestRunStage(runId, data);
+  if (data.holdPrompts?.some((value) => context.prompts.some((prompt) => prompt.text.includes(value)))) return "hold";
+  const shouldFail = data.failPrompts?.some((value) => context.prompts.some((prompt) => prompt.text.includes(value))) ?? false;
+  const matchedReply = Object.entries(data.replyByPrompt ?? {}).find(([prompt]) => context.prompts.some((item) => item.text.includes(prompt)))?.[1];
+  const finalResponse = matchedReply ?? data.replyText ?? `Answered: ${context.prompts.map((prompt) => prompt.text).join(" | ")}`;
+  const activitySource = data.activityEvents ?? [
+    { kind: "reasoning", detail: "Reading the session brief and repository before answering." },
+    { kind: "agent_message", detail: finalResponse },
+  ];
+  const inserted = await insertRunActivityEvents(runId, activitySource.map((event, index) => ({
+    sequence: RUNNER_SEQUENCE_BASE + index + 1, kind: event.kind, detail: event.detail,
+  })));
+  if (inserted.length > 0) await notifyRunActivity(context.sessionId, { runId, agentId: context.agentId, events: inserted });
+  await holdTestRunStage(runId, data);
+  await finishAgentReply(runId, shouldFail ? "failed" : "ready", shouldFail ? null : finalResponse, shouldFail ? "The reply could not be generated." : "Answered the prompt.");
   await holdTestRunStage(runId, data);
   return shouldFail ? "failed" : "ready";
 }

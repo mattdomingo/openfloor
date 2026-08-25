@@ -6,6 +6,7 @@ import {
   bumpAgentRunRevision,
   beginRunIntegration,
   cancelRunIntegration,
+  finishAgentReply,
   finishAgentRun,
   finishRunCheck,
   finishRunPublished,
@@ -283,6 +284,7 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
                 conflictInputUrl: `${this.env.OPENFLOOR_RUNTIME_ORIGIN}/runtime/run/conflict-input`,
                 conflictInputToken,
               } : {}),
+              readOnly: context.kind === "reply",
             }),
           );
           await sandbox.writeFile(
@@ -290,6 +292,7 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
             buildGeminiSrtSettings({
               gatewayHost: new URL(this.env.OPENFLOOR_RUNTIME_ORIGIN).host,
               workspace: "/workspace/repository",
+              readOnly: context.kind === "reply",
             }),
           );
           const prepared = await sandbox.exec(
@@ -377,6 +380,11 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
               OPENFLOOR_RESULT_PATH: "/tmp/openfloor/result.json",
               OPENFLOOR_WORKSPACE: "/workspace/repository",
               OPENFLOOR_MODEL: context.model,
+              // Defense in depth only: a reply run never exports a bundle or
+              // publishes, so nothing it writes can escape the container
+              // regardless. Each runner uses this to select a read-only
+              // permission/sandbox/approval mode.
+              OPENFLOOR_RUN_MODE: context.kind === "reply" ? "reply" : "task",
               OPENFLOOR_EVENTS_URL: `${this.env.OPENFLOOR_RUNTIME_ORIGIN}/runtime/run/events`,
               OPENFLOOR_EVENTS_TOKEN: eventsToken,
               OPENFLOOR_CONTEXT_URL: `${this.env.OPENFLOOR_RUNTIME_ORIGIN}/runtime/run/context`,
@@ -453,6 +461,23 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
       }
       await markRunChecking(runId, codexResult.threadId, codexResult.finalResponse, this.env.DB);
       await this.notify(runId);
+
+      // A reply run answers and stops here: no file collection, no required
+      // checks (createAgentRun never inserted rows for one — context.checks
+      // is empty), no bundle export, no publish, no integrate. Its queue item
+      // completes outright (finishAgentReply), unlike a task run's "ready",
+      // which still has to publish and integrate before it's truly done.
+      if (context.kind === "reply") {
+        const finalResponse = codexResult.finalResponse;
+        finalStatus = finalResponse ? "ready" : "failed";
+        summary = finalResponse ? "Answered the prompt." : "The agent did not produce a text answer.";
+        const completion = await finishAgentReply(runId, finalStatus, finalResponse, summary, this.env.DB);
+        if (completion) {
+          await notifyFloorChanged(completion.sessionId, completion.revision, ["queue", "runs"]);
+          await pokeSessionRouter(completion.sessionId, "run_completed");
+        }
+        return { status: finalStatus };
+      }
 
       const files = await step.do("collect changed files", { retries: { limit: 0, delay: "1 second" }, timeout: "5 minutes" }, async () => {
         await sandbox.exec("git add -N .", { cwd: "/workspace/repository", timeout: 30_000 });
@@ -806,19 +831,24 @@ async function buildRunPrompt(context: NonNullable<Awaited<ReturnType<typeof get
   const snapshot = await getSessionContext(context.sessionId, { runId: context.id, queueItemId: context.queueItemId }, database);
   if (!snapshot) throw new Error("Session context is unavailable for this run");
   const sessionBrief = renderSessionContext(snapshot, viewerFromRunContext(context));
-  if (!context.conflictCaseId) return sessionBrief;
-  const [runContext, cases] = await Promise.all([
-    getConflictRunContext(context.id, database),
-    getMergeConflictCases(context.sessionId, database),
-  ]);
-  const conflictCase = cases.find((item) => item.id === context.conflictCaseId);
-  if (!runContext || !conflictCase) throw new Error("Merge conflict context is unavailable for this run");
-  return renderConflictResolverPrompt({
-    conflict: conflictCase,
-    sourceSummary: runContext.sourceSummary,
-    sourceConflictReason: runContext.sourceConflictReason,
-    sessionBrief,
-  });
+  if (context.conflictCaseId) {
+    const [runContext, cases] = await Promise.all([
+      getConflictRunContext(context.id, database),
+      getMergeConflictCases(context.sessionId, database),
+    ]);
+    const conflictCase = cases.find((item) => item.id === context.conflictCaseId);
+    if (!runContext || !conflictCase) throw new Error("Merge conflict context is unavailable for this run");
+    return renderConflictResolverPrompt({
+      conflict: conflictCase,
+      sourceSummary: runContext.sourceSummary,
+      sourceConflictReason: runContext.sourceConflictReason,
+      sessionBrief,
+    });
+  }
+  if (context.kind === "reply") {
+    return `${sessionBrief}\n\n## Reply instructions\n\nThis is a question or non-actionable message, not a coding task. Answer it in plain text using the repository and session brief above for context. Do not edit, create, or delete any files — your text response is the only output that reaches the floor.`;
+  }
+  return sessionBrief;
 }
 
 function parseCodexResult(value: string): { ok: boolean; threadId: string | null; finalResponse: string | null; error: string | null } {
