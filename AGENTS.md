@@ -102,7 +102,7 @@ openfloor has three intentionally separate state classes:
 
 1. **D1-authoritative application state**: users, Stripe entitlement projections, sessions, memberships, invites, objective, agents, assignments, messages, queue items, queue prompts, ordering, and floor revision. Stripe remains authoritative for the external subscription lifecycle; D1 owns the product-facing projection.
 2. **Durable Object-coordinated ephemeral state**: online connections and teammate prompt drafts. This state is realtime but is not D1 history.
-3. **Local UI state**: selected tabs, panel order and size, collapsed or expanded panels, queue filters, menus, dialogs, and the local visibility choice for teammate drafts.
+3. **Local UI state**: selected tabs, panel order and size, collapsed or expanded panels, queue filters, menus, dialogs, the current onboarding step and its unsaved profile/plan inputs, and the local visibility choice for teammate drafts.
 
 Do not persist an ephemeral interaction merely because D1 is available. Do not leave collaborative state local merely because React state is convenient.
 
@@ -207,7 +207,7 @@ Production is mounted under `/app` on `opnflr.com`. Local `npm run dev` is mount
 | `/app` | `/` | Public | Product landing and entry into Cloudflare Access. |
 | `/app/home` | `/home` | Protected | Sessions where the current user is a member; session creation. |
 | `/app/settings` | `/settings` | Protected | Account settings: profile (name, GitHub handle, picture), plan and usage, preferences (Do Not Disturb, theme), and account deletion. Reached from the account menu behind the avatar in the header. |
-| `/app/onboarding` | `/onboarding` | Protected | First-login account setup (profile picture, name, GitHub handle); gates `/home`, `/join/*`, and `/session/*` until complete. |
+| `/app/onboarding` | `/onboarding` | Protected | Two-step first-login setup: ephemeral profile details first, then explicit plan/seat selection (or locked invite Free confirmation); gates `/home`, `/join/*`, and `/session/*` until final submission. |
 | `/app/join/[token]` | `/join/[token]` | Protected | Valid invite preview followed by explicit acceptance. |
 | `/app/session/[id]` | `/session/[id]` | Protected/member-only | Session lobby, roster, invite controls, leave, and floor entry. |
 | `/app/session/[id]/floor` | `/session/[id]/floor` | Protected/member-only | Main collaborative Agent Floor. |
@@ -219,6 +219,7 @@ Production is mounted under `/app` on `opnflr.com`. Local `npm run dev` is mount
 Important behavior:
 
 - The landing page owns no password, OAuth callback, or application login session.
+- `/onboarding`, `/home`, and the session lobby share the Archivo/shop-palette `shop-shell` visual system and wave field. Onboarding-specific layout stays under `.onboarding-shell`; `/join`, `/settings`, and `/floor` retain their established styling.
 - Clicking Sign in navigates to a protected path; Cloudflare Access performs the login and returns the browser.
 - `/signout` is the production sign-out endpoint (an application route, not Cloudflare's own `/cdn-cgi/access/logout` — see "Authentication and identity" for why).
 - A join page reveals session title and owner only after authentication and only for a valid, active signed token.
@@ -1657,6 +1658,14 @@ An owner cannot remove a member from a session today — `leaveSession` is self-
 **Rationale:** No fetch, nothing to fail. The alternative — reading the Vite build manifest to resolve the real hashed filename — was not pursued: more moving parts (manifest location, whether it survives into the deployed asset bundle) for the same small, fixed set of CSS this one page needs, which is cheap to duplicate by hand.
 
 **Consequences:** `lib/access-login.ts`'s `resolveOwnStylesheetHref` (and its `OPENFLOOR_TEST_LANDING_HTML` test seam) is deleted — it existed for one call site that no longer needs it. `app/signin/code/route.ts`'s inline stylesheet has **no build-time link to `app/styles/layout.css`** — if `.entry-shell`/`.signin-*` change there, this page's copy goes stale silently. Whoever touches those classes next should grep for `INLINE_STYLE` in `app/signin/code/route.ts` and update it by hand. The inlined version also drops the entrance animations and keyframes `page.tsx` has (this route loads once per sign-in attempt; the extra weight wasn't worth it), so the two pages' first-paint states differ slightly by design — the input/button/link styling matches exactly.
+
+### 2026-08-25 — Split first-login onboarding into profile and plan steps
+
+**Decision:** `/onboarding` is a two-step local-state flow in `OnboardingScreen`: profile picture/name/GitHub handle first, then explicit Free/Pro/Max selection and paid seat quantity. Both panels stay mounted while navigating Back/Continue so unsaved values and the avatar preview survive within the page; reload starts again at profile and nothing is persisted until the final submit. A server-validated invite return replaces plan selection with a locked Free confirmation, but final onboarding still returns to the existing invite preview and never accepts membership automatically.
+
+**Rationale:** Separating identity from billing makes the required choices easier to scan without adding a draft entity or weakening the existing single onboarding mutation. Reusing the API's final multipart submission keeps profile validation, invite verification, Stripe Checkout, safe redirects, and membership acceptance at their current authoritative boundaries.
+
+**Consequences:** The current step and every unsaved field belong only to `OnboardingScreen`; no schema, API, Access, billing, or invite contract changed. The screen now shares the shop palette, wave field, Archivo type, bracket buttons, and theme resolution used by `/home` and the lobby, while onboarding-only responsive/rounded-surface rules remain scoped under `.onboarding-shell` in `app/styles/shop.css`. Step changes focus the active heading, progress exposes `aria-current="step"`, inactive panels are hidden, and narrow layouts stack profile, plan, seat, and action controls.
 
 ## How to record the next decision
 
