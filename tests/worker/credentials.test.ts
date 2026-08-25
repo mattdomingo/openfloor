@@ -774,6 +774,24 @@ describe("OpenAI gateway credential resolution", () => {
     delete (env as unknown as Record<string, unknown>).MOONSHOT_API_KEY;
   });
 
+  it("openai gateway refuses an oauth bundle outright until §5 ships — never sending it upstream", async () => {
+    const { sessionId, owner, member, runId } = await runningRun("openai-oauth", "member");
+    // A real pasted bundle is pretty-printed: interior newlines survive
+    // storage by design, so it must never reach a header value.
+    const bundle = JSON.stringify({ tokens: { account_id: "acct-1", access_token: "at", refresh_token: "rt" } }, null, 2);
+    await connectKey(member.id, "openai", bundle, "oauth");
+    await env.DB.prepare("UPDATE floor_agents SET credential_kind = 'oauth' WHERE session_id = ?").bind(sessionId).run();
+    // Even with a server key available: this is not a missing credential,
+    // it is an unusable-by-design one — no silent payer switch.
+    (env as unknown as Record<string, unknown>).OPENAI_API_KEY = "sk-openai-server-key";
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+    const refused = await postOpenAiGateway(gatewayRequest(await signedRunToken(runId, sessionId)), gatewayParams());
+    expect(refused.status).toBe(503);
+    expect(await refused.text()).toContain("ChatGPT subscription credentials cannot run agents yet");
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
   it("keeps the existing rejection paths", async () => {
     const { sessionId, owner, runId } = await runningRun("gw-reject");
     await connectOpenAiKey(owner.id, "sk-openai-owner-key4");

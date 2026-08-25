@@ -32,6 +32,17 @@ export async function POST(request: Request, { params }: { params: Promise<{ pat
     encryptionKey: bindings.CREDENTIAL_ENCRYPTION_KEY,
   });
   if (!resolved.ok) return new Response(resolved.message, { status: 503 });
+  // A ChatGPT-subscription auth bundle cannot drive a Codex run until the
+  // brief's §5 ships (gated on Spike D, which has not run). Refuse before
+  // any header is built: sending the stored bundle — refresh token included
+  // — upstream as a bearer would be a credential leak, and a pretty-printed
+  // bundle's newlines would crash Headers.set into an opaque 500 besides.
+  if (resolved.kind === "oauth") {
+    return new Response(
+      "ChatGPT subscription credentials cannot run agents yet. Set this agent's Billing to API key, or connect an OpenAI API key in Settings.",
+      { status: 503 },
+    );
+  }
   const headers = new Headers();
   headers.set("authorization", `Bearer ${resolved.secret}`);
   headers.set("content-type", request.headers.get("content-type") ?? "application/json");
