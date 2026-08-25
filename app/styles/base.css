@@ -70,5 +70,9 @@ input:focus-visible, textarea:focus-visible { box-shadow: 0 0 0 3px var(--accent
 }
 
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+  /* animation-delay isn't clamped by duration alone — without zeroing it
+     too, a staggered entrance (shop.css's shop-settle/-rule-draw) would
+     still pop in step by step, just with each step near-instant instead of
+     genuinely all-at-once. */
+  *, *::before, *::after { animation-duration: .01ms !important; animation-delay: 0s !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }

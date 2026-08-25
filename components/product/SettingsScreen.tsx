@@ -102,7 +102,7 @@ export function SettingsScreen({ user: initialUser, usage, billing, credentials,
         <div className="settings-layout">
           <SettingsRail value={section} onChange={setSection} />
           {/* key={section} remounts on every switch so the shop shell's
-              rise-and-fade (shop-tab-enter, app/styles/shop.css) replays
+              rise-and-fade (shop-settle, app/styles/shop.css) replays
               each time, same as HomeScreen's tab-panel. */}
           <div className="settings-panel tab-panel" key={section}>
             {section === "profile" && <ProfileSection user={user} onSaved={setUser} />}

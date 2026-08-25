@@ -52,6 +52,15 @@
 }
 .settings-shell .settings-rail-item:hover { color: var(--ink); }
 
+/* Rows arrive top-down, starting just after .settings-layout itself
+   (page-body's own stagger, shop.css) settles in — a tighter half-step
+   cascade since these are five small labels, not page-sized landmarks. */
+.settings-shell .settings-rail-item:nth-child(1) { animation: shop-settle .34s var(--ease-out) calc(var(--settle-step) * 1.5) both; }
+.settings-shell .settings-rail-item:nth-child(2) { animation: shop-settle .34s var(--ease-out) calc(var(--settle-step) * 2) both; }
+.settings-shell .settings-rail-item:nth-child(3) { animation: shop-settle .34s var(--ease-out) calc(var(--settle-step) * 2.5) both; }
+.settings-shell .settings-rail-item:nth-child(4) { animation: shop-settle .34s var(--ease-out) calc(var(--settle-step) * 3) both; }
+.settings-shell .settings-rail-item:nth-child(n+5) { animation: shop-settle .34s var(--ease-out) calc(var(--settle-step) * 3.5) both; }
+
 /* Same floor-bracket glyph and reveal-on-state technique as
    .shop-shell .button (shop.css:229-247, 249-251) — collapsed to nothing at
    rest, widening open around the label for the active row, so the marker
