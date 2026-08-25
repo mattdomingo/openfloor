@@ -2,7 +2,19 @@ import { SignJWT, importPKCS8 } from "jose";
 import { BASE_PATH } from "@/components/basePath";
 import type { GitHubRepositoryOption } from "@/lib/session-types";
 
-export type GitHubTestRepository = GitHubRepositoryOption & { branches: string[]; branchShas?: Record<string, string> };
+export type GitHubTestRepository = GitHubRepositoryOption & {
+  branches: string[];
+  branchShas?: Record<string, string>;
+  // Path -> UTF-8 contents, served by listRepositoryTree/getRepositoryFileContent
+  // in test-adapter mode. Directories are inferred from path segments.
+  files?: Record<string, string>;
+};
+
+export type RepositoryTreeEntry = { path: string; type: "file" | "dir"; size: number | null; sha: string };
+export type RepositoryTree = { ref: string; sha: string; entries: RepositoryTreeEntry[]; truncated: boolean };
+export type RepositoryFileContent =
+  | { path: string; encoding: "text"; text: string; size: number; truncated: boolean }
+  | { path: string; encoding: "binary" | "too_large"; size: number };
 
 export type GitHubPullRequestReview = {
   number: number;
@@ -450,6 +462,124 @@ export async function downloadRepositoryArchive(
   );
   if (!response.ok) throw await githubError(response);
   return response;
+}
+
+const MAX_TREE_ENTRIES = 10_000;
+const MAX_FILE_BYTES = 512 * 1024;
+const MAX_FILE_LINES = 5_000;
+
+function assertSafeRepositoryRef(ref: string): void {
+  if (!ref || ref.includes("..") || ref.startsWith("/") || /[\s\0]/.test(ref)) throw new GitHubApiError("Invalid repository ref", 400);
+}
+
+function assertSafeRepositoryPath(path: string): void {
+  if (!path || path.startsWith("/") || path.split("/").some((segment) => segment === "" || segment === "." || segment === "..")) {
+    throw new GitHubApiError("Invalid repository path", 400);
+  }
+}
+
+/** Recursive repository tree at `ref` (a branch name or full commit SHA), bounded so a huge
+    monorepo can't blow up the response — same discipline as getPullRequestReview's file caps. */
+export async function listRepositoryTree(
+  config: GitHubAppConfig,
+  installationId: string,
+  repository: GitHubRepositoryOption,
+  ref: string,
+): Promise<RepositoryTree> {
+  assertSafeRepositoryRef(ref);
+  if (config.testData) {
+    const match = config.testData.repositories.find((item) => item.id === repository.id);
+    if (!match || installationId !== config.testData.installationId) throw new GitHubApiError("Repository is not available", 404);
+    const files = match.files ?? {};
+    const dirs = new Set<string>();
+    const entries: RepositoryTreeEntry[] = [];
+    for (const path of Object.keys(files)) {
+      const segments = path.split("/");
+      for (let index = 1; index < segments.length; index += 1) {
+        const dir = segments.slice(0, index).join("/");
+        if (!dirs.has(dir)) {
+          dirs.add(dir);
+          entries.push({ path: dir, type: "dir", size: null, sha: "0".repeat(40) });
+        }
+      }
+      entries.push({ path, type: "file", size: new TextEncoder().encode(files[path]).byteLength, sha: "0".repeat(40) });
+    }
+    entries.sort((a, b) => a.path.localeCompare(b.path));
+    return { ref, sha: "0".repeat(40), entries, truncated: false };
+  }
+  const token = await createInstallationToken(config, installationId, repository.id);
+  const response = await githubFetch(
+    `${API_ROOT}/repos/${encodeURIComponent(repository.owner)}/${encodeURIComponent(repository.name)}/git/trees/${encodeURIComponent(ref)}?recursive=1`,
+    token,
+  );
+  const body = await response.json() as {
+    sha?: string;
+    truncated?: boolean;
+    tree?: Array<{ path?: string; type?: string; size?: number; sha?: string }>;
+  };
+  if (!body.sha) throw new GitHubApiError("GitHub did not return a tree SHA", 502);
+  const entries: RepositoryTreeEntry[] = [];
+  for (const item of body.tree ?? []) {
+    if (!item.path || !item.sha) continue;
+    if (item.type === "blob") entries.push({ path: item.path, type: "file", size: typeof item.size === "number" ? item.size : null, sha: item.sha });
+    else if (item.type === "tree") entries.push({ path: item.path, type: "dir", size: null, sha: item.sha });
+    // "commit" entries are submodules; intentionally dropped — there is nothing to browse into.
+  }
+  const truncated = body.truncated === true || entries.length > MAX_TREE_ENTRIES;
+  return { ref, sha: body.sha, entries: entries.slice(0, MAX_TREE_ENTRIES), truncated };
+}
+
+/** A single file's contents at `ref`, bounded to MAX_FILE_BYTES and MAX_FILE_LINES so a large
+    or binary blob never lands whole in a browser tab. */
+export async function getRepositoryFileContent(
+  config: GitHubAppConfig,
+  installationId: string,
+  repository: GitHubRepositoryOption,
+  ref: string,
+  path: string,
+): Promise<RepositoryFileContent> {
+  assertSafeRepositoryRef(ref);
+  assertSafeRepositoryPath(path);
+  if (config.testData) {
+    const match = config.testData.repositories.find((item) => item.id === repository.id);
+    if (!match || installationId !== config.testData.installationId) throw new GitHubApiError("Repository is not available", 404);
+    const content = match.files?.[path];
+    if (content === undefined) throw new GitHubApiError("File is not available", 404);
+    return decodeRepositoryFile(path, new TextEncoder().encode(content));
+  }
+  const token = await createInstallationToken(config, installationId, repository.id);
+  const encodedPath = path.split("/").map(encodeURIComponent).join("/");
+  const response = await githubFetch(
+    `${API_ROOT}/repos/${encodeURIComponent(repository.owner)}/${encodeURIComponent(repository.name)}/contents/${encodedPath}?ref=${encodeURIComponent(ref)}`,
+    token,
+  );
+  const body = await response.json() as { content?: string; encoding?: string; size?: number; type?: string };
+  if (body.type && body.type !== "file") throw new GitHubApiError("Path is not a file", 400);
+  if (typeof body.size === "number" && body.size > MAX_FILE_BYTES) return { path, encoding: "too_large", size: body.size };
+  if (typeof body.content !== "string" || body.encoding !== "base64") throw new GitHubApiError("GitHub did not return file contents", 502);
+  const bytes = base64ToBytes(body.content.replace(/\n/g, ""));
+  return decodeRepositoryFile(path, bytes);
+}
+
+function decodeRepositoryFile(path: string, bytes: Uint8Array): RepositoryFileContent {
+  if (bytes.byteLength > MAX_FILE_BYTES) return { path, encoding: "too_large", size: bytes.byteLength };
+  if (bytes.includes(0)) return { path, encoding: "binary", size: bytes.byteLength };
+  let text: string;
+  try {
+    text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    return { path, encoding: "binary", size: bytes.byteLength };
+  }
+  const lines = text.split("\n");
+  const truncated = lines.length > MAX_FILE_LINES;
+  return { path, encoding: "text", text: truncated ? lines.slice(0, MAX_FILE_LINES).join("\n") : text, size: bytes.byteLength, truncated };
+}
+
+function base64ToBytes(base64: string): Uint8Array {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  return bytes;
 }
 
 export class GitHubApiError extends Error {

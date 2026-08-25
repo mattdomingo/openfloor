@@ -3722,6 +3722,46 @@
   flex-wrap: wrap;
 }
 
+.review-tree {
+  overflow-y: auto;
+}
+
+.review-tree-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.review-tree-dir,
+.review-tree-file {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: 6px var(--space-3) 6px 0;
+  border: 0;
+  background: none;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  text-align: left;
+}
+
+.review-tree-dir {
+  color: var(--text-primary);
+}
+
+.review-tree-dir:hover,
+.review-tree-file:hover {
+  background: var(--surface-raised);
+}
+
+.review-tree-file[data-selected="true"] {
+  background: var(--surface-raised);
+  box-shadow: inset 3px 0 0 var(--accent);
+  color: var(--text-primary);
+}
+
 .review-attribution {
   display: flex;
   flex-wrap: wrap;

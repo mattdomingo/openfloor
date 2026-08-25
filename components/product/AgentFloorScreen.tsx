@@ -6,6 +6,7 @@ import { BASE_PATH } from "@/components/basePath";
 import { Workspace } from "@/components/session/Workspace";
 import { usePersistentFloorData } from "@/components/session/usePersistentFloorData";
 import { usePresenceSocket } from "@/components/session/usePresenceSocket";
+import { useRepositoryTree } from "@/components/session/useRepositoryTree";
 import { useRunActivity } from "@/components/session/useRunActivity";
 import { reducePresence } from "@/lib/presence";
 import type { CredentialProvider } from "@/lib/provider-credentials";
@@ -41,6 +42,8 @@ export function AgentFloorScreen({
   const refreshFloor = floorData.refresh;
   const setFloorError = floorData.setError;
   const activity = useRunActivity(session.id);
+  const repositoryTree = useRepositoryTree(session.id);
+  const resetRepositoryTree = repositoryTree.reset;
   // Only these two stable callbacks feed the socket handlers below; depending
   // on the whole `activity` object would rebuild them on every event batch.
   const { ingest: ingestActivity, catchUp: catchUpActivity } = activity;
@@ -86,8 +89,11 @@ export function AgentFloorScreen({
     }
     if (event.type === "run.activity") ingestActivity(event);
     if (event.type === "floor.changed" && event.domains.includes("runs")) catchUpActivity(activeRunIdsRef.current);
+    // A new candidate head (or a disconnect) invalidates the browsed tree/blobs; the Review
+    // screen re-requests them lazily the next time it needs one.
+    if (event.type === "floor.changed" && event.domains.includes("repository")) resetRepositoryTree();
     if (shouldRefreshFloor(revisionRef.current, event)) void refreshFloor();
-  }, [catchUpActivity, ingestActivity, refreshFloor, refreshMembers]);
+  }, [catchUpActivity, ingestActivity, refreshFloor, refreshMembers, resetRepositoryTree]);
 
   const handleLive = useCallback((send: (update: TypingUpdate) => void) => {
     if (latestTypingUpdateRef.current.text) send(latestTypingUpdateRef.current);
@@ -150,5 +156,5 @@ export function AgentFloorScreen({
     send(update);
   }, [send]);
 
-  return <Workspace user={user} session={session} members={visibleMembers} floorData={floorData} activity={activity} typingDrafts={typingDrafts} onTypingUpdate={sendTypingUpdate} onSaveObjective={saveObjective} agentRunEnabled={agentRunEnabled} enabledProviders={enabledProviders} presenceConnected={presenceConnected} quotaExhausted={quotaExhausted} />;
+  return <Workspace user={user} session={session} members={visibleMembers} floorData={floorData} activity={activity} repositoryTree={repositoryTree} typingDrafts={typingDrafts} onTypingUpdate={sendTypingUpdate} onSaveObjective={saveObjective} agentRunEnabled={agentRunEnabled} enabledProviders={enabledProviders} presenceConnected={presenceConnected} quotaExhausted={quotaExhausted} />;
 }

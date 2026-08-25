@@ -16,6 +16,11 @@ const githubTestData = JSON.stringify({
     private: true,
     defaultBranch: "main",
     branches: ["main", "develop"],
+    files: {
+      "README.md": "# repository-integration\n\nFixture repository for e2e tests.\n",
+      "src/index.ts": "export const entry = true;\n",
+      "src/agent-change.ts": "export const implemented = false;\n",
+    },
   }],
 });
 const wranglerConfig = "tests/e2e/wrangler.jsonc";

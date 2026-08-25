@@ -281,6 +281,15 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await expect(owner.getByText(/typing/i)).toHaveCount(0);
   await expect(owner.getByText(/terminal/i)).toHaveCount(0);
 
+  // Before any run, Review still lets a member browse the whole connected
+  // repository at its base branch — not only files a run has changed.
+  await expect(owner.locator(".review-tree-file", { hasText: "README.md" })).toBeVisible();
+  await owner.locator(".review-tree-file", { hasText: "README.md" }).click();
+  await expect(owner.getByText("# repository-integration", { exact: true })).toBeVisible();
+  await owner.locator(".review-tree-dir", { hasText: "src" }).click();
+  await owner.locator(".review-tree-file", { hasText: "index.ts" }).click();
+  await expect(owner.getByText("export const entry = true;", { exact: true })).toBeVisible();
+
   await owner.getByRole("button", { name: "Workspace" }).click();
   await expect(member.getByRole("button", { name: "Run", exact: true })).toHaveCount(0);
   await owner.getByRole("button", { name: "Run", exact: true }).click();
@@ -304,6 +313,14 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await expect(owner.getByText("export const implemented = true;", { exact: true })).toBeVisible();
   await expect(owner.getByText("npm test", { exact: true })).toBeVisible();
   await expect(owner.getByRole("link", { name: /Draft PR #1/ })).toHaveAttribute("href", /\/pull\/1$/);
+
+  // The changed file is still reachable through the repository browser, and
+  // selecting it there shows its diff, not the raw candidate-head content.
+  await owner.getByRole("button", { name: "All files" }).click();
+  await owner.locator(".review-tree-dir", { hasText: "src" }).click();
+  await owner.locator(".review-tree-file", { hasText: "agent-change.ts" }).click();
+  await expect(owner.getByRole("button", { name: "Changed (1)" })).toHaveAttribute("aria-pressed", "true");
+  await expect(owner.getByText("export const implemented = true;", { exact: true })).toBeVisible();
 
   await owner.getByRole("button", { name: "Workspace" }).click();
   await owner.getByRole("combobox", { name: "Queue target" }).click();

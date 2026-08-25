@@ -5,9 +5,11 @@ import {
   createDraftPullRequest,
   deleteTestRepositoryBranchIfMatches,
   getPullRequestReview,
+  getRepositoryFileContent,
   getRepositoryRefSha,
   importGitHubAppPrivateKey,
   listInstallationRepositories,
+  listRepositoryTree,
   mergeRepositoryBranch,
   markPullRequestReadyForReview,
   squashMergePullRequest,
@@ -92,5 +94,59 @@ describe("GitHub App client", () => {
     expect(await getRepositoryRefSha(config, "installation-6", repository, "main")).toBe(squash.sha);
     expect(await getPullRequestReview(config, "installation-6", repository, first.number)).toEqual(expect.objectContaining({ merged: true, state: "closed", mergeCommitSha: squash.sha }));
     expect(await deleteTestRepositoryBranchIfMatches(config, "installation-6", repository, candidate, merged.sha)).toBe(true);
+  });
+
+  it("lists a repository tree with inferred directories and reads file contents", async () => {
+    const repository = { id: "browse", nodeId: "R_browse", owner: "openfloor", name: "browse", fullName: "openfloor/browse", private: true, defaultBranch: "main" };
+    const config: GitHubAppConfig = {
+      appId: "1", slug: "openfloor-test", privateKey: "test", stateSecret: "state", webhookSecret: "webhook",
+      testData: {
+        installationId: "installation-browse",
+        repositories: [{
+          ...repository,
+          branches: ["main"],
+          files: { "README.md": "# Browse\n", "src/index.ts": "export const entry = true;\n" },
+        }],
+      },
+    };
+    const tree = await listRepositoryTree(config, "installation-browse", repository, "main");
+    expect(tree.truncated).toBe(false);
+    expect(tree.entries).toEqual(expect.arrayContaining([
+      { path: "src", type: "dir", size: null, sha: "0".repeat(40) },
+      { path: "src/index.ts", type: "file", size: expect.any(Number), sha: "0".repeat(40) },
+      { path: "README.md", type: "file", size: expect.any(Number), sha: "0".repeat(40) },
+    ]));
+
+    const readme = await getRepositoryFileContent(config, "installation-browse", repository, "main", "README.md");
+    expect(readme).toEqual({ path: "README.md", encoding: "text", text: "# Browse\n", size: 9, truncated: false });
+
+    await expect(getRepositoryFileContent(config, "installation-browse", repository, "main", "missing.txt"))
+      .rejects.toMatchObject({ status: 404 });
+    await expect(getRepositoryFileContent(config, "installation-browse", repository, "main", "../escape.txt"))
+      .rejects.toMatchObject({ status: 400 });
+    await expect(listRepositoryTree(config, "installation-browse", repository, "../main"))
+      .rejects.toMatchObject({ status: 400 });
+    await expect(listRepositoryTree(config, "wrong-installation", repository, "main"))
+      .rejects.toMatchObject({ status: 404 });
+  });
+
+  it("classifies binary and oversized file content without decoding past the cap", async () => {
+    const repository = { id: "blobs", nodeId: "R_blobs", owner: "openfloor", name: "blobs", fullName: "openfloor/blobs", private: true, defaultBranch: "main" };
+    const large = "x".repeat(512 * 1024 + 1);
+    const config: GitHubAppConfig = {
+      appId: "1", slug: "openfloor-test", privateKey: "test", stateSecret: "state", webhookSecret: "webhook",
+      testData: {
+        installationId: "installation-blobs",
+        repositories: [{
+          ...repository,
+          branches: ["main"],
+          files: { "image.bin": " binary", "large.txt": large },
+        }],
+      },
+    };
+    await expect(getRepositoryFileContent(config, "installation-blobs", repository, "main", "image.bin"))
+      .resolves.toMatchObject({ encoding: "binary" });
+    await expect(getRepositoryFileContent(config, "installation-blobs", repository, "main", "large.txt"))
+      .resolves.toMatchObject({ encoding: "too_large" });
   });
 });
