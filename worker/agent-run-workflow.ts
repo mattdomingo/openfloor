@@ -546,7 +546,7 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
             // HOME points into the scratch tree, but a process that lost HOME
             // would fall back to the passwd entry.
             const reset = await parked.exec(
-              "rm -rf /workspace/repository /tmp/openfloor ~/.codex /home/openfloor-agent/.claude /home/openfloor-agent/.claude.json /home/openfloor-agent/.claude.json.backup",
+              "rm -rf /workspace/repository /tmp/openfloor ~/.codex /home/openfloor-agent/.claude /home/openfloor-agent/.claude.json /home/openfloor-agent/.claude.json.backup /home/openfloor-agent/.gemini",
               { timeout: 60_000 },
             );
             if (!reset.success) throw new Error(`Sandbox reset failed with exit code ${reset.exitCode}`);
