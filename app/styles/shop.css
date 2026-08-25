@@ -573,6 +573,8 @@
 .shop-shell .empty-state p { color: var(--muted); }
 
 .shop-shell .notice {
+  width: fit-content;
+  max-width: 100%;
   border-left: 0;
   border: 1px solid var(--accent-ink);
   border-radius: var(--radius-md);
