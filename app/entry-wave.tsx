@@ -5,10 +5,14 @@ import { useEffect, useRef } from "react";
 // Ported from openfloor-ai/openfloor.ai's site.js waveField(): a handful of
 // horizontal sine lines whose phase drifts over time, so they read as slow
 // moving strands rather than a static pattern. Same tuning (9 lines, same
-// amplitude/frequency/speed spread) and the same --entry-wave convention —
-// an "r, g, b" custom property, since a canvas can't read a hex token, swapped
-// per color scheme the same way the source site swaps --wave per theme.
-export function WaveField() {
+// amplitude/frequency/speed spread) and the same "r, g, b" custom-property
+// convention — a canvas can't read a hex token, so the ink color is read back
+// from a CSS var each frame, swapped per color scheme the same way the source
+// site swaps --wave per theme. varName/className let a second caller (the
+// /home shop shell) reuse this same canvas under its own token and class
+// instead of forking the component; app/page.tsx's entry screen keeps the
+// defaults.
+export function WaveField({ varName = "--entry-wave", className = "entry-wave" }: { varName?: string; className?: string }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
@@ -35,7 +39,7 @@ export function WaveField() {
       ctx.setTransform(r, 0, 0, r, 0, 0);
     };
 
-    const waveInk = () => `rgba(${getComputedStyle(canvas).getPropertyValue("--entry-wave").trim()}, 0.2)`;
+    const waveInk = () => `rgba(${getComputedStyle(canvas).getPropertyValue(varName).trim()}, 0.2)`;
 
     const draw = () => {
       const w = canvas.offsetWidth, h = canvas.offsetHeight;
@@ -87,7 +91,7 @@ export function WaveField() {
       window.removeEventListener("resize", handleResize);
       ro?.disconnect();
     };
-  }, []);
+  }, [varName]);
 
-  return <canvas ref={canvasRef} className="entry-wave" aria-hidden="true" />;
+  return <canvas ref={canvasRef} className={className} aria-hidden="true" />;
 }

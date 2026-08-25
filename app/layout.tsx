@@ -6,8 +6,12 @@ import "./globals.css";
 
 const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
 const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
-// opnflr.com's own logotype face, loaded only for the pre-auth entry screen
-// (app/page.tsx) — the rest of the app keeps Geist.
+// opnflr.com's own logotype face, loaded for the pre-auth entry screen
+// (app/page.tsx) and the /home shop shell (app/styles/shop.css). Archivo
+// ships as a variable font (weights 100-900), so the shop shell's bold
+// display headline is just a heavier font-weight, not a second family —
+// Geist Mono (already loaded for the rest of the app) covers tracked
+// data/labels there instead of a third typeface.
 const brandSans = Archivo({ variable: "--font-brand-sans", subsets: ["latin"] });
 
 export async function generateMetadata(): Promise<Metadata> {
