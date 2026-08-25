@@ -80,9 +80,13 @@ export function AgentFloorScreen({
     // look active. Deliberately window-level and un-throttled — cost is a
     // timestamp write per event, no re-render.
     let lastInputAt = Date.now();
+    // Set on a 4003 close and never cleared: quota is terminal for the rest
+    // of this billing period, so reconnect attempts must stay blocked even
+    // though socketRef/retryTimer look identical to the idle-close case.
+    let quotaExhaustedLocal = false;
 
     function tryReconnectAfterIdleClose() {
-      if (!disposed && document.visibilityState === "visible" && socketRef.current === null && retryTimer === null) {
+      if (!disposed && !quotaExhaustedLocal && document.visibilityState === "visible" && socketRef.current === null && retryTimer === null) {
         connect();
       }
     }
@@ -145,6 +149,7 @@ export function AgentFloorScreen({
         if (disposed) return;
         if (event.code === 4003) {
           // Hour quota exhausted: surface the reason and stop reconnecting.
+          quotaExhaustedLocal = true;
           setFloorError(event.reason || "This session's host has used up their plan's monthly session hours.");
           setQuotaExhausted(true);
           return;
