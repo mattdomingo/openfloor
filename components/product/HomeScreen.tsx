@@ -131,7 +131,7 @@ export function HomeScreen({
       setSubmitting(false);
       return;
     }
-    router.push(`/session/${body.session.id}`);
+    router.push(`/session/${body.session.id}?setup=1`);
   }
 
   return (

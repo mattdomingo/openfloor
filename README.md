@@ -4,6 +4,8 @@ openfloor is a persistent multiplayer session shell for teams coordinating agent
 
 Members enter a session at `/app/session/[id]`, then continue to the authenticated workspace at `/app/session/[id]/floor`. A new floor starts empty. Everything shown comes from the session, persisted member actions, or a connected backend; openfloor does not seed sample agents, prompts, files, checks, or review candidates.
 
+Creating a session sends its owner to `/session/[id]?setup=1` and opens the lobby’s two-step setup: connect and enable the required GitHub repository, then optionally connect the owner’s model-provider API keys. “Set up later” leaves the lobby usable and removes the query state. Provider keys remain per-user: a run uses its agent owner’s connected key, then the configured server key, and otherwise refuses clearly. Returning members never enter this creation flow automatically, and entering the live floor still requires the existing repository-ready invariant.
+
 ## Local development
 
 Install dependencies and create an ignored local environment file:
@@ -29,14 +31,15 @@ npm run dev
 
 Open the URL printed by the server, normally [http://localhost:3000](http://localhost:3000). Local development serves the application at the root, so use `/home` rather than `/app/home`; the `/app` prefix is added by production builds. You are automatically signed in with the identity from `.dev.vars`.
 
-To exercise the new path manually:
+To exercise the product manually:
 
 1. Open `/home` and create a session.
-2. On the session lobby, click **Enter agent floor**.
-3. Confirm the floor shows the real session title, objective, and your online presence.
-4. Create a named agent, add assigned or unassigned prompts, edit an assignment, and use team chat. Reload and confirm they persist.
-5. Open Review and confirm it remains empty until a genuine agent run records changed files.
-6. Use **Session settings** to return to the lobby.
+2. Confirm the owner-only setup dialog opens. Connect a repository and create its candidate branch; optionally connect provider API keys, or choose **Set up later** and reopen **Setup** from the lobby.
+3. Click **Enter agent floor**. Without a ready repository, confirm only the focused repository-required dialog opens.
+4. Confirm the floor shows the real session title, objective, and your online presence.
+5. Create a named agent, add assigned or unassigned prompts, edit an assignment, and use team chat. Reload and confirm they persist.
+6. Open Review and confirm it remains empty until a genuine agent run records changed files.
+7. Use **Session settings** to return to the lobby.
 
 The browser test runs the complete two-user flow with a temporary local database, including invite acceptance, live presence, floor navigation, reconnection, and leaving:
 

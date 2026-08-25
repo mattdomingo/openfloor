@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
 import { BASE_PATH } from "@/components/basePath";
 import { SelectMenu } from "@/components/session/SelectMenu";
 import type {
@@ -49,6 +48,7 @@ export function RepositoryCard({
   initialPreflight,
   preflightEnabled,
   beginSetup,
+  onStateChange,
 }: {
   sessionId: string;
   sessionTitle: string;
@@ -59,8 +59,8 @@ export function RepositoryCard({
   initialPreflight: RepositoryPreflight | null;
   preflightEnabled: boolean;
   beginSetup: boolean;
+  onStateChange?: (state: { repository: RepositoryConnection | null; candidate: RepositoryCandidate | null }) => void;
 }) {
-  const router = useRouter();
   const [repository, setRepository] = useState(initialRepository);
   const [candidate, setCandidate] = useState(initialCandidate);
   const [preflight, setPreflight] = useState(initialPreflight);
@@ -184,11 +184,11 @@ export function RepositoryCard({
       return;
     }
     setRepository(body.repository);
+    onStateChange?.({ repository: body.repository, candidate });
     setCommands(body.repository.checkCommands.map((item) => item.command).join("\n"));
     setEditing(false);
     setBusy(false);
     setNotice("GitHub repository connected.");
-    router.replace(`/session/${sessionId}`);
   }
 
   async function disconnect() {
@@ -200,6 +200,7 @@ export function RepositoryCard({
       setError(body.error ?? "Unable to disconnect the repository");
     } else {
       setRepository(body.repository);
+      onStateChange?.({ repository: body.repository, candidate });
       setEditing(false);
       setNotice("Repository disconnected. No GitHub content was changed.");
     }
@@ -221,6 +222,7 @@ export function RepositoryCard({
     } else {
       setRepository(body.repository);
       setCandidate(body.candidate);
+      onStateChange?.({ repository: body.repository, candidate: body.candidate });
       setNamingCandidate(false);
       setNotice(action === "candidate" ? "Execution enabled. Candidate branch created." : "Repository state synchronized with GitHub.");
     }

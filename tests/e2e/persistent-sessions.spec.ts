@@ -28,7 +28,20 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await owner.getByLabel("Session title").fill("Release coordination");
   await owner.getByLabel(/Objective/).fill("Ship persistent multiplayer sessions");
   await owner.getByRole("button", { name: "Create session" }).click();
+  await expect(owner).toHaveURL(/\/session\/[0-9a-f-]+\?setup=1$/);
+  await expect(owner.getByRole("dialog").getByRole("heading", { name: "Connect the workspace" })).toBeVisible();
+  await owner.getByRole("button", { name: "Set up later" }).click();
   await expect(owner).toHaveURL(/\/session\/[0-9a-f-]+$/);
+  await owner.reload();
+  await expect(owner.getByRole("dialog")).toHaveCount(0);
+  await owner.getByRole("button", { name: "Setup" }).click();
+  await expect(owner.getByRole("dialog").getByRole("heading", { name: "Connect the workspace" })).toBeVisible();
+  await owner.keyboard.press("Escape");
+  await expect(owner.getByRole("dialog")).toHaveCount(0);
+  await owner.getByRole("link", { name: "Enter agent floor" }).click();
+  await expect(owner.getByRole("dialog").getByRole("heading", { name: "Connect a repository to enter the agent floor" })).toBeVisible();
+  await expect(owner.getByRole("dialog").getByText("Model keys")).toHaveCount(0);
+  await owner.getByRole("button", { name: "Not now" }).click();
   await expect(owner.getByText("Owner E.").first()).toBeVisible();
   await expect(owner.getByText("Online", { exact: true })).toBeVisible();
 
@@ -51,6 +64,9 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await owner.getByRole("button", { name: "Save repository" }).click();
   await expect(owner.getByText("openfloor-test/repository-integration")).toBeVisible();
   await expect(owner.getByText("Not configured", { exact: true })).toBeVisible();
+  await expect(owner.getByRole("dialog").getByRole("heading", { name: "Connect the workspace" })).toBeVisible();
+  await owner.getByRole("button", { name: "Set up later" }).click();
+  await expect(owner).toHaveURL(/\/session\/[0-9a-f-]+$/);
   await member.reload();
   await expect(member.getByText("openfloor-test/repository-integration")).toBeVisible();
   await expect(member.getByText("Not configured", { exact: true })).toBeVisible();
@@ -69,6 +85,8 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await owner.getByLabel("Required check commands").fill("npm test");
   await owner.getByRole("button", { name: "Save repository" }).click();
   await expect(owner.getByText("Connected", { exact: true })).toBeVisible();
+  await owner.getByRole("button", { name: "Set up later" }).click();
+  await expect(owner).toHaveURL(/\/session\/[0-9a-f-]+$/);
   await owner.getByRole("button", { name: "Enable execution" }).click();
   await expect(owner.getByLabel("Candidate branch name")).toHaveValue("Release coordination");
   await expect(owner.getByLabel("Candidate description")).toHaveValue("Ship persistent multiplayer sessions");
@@ -79,11 +97,11 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await expect(owner.getByText("Release candidate", { exact: true })).toBeVisible();
   await expect(owner.getByText("Integrate the repository execution release.", { exact: true })).toBeVisible();
   await expect(owner.getByText(/openfloor\/[0-9a-f]{8}\/candidate\/release-candidate-[0-9a-f]{8}/)).toBeVisible();
-  await expect(owner.getByText("Ready", { exact: true })).toBeVisible();
+  await expect(owner.getByLabel("GitHub repository").getByText("Ready", { exact: true })).toBeVisible();
   await owner.reload();
   await expect(owner.getByRole("button", { name: "Sync repository" })).toBeVisible();
   await owner.getByRole("button", { name: "Sync repository" }).click();
-  await expect(owner.getByText("Ready", { exact: true })).toBeVisible();
+  await expect(owner.getByLabel("GitHub repository").getByText("Ready", { exact: true })).toBeVisible();
   await owner.getByRole("button", { name: "Verify runner" }).click();
   await expect(owner.getByLabel("Runner verification").getByText("passed", { exact: true }).first()).toBeVisible();
   await owner.getByRole("button", { name: "Open command output" }).click();
@@ -333,6 +351,7 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await owner.getByRole("button", { name: "New session" }).click();
   await owner.getByLabel("Session title").fill("Disposable session");
   await owner.getByRole("button", { name: "Create session" }).click();
+  await owner.getByRole("dialog").getByRole("button", { name: "Set up later" }).click();
   await owner.getByRole("button", { name: "End session", exact: true }).click();
   await owner.getByRole("dialog").getByRole("button", { name: "End session", exact: true }).click();
   await owner.goto("/home");
