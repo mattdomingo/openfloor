@@ -492,6 +492,44 @@ export async function setFloorQueueItemPaused(
   return readFloorSnapshot(sessionId, userId, database);
 }
 
+// Gives an unassigned queued item a target so it can be Run manually — the
+// only other assigner is the router's assign phase, which never runs while
+// auto-dispatch is off, so a targetless prompt otherwise had no way to reach
+// a Run button (PromptQueue.tsx's Run condition requires item.agentId).
+export async function setFloorQueueItemAgent(
+  sessionId: string,
+  userId: string,
+  itemId: string,
+  agentId: string,
+  database = getDb(),
+): Promise<FloorSnapshot | null> {
+  if (!(await canManageQueueItem(sessionId, userId, itemId, database))) return null;
+  if (!(await isSessionAgent(sessionId, agentId, database))) {
+    throw new FloorTargetError("Queue target must belong to this session.");
+  }
+  const now = Date.now();
+  const results = await database.batch([
+    database.prepare(
+      `UPDATE floor_queue_items SET agent_id = ?, assigned_by = 'user', assigned_reason = NULL, updated_at = ?
+       WHERE id = ? AND session_id = ? AND status = 'queued' AND agent_id IS NULL AND dismissed_at IS NULL`,
+    ).bind(agentId, now, itemId, sessionId),
+    bumpFloorRevision(database, sessionId, now),
+  ]);
+  if (Number(results[0]?.meta?.changes ?? 0) === 0) {
+    if (!(await getActiveMembershipRole(sessionId, userId, database))) return null;
+    throw new FloorConflictError("This prompt already has a target, or is no longer queued.");
+  }
+  return readFloorSnapshot(sessionId, userId, database);
+}
+
+// Soft-delete: agent_runs.queue_item_id has no ON DELETE cascade (agent_runs
+// keeps four inbound cascades already — see its schema comment — so adding
+// one more here would force a table recreate against production data). A
+// failed/cancelled item always has a run row, so a hard DELETE on it raised
+// a raw FOREIGN KEY constraint failure, which the client misreported as
+// "The floor could not be reached." Dismissal preserves the run's audit
+// history and simply hides the item; every queue read and mutation guard
+// filters on dismissed_at IS NULL.
 export async function deleteFloorQueueItem(
   sessionId: string,
   userId: string,

@@ -1,19 +1,22 @@
 "use client";
 
 import { useState, type DragEvent } from "react";
-import type { AgentRun, FloorQueueItem } from "@/lib/floor-types";
+import type { AgentRun, FloorAgent, FloorQueueItem } from "@/lib/floor-types";
 import { LocalDateTime } from "@/components/LocalDateTime";
 import type { QueueOrderMode, QueueScope } from "./data";
+import { runStatusToken } from "./data";
+import { AgentTargetMenu } from "./AgentTargetMenu";
 import { Icon, SegmentedControl } from "./primitives";
 import { Panel, type PanelChrome } from "./Rail";
 import { QueueOrderMenu } from "./QueueOrderMenu";
 
 const scopeOptions: { value: QueueScope; label: string }[] = [{ value: "mine", label: "You" }, { value: "team", label: "Team" }];
 
-export function PromptQueue({ chrome, items, runs, owner, runEnabled, busy, autoDispatch, onAutoDispatch, autoResolveConflicts, onAutoResolveConflicts, browserConflictAlerts, onBrowserConflictAlerts, onRun, onCancel, onDiscard, onRetry, onEditPrompt, onPause, onDelete, currentUserId, scope, onScope, orderMode, onOrderMode, draggedItemId, onItemDragStart, onItemDragEnd, onItemDrop, onFocusAgent }: {
+export function PromptQueue({ chrome, items, runs, agents, owner, runEnabled, busy, autoDispatch, onAutoDispatch, autoResolveConflicts, onAutoResolveConflicts, browserConflictAlerts, onBrowserConflictAlerts, onRun, onCancel, onDiscard, onRetry, onEditPrompt, onPause, onDelete, onSetAgent, currentUserId, scope, onScope, orderMode, onOrderMode, draggedItemId, onItemDragStart, onItemDragEnd, onItemDrop, onFocusAgent }: {
   chrome: PanelChrome;
   items: FloorQueueItem[];
   runs: AgentRun[];
+  agents: FloorAgent[];
   owner: boolean;
   runEnabled: boolean;
   busy: boolean;
@@ -30,6 +33,7 @@ export function PromptQueue({ chrome, items, runs, owner, runEnabled, busy, auto
   onEditPrompt: (queueItemId: string, promptId: string, text: string) => Promise<boolean>;
   onPause: (queueItemId: string, paused: boolean) => Promise<void>;
   onDelete: (queueItemId: string) => Promise<void>;
+  onSetAgent: (queueItemId: string, agentId: string) => Promise<void>;
   currentUserId: string;
   scope: QueueScope;
   onScope: (scope: QueueScope) => void;
@@ -69,7 +73,7 @@ export function PromptQueue({ chrome, items, runs, owner, runEnabled, busy, auto
       // queue item's own state wins once it's back in a not-yet-run state.
       const statusValue = item.status === "queued" || item.status === "paused"
         ? item.status
-        : run?.discardedAt ? "discarded" : run?.status ?? item.status;
+        : run?.discardedAt ? "discarded" : run ? runStatusToken(run) : item.status;
       const editing = editingId === item.id;
       const mine = item.prompts.length > 0 && item.prompts.every((prompt) => prompt.authorUserId === currentUserId);
       const manageable = (owner || mine) && item.prompts.length === 1;
@@ -77,13 +81,17 @@ export function PromptQueue({ chrome, items, runs, owner, runEnabled, busy, auto
       const pausable = manageable && item.status === "queued";
       const resumable = manageable && ["paused", "failed", "cancelled"].includes(item.status);
       const deletable = manageable && ["queued", "paused", "failed", "cancelled"].includes(item.status);
+      // The only other assigner is the router's assign phase, which never
+      // runs while auto-dispatch is off — without this, a prompt submitted
+      // with target "Auto" in that state has no path to a Run button at all.
+      const retargetable = manageable && item.status === "queued" && !item.agentId && agents.length > 0;
       return <li key={item.id} className="queue-item" data-done={(statusValue === "integrated" || statusValue === "cancelled") ? "true" : undefined} data-attention={statusValue === "failed" ? "true" : undefined} data-manual={manual ? "true" : undefined} data-dragging={draggedItemId === item.id ? "true" : undefined} data-drop-target={dragOverId === item.id ? "true" : undefined} draggable={manual}
         onDragStart={manual ? () => onItemDragStart(item.id) : undefined}
         onDragEnd={manual ? () => { setDragOverId(null); onItemDragEnd(); } : undefined}
         onDragOver={manual ? (event) => { event.preventDefault(); if (draggedItemId && draggedItemId !== item.id) setDragOverId(item.id); } : undefined}
         onDragLeave={manual ? (event: DragEvent<HTMLLIElement>) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragOverId((current) => current === item.id ? null : current); } : undefined}
         onDrop={manual ? () => { setDragOverId(null); onItemDrop(item.id); } : undefined}>
-        <div className="queue-item-head"><span className="queue-identity">{manual && <span className="queue-grip" title="Drag to reorder" aria-hidden="true"><Icon name="grip" /></span>}<span className="queue-position" aria-label={`Queue position ${item.position}`}>#{item.position}</span><span className="queue-chip" data-kind="author">{item.prompts.length > 1 ? `${item.prompts.length} prompts` : first?.authorName}</span>{item.agentId ? <button type="button" className="queue-chip queue-chip-button" data-kind={item.assignedBy === "router" ? "agent-auto" : "agent"} title={item.assignedBy === "router" ? item.assignedReason ?? "Assigned automatically" : "Open this agent"} onClick={() => onFocusAgent(item.agentId!)}>{item.agentName ?? "Unassigned"}{item.assignedBy === "router" && " · auto"}</button> : <span className="queue-chip" data-kind="agent">Unassigned</span>}</span>{item.intent === "question" && <span className="queue-chip" data-kind="intent">Question</span>}{item.intent === "noise" && <span className="queue-chip" data-kind="intent">Not a task</span>}{first && <span className="queue-time"><LocalDateTime timestamp={first.createdAt} /></span>}</div>
+        <div className="queue-item-head"><span className="queue-identity">{manual && <span className="queue-grip" title="Drag to reorder" aria-hidden="true"><Icon name="grip" /></span>}<span className="queue-position" aria-label={`Queue position ${item.position}`}>#{item.position}</span><span className="queue-chip" data-kind="author">{item.prompts.length > 1 ? `${item.prompts.length} prompts` : first?.authorName}</span>{item.agentId ? <button type="button" className="queue-chip queue-chip-button" data-kind={item.assignedBy === "router" ? "agent-auto" : "agent"} title={item.assignedBy === "router" ? item.assignedReason ?? "Assigned automatically" : "Open this agent"} onClick={() => onFocusAgent(item.agentId!)}>{item.agentName ?? "Unassigned"}{item.assignedBy === "router" && " · auto"}</button> : retargetable ? <AgentTargetMenu value={null} agents={agents} allowAuto={false} onChange={(agentId) => { if (agentId) void onSetAgent(item.id, agentId); }} /> : <span className="queue-chip" data-kind="agent">Unassigned</span>}</span>{item.intent === "question" && <span className="queue-chip" data-kind="intent">Question</span>}{item.intent === "noise" && <span className="queue-chip" data-kind="intent">Not a task</span>}{first && <span className="queue-time"><LocalDateTime timestamp={first.createdAt} /></span>}</div>
         {editing ? <form className="queue-edit-form" onSubmit={(event) => { event.preventDefault(); const text = draftText.trim(); if (!text || !first) return; void onEditPrompt(item.id, first.id, text).then((ok) => { if (ok) setEditingId(null); }); }}>
           <textarea className="queue-edit-textarea" value={draftText} onChange={(event) => setDraftText(event.target.value)} maxLength={4000} autoFocus />
           <div className="queue-edit-actions">

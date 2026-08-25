@@ -103,7 +103,10 @@ describe("durable merge conflicts", () => {
     await setSessionRoutingSettings(room.sessionId, room.owner.id, { autoResolveConflicts: false }, env.DB);
     const row = await env.DB.prepare("SELECT auto_dispatch AS autoDispatch, auto_resolve_conflicts AS autoResolve FROM sessions WHERE id = ?")
       .bind(room.sessionId).first<{ autoDispatch: number; autoResolve: number }>();
-    expect(row).toEqual({ autoDispatch: 0, autoResolve: 0 });
+    // auto_dispatch now defaults to 1 for every new session (db/sessions.ts
+    // createSession) — this assertion is really about the omitted setting
+    // being *preserved*, not about the value being 0.
+    expect(row).toEqual({ autoDispatch: 1, autoResolve: 0 });
   });
 
   it("accepts one complete member answer set, rejects stale races, and resets attempt budget", async () => {
