@@ -206,7 +206,7 @@ Production is mounted under `/app` on `opnflr.com`. Local `npm run dev` is mount
 | --- | --- | --- | --- |
 | `/app` | `/` | Public | Product landing and entry into Cloudflare Access. |
 | `/app/home` | `/home` | Protected | Sessions where the current user is a member; session creation. |
-| `/app/settings` | `/settings` | Protected | Account settings: profile (name, GitHub handle, picture), plan and usage, preferences (Do Not Disturb, theme), and account deletion. Reached from the account menu behind the avatar in the header. |
+| `/app/settings` | `/settings` | Protected | Account settings: profile, plan and usage, connections, preferences, and account deletion. The account menu supplies an optional membership-checked `from` path so the header can return to the originating home/session/floor page. |
 | `/app/onboarding` | `/onboarding` | Protected | Two-step first-login setup: ephemeral profile details first, then explicit plan/seat selection (or locked invite Free confirmation); gates `/home`, `/join/*`, and `/session/*` until final submission. |
 | `/app/join/[token]` | `/join/[token]` | Protected | Valid invite preview followed by explicit acceptance. |
 | `/app/session/[id]` | `/session/[id]` | Protected/member-only | Session lobby, roster, invite controls, leave, and floor entry. |
@@ -219,7 +219,8 @@ Production is mounted under `/app` on `opnflr.com`. Local `npm run dev` is mount
 Important behavior:
 
 - The landing page owns no password, OAuth callback, or application login session.
-- `/onboarding`, `/home`, and the session lobby share the Archivo/shop-palette `shop-shell` visual system and wave field. Onboarding-specific layout stays under `.onboarding-shell`; `/join`, `/settings`, and `/floor` retain their established styling.
+- `/onboarding`, `/home`, `/settings`, and the session lobby share the Archivo/shop-palette `shop-shell` visual system and wave field. Route-specific layout stays under `.onboarding-shell`, `.settings-shell`, or `.session-lobby-shell`; `/join` and `/floor` retain their established styling.
+- `/settings?from=` is local navigation state, not authority: only `/home` or a current member-visible `/session/[id]` or `/session/[id]/floor` is accepted, and every invalid, stale, or non-member origin falls back to `/home` without revealing the session.
 - Clicking Sign in navigates to a protected path; Cloudflare Access performs the login and returns the browser.
 - `/signout` is the production sign-out endpoint (an application route, not Cloudflare's own `/cdn-cgi/access/logout` — see "Authentication and identity" for why).
 - A join page reveals session title and owner only after authentication and only for a valid, active signed token.
@@ -1632,6 +1633,14 @@ An owner cannot remove a member from a session today — `leaveSession` is self-
 **Rationale:** Cloudflare's App Launcher launches "the application's hostname" — the single domain configured on the app — so a wildcard-path-only app's tile is that literal, unroutable string, and Cloudflare gives a separate tile per app sharing one hostname. A signed-out user re-entering through `openfloor.cloudflareaccess.com` therefore had a real chance of landing on the dead tile; hiding it is the actual fix. The AUD list is defense against a second, previously silent assumption: nothing in Cloudflare's docs states whether one hostname's `CF_Authorization` cookie merges multiple apps' AUD tags into a single token's `aud` array (confirmed absent from `developers.cloudflare.com` during this investigation) — trusting either tag explicitly removes the dependency regardless of the true behavior. Neither Access logout endpoint accepts a `returnTo`, and the app-domain one alone left the team-domain global session alive, which is what made re-sign-in silently re-authenticate the same Google identity with no prompt — a single owned route that hits both cookie scopes closes that gap. The `worker/index.ts` redirect is a last-resort safety net for the same failure class recurring (a dashboard misconfiguration pointing a browser at a route nothing serves); it keys on `sec-fetch-mode: navigate` specifically because an earlier attempt using an `Accept: text/html` fallback redirected genuine member-only `404`s in `tests/render/skills.test.ts` and `tests/render/mcp-servers.test.ts`, whose test helpers reuse that header on real API calls.
 
 **Consequences:** `CF_ACCESS_AUD` must be set to both apps' AUD tags, comma-separated, in Worker secrets — a single tag still works unchanged. `cloudflare-env.d.ts` gained `CF_ACCESS_TEAM_DOMAIN?: string` on `Cloudflare.Env` so `app/signout/route.ts` can read it via `cloudflare:workers`'s `env`. Any future sign-out UI must link to `/signout`, never `/cdn-cgi/access/logout` directly. `/signout` must never be added to either Access application's destinations. The App Launcher visibility toggle and Cookie Path Attribute setting are dashboard state outside version control — re-verify them if the two Access applications are ever recreated.
+
+### 2026-08-25 — Give settings a membership-checked return origin
+
+**Decision:** Opening Account settings from `/home`, a session lobby, or a floor adds that pathname as the optional `/settings?from=` query. `app/settings/origin.ts` accepts only `/home`, `/session/[id]`, or `/session/[id]/floor`, verifies session membership server-side, and supplies the header back-link and label; absent, malformed, stale, or non-member values fall back to Sessions at `/home`. Stripe Checkout and Portal return paths retain the accepted origin so billing round trips do not lose context.
+
+**Rationale:** Settings is a full-page destination reached from several product contexts. A small, server-resolved origin contract restores the caller's place without trusting an arbitrary browser-provided URL or exposing a session title to a non-member.
+
+**Consequences:** `from` remains ephemeral navigation state and is never persisted. Account-menu paths exclude the base path before encoding; new settings entry points may omit `from` and receive the safe `/home` default. Any future accepted origin shape must be explicitly allowlisted and authorized before its label is rendered. `/settings` now shares the `shop-shell` palette, wave field, Archivo typography, and bracket controls with `/home`; settings-only rail, category, and responsive rules stay scoped under `.settings-shell` in `app/styles/settings.css`.
 
 ### 2026-08-25 — Front the email/one-time-code Access step with an app-owned page; leave Google on Cloudflare's picker
 

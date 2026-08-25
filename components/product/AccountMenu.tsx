@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { DoNotDisturbToggle } from "@/components/DoNotDisturbToggle";
 import { Avatar, Icon } from "@/components/session/primitives";
@@ -21,6 +22,10 @@ export function AccountMenu({ user }: { user: AppUser }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  // usePathname() excludes basePath, matching what resolveSettingsOrigin
+  // (app/settings/origin.ts) expects to receive back on `from`.
+  const pathname = usePathname();
+  const settingsHref = pathname && pathname !== "/settings" ? `/settings?from=${encodeURIComponent(pathname)}` : "/settings";
 
   useEffect(() => {
     if (!open) return;
@@ -59,7 +64,7 @@ export function AccountMenu({ user }: { user: AppUser }) {
             <strong title={user.displayName}>{user.displayName}</strong>
             <span title={user.email}>{user.email}</span>
           </div>
-          <Link href="/settings" className="account-menu-item" onClick={() => setOpen(false)}>
+          <Link href={settingsHref} className="account-menu-item" onClick={() => setOpen(false)}>
             Account settings<Icon name="chevronRight" size={12} />
           </Link>
           <div className="account-menu-row">

@@ -333,6 +333,16 @@
 .breadcrumbs { display: flex; align-items: center; gap: var(--space-2); min-width: 0; margin-right: auto; color: var(--text-tertiary); font-size: var(--text-sm); }
 .breadcrumbs a { text-decoration: none; }
 .breadcrumbs strong { overflow: hidden; color: var(--text-primary); text-overflow: ellipsis; white-space: nowrap; }
+
+/* The settings back link (AppHeader's `backTo` prop) — occupies the same
+   slot as .breadcrumbs but names the page it returns to (e.g. a session
+   title) rather than the page you're on. Base/cream styling here; the shop
+   shell (app/styles/settings.css) restyles it for /settings specifically. */
+.app-back { display: flex; align-items: center; gap: var(--space-2); min-width: 0; margin-right: auto; color: var(--text-secondary); font-size: var(--text-sm); text-decoration: none; }
+.app-back:hover, .app-back:focus-visible { color: var(--text-primary); }
+.app-back svg { flex: none; }
+.app-back span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 .account { display: flex; align-items: center; gap: var(--space-3); margin-left: auto; }
 
 .page-body { width: min(1180px, calc(100% - 40px)); margin: 0 auto; padding: clamp(48px, 7vw, 88px) 0; }
@@ -361,6 +371,10 @@
      theme, DND, sign out) — it must stay visible at every width, unlike the
      old bare name label this replaced. */
   .breadcrumbs { display: none; }
+  /* .app-back stays visible at every width, unlike .breadcrumbs above — it's
+     the only way back to where settings was opened from, so hiding it would
+     strand a mobile user on the page with no way back but the brand mark
+     (always /home). */
   .page-heading, .session-hero { align-items: flex-start; flex-direction: column; }
   .session-hero-actions, .floor-heading, .floor-heading-actions { align-items: flex-start; flex-direction: column; }
   .session-layout { grid-template-columns: 1fr; }
