@@ -1,0 +1,271 @@
+# Task: add GLM (Z.ai) and Grok (xAI) as agent-run providers, accept Claude / ChatGPT **subscription** credentials alongside API keys, and let each agent pick its model
+
+You are working in the openfloor repo, branching off `main`. Read `AGENTS.md` completely first — its "Mandatory maintenance rule" (AGENTS.md:7) applies to every commit here. `docs/claude-provider-prompt.md` and `docs/kimi-grok-gemini-provider-prompt.md` are the precedent briefs; this task extends both and **reverses one of their outcomes** (the Grok exclusion).
+
+Six sections, ordered by ascending risk: shared credential plumbing (§1), two new providers (§2, §3), two subscription credential kinds (§4, §5), and per-agent model selection (§6). Each is separately shippable and separately gated. §5 has a decision gate that may end with "do not ship" — that is an acceptable, documented outcome, not a failure. §1 carries the only migration; §6 is the only section with no security seam in it.
+
+## What exists today
+
+A provider = a runner script in the sandbox image + a credential-holding gateway route. Never a chat-API integration.
+
+- `lib/provider-credentials.ts:8` — `CREDENTIAL_PROVIDERS = ["anthropic", "openai", "kimi", "gemini"]`; `:13` `CredentialKind = "api_key"` (only); `:29` `PROVIDER_LABELS`; `:42` `AGENT_PROVIDER_LABELS`; `:52` `usesClaudeRunner`; `:68` `DEFAULT_PROVIDER_MODELS`; `:90` `resolveRunCredentialSource` (owner-else-server-else-refuse).
+- `lib/provider-credentials.ts:5` — a comment stating Grok is **deliberately absent**, and `tests/unit/provider-credentials.test.ts:21` pins `parseCredentialProvider("grok") === null`. Both are load-bearing and both get deleted by §3.
+- `lib/anthropic-compat-gateway.ts` — the shared Anthropic-Messages gateway used by `/runtime/anthropic` and `/runtime/kimi`: run-scoped JWT bound to a per-provider `operation`, run-status check, 10 MiB cap, path allowlist with log-then-404, owner-key-else-server-key-else-503, upstream fetch with SSE passthrough. `buildAuthHeaders: (apiKey) => …` is the only per-vendor auth seam.
+- `app/runtime/openai/[...path]/route.ts` — the **Responses**-API gateway. Standalone (not extracted), single allowed path `responses`, upstream `https://api.openai.com/v1/responses`, `authorization: Bearer` injected server-side.
+- `app/runtime/gemini/[...path]/route.ts` — deliberately standalone; structurally divergent (JWT in `x-goog-api-key`, path *pattern*, query forwarding).
+- `scripts/claude-runner.mjs:200` — Claude Agent SDK, fully parametrized by `ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN` (both set from `OPENFLOOR_ANTHROPIC_*`). It never contacts a vendor directly.
+- `scripts/codex-runner.mjs` — `new Codex({ baseUrl, apiKey, config })`. The SDK turns `baseUrl` into a `--config openai_base_url=…` override and `apiKey` into `CODEX_API_KEY` in the CLI's env (`node_modules/@openai/codex-sdk/dist/index.js:180,246`). **So a Responses-compatible vendor needs no runner change at all — only a different gateway URL.**
+- `worker/agent-run-workflow.ts` — provider branches at `:153` (CLAUDE.md append), `:175` (non-root prep + skills), `:207` (Gemini prep), `:260` (JWT operation), `:278` (start command), `:283` (providerEnv). `RUN_SANDBOX_IMAGE_VERSION = "v3"` at `:68`.
+- `lib/agent-run-start.ts:71` — `disabledRunProviders()`, the single reader of the per-provider rollout flags; consumed by the manual-start seam, `db/routing.ts:160,:229` (per-item skip), and `app/api/sessions/[id]/agents/route.ts:19` (creation refusal).
+- `db/schema.ts:204,:698,:703` — `provider` and `kind` are **TS-only open enums with no SQL CHECK**. Adding providers *and* adding a credential kind require **no migration**. `db/schema.ts:699` already carries the `ponytail:` comment predicting `kind: "oauth"`.
+- `db/provider-credentials.ts:77` — `getRunAgentOwnerCredential` returns `{ ownerUserId, ciphertext }` only. §1 adds `kind`.
+- `lib/validation.ts:172` — `parseCredentialConnectInput`: a single opaque token, no whitespace or control characters, ≤512 chars (`MAX_API_KEY_LENGTH`, `:21`).
+- `lib/provider-validation.ts:24` — connect-time validation, one models-endpoint request per provider, with a deterministic test adapter.
+
+## Verified external facts (checked 2026-08-24; re-verify anything load-bearing at Step 0)
+
+| # | Fact | Status |
+|---|---|---|
+| 1 | Z.ai exposes an Anthropic-compatible endpoint at `https://api.z.ai/api/anthropic`, documented for Claude Code via `ANTHROPIC_BASE_URL` + `ANTHROPIC_AUTH_TOKEN` (docs.z.ai/devpack/quick-start). It is the officially supported path for third-party coding tools on both pay-as-you-go keys and the GLM Coding Plan subscription. | Base URL verified. Auth header form, model ids, and **system-role tolerance** are Spike A. |
+| 2 | Current GLM lineup: GLM-5.3 (Aug 14 2026), GLM-5.2 (flagship, Jun 13 2026), GLM-5-Turbo, GLM-4.7, GLM-4.5-Air. | Names verified, **exact API ids are not** — Spike A reads them from the models endpoint. |
+| 3 | xAI ships a Responses API at `https://api.x.ai/v1/responses`. Spike B of the previous brief already recorded `POST /v1/responses` → 200 against a scratch key. | Verified. Codex-CLI-shaped fidelity is Spike B here. |
+| 4 | The 2026-08-24 decision log records **why Grok was excluded**: xAI's `/v1/messages` rejects the `role: "system"` messages the Claude Code CLI places inside `messages` (`400 invalid-argument … Invalid message role.`). That kills the *Anthropic-compat* route only. The same entry names the Responses route as the viable future design. | Verified in-repo (AGENTS.md:1585–1591). |
+| 5 | `claude setup-token` mints a **one-year** OAuth token for a Pro/Max/Team/Enterprise subscription, consumed as `CLAUDE_CODE_OAUTH_TOKEN`. Anthropic documents it explicitly for "CI pipelines and scripts where browser login isn't available", and `anthropics/claude-code-action` uses it. | Verified (code.claude.com/docs/en/authentication). |
+| 6 | Claude Code auth precedence: `ANTHROPIC_AUTH_TOKEN` (sent as `Authorization: Bearer`) ranks **above** `CLAUDE_CODE_OAUTH_TOKEN`; `ANTHROPIC_BASE_URL` is the documented custom-endpoint override. So today's runner env keeps winning and needs no change. | Verified (same page). |
+| 7 | The setup token "can only make model requests" and is described as rejected by the plain Messages API. Whether `api.anthropic.com/v1/messages` accepts it depends on request shape/headers, not just the bearer value. | **Unverified and load-bearing — Spike C exists for exactly this.** |
+| 8 | OpenAI documents a supported CI/CD path for ChatGPT-subscription Codex: run `codex login` on a trusted machine, copy `~/.codex/auth.json` (location controlled by `CODEX_HOME`), set `cli_auth_credentials_store = "file"`. Codex refreshes the bundle when `last_refresh` is older than ~8 days, and on a `401`, writing the rotated tokens back to the file. | Verified (learn.chatgpt.com/docs/auth/ci-cd-auth). |
+| 9 | The same page restricts that pattern to "trusted private infrastructure", says not to use it for public/open-source repositories, and states that **only one machine or serialized job stream may use a given `auth.json`** — concurrent users of one copy cause token-rotation conflicts. | Verified. This is an architectural constraint on §5, not a caveat. |
+| 10 | In ChatGPT-auth mode the Codex CLI talks to `https://chatgpt.com/backend-api/codex/responses` directly. `CODEX_API_KEY` (what the SDK's `apiKey` sets) selects API-key mode instead. | Verified at doc level; the interaction with `openai_base_url` is Spike D gate 2. |
+
+Unverified, each a named Step-0 checkpoint rather than an assumption: Z.ai's accepted auth header(s) and `count_tokens` support; whether Z.ai tolerates system-role messages; xAI Responses support for `store:false`, `include:["reasoning.encrypted_content"]`, `previous_response_id`, and Codex's tool schema; whether Anthropic accepts a setup token proxied through a substituting gateway; the ChatGPT access-token TTL and whether the CLI starts from a bundle with the refresh token stripped.
+
+## Step 0 — spikes (one per deliverable, each with a decision gate; report before its § lands)
+
+Obtain scratch credentials first: a Z.ai key, an xAI key, a Claude subscription setup token, and a ChatGPT-subscription `auth.json`. Spikes A–C need no deploy. Do not build or push images by hand — `wrangler deploy` owns that.
+
+**Spike A — GLM wire check.** Against `https://api.z.ai/api/anthropic`:
+1. `POST /v1/messages` with `authorization: Bearer $ZAI_API_KEY`, `anthropic-version: 2023-06-01`, a trivial 64-token message. Repeat with `x-api-key`. Record which header(s) work; the gateway sends exactly that.
+2. Repeat with `"stream": true`; confirm Anthropic SSE framing (`message_start` / `content_block_delta` / `message_stop`).
+3. `POST /v1/messages/count_tokens` — record the status. A 404 is fine (Kimi's precedent); the allowlist still forwards it so the CLI degrades on the vendor's answer, not on concealment.
+4. `GET https://api.z.ai/api/paas/v4/models` with Bearer — this becomes the connect-validation URL, and gives the exact coding model id for `DEFAULT_PROVIDER_MODELS.glm`.
+5. **The Grok-killer check.** Replay a captured Claude-Code request that contains a `role: "system"` entry inside `messages` (capture one by pointing a local logging proxy at `ANTHROPIC_BASE_URL`). Confirm a 200 with a correct `tool_use` block.
+6. End to end: `ANTHROPIC_BASE_URL=https://api.z.ai/api/anthropic ANTHROPIC_AUTH_TOKEN=$ZAI_API_KEY` running `scripts/claude-runner.mjs` locally against a scratch workspace; confirm a file edit and a `result.json` with `ok:true`.
+
+**Gate A:** steps 1, 2, 5, 6 all pass → §2 proceeds unchanged. Step 5 fails → **stop; Grok's fate is GLM's fate.** Record it exactly like the 2026-08-24 Grok entry and drop §2 rather than shimming roles in the gateway (that rejection stands: it is a rewrite on a security-sensitive proxy).
+
+> **Outcome (2026-08-24): PASS**, on the second run — the first run hit a funding wall (every inference 429 code 1113 on the unfunded account) with every wire-level observable already favorable; the funded rerun passed steps 1, 2, 5, 6 outright. Banked facts now pinned in §2 below: default id `glm-5.3`; both auth headers accepted (gateway sends Bearer); SSE framing Anthropic-exact; `count_tokens` a real 200 (unlike Moonshot); system-role messages accepted with 200 + `tool_use` (the Grok-killer passes affirmatively); CLI paths exactly `HEAD /api/hello` + `POST /v1/messages?beta=true`; zero `claude-*` traffic; glm-5.3 requires a `thinking` config on hand-built requests (400 code 1210 without) but the CLI's native `thinking: adaptive` is accepted.
+
+**Spike B — Grok via the Codex/Responses path.** No repo changes; drive the pinned SDK directly.
+1. Point a local logging proxy at `https://api.x.ai/v1` and run the real `@openai/codex-sdk@0.148.0` with `baseUrl` = the proxy, `apiKey` = a scratch token, `model` = the xAI coding model, in a throwaway git workspace, with the exact `startThread` options `scripts/codex-runner.mjs` uses (`sandboxMode: "workspace-write"`, `approvalPolicy: "never"`, `networkAccessEnabled: false`, `webSearchMode: "disabled"`).
+2. From the proxy log, record the **exact paths** the CLI calls (the allowlist is grown from this, not from spec) and the request body fields: `store`, `include`, `reasoning`, `previous_response_id`, `instructions`, `prompt_cache_key`, and the tool schema shape.
+3. Confirm the run completes a real multi-turn edit — not just a 200 on turn one. Reasoning continuity across turns is where a partial Responses implementation fails.
+4. `GET https://api.x.ai/v1/models` with Bearer — connect-validation URL and the exact model id for `DEFAULT_PROVIDER_MODELS.grok`.
+5. Record which request headers the CLI sends that the current OpenAI route does **not** forward (it forwards only `openai-beta`).
+
+**Gate B:** step 3 passes → §3 proceeds. It fails on a missing Responses feature → report the specific field, and stop. Do not add body rewriting to the gateway; that is the same rejected shim in a different costume.
+
+> **Outcome (2026-08-24): FAIL — §3 is dead at this pin.** Turn one works (after `features.collab=false` removes the `namespace` tool xAI 422s), but every thread's second request 400s: `"Could not decode the compaction blob"`. Root cause isolated byte-level: Codex 0.148.0 writes `"content": null` on replayed reasoning input items and xAI's deserializer rejects exactly that field (byte-exact replay 200; Codex serialization 400; status-drop/summary-mutation 200). Recorded in the AGENTS.md decision log ("Grok stays excluded: the Responses path also fails"). Revisit when xAI tolerates the field or a Codex pin stops emitting it.
+
+**Spike C — Claude subscription token.** The whole question is whether a *substituting gateway* preserves whatever makes a setup token acceptable.
+1. Run the real Agent SDK locally with `ANTHROPIC_BASE_URL` pointed at a local proxy and `ANTHROPIC_AUTH_TOKEN` set to a dummy. Capture the full request: headers (`authorization`, `anthropic-beta`, `anthropic-version`, user agent) and the first system block.
+2. Repeat with `CLAUDE_CODE_OAUTH_TOKEN` set instead (unset `ANTHROPIC_AUTH_TOKEN`). **Diff the two captures.** Every difference is something the gateway must reproduce when it substitutes.
+3. Have the proxy swap the bearer for the real setup token, add whatever headers the diff showed (expect an `anthropic-beta` OAuth flag that must be *merged with*, not replace, the client's `anthropic-beta`), and forward to `https://api.anthropic.com/v1/messages`. Confirm 200 + streaming + `tool_use`.
+4. Confirm `POST /v1/messages/count_tokens` under the same substitution; record the status.
+5. Establish what connect-time validation is possible. `GET /v1/models` with a setup token is expected to fail — if it does, §4 stores with `validated_at = null` and the first run is the real validation. Prove which.
+6. Record the shape of a subscription rate-limit response (status, `retry-after`, body) so §4 can surface it as a run failure a human can act on.
+
+**Gate C:** step 3 passes → §4 proceeds. It fails → §4 ships nothing and a decision-log entry records the exact rejection, superseding AGENTS.md:439 with evidence rather than leaving it stale.
+
+> **Outcome (2026-08-24): PASS**, on the second run — the first run's 401s were a truncated token (line-wrapped paste, 79 of 108 chars), not a revocation. With the full token: oauth mode differs from Bearer mode **only in transport headers** (bearer value + `anthropic-beta` gains `oauth-2025-04-20`; `extended-cache-ttl-2025-04-11` also appears but was proven **incidental** — substitution succeeded without it); body and system blocks are byte-identical; the SDK honors `ANTHROPIC_BASE_URL` in oauth mode; the substitution run returned 200/SSE/tool_use end to end. Three brief corrections fell out, applied to §4 below: (1) `GET /v1/models` with a plain Bearer setup token returns **200** — connect-time validation IS possible, reversing the validated_at-null design; (2) merge only `oauth-2025-04-20`, never `extended-cache-ttl-2025-04-11`; (3) no `retry-after` was observed on 200s, but the `anthropic-ratelimit-unified-*` family was — forward those too.
+
+**Spike D — ChatGPT-subscription Codex.** The riskiest, and the one most likely to end in "no".
+1. Decode the `access_token` in a scratch `auth.json`; record its `exp`. Compare against the 60-minute `wait for Codex` step timeout (`worker/agent-run-workflow.ts:337`). If the TTL is shorter than a long run, the minimal-bundle design in §5 is dead as written.
+2. Start the CLI with `CODEX_HOME` pointed at a temp dir holding that `auth.json`, `cli_auth_credentials_store = "file"`, **no `CODEX_API_KEY`**, and `openai_base_url` set to a local proxy. Record whether the CLI honors the base-URL override in ChatGPT mode or ignores it and goes straight to `chatgpt.com`. This single answer decides whether openfloor's gateway can stay in the path.
+3. Strip `tokens.refresh_token` from the bundle, set `last_refresh` to now, and start the CLI again. Record whether it runs, warns, or refuses. §5's exposure mitigation depends on this.
+4. Determine whether the Codex sandbox (`workspace-write`) permits the agent's shell to **read** `$CODEX_HOME/auth.json`. Assume yes until proven otherwise — Codex's workspace-write mode restricts writes, not reads.
+5. Test whether the whole Codex runner survives being srt-wrapped the way `gemini-runner.mjs` is (`worker/agent-run-workflow.ts:281`), with `chatgpt.com` and `auth.openai.com` as the allowed domains. Nesting the CLI's own sandbox inside bubblewrap is the open question.
+
+**Gate D:** ship §5 **only if** (1) the access-token TTL covers a full run, (2) the CLI starts without a refresh token, and (3) either the base-URL override works in ChatGPT mode *or* the srt wrap holds. If any of those fails, **do not ship §5.** Write the decision-log entry, add a `docs/agent-backend-gaps.md` line, and stop. My recommendation before the spike runs: expect this one to fail, and treat §1–§4 as the deliverable.
+
+---
+
+## §1. Credential kinds become first-class, two per provider, selected per agent
+
+A member connects **both** a subscription and an API key for the same provider, and each agent they own says which one pays. This is the only migration in the brief, and it is a table recreate — SQLite cannot alter a primary key in place. `drizzle/0003`, `0005`, `0013`, `0019`, and `0022` are the in-repo precedent for a generated `__new_` recreate; `npm run test:migrations` covers it.
+
+Why per-agent rather than an either/or: a subscription is rate-limited by design. Several agents on one Max seat will hit the five-hour window, and without a per-agent escape hatch those runs die on a 429 with nothing the member can do except wait. Automatic fallback was considered and rejected — it switches ledgers mid-run, which is exactly what the "never silently switch payer" rule exists to prevent.
+
+- `lib/provider-credentials.ts:13` → `export type CredentialKind = "api_key" | "oauth";`. Delete the `ponytail:` comment above it and replace it with the fact: a setup token / auth bundle is stored under the same `(user_id, provider)` identity, and `kind` says how to use it.
+- **`user_provider_credentials` primary key `(user_id, provider)` → `(user_id, provider, kind)`.** Nothing else about the table changes; no CHECK is added. Generate the migration with drizzle-kit, read the emitted SQL before committing it, and confirm the copy step preserves `created_at` (the recreate must not restamp existing rows).
+- **`floor_agents` gains a nullable `credential_kind`** (open enum, no CHECK, no default — a plain `ALTER TABLE … ADD COLUMN`, cheap). `null` means "the owner's default", which resolves to `api_key` when present and otherwise to whatever single row exists. That keeps every pre-existing agent billing exactly what it billed before its owner connects a subscription.
+- **AAD.** `lib/credential-crypto.ts` binds `"<userId>:<provider>"` so a ciphertext moved to another row fails to decrypt. With two rows per user+provider that no longer identifies a row, so new kinds bind `"<userId>:<provider>:<kind>"` while `api_key` keeps the bare legacy form — existing rows stay decryptable and nobody is forced to reconnect. Comment it as the legacy shape, not as an inconsistency.
+- Add `export function credentialKindsForProvider(provider: CredentialProvider): readonly CredentialKind[]` — `anthropic` and `openai` return both; every other provider returns `["api_key"]`. Enforced at the PUT route **and** at gateway resolution, so a hand-written row cannot get a Claude subscription token sent to Moonshot.
+- `resolveRunCredentialSource` grows one case and stays pure: when the agent names a kind and the owner has no row of that kind, the result is **refuse** — never the other kind, and never the server key. Return a distinguishable reason (`"missing_selected_kind"` vs `"no_credential"`) so the gateway can say *"This agent is set to use your Anthropic subscription, which is not connected. Connect it in Settings or change the agent."* rather than the generic 503. Billing a payer the agent did not name is the same failure the existing invariant forbids.
+- `lib/validation.ts` — `parseAgentInput` accepts an optional `credentialKind`, validated against `credentialKindsForProvider(input.provider)`; anything else is a `400`.
+- Add `export function credentialKindsForProvider(provider: CredentialProvider): readonly CredentialKind[]` — `anthropic` and `openai` return both; every other provider returns `["api_key"]`. Enforced at the PUT route **and** at gateway resolution, so a hand-written row cannot get a Claude subscription token sent to Moonshot.
+- **Invariant, stated in code and in AGENTS.md: a server fallback credential is always `api_key`.** Server bindings are plain strings and can never be `oauth`. openfloor must never operate one person's subscription seat on behalf of others. `resolveRunCredentialSource` is unchanged — it decides *whose*, not *what kind*.
+- `db/provider-credentials.ts:77` — `getRunAgentOwnerCredential(runId, provider)` selects `c.kind` and now joins on the agent's `credential_kind`: match it when set, otherwise prefer `api_key` and fall back to the single remaining row. Return `{ ownerUserId, kind, ciphertext }` **plus** the agent's requested kind, so the caller can tell "owner has nothing" from "owner has nothing *of the kind this agent asked for*". `listProviderCredentials` (`:17`) already orders by provider — order by `provider, kind` so two rows render deterministically.
+- `lib/validation.ts:172` — `parseCredentialConnectInput` accepts either `{ apiKey }` (unchanged: single opaque token, ≤512 chars) **or** `{ authJson }` (a JSON object string, ≤8192 chars, parsed and shape-checked, not a bare token). Return a discriminated `{ kind, secret }`. Keep the existing whitespace/control-character rejection on the `apiKey` branch — it catches paste errors and must not be relaxed for the new branch's sake.
+- `credentialFingerprint` (`:57`) stays last-four, but the caller passes what is meaningful per kind: the token for `api_key` and for a Claude setup token; the ChatGPT `account_id` for an auth bundle. Never the refresh token.
+- `app/api/account/credentials/[provider]/route.ts` — branch on the parsed kind, reject a kind the provider does not support with `400`, and pass `kind` through to `upsertProviderCredential` (which already takes it). **`DELETE` now needs to say which kind to disconnect**: take it from the request (`?kind=`), default to `api_key` for back-compat, and `404` an unsupported one. Upsert's `ON CONFLICT(user_id, provider)` becomes `ON CONFLICT(user_id, provider, kind)` — miss this and connecting a subscription silently overwrites the API key, which is the exact bug this section exists to prevent.
+
+Commit 1 lands §1 (including the migration) plus every new rollout flag at `"false"`, plus the test flips below. The only user-visible change is Settings rendering two rows per provider for `anthropic` and `openai`.
+
+## §2. GLM (Z.ai) — the Kimi recipe, verbatim
+
+Lowest risk in the set: an officially supported Anthropic-compatible endpoint, an already-shared gateway handler, and a runner that needs no change.
+
+- `CREDENTIAL_PROVIDERS` += `"glm"`. `PROVIDER_LABELS.glm = "Z.ai"`; `AGENT_PROVIDER_LABELS.glm = "GLM"`; `usesClaudeRunner` returns true for it; `DEFAULT_PROVIDER_MODELS.glm = "glm-5.3"` (Spike A read it from the models endpoint — do not hardcode a marketing name).
+- `lib/runtime-token.ts:51` — add `"glm"` to the `operation` union.
+- New `app/runtime/glm/[...path]/route.ts`, ~20 lines, copied from the Kimi route: `operation: "glm"`, `upstreamBase: "https://api.z.ai/api/anthropic/v1"`, `serverKeyBinding: "ZAI_API_KEY"`, `buildAuthHeaders` = `authorization: Bearer` (Spike A step 1: both header forms authenticate; Bearer is the documented form and what the SDK sends), `allowedPaths` = `messages` + `messages/count_tokens` (Spike A steps 1–3; Z.ai's `count_tokens` is a real 200, unlike Moonshot's 404 — nothing downstream assumed the 404, confirmed). Plus the `logAndConcealGet` export.
+- `lib/provider-validation.ts:24` — `glm: { url: "https://api.z.ai/api/paas/v4/models", headers: { authorization: \`Bearer ${apiKey}\` } }`.
+- `worker/agent-run-workflow.ts` — **no change.** `usesClaudeRunner(context.provider)` already parametrizes the gateway path as `/runtime/${provider}` (`:285`) and the JWT operation as `context.provider` (`:260`).
+- Flag `GLM_RUN_ENABLED` in `lib/agent-run-start.ts:71` and `wrangler.jsonc`. Secret `ZAI_API_KEY` (optional server fallback).
+- `RUN_SANDBOX_IMAGE_VERSION`: **no bump.** No script and no Dockerfile line changes.
+
+## §3. Grok (xAI) — reverse the exclusion, via Responses
+
+The previous brief's Grok section died on the Anthropic-compat route. This is the design its own decision log named as viable.
+
+- **Delete `lib/provider-credentials.ts:5–7`** (the "deliberately absent" comment) and **flip `tests/unit/provider-credentials.test.ts:21`** to assert `parseCredentialProvider("grok") === "grok"`. Leave `"mistral"` as the unknown-provider string everywhere.
+- `CREDENTIAL_PROVIDERS` += `"grok"`; `PROVIDER_LABELS.grok = "xAI"`; `AGENT_PROVIDER_LABELS.grok = "Grok"`; `DEFAULT_PROVIDER_MODELS.grok` from Spike B step 4.
+- Add `export function usesCodexRunner(provider): boolean` returning true for `openai` and `grok` — the mirror of `usesClaudeRunner`, and the single predicate the workflow keys on. Replace the workflow's implicit "everything else is Codex" fallbacks (`:260`, `:278`, `:311`) with explicit branches so a future provider cannot silently inherit the Codex path.
+- **Extract `lib/responses-gateway.ts`** from `app/runtime/openai/[...path]/route.ts`, with the same justification the Anthropic extraction used: the route is security-sensitive and a fix must not land twice. Config: `operation`, `provider`, `upstreamUrl`, `serverKeyBinding`, plus a `forwardRequestHeaders` list (grown from Spike B step 5; today that is just `openai-beta`). Rewrite the OpenAI route as a thin caller — its behavior must be byte-identical, and `tests/worker/credentials.test.ts:184–249` must pass untouched to prove it.
+- New `app/runtime/grok/[...path]/route.ts`: `operation: "grok"`, `upstreamUrl: "https://api.x.ai/v1/responses"`, `serverKeyBinding: "XAI_API_KEY"`.
+- `worker/agent-run-workflow.ts:311` — the Codex `providerEnv` sets `OPENFLOOR_OPENAI_BASE_URL` to `${origin}/runtime/${context.provider}/v1`. **Keep the `OPENFLOOR_OPENAI_*` variable names** (the Kimi precedent: Kimi reuses `OPENFLOOR_ANTHROPIC_*`); add a comment saying the name is the runner's wire protocol, not the vendor. `scripts/codex-runner.mjs` is untouched, so no image bump.
+- `lib/provider-validation.ts` — `grok: { url: "https://api.x.ai/v1/models", headers: { authorization: \`Bearer ${apiKey}\` } }`.
+- Flag `GROK_RUN_ENABLED`; secret `XAI_API_KEY`.
+- Skills and MCP servers are Claude-runner features and stay off for Grok, exactly as they are for Codex today. `SessionScreen.tsx:309–310` already gates on `enabledProviders.some(usesClaudeRunner)`; verify it, do not change it.
+
+## §4. Claude subscription credentials (`anthropic`, `kind: "oauth"`)
+
+The user runs `claude setup-token` on their own machine and pastes the resulting token. openfloor stores it encrypted and runs real Claude Code with it. This is the flow Anthropic documents for CI (fact 5) — but it is a *policy* surface as much as a technical one, so treat the gate as real.
+
+- Settings copy must say plainly: the token is used only for runs of agents **that user owns**; the subscription's rate limits are theirs; openfloor never uses it for anyone else; disconnecting is immediate. Do not present it as "unlimited" — it is a seat with limits.
+- `AnthropicCompatGatewayConfig.buildAuthHeaders` becomes `(secret, kind) => Record<string, string>`. The anthropic route returns `x-api-key` for `api_key`, and for `oauth` returns `authorization: Bearer <secret>` plus whatever Spike C step 2 proved is required.
+- `handleAnthropicCompatProxy` must **merge** `anthropic-beta` rather than overwrite it: the client's value and the gateway's OAuth flag both need to survive. Getting this wrong is the most likely §4 bug and it will look like an unrelated 400.
+- The gateway must refuse `kind: "oauth"` for any provider outside `credentialKindsForProvider` — a 503 with the existing wording, plus a `console.warn`.
+- Copy `retry-after` into the response header allowlist (`lib/anthropic-compat-gateway.ts:93`) so a subscription limit reaches the run as an actionable failure and not an opaque 429.
+- Connect validation: whatever Spike C step 5 established. If a setup token cannot be validated without a real model call, store it with `validated_at = null` and say "Connected — not yet verified" in Settings. **Do not fake a validation timestamp.**
+- `scripts/claude-runner.mjs` and `worker/agent-run-workflow.ts`: **no change.** The runner keeps sending the run-scoped JWT as `ANTHROPIC_AUTH_TOKEN`; only the gateway knows the difference. No image bump.
+- AGENTS.md:439 and AGENTS.md:1521 both currently forbid this. Supersede them in the same commit, with a decision-log entry that cites the documented `setup-token` CI path, states the "no subscription credential as a server fallback" invariant, and records what Spike C proved — mark the old text superseded rather than deleting it (AGENTS.md:19).
+
+## §5. ChatGPT-subscription Codex (`openai`, `kind: "oauth"`) — gated on Spike D
+
+Ship only if Gate D passes. Three things make this materially harder than §4, and each maps to a required design element:
+
+1. **Rotation.** The bundle refreshes (~8 days, or on 401) and the rotated tokens must be written back — otherwise openfloor's stored copy goes stale *and* invalidates the user's own laptop login. After each run, read the bundle back and re-encrypt via `upsertProviderCredential`.
+2. **Serialization — narrower than it first reads.** Fact 9's constraint is scoped to *one `auth.json` copy*, and the named failure is **token rotation**, not concurrent API use. Two different members hold two different bundles for two different ChatGPT accounts and never interact; concurrent ChatGPT-Codex runs across the team are fine and always were. The access token is an ordinary bearer JWT — nothing about it is single-use — so even two runs owned by the *same* member can share one. Only the refresh dance conflicts. Which means the mitigation in item 3 (refresh server-side, strip the refresh token from the injected bundle) removes the conflict by construction: a container with no refresh token cannot rotate anything. What remains is a **short critical section around the server-side refresh** — a conditional D1 update on the credential row so two dispatches don't refresh the same bundle at once, with the loser re-reading the winner's result. Not a whole-run lock.
+
+   Fall back to a real per-owner run lock **only if** Spike D step 3 shows the CLI refuses a bundle without a refresh token, because then the durable token is back in the container and back in the rotation path. In that case: no new table — query `agent_runs` joined to `floor_agents` for another in-flight run (`running` / `cancel_requested` / `checking`) owned by that user on that provider, and treat a hit as a **per-item skip** in `runRoutingTick` (`db/routing.ts:160`, the existing `disabledProviders` shape) plus a `not_ready` at the manual-start seam — never a session-wide hold.
+
+   Either way, one user-visible consequence must be in the Settings copy: **rotating the bundle invalidates the copy on the member's own machine.** Their local `codex` login will need redoing. That is inherent to a rotating refresh token being held in two places, not something openfloor can write back its way out of.
+3. **Credential exposure.** The supported path puts a real account credential on disk inside the container, and Codex's `workspace-write` sandbox restricts writes, not reads (Spike D step 4). A prompt-injected repository can read it and write it into a changed file that the publisher then pushes. Mitigate: openfloor refreshes **server-side** and writes a **minimal derived bundle** into the run — access token, `account_id`, `last_refresh` set to now, **refresh token omitted** — so what is exposed is short-lived rather than durable account access. If Spike D step 3 shows the CLI refuses that bundle, this mitigation is unavailable and Gate D fails.
+
+If it ships: `scripts/codex-runner.mjs` gains a ChatGPT branch that omits `apiKey` (passing it sets `CODEX_API_KEY` and forces API-key mode) and sets `CODEX_HOME` under the per-run scratch tree that prepare wipes; `cli_auth_credentials_store = "file"` goes through the SDK's `config` override, next to the existing `mcp_servers`. That is a script change → **bump `RUN_SANDBOX_IMAGE_VERSION` to `v4`** in the same commit. Add the srt wrap from Spike D step 5 if the base-URL override does not hold, so egress stays allowlisted; document whichever posture ships, in the decision log, the way the Gemini entry does.
+
+## §6. Per-agent model selection (closed allowlist, no migration)
+
+Everything except the input surface already exists: `floor_agents.model` is a nullable column with no UI (AGENTS.md:513), `resolveRunModel(provider, agentModel)` (`lib/provider-credentials.ts:75`) already falls back to the provider default, and `db/runs.ts:92` snapshots the resolved model onto `agent_runs.model` at run creation — so a run's model is fixed the moment it starts. The two prior briefs deferred this on one specific objection: *"a free-text model input is a new validation surface whose failure mode is a vendor 404 mid-run."* A closed per-provider allowlist answers that objection exactly, which is why it can land now.
+
+- **Replace `DEFAULT_PROVIDER_MODELS` with `PROVIDER_MODELS: Record<CredentialProvider, readonly string[]>`, first entry = the default.** One source of truth instead of two that can disagree; `DEFAULT_PROVIDER_MODELS[p]` becomes `PROVIDER_MODELS[p][0]` and `resolveRunModel` is otherwise unchanged. Keep a `DEFAULT_PROVIDER_MODELS` alias export if it keeps the diff smaller, but do not let two lists exist.
+- `parseAgentInput` (`lib/validation.ts:48`) gains one line: `if (input.model !== undefined && !PROVIDER_MODELS[provider].includes(input.model)) return null;`. A closed set means an unknown id is a `400` at creation, never a vendor 404 mid-run.
+- `components/session/CreateAgentDialog.tsx` — a **Model** `<select>` populated from `PROVIDER_MODELS[provider]`, first option "Provider default" (value `null`). It must re-key off the provider field: switching provider resets the model, or you will post a `claude-opus-5` to Moonshot.
+- `components/session/AgentCard.tsx:55` — append the model to the identity line only when `agent.model` is non-null, so today's cards are unchanged.
+
+**Banked allowlists (Step 0 read-only pass, 2026-08-24, recorded exactly as each models endpoint returned them — a documented name can 404 as an API id; the endpoint wins on any disagreement with the table below):**
+
+- `anthropic` (GET `/v1/models`, plain Bearer setup token, `has_more: false`, endpoint order): `claude-opus-5`, `claude-sonnet-5`, `claude-fable-5`, `claude-opus-4-8`, `claude-opus-4-7`, `claude-sonnet-4-6`, `claude-opus-4-6`, `claude-opus-4-5-20251101`, `claude-haiku-4-5-20251001`, `claude-sonnet-4-5-20250929`. Reconciliation against the pinned table: `claude-fable-5`, `claude-opus-5`, `claude-opus-4-8`, `claude-sonnet-5` match as written; **the table's bare `claude-haiku-4-5` is NOT what the endpoint returns — it returns the dated `claude-haiku-4-5-20251001`, so that is the id to pin**; `claude-mythos-5` is absent as expected.
+- `kimi` (`https://api.moonshot.ai/v1/models`): `kimi-k2.6`, `kimi-k2.7-code`, `kimi-k2.7-code-highspeed`, `kimi-k3`. Current default `kimi-k3` present.
+- `glm` (`https://api.z.ai/api/paas/v4/models`): `glm-4.5`, `glm-4.5-air`, `glm-4.6`, `glm-4.7`, `glm-5`, `glm-5-turbo`, `glm-5.1`, `glm-5.2`, `glm-5.3`. Default `glm-5.3` present.
+- `gemini` (`https://generativelanguage.googleapis.com/v1beta/models`, filtered to `generateContent`-capable, `models/` prefix stripped, no pagination remained): `antigravity-preview-05-2026`, `deep-research-max-preview-04-2026`, `deep-research-preview-04-2026`, `deep-research-pro-preview-12-2025`, `gemini-2.5-computer-use-preview-10-2025`, `gemini-2.5-flash`, `gemini-2.5-flash-image`, `gemini-2.5-flash-lite`, `gemini-2.5-flash-preview-tts`, `gemini-2.5-pro`, `gemini-2.5-pro-preview-tts`, `gemini-3-flash-preview`, `gemini-3-pro-image`, `gemini-3-pro-image-preview`, `gemini-3.1-flash-image`, `gemini-3.1-flash-image-preview`, `gemini-3.1-flash-lite`, `gemini-3.1-flash-lite-image`, `gemini-3.1-flash-lite-preview`, `gemini-3.1-flash-tts-preview`, `gemini-3.1-pro-preview`, `gemini-3.1-pro-preview-customtools`, `gemini-3.5-flash`, `gemini-3.5-flash-lite`, `gemini-3.6-flash`, `gemini-3.7-flash`, `gemini-flash-latest`, `gemini-flash-lite-latest`, `gemini-omni-flash-preview`, `gemini-pro-latest`, `gemini-robotics-er-1.6-preview`, `gemini-robotics-er-2-preview`, `gemma-4-26b-a4b-it`, `gemma-4-31b-it`, `lyria-3-clip-preview`, `lyria-3-pro-preview`, `nano-banana-pro-preview`. Default `gemini-3.5-flash` present. §6 curation caveat: the pinned CLI rewrites some ids through its model-resolution table (`gemini-3.7-flash` → `gemini-3.5-flash` at pin 0.56.0, per the Gemini decision log) — the curated list must contain ids that actually reach the wire.
+- `openai` — **blocked on a key**: no `OPENAI_API_KEY` exists in `.dev.vars`, and gpt-5.6 variant ids must not be guessed from the current default or memory. Until a key is supplied, openai's allowlist entry stays the single existing default `gpt-5.6-terra`.
+- `grok` — out. Gate B failed; no entry.
+
+**Anthropic's allowlist is the one you can pin from documentation** — the exact id strings, verified 2026-08-24, are:
+
+| Model | Id | Context | $/1M in | $/1M out |
+|---|---|---|---|---|
+| Claude Fable 5 | `claude-fable-5` | 1M | $10 | $50 |
+| Claude Opus 5 | `claude-opus-5` | 1M | $5 | $25 |
+| Claude Opus 4.8 | `claude-opus-4-8` | 1M | $5 | $25 |
+| Claude Sonnet 5 | `claude-sonnet-5` | 1M | $2 | $10 |
+| Claude Haiku 4.5 | `claude-haiku-4-5` | 200K | $1 | $5 |
+
+Keep `claude-opus-5` first (it is today's default; do not change the default in this commit). Ids are complete as written — **never append a date suffix**. Exclude `claude-mythos-5` (invitation-only). Two footnotes worth a code comment: `claude-haiku-4-5` is the only 200K-context entry in the list, and `claude-fable-5` is unavailable under zero data retention, so an org configured for ZDR gets a `400` rather than a run.
+
+**Every other provider's list comes from its `/v1/models` endpoint at spike time, not from marketing names or from memory.** This repo already learned that the hard way: `lib/provider-credentials.ts:63` records that Moonshot's documented `kimi-k3[1m]` is a Claude-Code alias, not an API id, and 404s. Each spike already reads the models endpoint (Spike A step 4, Spike B step 4) — that call now produces the allowlist, not just the default. OpenAI's `gpt-5.6` variants (`…-terra` is the current default at `lib/provider-credentials.ts:69`) get the same treatment: read the endpoint, pin what it returns.
+
+Two limits to state in code and in the dialog's help text rather than engineer around:
+
+- **The allowlist goes stale.** A model shipped after the last edit is unpickable until someone edits the constant. That is a code change, not a broken run — the correct direction for this failure to point. Do not fetch `/v1/models` at dialog render: per-provider auth, caching, and a network call in a modal, to save one constant edit.
+- **The allowlist is per provider, not per credential.** A member's Claude Pro plan or GLM Coding Plan tier may not include a model that is valid for the provider. That surfaces at run start as the vendor's own error. Do not try to model plan entitlements — openfloor has no authoritative source for them.
+
+## §UI
+
+- `components/product/SettingsScreen.tsx:316` — `ConnectionsSection` iterates `CREDENTIAL_PROVIDERS × credentialKindsForProvider(provider)` instead of providers alone, so `anthropic` and `openai` render **two independently connectable rows** and every other provider renders one, exactly as today. Key by `${provider}:${kind}`.
+- `ProviderCredentialRow` (`:332`) takes `kind` and becomes kind-aware. Connected state reads "API key ending in ····XXXX", "Claude subscription · ····XXXX", or "ChatGPT subscription · account ····XXXX". The subscription form carries one line of help naming the exact command (`claude setup-token`; `codex login` then copy `~/.codex/auth.json`), and the auth-bundle input is a `textarea`. Keep `autoComplete="off"` and `spellCheck={false}` on every variant. Disconnect passes its kind.
+- `components/session/CreateAgentDialog.tsx` — a **Billing** field: "Owner's default", "Subscription", "API key". Render it only when `credentialKindsForProvider(provider).length > 1`; default to `null` ("Owner's default"). New providers arrive through `enabledProviders` and render as "GLM (Z.ai)" and "Grok (xAI)" with no code change.
+- **Do not show which kinds the owner has actually connected.** The owner is picked in the same dialog and may be another member; their credential state is not the creator's to see, and fetching it would mean a new endpoint returning another user's connection status. A missing selection surfaces at run time as the §1 refusal message, which the owner can act on. Same reason `GET /api/account/credentials` stays caller-scoped.
+- `ConnectionsSection`'s intro copy (`:311`) gains one sentence: subscriptions are per-user, never shared, and never used as openfloor's fallback.
+
+## §Tests
+
+- `tests/unit/provider-credentials.test.ts` — positive assertions for `glm` and `grok`; **flip the `"grok"` negative at `:21`**; `usesClaudeRunner("glm") === true`, `usesCodexRunner("grok") === true`, `usesCodexRunner("gemini") === false`; `credentialKindsForProvider` per provider; the two new default model ids.
+- `tests/unit/validation.test.ts` — `parseCredentialConnectInput` accepts a valid `authJson`, rejects malformed JSON, rejects >8192 chars, and still rejects a whitespace-bearing `apiKey`. `parseAgentInput` accepts a valid `credentialKind`, rejects one the provider does not allow, and still accepts input that omits it. Keep `"mistral"` as the unknown provider at `:98`.
+- `tests/unit/provider-credentials.test.ts` — `resolveRunCredentialSource` returns `missing_selected_kind` when the agent names a kind the owner lacks, and specifically **does not** return `{source:"server"}` in that case. This is the single most important new unit test in the brief: it is the assertion that stops a run from silently billing openfloor when a member's subscription is disconnected.
+- `tests/worker/credentials.test.ts` — an owner holding **both** an `api_key` and an `oauth` row for one provider, with one agent on each, each run resolving its own credential; and a `credential_kind = null` agent resolving to `api_key` while both rows exist. Plus the §4 header cases already listed.
+- `tests/worker/credentials.test.ts` — new cases for the glm and grok gateways mirroring the kimi/openai ones; an oauth-kind anthropic case asserting `authorization: Bearer` **and** the merged `anthropic-beta` **and** the absence of `x-api-key`; a case proving an oauth credential on a provider that does not allow it is refused. All of these go in this existing file: `package.json:15` enumerates the worker test files, so **a new file silently never runs**.
+- `tests/render/credentials.test.ts` — connect/disconnect for one new provider, and one subscription-kind connect, using the `OPENFLOOR_TEST_PROVIDER_KEYS` adapter.
+- `tests/worker/routing.test.ts` — a `glm` item is per-item skipped while gated; and, if §5 ships, a second concurrent ChatGPT-subscription item is skipped rather than holding the queue.
+- §6: `tests/unit/provider-credentials.test.ts:51–58` already pins `resolveRunModel` against `DEFAULT_PROVIDER_MODELS` and against the literal `"claude-sonnet-5"` — keep both passing through the `PROVIDER_MODELS` refactor, and add that `PROVIDER_MODELS[p][0] === DEFAULT_PROVIDER_MODELS[p]` for every provider (the assertion that stops the two lists from drifting if the alias is kept). In `tests/unit/validation.test.ts`, `parseAgentInput` accepts an allowlisted model, rejects `"claude-opus-5"` under `provider: "kimi"`, and still accepts input that omits `model` entirely.
+- `npm test` green on every commit.
+
+## §Constraints and invariants
+
+- **Per-item skip, never a session-wide hold.** Applies to the new rollout flags and to §5's serialization lock. Do not change that shape.
+- **No subscription credential is ever a server fallback.** Server keys are `api_key` by construction.
+- **Never fall back from a present-but-broken owner credential to the server key.** Unchanged, and it now also covers an unusable oauth credential **and** an agent whose named credential kind is not connected — that refuses, it does not quietly bill the other kind or the server.
+- **`AGENTS.md:436`'s "adding a provider or credential kind never requires a table recreate" stays true for enum values and must be corrected for the key.** §1 recreates the table to widen the primary key, once. Say so in the decision log rather than leaving the sentence to read as if nothing changed.
+- **No body or role rewriting in any gateway.** That rejection is what excluded Grok from the Anthropic route; it stands for GLM, for Grok's Responses route, and for §4's header substitution — headers may be substituted, request bodies may not be edited.
+- **Bump `RUN_SANDBOX_IMAGE_VERSION` in any commit touching `Dockerfile.sandbox` or a `COPY`'d script.** §2–§4 touch neither; §5 does.
+- Never rename `agent_runs.codex_thread_id` (exposed as `providerThreadId`); the `codex_log` artifact kind and `codex.log` R2 key stay shared across providers.
+- **No metering work.** Runners capture `usage` into `result.json` and `parseCodexResult` (`worker/agent-run-workflow.ts:724`) discards it. Subscription credentials do not change that — and specifically, do not try to display "subscription usage remaining"; openfloor has no authoritative source for it.
+- 404 concealment on every gateway rejection; every rejected path logged with its provider prefix so allowlists grow from evidence.
+- `AGENTS.md` in the same change: implemented list (`:182`–`:184`), `user_provider_credentials` (`:436` the key and the recreate, `:439` the superseded subscription prohibition), `floor_agents` (`:513`, add `credential_kind`, and correct "has no UI yet" for `model`), the schema-workflow section (`:341`) since this brief adds the first migration since `0023`, API contracts (`:648`–`:650`, including `DELETE`'s new `kind`), validation limits (`:736`), flags (`:1064`), secrets (`:1068`+, add `ZAI_API_KEY` and `XAI_API_KEY`), and one decision-log entry per deliverable. Also `docs/agent-backend-gaps.md`, and the `docs/github-production.md` secrets runbook.
+
+## §Sequencing (one commit per line, `npm test` green each)
+
+1. Spikes A, B, C in parallel — none needs a deploy. D only if you intend to attempt §5.
+2. Commit 1 — §1 plumbing **and its migration**, new flags at `"false"`, test flips (including the Grok un-pin). Deploy this one on its own and confirm existing credentials still decrypt and existing agents still run before anything else lands on top of it. A recreate that silently drops rows is the one failure in this brief that costs users their connected keys.
+3. Commit 2 — §2 GLM: route + validation + labels + tests.
+4. Commit 3 — §3 Grok: `lib/responses-gateway.ts` extraction + OpenAI route rewrite (behavior identical, existing tests untouched) + grok route + `usesCodexRunner` + tests.
+5. Commit 4 — §4 Claude subscription: kind-aware `buildAuthHeaders`, beta merge, `retry-after`, UI, tests, AGENTS.md supersession.
+6. Commit 5 — §5, **only if Gate D passed**. Otherwise a docs-only commit recording the refusal.
+7. Commit 6 — §6 per-agent model selection. Last on purpose: it depends on Spikes A and B having produced each new provider's real model list, and it is the only commit here that is pure product surface with no security seam in it.
+8. Per provider, after its commit deploys: the acceptance runbook below, then a separate flag-flip commit.
+
+Do §3's gateway extraction as its own reviewable step. It is the one change in this brief that touches a route that already carries production traffic.
+
+## §Out of scope (each gets a `docs/agent-backend-gaps.md` line)
+
+- Token and cost metering; subscription quota display.
+- Changing an agent's model **after** creation. There is no agent-edit surface today beyond `task`; add this when one exists, not before. `agent_runs.model` snapshots at run creation (`db/runs.ts:92`), so an edit would never disturb an in-flight run.
+- Per-agent reasoning effort (`output_config.effort`). Same dialog-field shape as §6 and the natural follow-on — `xhigh` is what Claude Code itself defaults to for coding — but it is a second axis and the runners do not thread it today.
+- Skills and MCP-server serialization for Codex-runner and Gemini providers.
+- OAuth *login* flows of any kind. Both subscription paths are paste-a-credential-you-minted-yourself. openfloor operating an OAuth client against Anthropic or OpenAI is a separate decision with separate approval requirements.
+- **More than two credentials per user per provider** (two named API keys, two subscriptions). The key is `(user_id, provider, kind)`, so the ceiling is one row per kind. Nothing here needs it, and raising it later means a nickname column and a picker, not another recreate.
+- Automatic failover between a member's own two credentials on a rate-limit response. Rejected in §1 for switching ledgers mid-run; revisit only with an explicit, member-visible setting.
+- Showing a member their remaining subscription quota, or another member's connection status.
+
+## §Acceptance checklist — flag-flip runbook, per provider (mirrors AGENTS.md:1064)
+
+Keep `GLM_RUN_ENABLED` / `GROK_RUN_ENABLED` at `"false"` until, in order:
+
+1. The deploy containing its code is live via `wrangler deploy` (plus the bumped image, for §5 only).
+2. A credential resolves — `wrangler secret put ZAI_API_KEY` / `XAI_API_KEY`, or a test user has connected an owner key in Settings.
+3. A staging session runs the full arc: create an agent with the provider, queue a trivial "create a file" item, and verify run start → streaming activity events → files collected → checks run → publish → `providerThreadId` recorded.
+4. Review that run's gateway logs: every rejected path is either added to the allowlist with the log line cited in the commit, or confirmed safe to refuse. Confirm no request carried a `claude-*` model id (GLM), and that Grok's traffic hit only `responses`.
+5. Flip the var in `wrangler.jsonc`, deploy, and update AGENTS.md's flag section and decision log in the same commit. Rollback = flip back; existing agents persist and degrade correctly.
+
+For §4 and §5 there is no flag — they change an existing provider's credential handling. Their acceptance is instead: connect a scratch subscription credential **alongside an API key for the same provider**, create two agents owned by the same member with different `credential_kind` values, run both, and confirm from the gateway logs that each used the credential its agent named. Then disconnect the subscription and confirm the subscription-bound agent **refuses with the §1 message** while the API-key agent keeps running. For §5 additionally: confirm the stored bundle was rewritten after the run; confirm two members with separate ChatGPT credentials run concurrently without either bundle breaking; and confirm the same member's two concurrent runs either both complete (stripped-bundle design) or the second is skipped rather than started (fallback design) — whichever design Spike D selected.

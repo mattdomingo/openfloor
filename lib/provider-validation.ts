@@ -26,6 +26,7 @@ export async function validateProviderApiKey(
     openai: { url: "https://api.openai.com/v1/models", headers: { authorization: `Bearer ${apiKey}` } },
     kimi: { url: "https://api.moonshot.ai/v1/models", headers: { authorization: `Bearer ${apiKey}` } },
     gemini: { url: "https://generativelanguage.googleapis.com/v1beta/models", headers: { "x-goog-api-key": apiKey } },
+    glm: { url: "https://api.z.ai/api/paas/v4/models", headers: { authorization: `Bearer ${apiKey}` } },
   };
   const request = requests[provider];
   try {

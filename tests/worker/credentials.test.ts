@@ -2,6 +2,7 @@ import { env } from "cloudflare:workers";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { POST as postAnthropicGateway } from "@/app/runtime/anthropic/[...path]/route";
 import { POST as postGeminiGateway } from "@/app/runtime/gemini/[...path]/route";
+import { GET as getGlmGateway, POST as postGlmGateway } from "@/app/runtime/glm/[...path]/route";
 import { GET as getKimiGateway, POST as postKimiGateway } from "@/app/runtime/kimi/[...path]/route";
 import { POST as postOpenAiGateway } from "@/app/runtime/openai/[...path]/route";
 import { createFloorAgent } from "@/db/floor";
@@ -34,7 +35,7 @@ async function room(suffix: string) {
 
 async function connectKey(
   userId: string,
-  provider: "anthropic" | "openai" | "kimi" | "gemini",
+  provider: "anthropic" | "openai" | "kimi" | "gemini" | "glm",
   apiKey: string,
   kind: "api_key" | "oauth" = "api_key",
 ) {
@@ -554,6 +555,87 @@ describe("OpenAI gateway credential resolution", () => {
     expect(served.status).toBe(200);
     expect(captured).toEqual(["AIza-server-key"]);
     delete (env as unknown as Record<string, unknown>).GEMINI_API_KEY;
+  });
+
+  it("glm gateway forwards to Z.ai with Bearer auth, resolving owner before server key", async () => {
+    const { sessionId, owner, runId } = await runningRun("glm-owner");
+    const captured: Array<{ url: string; bearer: string | null; apiKey: string | null }> = [];
+    vi.stubGlobal("fetch", async (url: string, init: { headers: Headers }) => {
+      captured.push({ url, bearer: init.headers.get("authorization"), apiKey: init.headers.get("x-api-key") });
+      return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+    });
+    const token = await signRunGatewayToken(
+      { runId, sessionId, repositoryId: "repo", candidateSha: "sha-run", operation: "glm" },
+      GATEWAY_SECRET,
+    );
+    function glmRequest(path: string) {
+      return postGlmGateway(
+        new Request(`https://app.opnflr.com/runtime/glm/${path}`, {
+          method: "POST",
+          headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+          body: JSON.stringify({ model: "glm-5.3" }),
+        }),
+        { params: Promise.resolve({ path: path.split("/") }) },
+      );
+    }
+    // Server key resolves while the owner has no glm credential.
+    (env as unknown as Record<string, unknown>).ZAI_API_KEY = "zai-server-key";
+    expect((await glmRequest("v1/messages")).status).toBe(200);
+    // A connected owner key takes over from the server key.
+    await connectKey(owner.id, "glm", "zai-owner-gwkey");
+    expect((await glmRequest("v1/messages")).status).toBe(200);
+    // count_tokens stays allowlisted — and unlike Moonshot's 404, Z.ai
+    // answers it with a real 200, so the probe genuinely works.
+    expect((await glmRequest("v1/messages/count_tokens")).status).toBe(200);
+    expect(captured.map((call) => call.url)).toEqual([
+      "https://api.z.ai/api/anthropic/v1/messages",
+      "https://api.z.ai/api/anthropic/v1/messages",
+      "https://api.z.ai/api/anthropic/v1/messages/count_tokens",
+    ]);
+    // Spike-A-verified auth shape: Bearer with the resolved key, never x-api-key.
+    expect(captured.map((call) => call.bearer)).toEqual([
+      "Bearer zai-server-key",
+      "Bearer zai-owner-gwkey",
+      "Bearer zai-owner-gwkey",
+    ]);
+    expect(captured.every((call) => call.apiKey === null)).toBe(true);
+    // Outside the allowlist stays concealed; GET probes are concealed too.
+    expect((await glmRequest("v1/models")).status).toBe(404);
+    expect((await getGlmGateway(new Request("https://app.opnflr.com/runtime/glm/v1/models"), { params: Promise.resolve({ path: ["v1", "models"] }) })).status).toBe(404);
+    delete (env as unknown as Record<string, unknown>).ZAI_API_KEY;
+  });
+
+  it("glm gateway refuses without a credential and rejects wrong-operation tokens", async () => {
+    const { sessionId, runId } = await runningRun("glm-none");
+    delete (env as unknown as Record<string, unknown>).ZAI_API_KEY;
+    const token = await signRunGatewayToken(
+      { runId, sessionId, repositoryId: "repo", candidateSha: "sha-run", operation: "glm" },
+      GATEWAY_SECRET,
+    );
+    const refused = await postGlmGateway(
+      new Request("https://app.opnflr.com/runtime/glm/v1/messages", {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+        body: "{}",
+      }),
+      { params: Promise.resolve({ path: ["v1", "messages"] }) },
+    );
+    expect(refused.status).toBe(503);
+    expect(await refused.text()).toContain("No Z.ai credential");
+    // A kimi-operation token must not open the glm gateway.
+    const kimiOperation = await signRunGatewayToken(
+      { runId, sessionId, repositoryId: "repo", candidateSha: "sha-run", operation: "kimi" },
+      GATEWAY_SECRET,
+    );
+    const crossed = await postGlmGateway(
+      new Request("https://app.opnflr.com/runtime/glm/v1/messages", {
+        method: "POST",
+        headers: { authorization: `Bearer ${kimiOperation}`, "content-type": "application/json" },
+        body: "{}",
+      }),
+      { params: Promise.resolve({ path: ["v1", "messages"] }) },
+    );
+    expect(crossed.status).toBe(404);
   });
 
   it("bills exactly the credential kind each agent names, through the gateway", async () => {

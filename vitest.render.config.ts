@@ -23,6 +23,7 @@ export default defineConfig({
             openai: ["sk-openai-render-accepted"],
             kimi: ["sk-kimi-render-accepted"],
             gemini: ["AIza-gemini-render-accepted"],
+            glm: ["zai-glm-render-accepted"],
           }),
           TEST_MIGRATIONS: JSON.stringify(migrations),
         },

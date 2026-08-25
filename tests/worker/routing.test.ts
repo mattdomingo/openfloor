@@ -272,21 +272,25 @@ describe("agent router tick", () => {
     const room = await routingRoom("mixed-provider");
     const claudeAgentId = await addAgent(room.sessionId, room.owner.id, "Claude", "Researcher", "Research the domain model");
     const kimiAgentId = await addAgent(room.sessionId, room.owner.id, "Kimi", "Reviewer", "Review incoming changes");
+    const glmAgentId = await addAgent(room.sessionId, room.owner.id, "Glm", "Tester", "Exercise the test suite");
     const codexAgentId = await addAgent(room.sessionId, room.owner.id, "Codex", "Engineer", "Implement backend changes");
     await env.DB.prepare("UPDATE floor_agents SET provider = 'anthropic' WHERE id = ?").bind(claudeAgentId).run();
     await env.DB.prepare("UPDATE floor_agents SET provider = 'kimi' WHERE id = ?").bind(kimiAgentId).run();
+    await env.DB.prepare("UPDATE floor_agents SET provider = 'glm' WHERE id = ?").bind(glmAgentId).run();
     // Gated-provider items sit FIRST in the queue — the regression this
     // guards is those items halting everything behind them.
     const first = await createFloorQueueItem(room.sessionId, room.owner.id, { prompt: "Claude work item", agentId: claudeAgentId }, env.DB);
     const claudeItemId = first?.queue.find((item) => item.agentId === claudeAgentId)?.id;
     const kimiFloor = await createFloorQueueItem(room.sessionId, room.owner.id, { prompt: "Kimi work item", agentId: kimiAgentId }, env.DB);
     const kimiItemId = kimiFloor?.queue.find((item) => item.agentId === kimiAgentId)?.id;
+    const glmFloor = await createFloorQueueItem(room.sessionId, room.owner.id, { prompt: "GLM work item", agentId: glmAgentId }, env.DB);
+    const glmItemId = glmFloor?.queue.find((item) => item.agentId === glmAgentId)?.id;
     const second = await createFloorQueueItem(room.sessionId, room.owner.id, { prompt: "Codex work item", agentId: codexAgentId }, env.DB);
     const codexItemId = second?.queue.find((item) => item.agentId === codexAgentId)?.id;
-    if (!claudeItemId || !kimiItemId || !codexItemId) throw new Error("Queue items were not created");
+    if (!claudeItemId || !kimiItemId || !glmItemId || !codexItemId) throw new Error("Queue items were not created");
 
     const stub = startRunStub();
-    const outcome = await runRoutingTick(room.sessionId, "enqueue", { ...stub.deps, disabledProviders: new Set(["anthropic", "kimi"]) }, env.DB);
+    const outcome = await runRoutingTick(room.sessionId, "enqueue", { ...stub.deps, disabledProviders: new Set(["anthropic", "kimi", "glm"]) }, env.DB);
     // The Codex item behind the gated items still dispatched, and the
     // tick did not hold (a hold would back off the whole session).
     expect(outcome.held).toBe(false);
@@ -298,9 +302,13 @@ describe("agent router tick", () => {
     const kimiSkipped = recorded.find((decision) => decision.queueItemId === kimiItemId);
     expect(kimiSkipped?.decision).toBe("skipped");
     expect(kimiSkipped?.reason).toContain("kimi");
+    const glmSkipped = recorded.find((decision) => decision.queueItemId === glmItemId);
+    expect(glmSkipped?.decision).toBe("skipped");
+    expect(glmSkipped?.reason).toContain("glm");
     expect(recorded.find((decision) => decision.queueItemId === codexItemId)?.decision).toBe("dispatched");
     expect((await queueItem(claudeItemId))?.status).toBe("queued");
     expect((await queueItem(kimiItemId))?.status).toBe("queued");
+    expect((await queueItem(glmItemId))?.status).toBe("queued");
     expect((await queueItem(codexItemId))?.status).toBe("running");
   });
 

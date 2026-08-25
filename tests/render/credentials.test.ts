@@ -8,6 +8,7 @@ const ACCEPTED_ANTHROPIC_KEY = "sk-ant-render-accepted";
 const ACCEPTED_OPENAI_KEY = "sk-openai-render-accepted";
 const ACCEPTED_KIMI_KEY = "sk-kimi-render-accepted";
 const ACCEPTED_GEMINI_KEY = "AIza-gemini-render-accepted";
+const ACCEPTED_GLM_KEY = "zai-glm-render-accepted";
 
 async function onboardedUser(providerUserId: string, firstName: string, lastName: string) {
   const headers = {
@@ -88,9 +89,9 @@ describe("provider credential routes", () => {
     expect(await afterDelete.json()).toEqual({ credentials: [] });
   });
 
-  it("connects and disconnects the kimi and gemini providers through the same flow", async () => {
+  it("connects and disconnects the kimi, gemini, and glm providers through the same flow", async () => {
     const { headers } = await onboardedUser("credentials-new-providers", "Cred", "Newer");
-    for (const [provider, apiKey] of [["kimi", ACCEPTED_KIMI_KEY], ["gemini", ACCEPTED_GEMINI_KEY]] as const) {
+    for (const [provider, apiKey] of [["kimi", ACCEPTED_KIMI_KEY], ["gemini", ACCEPTED_GEMINI_KEY], ["glm", ACCEPTED_GLM_KEY]] as const) {
       const connected = await SELF.fetch(`http://localhost/api/account/credentials/${provider}`, {
         method: "PUT",
         headers: jsonHeaders(headers),
@@ -112,7 +113,7 @@ describe("provider credential routes", () => {
     const removed = await SELF.fetch("http://localhost/api/account/credentials/gemini", { method: "DELETE", headers });
     expect(removed.status).toBe(204);
     const list = await SELF.fetch("http://localhost/api/account/credentials", { headers });
-    expect(((await list.json()) as { credentials: Array<{ provider: string }> }).credentials.map((entry) => entry.provider)).toEqual(["kimi"]);
+    expect(((await list.json()) as { credentials: Array<{ provider: string }> }).credentials.map((entry) => entry.provider)).toEqual(["glm", "kimi"]);
   });
 
   it("connects a subscription credential alongside the API key, disconnecting per kind", async () => {

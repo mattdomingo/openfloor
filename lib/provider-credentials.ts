@@ -2,10 +2,12 @@
 // this module is shared by client components and unit tests (same rule as
 // lib/plans.ts). Persistence lives in db/provider-credentials.ts.
 
-// Grok (xAI) is deliberately absent: its Anthropic-compat endpoint rejects
-// the system-role messages the Claude Code CLI sends (Spike B, 2026-08-24 —
-// see the AGENTS.md decision log), so no runner can serve it today.
-export const CREDENTIAL_PROVIDERS = ["anthropic", "openai", "kimi", "gemini"] as const;
+// Grok (xAI) is deliberately absent — twice over: its Anthropic-compat
+// endpoint rejects the CLI's system-role messages, and its Responses API
+// rejects the "content": null Codex writes on replayed reasoning items
+// (both 2026-08-24 — see the AGENTS.md decision log), so no runner can
+// serve it today.
+export const CREDENTIAL_PROVIDERS = ["anthropic", "openai", "kimi", "gemini", "glm"] as const;
 export type CredentialProvider = (typeof CREDENTIAL_PROVIDERS)[number];
 
 // A subscription credential (Claude setup token, ChatGPT auth bundle) is
@@ -62,6 +64,7 @@ const PROVIDER_LABELS: Record<CredentialProvider, string> = {
   openai: "OpenAI",
   kimi: "Moonshot",
   gemini: "Google",
+  glm: "Z.ai",
 };
 
 export function providerLabel(provider: CredentialProvider): string {
@@ -75,13 +78,14 @@ export const AGENT_PROVIDER_LABELS: Record<CredentialProvider, string> = {
   openai: "Codex",
   kimi: "Kimi",
   gemini: "Gemini",
+  glm: "GLM",
 };
 
 // Providers whose runs execute through scripts/claude-runner.mjs against an
 // Anthropic-Messages-compatible gateway route — the single predicate every
 // workflow branch keys on. Gemini has its own runner; openai is Codex.
 export function usesClaudeRunner(provider: CredentialProvider): boolean {
-  return provider === "anthropic" || provider === "kimi";
+  return provider === "anthropic" || provider === "kimi" || provider === "glm";
 }
 
 // Stored and shown instead of the key itself; routes never return the key.
@@ -96,11 +100,14 @@ export function credentialFingerprint(apiKey: string): string {
 // "kimi-k3[1m]" alias is NOT an API id (404, verified in Spike A).
 // gemini: "gemini-3.5-flash" — the id the pinned CLI actually sends; it
 // rewrites newer flash ids (e.g. gemini-3.7-flash) to this one (Spike C).
+// glm: "glm-5.3" — the coding flagship id Z.ai's /api/paas/v4/models
+// endpoint returns (Spike A, 2026-08-24); marketing names are not API ids.
 export const DEFAULT_PROVIDER_MODELS: Record<CredentialProvider, string> = {
   openai: "gpt-5.6-terra",
   anthropic: "claude-opus-5",
   kimi: "kimi-k3",
   gemini: "gemini-3.5-flash",
+  glm: "glm-5.3",
 };
 
 export function resolveRunModel(provider: CredentialProvider, agentModel: string | null): string {

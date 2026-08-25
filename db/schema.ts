@@ -201,7 +201,7 @@ export const floorAgents = sqliteTable(
     // Open enum, TS-only, no SQL CHECK (agent_run_artifacts.kind convention);
     // existing rows keep current behavior via the default. `model` null means
     // "use the provider's default" (lib/provider-credentials.ts).
-    provider: text("provider", { enum: ["anthropic", "openai", "kimi", "gemini"] }).notNull().default("openai"),
+    provider: text("provider", { enum: ["anthropic", "openai", "kimi", "gemini", "glm"] }).notNull().default("openai"),
     // Which of the owner's credential kinds pays for this agent's runs. Open
     // enum, nullable, no CHECK and no default: null means "the owner's
     // default" — api_key when connected, else whatever single row exists —
@@ -709,7 +709,7 @@ export const userProviderCredentials = sqliteTable(
   "user_provider_credentials",
   {
     userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
-    provider: text("provider", { enum: ["anthropic", "openai", "kimi", "gemini"] }).notNull(),
+    provider: text("provider", { enum: ["anthropic", "openai", "kimi", "gemini", "glm"] }).notNull(),
     kind: text("kind", { enum: ["api_key", "oauth"] }).notNull().default("api_key"),
     ciphertext: text("ciphertext").notNull(),
     fingerprint: text("fingerprint").notNull(),

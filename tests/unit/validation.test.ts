@@ -96,6 +96,7 @@ describe("floor input validation", () => {
     expect(parseAgentInput({ name: "A", role: "R", task: "T", ownerUserId: "o", provider: "openai" })?.provider).toBe("openai");
     expect(parseAgentInput({ name: "A", role: "R", task: "T", ownerUserId: "o", provider: "kimi" })?.provider).toBe("kimi");
     expect(parseAgentInput({ name: "A", role: "R", task: "T", ownerUserId: "o", provider: "gemini" })?.provider).toBe("gemini");
+    expect(parseAgentInput({ name: "A", role: "R", task: "T", ownerUserId: "o", provider: "glm" })?.provider).toBe("glm");
     expect(parseAgentInput({ name: "A", role: "R", task: "T", ownerUserId: "o", provider: "mistral" })).toBeNull();
     expect(parseAgentInput({ name: "A", role: "R", task: "T", ownerUserId: "o", provider: 7 })).toBeNull();
   });
@@ -110,6 +111,7 @@ describe("floor input validation", () => {
     // A kind the provider does not support, and garbage, are 400s.
     expect(parseAgentInput({ ...base, provider: "kimi", credentialKind: "oauth" })).toBeNull();
     expect(parseAgentInput({ ...base, provider: "gemini", credentialKind: "oauth" })).toBeNull();
+    expect(parseAgentInput({ ...base, provider: "glm", credentialKind: "oauth" })).toBeNull();
     expect(parseAgentInput({ ...base, provider: "anthropic", credentialKind: "subscription" })).toBeNull();
     expect(parseAgentInput({ ...base, provider: "anthropic", credentialKind: 7 })).toBeNull();
   });

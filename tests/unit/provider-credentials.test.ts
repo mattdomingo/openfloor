@@ -21,6 +21,7 @@ describe("provider parsing and labels", () => {
     expect(parseCredentialProvider("openai")).toBe("openai");
     expect(parseCredentialProvider("kimi")).toBe("kimi");
     expect(parseCredentialProvider("gemini")).toBe("gemini");
+    expect(parseCredentialProvider("glm")).toBe("glm");
     expect(parseCredentialProvider("mistral")).toBeNull();
     expect(parseCredentialProvider("grok")).toBeNull();
     expect(parseCredentialProvider("")).toBeNull();
@@ -32,6 +33,7 @@ describe("provider parsing and labels", () => {
     expect(providerLabel("openai")).toBe("OpenAI");
     expect(providerLabel("kimi")).toBe("Moonshot");
     expect(providerLabel("gemini")).toBe("Google");
+    expect(providerLabel("glm")).toBe("Z.ai");
   });
 
   it("names agents per provider and routes kimi through the Claude runner", () => {
@@ -39,8 +41,10 @@ describe("provider parsing and labels", () => {
     expect(AGENT_PROVIDER_LABELS.openai).toBe("Codex");
     expect(AGENT_PROVIDER_LABELS.kimi).toBe("Kimi");
     expect(AGENT_PROVIDER_LABELS.gemini).toBe("Gemini");
+    expect(AGENT_PROVIDER_LABELS.glm).toBe("GLM");
     expect(usesClaudeRunner("anthropic")).toBe(true);
     expect(usesClaudeRunner("kimi")).toBe(true);
+    expect(usesClaudeRunner("glm")).toBe(true);
     expect(usesClaudeRunner("openai")).toBe(false);
     expect(usesClaudeRunner("gemini")).toBe(false);
   });
@@ -60,6 +64,8 @@ describe("per-provider run models", () => {
     // gemini-3.5-flash (what the pinned CLI actually sends on the wire).
     expect(resolveRunModel("kimi", null)).toBe("kimi-k3");
     expect(resolveRunModel("gemini", null)).toBe("gemini-3.5-flash");
+    // glm-5.3: the coding flagship id Z.ai's models endpoint returns.
+    expect(resolveRunModel("glm", null)).toBe("glm-5.3");
   });
 
   it("keeps the Codex default the historical AGENT_RUN_MODEL value", () => {
@@ -98,6 +104,7 @@ describe("credential kinds", () => {
     expect(credentialKindsForProvider("openai")).toEqual(["api_key", "oauth"]);
     expect(credentialKindsForProvider("kimi")).toEqual(["api_key"]);
     expect(credentialKindsForProvider("gemini")).toEqual(["api_key"]);
+    expect(credentialKindsForProvider("glm")).toEqual(["api_key"]);
   });
 
   it("parses kinds strictly", () => {
@@ -145,11 +152,14 @@ describe("connect-time key validation", () => {
     });
     expect(await validateProviderApiKey("anthropic", "sk-ant-key")).toEqual({ ok: true });
     expect(await validateProviderApiKey("openai", "sk-openai-key")).toEqual({ ok: true });
+    expect(await validateProviderApiKey("glm", "zai-key")).toEqual({ ok: true });
     expect(calls[0].url).toBe("https://api.anthropic.com/v1/models");
     expect(calls[0].headers["x-api-key"]).toBe("sk-ant-key");
     expect(calls[0].headers["anthropic-version"]).toBeTruthy();
     expect(calls[1].url).toBe("https://api.openai.com/v1/models");
     expect(calls[1].headers.authorization).toBe("Bearer sk-openai-key");
+    expect(calls[2].url).toBe("https://api.z.ai/api/paas/v4/models");
+    expect(calls[2].headers.authorization).toBe("Bearer zai-key");
   });
 
   it("maps provider rejection and unreachability to distinct reasons", async () => {
