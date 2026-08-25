@@ -510,7 +510,7 @@ function RepositoryGateDialog({ role, repository, candidate, onClose, onGoToSetu
   const executionEnabled = candidate != null;
 
   return (
-    <dialog className="dialog" {...dialogProps} aria-labelledby="repo-gate-title">
+    <dialog className="dialog repository-gate-dialog" {...dialogProps} aria-labelledby="repo-gate-title">
       <div className="dialog-head">
         <div className="dialog-title">
           <h2 id="repo-gate-title">Connect a repository to enter the agent floor</h2>

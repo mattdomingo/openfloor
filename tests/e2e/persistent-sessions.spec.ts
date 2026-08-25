@@ -29,7 +29,28 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await owner.getByLabel(/Objective/).fill("Ship persistent multiplayer sessions");
   await owner.getByRole("button", { name: "Create session" }).click();
   await expect(owner).toHaveURL(/\/session\/[0-9a-f-]+\?setup=1$/);
-  await expect(owner.getByRole("dialog").getByRole("heading", { name: "Connect the workspace" })).toBeVisible();
+  const setupDialog = owner.getByRole("dialog");
+  await expect(setupDialog.getByRole("heading", { name: "Connect the workspace" })).toBeVisible();
+  const connectGitHub = setupDialog.getByRole("button", { name: "Connect GitHub" });
+  await expect(connectGitHub).toHaveCSS("background-color", "rgb(27, 69, 184)");
+  expect(await connectGitHub.evaluate((button) => getComputedStyle(button, "::before").display)).toBe("none");
+
+  await setupDialog.getByRole("button", { name: "Continue to model keys" }).click();
+  const credentialRow = setupDialog.locator(".provider-credential-row").first();
+  const credentialInput = credentialRow.locator("input");
+  await expect(credentialRow).toHaveCSS("background-color", "rgb(211, 216, 223)");
+  await expect(credentialInput).toHaveCSS("background-color", "rgb(220, 225, 231)");
+
+  await owner.evaluate(() => { document.documentElement.dataset.theme = "dark"; });
+  await expect(credentialRow).toHaveCSS("background-color", "rgb(41, 47, 55)");
+  await expect(credentialInput).toHaveCSS("background-color", "rgb(49, 55, 64)");
+
+  await owner.evaluate(() => { delete document.documentElement.dataset.theme; });
+  await owner.emulateMedia({ colorScheme: "dark" });
+  await expect(credentialRow).toHaveCSS("background-color", "rgb(41, 47, 55)");
+  await expect(credentialInput).toHaveCSS("background-color", "rgb(49, 55, 64)");
+  await owner.emulateMedia({ colorScheme: "light" });
+  await setupDialog.getByRole("button", { name: "Back" }).click();
   await owner.getByRole("button", { name: "Set up later" }).click();
   await expect(owner).toHaveURL(/\/session\/[0-9a-f-]+$/);
   await owner.reload();

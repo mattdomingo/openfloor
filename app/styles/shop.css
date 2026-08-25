@@ -1,8 +1,7 @@
-/* The opnflr.com marketing identity, scoped to /home only via .shop-shell
-   (set on HomeScreen.tsx's <main>). Every rule below is prefixed .shop-shell
-   so it can only ever reach this one page — /session, /settings, and /join
-   keep the cream product theme untouched, exactly the same scoping .entry-
-   shell already does for the pre-auth screen in layout.css.
+/* The opnflr.com marketing identity, scoped via .shop-shell to /home and the
+   session lobby. Every shared rule below is prefixed .shop-shell so /floor,
+   /settings, and /join keep their established product styling; lobby-only
+   rules receive the narrower .session-lobby-shell prefix.
 
    Palette is ported verbatim from openfloor-ai/openfloor.ai's styles.css
    (:root and :root[data-theme="dark"]). Type and the button motif diverge
@@ -25,6 +24,8 @@
   --accent-ink: #1A3FA6;
   --accent-fill: #1B45B8;
   --btn-ink: #fff;
+  --attention-ink: #8b5917;
+  --ready-ink: #207052;
   --wave: 30, 38, 47;
 
   --gutter: clamp(20px, 5vw, 68px);
@@ -41,11 +42,9 @@
 }
 
 /* Dark resolution: app themes light/polar stay on the light shop palette
-   above, dark/midnight resolve to the dark one below. No bare
-   prefers-color-scheme branch — unlike .entry-shell, /home sits behind the
-   theme toggle, so a system preference alone should not override a light
-   theme the user explicitly picked. Kept byte-identical between the two
-   blocks, same discipline as tokens.css:137-209. */
+   above, dark/midnight resolve to the dark one below, and System follows the
+   OS only when there is no explicit data-theme. Keep the two dark variable
+   blocks byte-identical, following the same discipline as tokens.css. */
 :root[data-theme="dark"] .shop-shell,
 :root[data-theme="midnight"] .shop-shell {
   color-scheme: dark;
@@ -60,7 +59,29 @@
   --accent-ink: #7FB0FF;
   --accent-fill: #6EA3FF;
   --btn-ink: #0d1319;
+  --attention-ink: #e7b76d;
+  --ready-ink: #6dd4aa;
   --wave: 190, 200, 214;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) .shop-shell {
+    color-scheme: dark;
+    --shop: #20262e;
+    --shop-2: #292f37;
+    --sheet: #313740;
+    --ink: #dfe3e8;
+    --muted: #a5acb6;
+    --steel: #8a919b;
+    --rule: #404751;
+    --edge: #4e5560;
+    --accent-ink: #7FB0FF;
+    --accent-fill: #6EA3FF;
+    --btn-ink: #0d1319;
+    --attention-ink: #e7b76d;
+    --ready-ink: #6dd4aa;
+    --wave: 190, 200, 214;
+  }
 }
 
 /* ── Backdrop ────────────────────────────────────────────────────────── */
@@ -561,14 +582,54 @@
 .session-lobby-shell .floor-setup-section { overflow: visible; }
 .session-lobby-shell .floor-setup-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; padding: 26px 28px; border-bottom: 1px solid var(--edge); }
 .session-lobby-shell .floor-setup-heading > div > p:last-child { margin-top: 8px; color: var(--muted); line-height: 1.55; }
-.session-lobby-shell .setup-status { flex: none; padding: 7px 10px; border: 1px solid #b5761f; color: #8b5917; font: 650 10px var(--mono); letter-spacing: .08em; text-transform: uppercase; }
-:root[data-theme="dark"] .session-lobby-shell .setup-status,
-:root[data-theme="midnight"] .session-lobby-shell .setup-status { color: #e7b76d; }
-.session-lobby-shell .setup-status[data-ready="true"] { border-color: #25805f; color: #207052; }
-:root[data-theme="dark"] .session-lobby-shell .setup-status[data-ready="true"],
-:root[data-theme="midnight"] .session-lobby-shell .setup-status[data-ready="true"] { color: #6dd4aa; }
+.session-lobby-shell .setup-status { flex: none; padding: 7px 10px; border: 1px solid #b5761f; color: var(--attention-ink); font: 650 10px var(--mono); letter-spacing: .08em; text-transform: uppercase; }
+.session-lobby-shell .setup-status[data-ready="true"] { border-color: #25805f; color: var(--ready-ink); }
 .session-lobby-shell .repository-card-slot { padding: 22px; }
 .session-lobby-shell .repository-card-slot .repository-card { padding: 24px; border-color: var(--edge); border-radius: 0; background: var(--shop-2); box-shadow: none; }
+.session-lobby-shell .repository-card .button,
+.session-lobby-shell .session-setup-dialog .setup-dialog-foot .button,
+.session-lobby-shell .repository-gate-dialog .button {
+  min-height: 34px;
+  gap: 0;
+  padding: 7px 12px;
+  border: 1px solid var(--edge);
+  background: var(--sheet);
+  color: var(--ink);
+  cursor: pointer;
+  transition: background-color .16s ease, border-color .16s ease, color .16s ease;
+}
+.session-lobby-shell .repository-card .button::before,
+.session-lobby-shell .repository-card .button::after,
+.session-lobby-shell .session-setup-dialog .setup-dialog-foot .button::before,
+.session-lobby-shell .session-setup-dialog .setup-dialog-foot .button::after,
+.session-lobby-shell .repository-gate-dialog .button::before,
+.session-lobby-shell .repository-gate-dialog .button::after { display: none; }
+.session-lobby-shell .repository-card .button:hover,
+.session-lobby-shell .session-setup-dialog .setup-dialog-foot .button:hover,
+.session-lobby-shell .repository-gate-dialog .button:hover {
+  gap: 0;
+  border-color: var(--ink);
+  background: var(--shop);
+  color: var(--ink);
+}
+.session-lobby-shell .repository-card .button[data-variant="primary"],
+.session-lobby-shell .session-setup-dialog .setup-dialog-foot .button[data-variant="primary"],
+.session-lobby-shell .repository-gate-dialog .button[data-variant="primary"] {
+  border-color: var(--accent-fill);
+  background: var(--accent-fill);
+  color: var(--btn-ink);
+}
+.session-lobby-shell .repository-card .button[data-variant="primary"]:hover,
+.session-lobby-shell .session-setup-dialog .setup-dialog-foot .button[data-variant="primary"]:hover,
+.session-lobby-shell .repository-gate-dialog .button[data-variant="primary"]:hover {
+  border-color: var(--accent-ink);
+  background: var(--accent-ink);
+  color: var(--btn-ink);
+}
+.session-lobby-shell .repository-card .danger-button,
+.session-lobby-shell .repository-gate-dialog .danger-button { border-color: currentColor; background: var(--sheet); }
+.session-lobby-shell .repository-card .danger-button:hover,
+.session-lobby-shell .repository-gate-dialog .danger-button:hover { border-color: currentColor; background: color-mix(in srgb, currentColor 10%, var(--sheet)); color: #d9584a; }
 .session-lobby-shell .repository-summary,
 .session-lobby-shell .repository-checks { color: var(--muted); }
 .session-lobby-shell .repository-summary span,
@@ -582,7 +643,7 @@
 .session-lobby-shell .floor-setup-secondary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px; padding: 0 22px 22px; }
 .session-lobby-shell .floor-setup-secondary .action-card { min-width: 0; border-color: var(--edge); border-radius: 0; background: var(--shop-2); box-shadow: none; }
 .session-lobby-shell .settings-category-list { margin-top: 18px; border-color: var(--rule); border-radius: 0; }
-.session-lobby-shell .settings-category-row { border-color: var(--rule); }
+.session-lobby-shell .settings-category-row { border-color: var(--rule); background: var(--shop-2); }
 .session-lobby-shell .settings-category-name { color: var(--ink); }
 .session-lobby-shell .settings-category-detail { color: var(--muted); }
 .session-lobby-shell .setup-dialog-active { padding: 28px; border: 1px dashed var(--rule); color: var(--steel); text-align: center; }
@@ -603,6 +664,7 @@
 .session-lobby-shell .provider-credential-row .settings-category-name { display: grid; gap: 3px; }
 .session-lobby-shell .provider-credential-row .settings-category-name small { color: var(--steel); font: 500 9px var(--mono); text-transform: none; }
 .session-lobby-shell .provider-credential-row form { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 10px; }
+.session-lobby-shell .provider-credential-row input { background: var(--sheet); }
 .session-lobby-shell .provider-credential-row .form-actions { align-self: end; }
 .session-lobby-shell .provider-credential-row .form-error { grid-column: 1 / -1; }
 .session-lobby-shell .setup-dialog-foot { justify-content: space-between; }
