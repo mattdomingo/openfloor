@@ -11,7 +11,7 @@ The app-side companion is the `/` landing interstitial (`app/page.tsx`), which t
 3. Colors, matched to the app's light theme tokens (the hosted page does not theme-switch):
    - Header: `#efe6d1` (`--surface-header`)
    - Background/footer: `#e3dac4` (`--surface-page`)
-4. App Launcher: same logo. Confirm the Access application's display name reads "openfloor" — it appears on the login card.
+4. App Launcher: same logo. Confirm both Access applications' display names read "openfloor" — they appear on the login card. (Production runs the protected paths as two self-hosted applications sharing one policy, since Access caps a single application at five destinations and there are six protected paths — see `AGENTS.md`'s "Authentication and identity.")
 5. Save, then verify in a private window via `https://app.opnflr.com/home` (should bounce to the branded Access screen).
 
 ## Caveats

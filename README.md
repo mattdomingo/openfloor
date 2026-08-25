@@ -59,16 +59,16 @@ for the capture boundary, outputs, and voiceover.
 
 ## Cloudflare Access
 
-Production authentication is provided by one Cloudflare Access self-hosted application. Keep the public landing page and assets outside Access, and add these protected public hostnames to the same application so they share one audience tag:
+Production authentication is provided by Cloudflare Access, applied as an **explicit allowlist of protected paths, not a protect-everything-then-bypass setup**. A path Cloudflare Access has no destination for is not specially exempted — it simply never goes through Access and reaches the Worker directly. That's what keeps the public landing page (`/`), static assets, `/webhooks/*`, and `/runtime/*` public: none of them are listed in any Access application. (A blank or `*` Path is *not* a way to scope a destination to "just the root" — per Cloudflare's own docs, `example.com` and `example.com/*` are equivalent and both mean the hostname plus everything beneath it. There is no root-only destination syntax.)
 
-- `app.opnflr.com/home`
-- `app.opnflr.com/settings`
-- `app.opnflr.com/onboarding`
-- `app.opnflr.com/session/*`
-- `app.opnflr.com/join/*`
-- `app.opnflr.com/api/*`
+Self-hosted applications cap at five destinations each, and there are six protected paths, so this uses two applications sharing one policy — attach the existing policy to the second app via "Add existing policy" rather than duplicating it:
 
-This path list is manually maintained in the Access application, not covered by a wildcard — every new protected page needs its path added here (and in the two copies of this list in `AGENTS.md` and `docs/github-production.md`) in the same change, or the page bounces every visitor back to sign-in.
+- App 1 ("OpenFloor authenticated users"): `app.opnflr.com/home`, `app.opnflr.com/settings`, `app.opnflr.com/onboarding`, `app.opnflr.com/session/*`, `app.opnflr.com/join/*`
+- App 2 (same policy attached): `app.opnflr.com/api/*`
+
+This path list is manually maintained in the Access applications, not covered by a wildcard — every new protected page needs its path added to whichever app has room (or a new app sharing the policy) here (and in the two copies of this list in `AGENTS.md` and `docs/github-production.md`) in the same change, or the page bounces every visitor back to sign-in.
+
+Check Zero Trust → Settings → "Require Access Protection" is off. If it's on, an unmatched hostname/path is blocked (error 1050) instead of passed through, which breaks the "unlisted = public" assumption this setup relies on.
 
 Enable Google and One-time PIN as identity providers. The application policy determines who may authenticate; session membership and invite acceptance remain enforced by openfloor.
 
