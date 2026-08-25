@@ -6,6 +6,8 @@ import { describe, expect, it } from "vitest";
 // vitest.render.config.ts — the deterministic connect-time validation adapter.
 const ACCEPTED_ANTHROPIC_KEY = "sk-ant-render-accepted";
 const ACCEPTED_OPENAI_KEY = "sk-openai-render-accepted";
+const ACCEPTED_KIMI_KEY = "sk-kimi-render-accepted";
+const ACCEPTED_GEMINI_KEY = "AIza-gemini-render-accepted";
 
 async function onboardedUser(providerUserId: string, firstName: string, lastName: string) {
   const headers = {
@@ -86,6 +88,33 @@ describe("provider credential routes", () => {
     expect(await afterDelete.json()).toEqual({ credentials: [] });
   });
 
+  it("connects and disconnects the kimi and gemini providers through the same flow", async () => {
+    const { headers } = await onboardedUser("credentials-new-providers", "Cred", "Newer");
+    for (const [provider, apiKey] of [["kimi", ACCEPTED_KIMI_KEY], ["gemini", ACCEPTED_GEMINI_KEY]] as const) {
+      const connected = await SELF.fetch(`http://localhost/app/api/account/credentials/${provider}`, {
+        method: "PUT",
+        headers: jsonHeaders(headers),
+        body: JSON.stringify({ apiKey }),
+      });
+      expect(connected.status).toBe(200);
+      const { credential } = (await connected.json()) as { credential: { provider: string; fingerprint: string; validatedAt: number | null } };
+      expect(credential.provider).toBe(provider);
+      expect(credential.fingerprint).toBe(apiKey.slice(-4));
+      expect(credential.validatedAt).not.toBeNull();
+    }
+    const rejected = await SELF.fetch("http://localhost/app/api/account/credentials/kimi", {
+      method: "PUT",
+      headers: jsonHeaders(headers),
+      body: JSON.stringify({ apiKey: "sk-kimi-render-wrong" }),
+    });
+    expect(rejected.status).toBe(400);
+    expect(((await rejected.json()) as { error: string }).error).toContain("Moonshot");
+    const removed = await SELF.fetch("http://localhost/app/api/account/credentials/gemini", { method: "DELETE", headers });
+    expect(removed.status).toBe(204);
+    const list = await SELF.fetch("http://localhost/app/api/account/credentials", { headers });
+    expect(((await list.json()) as { credentials: Array<{ provider: string }> }).credentials.map((entry) => entry.provider)).toEqual(["kimi"]);
+  });
+
   it("rejects invalid keys, invalid input, and unknown providers", async () => {
     const { headers } = await onboardedUser("credentials-reject", "Cred", "Reject");
 
@@ -104,7 +133,7 @@ describe("provider credential routes", () => {
     });
     expect(badInput.status).toBe(400);
 
-    const unknownProvider = await SELF.fetch("http://localhost/app/api/account/credentials/gemini", {
+    const unknownProvider = await SELF.fetch("http://localhost/app/api/account/credentials/mistral", {
       method: "PUT",
       headers: jsonHeaders(headers),
       body: JSON.stringify({ apiKey: ACCEPTED_OPENAI_KEY }),

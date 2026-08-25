@@ -2,6 +2,7 @@
 
 import { FormEvent, useEffect, useId, useRef, useState } from "react";
 import type { CreateFloorAgentInput, FloorParticipant } from "@/lib/floor-types";
+import { AGENT_PROVIDER_LABELS, parseCredentialProvider, providerLabel, type CredentialProvider } from "@/lib/provider-credentials";
 import { Icon, useDialogDismiss } from "./primitives";
 import { SelectMenu } from "./SelectMenu";
 
@@ -10,13 +11,13 @@ export function CreateAgentDialog({
   onClose,
   participants,
   currentUserId,
-  claudeRunEnabled,
+  enabledProviders,
 }: {
   onCreate: (input: CreateFloorAgentInput) => Promise<boolean>;
   onClose: () => void;
   participants: FloorParticipant[];
   currentUserId: string;
-  claudeRunEnabled: boolean;
+  enabledProviders: CredentialProvider[];
 }) {
   const titleId = useId();
   const { dismiss, dialogProps } = useDialogDismiss(onClose);
@@ -25,7 +26,7 @@ export function CreateAgentDialog({
   const [role, setRole] = useState("");
   const [task, setTask] = useState("");
   const [ownerUserId, setOwnerUserId] = useState(currentUserId);
-  const [provider, setProvider] = useState<"anthropic" | "openai">("openai");
+  const [provider, setProvider] = useState<CredentialProvider>("openai");
   const [submitting, setSubmitting] = useState(false);
   const ready = name.trim().length > 0 && role.trim().length > 0 && task.trim().length > 0 && ownerUserId.length > 0;
 
@@ -63,17 +64,17 @@ export function CreateAgentDialog({
               options={participants.map((person) => ({ value: person.id, label: `${person.name}${person.isCurrentUser ? " (You)" : ""}` }))}
             />
           </div>
-          {claudeRunEnabled && (
+          {enabledProviders.length > 1 && (
             <div className="field">
               <span className="label">Provider</span>
               <SelectMenu
                 label="Agent provider"
                 value={provider}
-                onChange={(value) => setProvider(value === "anthropic" ? "anthropic" : "openai")}
-                options={[
-                  { value: "openai", label: "Codex (OpenAI)" },
-                  { value: "anthropic", label: "Claude (Anthropic)" },
-                ]}
+                onChange={(value) => setProvider(parseCredentialProvider(value) ?? "openai")}
+                options={enabledProviders.map((option) => ({
+                  value: option,
+                  label: `${AGENT_PROVIDER_LABELS[option]} (${providerLabel(option)})`,
+                }))}
               />
             </div>
           )}

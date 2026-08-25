@@ -7,6 +7,7 @@ import { Workspace } from "@/components/session/Workspace";
 import { usePersistentFloorData } from "@/components/session/usePersistentFloorData";
 import { useRunActivity } from "@/components/session/useRunActivity";
 import { reducePresence } from "@/lib/presence";
+import type { CredentialProvider } from "@/lib/provider-credentials";
 import type { FloorSnapshot } from "@/lib/floor-types";
 import { shouldRefreshFloor } from "@/lib/floor-state";
 import { reduceTypingDrafts } from "@/lib/typing-drafts";
@@ -18,14 +19,14 @@ export function AgentFloorScreen({
   initialMembers,
   initialFloor,
   agentRunEnabled,
-  claudeRunEnabled,
+  enabledProviders,
 }: {
   user: AppUser;
   session: SessionSummary;
   initialMembers: SessionMember[];
   initialFloor: FloorSnapshot;
   agentRunEnabled: boolean;
-  claudeRunEnabled: boolean;
+  enabledProviders: CredentialProvider[];
 }) {
   const router = useRouter();
   const [session, setSession] = useState(initialSession);
@@ -230,5 +231,5 @@ export function AgentFloorScreen({
     if (socketRef.current?.readyState === WebSocket.OPEN) socketRef.current.send(JSON.stringify(update));
   }, []);
 
-  return <Workspace user={user} session={session} members={visibleMembers} floorData={floorData} activity={activity} typingDrafts={typingDrafts} onTypingUpdate={sendTypingUpdate} onSaveObjective={saveObjective} agentRunEnabled={agentRunEnabled} claudeRunEnabled={claudeRunEnabled} presenceConnected={presenceConnected} quotaExhausted={quotaExhausted} />;
+  return <Workspace user={user} session={session} members={visibleMembers} floorData={floorData} activity={activity} typingDrafts={typingDrafts} onTypingUpdate={sendTypingUpdate} onSaveObjective={saveObjective} agentRunEnabled={agentRunEnabled} enabledProviders={enabledProviders} presenceConnected={presenceConnected} quotaExhausted={quotaExhausted} />;
 }

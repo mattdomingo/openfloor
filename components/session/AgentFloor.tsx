@@ -1,6 +1,7 @@
 "use client";
 
 import { useLayoutEffect, useRef, useState } from "react";
+import type { CredentialProvider } from "@/lib/provider-credentials";
 import type { AgentRun, CreateFloorAgentInput, FloorAgent, FloorParticipant, FloorQueueItem } from "@/lib/floor-types";
 import type { AgentLayout } from "./data";
 import { agentTone } from "./data";
@@ -46,7 +47,7 @@ function AllAgentsButton({ active, onClick }: { active: boolean; onClick: () => 
   );
 }
 
-export function AgentFloor({ chrome, sessionId, agents, runs, activity, selected, onSelect, agentLayout, onAgentLayout, onCreateAgent, onUpdateTask, queue, participants, currentUserId, claudeRunEnabled }: {
+export function AgentFloor({ chrome, sessionId, agents, runs, activity, selected, onSelect, agentLayout, onAgentLayout, onCreateAgent, onUpdateTask, queue, participants, currentUserId, enabledProviders }: {
   chrome: PanelChrome;
   sessionId: string;
   agents: FloorAgent[];
@@ -61,7 +62,7 @@ export function AgentFloor({ chrome, sessionId, agents, runs, activity, selected
   queue: FloorQueueItem[];
   participants: FloorParticipant[];
   currentUserId: string;
-  claudeRunEnabled: boolean;
+  enabledProviders: CredentialProvider[];
 }) {
   const [creating, setCreating] = useState(false);
   const [historyAgentId, setHistoryAgentId] = useState<string | null>(null);
@@ -131,7 +132,7 @@ export function AgentFloor({ chrome, sessionId, agents, runs, activity, selected
         <AgentSpotlight agent={selected} tone={agentTone(selected.id, agents.findIndex((agent) => agent.id === selected.id))} sessionId={sessionId} latestRun={runs.find((run) => run.agentId === selected.id) ?? null} activity={activity} onHistory={() => setHistoryAgentId(selected.id)} onUpdateTask={onUpdateTask} />
       ) : null}
     </Panel>
-    {creating && <CreateAgentDialog participants={participants} currentUserId={currentUserId} claudeRunEnabled={claudeRunEnabled} onClose={() => { setCreating(false); createButtonRef.current?.focus(); }} onCreate={onCreateAgent} />}
+    {creating && <CreateAgentDialog participants={participants} currentUserId={currentUserId} enabledProviders={enabledProviders} onClose={() => { setCreating(false); createButtonRef.current?.focus(); }} onCreate={onCreateAgent} />}
     {historyAgent && <AgentChatHistory agent={historyAgent} queue={queue} onClose={() => setHistoryAgentId(null)} />}
   </>;
 }

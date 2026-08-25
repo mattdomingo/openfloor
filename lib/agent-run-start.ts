@@ -31,6 +31,7 @@ import {
 import { getMembershipRole, getOwnerHourQuota, getSessionForMember, PLAN_LIMITS } from "@/db/sessions";
 import { renderRunBrief } from "@/db/session-context";
 import { createDraftPullRequest, createRepositoryBranch, getInstallationRepository, getRepositoryRefSha, GitHubApiError, mergeRepositoryBranch, setTestRepositoryMergeConflict } from "@/lib/github";
+import { providerLabel } from "@/lib/provider-credentials";
 import { openFloorBranchName } from "@/lib/repository-refs";
 import { notifyFloorChanged, notifyRunActivity } from "@/lib/presence-server";
 import { env } from "cloudflare:workers";
@@ -68,11 +69,21 @@ export type StartRunResult =
 // auto-dispatch (a per-item condition); the seam check below still refuses a
 // direct manual start with kind "disabled" (the correct answer there).
 export function disabledRunProviders(): ReadonlySet<import("@/lib/provider-credentials").CredentialProvider> {
-  const bindings = env as unknown as { CLAUDE_RUN_ENABLED?: string; OPENFLOOR_TEST_ALLOW_IDENTITY_HEADERS?: string };
-  if (bindings.CLAUDE_RUN_ENABLED === "true" || bindings.OPENFLOOR_TEST_ALLOW_IDENTITY_HEADERS === "true") {
-    return new Set();
-  }
-  return new Set(["anthropic"] as const);
+  const bindings = env as unknown as {
+    CLAUDE_RUN_ENABLED?: string;
+    KIMI_RUN_ENABLED?: string;
+    GEMINI_RUN_ENABLED?: string;
+    OPENFLOOR_TEST_ALLOW_IDENTITY_HEADERS?: string;
+  };
+  if (bindings.OPENFLOOR_TEST_ALLOW_IDENTITY_HEADERS === "true") return new Set();
+  const flags = {
+    anthropic: bindings.CLAUDE_RUN_ENABLED,
+    kimi: bindings.KIMI_RUN_ENABLED,
+    gemini: bindings.GEMINI_RUN_ENABLED,
+  } as const;
+  return new Set(
+    (Object.keys(flags) as Array<keyof typeof flags>).filter((provider) => flags[provider] !== "true"),
+  );
 }
 
 // This is the one seam that covers every way a run can start: the two HTTP
@@ -106,7 +117,7 @@ export async function startQueueItemRun(sessionId: string, queueItemId: string, 
   if (disabledProviders.size > 0) {
     const provider = await getQueueItemProvider(sessionId, queueItemId, getDb());
     if (provider && disabledProviders.has(provider)) {
-      return { ok: false, kind: "disabled", message: "Claude execution is not enabled" };
+      return { ok: false, kind: "disabled", message: `${providerLabel(provider)} execution is not enabled` };
     }
   }
   // Unlike worker/presence.ts's use of this same function, a null quota here

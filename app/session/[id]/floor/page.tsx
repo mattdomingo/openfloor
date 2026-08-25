@@ -5,6 +5,8 @@ import { getSessionForMember, getSessionMembers } from "@/db/sessions";
 import { getActiveRepositoryCandidateForMember, getRepositoryConnectionForMember } from "@/db/repositories";
 import { getFloorSnapshot } from "@/db/floor";
 import { isRepositoryReadyForFloor } from "@/lib/repository-gate";
+import { disabledRunProviders } from "@/lib/agent-run-start";
+import { CREDENTIAL_PROVIDERS } from "@/lib/provider-credentials";
 import { env } from "cloudflare:workers";
 
 export const dynamic = "force-dynamic";
@@ -24,6 +26,7 @@ export default async function AgentFloorPage({ params }: { params: Promise<{ id:
     redirect(`/session/${encodeURIComponent(id)}?repo=required`);
   }
   const agentRunEnabled = (env as unknown as { AGENT_RUN_ENABLED?: string }).AGENT_RUN_ENABLED === "true";
-  const claudeRunEnabled = (env as unknown as { CLAUDE_RUN_ENABLED?: string }).CLAUDE_RUN_ENABLED === "true";
-  return <AgentFloorScreen user={user} session={session} initialMembers={members} initialFloor={floor} agentRunEnabled={agentRunEnabled} claudeRunEnabled={claudeRunEnabled} />;
+  const disabled = disabledRunProviders();
+  const enabledProviders = CREDENTIAL_PROVIDERS.filter((provider) => !disabled.has(provider));
+  return <AgentFloorScreen user={user} session={session} initialMembers={members} initialFloor={floor} agentRunEnabled={agentRunEnabled} enabledProviders={enabledProviders} />;
 }

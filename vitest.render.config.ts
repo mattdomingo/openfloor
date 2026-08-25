@@ -20,6 +20,8 @@ export default defineConfig({
           OPENFLOOR_TEST_PROVIDER_KEYS: JSON.stringify({
             anthropic: ["sk-ant-render-accepted"],
             openai: ["sk-openai-render-accepted"],
+            kimi: ["sk-kimi-render-accepted"],
+            gemini: ["AIza-gemini-render-accepted"],
           }),
           TEST_MIGRATIONS: JSON.stringify(migrations),
         },

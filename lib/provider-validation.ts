@@ -21,9 +21,13 @@ export async function validateProviderApiKey(
       ? { ok: true }
       : { ok: false, reason: "unauthorized" };
   }
-  const request: { url: string; headers: Record<string, string> } = provider === "anthropic"
-    ? { url: "https://api.anthropic.com/v1/models", headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01" } }
-    : { url: "https://api.openai.com/v1/models", headers: { authorization: `Bearer ${apiKey}` } };
+  const requests: Record<CredentialProvider, { url: string; headers: Record<string, string> }> = {
+    anthropic: { url: "https://api.anthropic.com/v1/models", headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01" } },
+    openai: { url: "https://api.openai.com/v1/models", headers: { authorization: `Bearer ${apiKey}` } },
+    kimi: { url: "https://api.moonshot.ai/v1/models", headers: { authorization: `Bearer ${apiKey}` } },
+    gemini: { url: "https://generativelanguage.googleapis.com/v1beta/models", headers: { "x-goog-api-key": apiKey } },
+  };
+  const request = requests[provider];
   try {
     const response = await fetch(request.url, { method: "GET", headers: request.headers });
     if (response.ok) return { ok: true };
