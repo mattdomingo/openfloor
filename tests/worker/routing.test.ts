@@ -415,7 +415,7 @@ describe("agent router tick", () => {
     const item = await queueItem(itemId);
     expect(item?.status).toBe("running");
     const run = await env.DB.prepare("SELECT id FROM agent_runs WHERE queue_item_id = ?").bind(itemId).first<{ id: string }>();
-    const outcome = await finishAgentReply(run!.id, "ready", "Hi! How can I help?", "Answered the prompt.", env.DB);
+    const outcome = await finishAgentReply(run!.id, "ready", "Hi! How can I help?", "Answered the prompt.", null, env.DB);
     expect(outcome).not.toBeNull();
     const finished = await queueItem(itemId);
     expect(finished?.status).toBe("completed");

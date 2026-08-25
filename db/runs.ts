@@ -537,6 +537,11 @@ export async function finishAgentReply(
   status: "ready" | "failed" | "cancelled",
   finalResponse: string | null,
   summary: string,
+  // A reply run never passes through markRunChecking (it has no checks to
+  // run, and the "checking" status would misleadingly surface in the UI as
+  // a task-pipeline stage for what is really just an answered question) —
+  // so this is the only place its provider thread id gets recorded.
+  threadId: string | null = null,
   database = getDb(),
 ): Promise<{ sessionId: string; revision: number } | null> {
   const run = await database.prepare("SELECT session_id AS sessionId, queue_item_id AS queueItemId, status FROM agent_runs WHERE id = ?")
@@ -549,9 +554,9 @@ export async function finishAgentReply(
   const now = Date.now();
   await database.batch([
     database.prepare(
-      `UPDATE agent_runs SET status = ?, final_response = ?, summary = ?, completed_at = ?, updated_at = ?
+      `UPDATE agent_runs SET status = ?, codex_thread_id = ?, final_response = ?, summary = ?, completed_at = ?, updated_at = ?
        WHERE id = ? AND status IN ('provisioning', 'running', 'cancel_requested')`,
-    ).bind(status, finalResponse?.slice(0, 20_000) ?? null, summary.slice(0, 1_000), now, now, runId),
+    ).bind(status, threadId, finalResponse?.slice(0, 20_000) ?? null, summary.slice(0, 1_000), now, now, runId),
     database.prepare("UPDATE floor_queue_items SET status = ?, updated_at = ? WHERE id = ?")
       .bind(status === "ready" ? "completed" : status, now, run.queueItemId),
     database.prepare("UPDATE sessions SET floor_revision = floor_revision + 1, updated_at = ? WHERE id = ?").bind(now, run.sessionId),

@@ -3502,7 +3502,8 @@
 
 .queue-chip[data-kind="status"][data-status="integrated"],
 .queue-chip[data-kind="status"][data-status="cancelled"],
-.queue-chip[data-kind="status"][data-status="discarded"] {
+.queue-chip[data-kind="status"][data-status="discarded"],
+.queue-chip[data-kind="status"][data-status="answered"] {
   background: var(--status-waiting-soft);
   color: var(--status-waiting);
 }

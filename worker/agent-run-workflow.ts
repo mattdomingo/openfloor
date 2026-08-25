@@ -459,25 +459,32 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
         );
         if (!verified.success) throw new Error("Merge Resolver left unmerged entries or conflict markers in the workspace.");
       }
-      await markRunChecking(runId, codexResult.threadId, codexResult.finalResponse, this.env.DB);
-      await this.notify(runId);
-
       // A reply run answers and stops here: no file collection, no required
       // checks (createAgentRun never inserted rows for one — context.checks
       // is empty), no bundle export, no publish, no integrate. Its queue item
       // completes outright (finishAgentReply), unlike a task run's "ready",
       // which still has to publish and integrate before it's truly done.
+      //
+      // markRunChecking is deliberately skipped here (unlike the task path
+      // below): it sets status = 'checking', a stage that means "required
+      // checks are running" — a reply run never runs checks, and surfacing
+      // that status made an answered question misleadingly look like it was
+      // moving through the task pipeline. Its thread id is instead recorded
+      // by finishAgentReply itself.
       if (context.kind === "reply") {
         const finalResponse = codexResult.finalResponse;
         finalStatus = finalResponse ? "ready" : "failed";
         summary = finalResponse ? "Answered the prompt." : "The agent did not produce a text answer.";
-        const completion = await finishAgentReply(runId, finalStatus, finalResponse, summary, this.env.DB);
+        const completion = await finishAgentReply(runId, finalStatus, finalResponse, summary, codexResult.threadId, this.env.DB);
         if (completion) {
           await notifyFloorChanged(completion.sessionId, completion.revision, ["queue", "runs"]);
           await pokeSessionRouter(completion.sessionId, "run_completed");
         }
         return { status: finalStatus };
       }
+
+      await markRunChecking(runId, codexResult.threadId, codexResult.finalResponse, this.env.DB);
+      await this.notify(runId);
 
       const files = await step.do("collect changed files", { retries: { limit: 0, delay: "1 second" }, timeout: "5 minutes" }, async () => {
         await sandbox.exec("git add -N .", { cwd: "/workspace/repository", timeout: 30_000 });
