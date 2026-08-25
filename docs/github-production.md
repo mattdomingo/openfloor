@@ -4,18 +4,14 @@ openfloor connects the production application to a GitHub App, keeps one real ca
 
 ## Production host and Cloudflare Access
 
-The application is served at `https://app.opnflr.com`. The existing Cloudflare Access application protects:
+The application is served at `https://app.opnflr.com`. Cloudflare Access protects it as an explicit allowlist — split across two self-hosted applications sharing one policy, since Access caps a single application at five destinations and there are six protected paths:
 
-- `app.opnflr.com/home`
-- `app.opnflr.com/settings`
-- `app.opnflr.com/onboarding`
-- `app.opnflr.com/session/*`
-- `app.opnflr.com/join/*`
-- `app.opnflr.com/api/*`
+- App 1 ("OpenFloor authenticated users"): `app.opnflr.com/home`, `app.opnflr.com/settings`, `app.opnflr.com/onboarding`, `app.opnflr.com/session/*`, `app.opnflr.com/join/*`
+- App 2 (same policy, attached via "Add existing policy"): `app.opnflr.com/api/*`
 
-This list is per-path, dashboard-configured state (see `docs/cloudflare-access-branding.md` and AGENTS.md's "Authentication and identity") — every new protected page needs its path added to the Access application in Zero Trust, or visitors get bounced back to sign-in on that page even while authenticated everywhere else.
+This list is per-path, dashboard-configured state (see `docs/cloudflare-access-branding.md` and AGENTS.md's "Authentication and identity") — every new protected page needs its path added to whichever Access application has room in Zero Trust, or visitors get bounced back to sign-in on that page even while authenticated everywhere else.
 
-Do not put `app.opnflr.com/webhooks/github` or `app.opnflr.com/webhooks/stripe` behind Access. Both are public only so GitHub and Stripe can reach them; the Worker rejects payloads without the configured HMAC signature. Neither is `app.opnflr.com/runtime/*`, which run containers fetch with bearer tokens — an Access rule over those paths breaks every agent run.
+Do not put `app.opnflr.com/webhooks/github` or `app.opnflr.com/webhooks/stripe` behind Access. Both are public only so GitHub and Stripe can reach them; the Worker rejects payloads without the configured HMAC signature. Neither is `app.opnflr.com/runtime/*`, which run containers fetch with bearer tokens — an Access rule over those paths breaks every agent run. None of the three need a bypass rule: a path with no matching Access-application destination is simply never touched by Access. (Do not try to express "public" as a bypass destination scoped to `/` — Cloudflare has no root-only Path syntax; a blank or `*` Path means the hostname plus everything beneath it, so a "bypass `/`" destination bypasses the whole domain.)
 
 Verify all three stay reachable after any Zero Trust edit:
 
