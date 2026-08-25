@@ -254,7 +254,7 @@ function SessionCard({
   // a hover away only when it's actually cut off — then the foot strip,
   // now down to just the two facts that matter together: who and how much.
   const tip = useHoverTip();
-  const desc = useIsTruncated<HTMLParagraphElement>();
+  const { ref: descriptionRef, truncated: descriptionTruncated } = useIsTruncated<HTMLParagraphElement>();
   const seatsOrMembers =
     session.role === "owner" && Number.isFinite(limitSeats)
       ? `${session.memberCount} of ${limitSeats} seats`
@@ -269,8 +269,8 @@ function SessionCard({
       <p className="session-card-updated">Updated <LocalDateTime timestamp={session.updatedAt} mode="date" /></p>
       {session.objective ? (
         <>
-          <p className="session-card-desc" ref={desc.ref} {...(desc.truncated ? tip.handlers : {})}>{session.objective}</p>
-          {desc.truncated && <HoverTip position={tip.position}>{session.objective}</HoverTip>}
+          <p className="session-card-desc" ref={descriptionRef} {...(descriptionTruncated ? tip.handlers : {})}>{session.objective}</p>
+          {descriptionTruncated && <HoverTip position={tip.position}>{session.objective}</HoverTip>}
         </>
       ) : (
         <p className="session-card-desc" data-empty="true">No objective has been written yet.</p>
