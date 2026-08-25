@@ -364,7 +364,7 @@ function PreferencesSection({ user }: { user: AppUser }) {
       <li className="settings-category-row">
         <span className="settings-category-name">Do Not Disturb</span>
         <span className="settings-category-detail">Mutes the team chat unread badge everywhere, on every device.</span>
-        <DoNotDisturbToggle initialValue={user.doNotDisturb} variant="state" />
+        <DoNotDisturbToggle initialValue={user.doNotDisturb} />
       </li>
       <li className="settings-category-row">
         <span className="settings-category-name">Theme</span>

@@ -385,15 +385,14 @@
   --elevation-2: 0 16px 36px rgba(0, 0, 0, 0.55);
 }
 
-/* Floor-only Polar/Midnight: unlike .join-shell (which still aliases Polar
-   to Light and Midnight to Dark, matching every other shop-shell page),
-   the floor keeps these as genuinely distinct manual variants — same
-   relationship the original cream Polar/Midnight blocks above had to Light/
-   Dark: only the surface + line stack shifts (cooler/near-white for Polar,
-   pushed past charcoal for Midnight); text, accent, and status stay
-   whatever the light/dark .app-shell block above already set, so they're
-   intentionally not redeclared here. */
-:root[data-theme="polar"] .app-shell {
+/* Floor + join Polar/Midnight: genuinely distinct manual variants, not an
+   alias to Light/Dark — same relationship the original cream Polar/Midnight
+   blocks above had to Light/Dark: only the surface + line stack shifts
+   (cooler/near-white for Polar, pushed past charcoal for Midnight); text,
+   accent, and status stay whatever the light/dark .app-shell, .join-shell
+   block above already set, so they're intentionally not redeclared here. */
+:root[data-theme="polar"] .app-shell,
+:root[data-theme="polar"] .join-shell {
   color-scheme: light;
 
   --surface-page: #eef0f2;
@@ -406,7 +405,8 @@
   --line-soft: #dadee2;
 }
 
-:root[data-theme="midnight"] .app-shell {
+:root[data-theme="midnight"] .app-shell,
+:root[data-theme="midnight"] .join-shell {
   color-scheme: dark;
 
   --surface-page: #0a0d11;
