@@ -87,6 +87,11 @@ export function HomeScreen({
     if (stored) sessionStorage.removeItem("openfloor:removed-notice");
     return stored;
   });
+  // Collapsed by default — plan/quota is detail, not the first thing on the
+  // page. The toggle sits beside the tabs (not the heading) so this has
+  // room to grow into real usage analytics later without crowding the head
+  // band; the quota-exhausted warning below stays visible either way.
+  const [usageOpen, setUsageOpen] = useState(false);
   const activeSessions = sessions.filter((session) => session.archivedAt == null && session.endedAt == null);
   const archivedSessions = sessions.filter((session) => session.archivedAt != null);
   const endedSessions = sessions.filter((session) => session.archivedAt == null && session.endedAt != null);
@@ -148,32 +153,20 @@ export function HomeScreen({
                 {removedNotice} <button type="button" className="button" data-variant="quiet" data-size="sm" onClick={() => setRemovedNotice(null)}>Dismiss</button>
               </p>
             )}
+            {quotaExhausted && (
+              /* Advisory only, same as the ended-session banner in
+                 Workspace.tsx: the 403s on create/dispatch are the
+                 enforcement. Stays visible on the main view regardless of
+                 whether the Usage panel below is open. */
+              <p className="notice" data-tone="attention" role="status">
+                {`Your ${planLabel(usage.effectivePlan)} plan's ${usage.limitHours}h of monthly session time is used up. `}
+                <Link href="/settings?section=plan">Upgrade for more session hours</Link>.
+              </p>
+            )}
           </div>
-          {/* Plan, quota bar, and the notes that go with them, gathered into
-              one card to the right of the heading instead of a single line
-              underneath it. */}
-          <div className="page-heading-usage">
-            <button className="button" data-variant="primary" onClick={() => setCreating((value) => !value)}>
-              {creating ? "Cancel" : "New session"}
-            </button>
-            <div className="usage-card">
-              <p className="usage-card-plan">{usagePlanLine}</p>
-              {usagePercent != null && (
-                <progress className="usage-meter" value={Math.min(usage.seconds, usageLimitSeconds)} max={usageLimitSeconds} aria-label={`${usagePercent}% of monthly session time used`} />
-              )}
-              <p className="usage-card-stat">{usageStatLine}</p>
-              {liveOwnedSessions > 1 && <p className="usage-card-note">{usageLiveLine}</p>}
-              {quotaExhausted && (
-                /* Advisory only, same as the ended-session banner in
-                   Workspace.tsx: the 403s on create/dispatch are the
-                   enforcement. */
-                <p className="usage-card-note usage-card-upgrade" role="status">
-                  {`Your ${planLabel(usage.effectivePlan)} plan's ${usage.limitHours}h of monthly session time is used up. `}
-                  <Link href="/settings?section=plan">Upgrade for more session hours</Link>.
-                </p>
-              )}
-            </div>
-          </div>
+          <button className="button" data-variant="primary" onClick={() => setCreating((value) => !value)}>
+            {creating ? "Cancel" : "New session"}
+          </button>
         </div>
 
         {creating && (
@@ -185,10 +178,12 @@ export function HomeScreen({
           </form>
         )}
 
-        {sessions.length === 0 ? (
-          <div className="empty-state"><strong>No sessions yet</strong><p>Create a session, then invite the people working beside you.</p></div>
-        ) : (
-          <>
+        {/* The Usage toggle lives here regardless of whether there are any
+            sessions yet — plan/quota isn't conditional on having sessions
+            to filter, so it can't hide inside that branch. The tab strip
+            itself only renders once there's something to filter. */}
+        <div className="tabs-row">
+          {sessions.length > 0 && (
             <SegmentedControl
               label="Filter sessions"
               value={tab}
@@ -199,22 +194,45 @@ export function HomeScreen({
                 { value: "ended", label: `Ended (${endedSessions.length})` },
               ]}
             />
-            {/* key={tab} remounts this on every tab switch so the CSS enter
-                animation (.tab-panel, shop.css) replays each time, active,
-                archived, and ended included. */}
-            <div className="tab-panel" key={tab}>
-              {tabSessions.length === 0 ? (
-                <div className="empty-state">
-                  <strong>Nothing here</strong>
-                  <p>{tab === "active" && "Sessions you archive or end will move out of this tab."}
-                    {tab === "archived" && "Archive a session from Active or Ended to tuck it out of your own view."}
-                    {tab === "ended" && "Sessions the owner ends will show up here."}</p>
-                </div>
-              ) : (
-                <SessionGrid sessions={tabSessions} archived={tab === "archived"} onDelete={setPendingDelete} onSetArchived={setArchived} limitSeats={usage.limitSeats} />
+          )}
+          {/* Quiet and bracket-styled rather than a fourth tab — this isn't
+              a filter, it's a detail toggle, and the room to grow into real
+              usage analytics later lives here rather than in the head band. */}
+          <button type="button" className="button" data-variant="quiet" data-size="sm" aria-expanded={usageOpen} onClick={() => setUsageOpen((value) => !value)}>
+            {usagePercent != null ? `Usage · ${usagePercent}%` : "Usage"}
+          </button>
+        </div>
+        <div className="usage-collapse" data-open={usageOpen ? "true" : "false"}>
+          <div>
+            <div className="usage-card">
+              <p className="usage-card-plan">{usagePlanLine}</p>
+              {usagePercent != null && (
+                <progress className="usage-meter" value={Math.min(usage.seconds, usageLimitSeconds)} max={usageLimitSeconds} aria-label={`${usagePercent}% of monthly session time used`} />
               )}
+              <p className="usage-card-stat">{usageStatLine}</p>
+              {liveOwnedSessions > 1 && <p className="usage-card-note">{usageLiveLine}</p>}
             </div>
-          </>
+          </div>
+        </div>
+
+        {sessions.length === 0 ? (
+          <div className="empty-state"><strong>No sessions yet</strong><p>Create a session, then invite the people working beside you.</p></div>
+        ) : (
+          /* key={tab} remounts this on every tab switch so the CSS enter
+             animation (.tab-panel, shop.css) replays each time, active,
+             archived, and ended included. */
+          <div className="tab-panel" key={tab}>
+            {tabSessions.length === 0 ? (
+              <div className="empty-state">
+                <strong>Nothing here</strong>
+                <p>{tab === "active" && "Sessions you archive or end will move out of this tab."}
+                  {tab === "archived" && "Archive a session from Active or Ended to tuck it out of your own view."}
+                  {tab === "ended" && "Sessions the owner ends will show up here."}</p>
+              </div>
+            ) : (
+              <SessionGrid sessions={tabSessions} archived={tab === "archived"} onDelete={setPendingDelete} onSetArchived={setArchived} limitSeats={usage.limitSeats} />
+            )}
+          </div>
         )}
       </section>
       {pendingDelete && <DeleteSessionDialog session={pendingDelete} onClose={() => setPendingDelete(null)} />}
