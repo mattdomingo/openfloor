@@ -49,7 +49,7 @@ describe("Stripe entitlement reconciliation", () => {
     const user = await upsertUser(identity("unsupported"), env.DB);
     await saveStripeCustomer(user.id, "cus_unsupported", env.DB);
     const event = stripeEvent("evt_unsupported", 400, subscription(user.id, "active", "price_unknown", 5, "cus_unsupported"));
-    const invalid = await receiveStripeWebhook(new Request("https://opnflr.com/app/webhooks/stripe", {
+    const invalid = await receiveStripeWebhook(new Request("https://app.opnflr.com/webhooks/stripe", {
       method: "POST", headers: { "stripe-signature": "bad" }, body: event,
     }));
     expect(invalid.status).toBe(401);
@@ -94,7 +94,7 @@ async function signedRequest(body: string): Promise<Request> {
   );
   const digest = new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(signed)));
   const signature = Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
-  return new Request("https://opnflr.com/app/webhooks/stripe", {
+  return new Request("https://app.opnflr.com/webhooks/stripe", {
     method: "POST", headers: { "content-type": "application/json", "stripe-signature": `t=${timestamp},v1=${signature}` }, body,
   });
 }

@@ -14,8 +14,8 @@ async function onboardedUser(providerUserId: string, firstName: string, lastName
   form.set("firstName", firstName);
   form.set("lastName", lastName);
   form.set("plan", "free");
-  form.set("returnTo", "/app/home");
-  const onboarded = await SELF.fetch("http://localhost/app/api/account/onboarding", { method: "POST", headers, body: form });
+  form.set("returnTo", "/home");
+  const onboarded = await SELF.fetch("http://localhost/api/account/onboarding", { method: "POST", headers, body: form });
   expect(onboarded.status).toBe(200);
   const row = await env.DB.prepare("SELECT id FROM users WHERE chatgpt_user_id = ?").bind(providerUserId).first<{ id: string }>();
   if (!row) throw new Error("Onboarded user was not persisted");
@@ -32,7 +32,7 @@ describe("session MCP server routes", () => {
     const member = await onboardedUser("mcp-route-member", "Mcp", "Member");
     const outsider = await onboardedUser("mcp-route-outsider", "Mcp", "Outsider");
 
-    const created = await SELF.fetch("http://localhost/app/api/sessions", {
+    const created = await SELF.fetch("http://localhost/api/sessions", {
       method: "POST",
       headers: jsonHeaders(owner.headers),
       body: JSON.stringify({ title: "MCP room" }),
@@ -40,16 +40,16 @@ describe("session MCP server routes", () => {
     expect(created.status).toBe(201);
     const { session, inviteUrl } = (await created.json()) as { session: { id: string }; inviteUrl: string };
     const token = inviteUrl.split("/join/")[1];
-    expect((await SELF.fetch(`http://localhost/app/api/invites/${token}/accept`, { method: "POST", headers: member.headers })).status).toBe(200);
+    expect((await SELF.fetch(`http://localhost/api/invites/${token}/accept`, { method: "POST", headers: member.headers })).status).toBe(200);
 
-    const reserved = await SELF.fetch(`http://localhost/app/api/sessions/${session.id}/mcp-servers`, {
+    const reserved = await SELF.fetch(`http://localhost/api/sessions/${session.id}/mcp-servers`, {
       method: "POST",
       headers: jsonHeaders(owner.headers),
       body: JSON.stringify({ name: "openfloor", transport: "http", url: "https://mcp.example.com" }),
     });
     expect(reserved.status).toBe(400);
 
-    const added = await SELF.fetch(`http://localhost/app/api/sessions/${session.id}/mcp-servers`, {
+    const added = await SELF.fetch(`http://localhost/api/sessions/${session.id}/mcp-servers`, {
       method: "POST",
       headers: jsonHeaders(owner.headers),
       body: JSON.stringify({
@@ -66,25 +66,25 @@ describe("session MCP server routes", () => {
     const { servers } = JSON.parse(addedText) as { servers: Array<{ id: string; headerNames: string[]; enabled: boolean }> };
     expect(servers[0].headerNames).toEqual(["Authorization"]);
 
-    const duplicate = await SELF.fetch(`http://localhost/app/api/sessions/${session.id}/mcp-servers`, {
+    const duplicate = await SELF.fetch(`http://localhost/api/sessions/${session.id}/mcp-servers`, {
       method: "POST",
       headers: jsonHeaders(owner.headers),
       body: JSON.stringify({ name: "issue-tracker", transport: "http", url: "https://mcp.example.com/v1" }),
     });
     expect(duplicate.status).toBe(409);
 
-    const memberList = await SELF.fetch(`http://localhost/app/api/sessions/${session.id}/mcp-servers`, { headers: member.headers });
+    const memberList = await SELF.fetch(`http://localhost/api/sessions/${session.id}/mcp-servers`, { headers: member.headers });
     expect(memberList.status).toBe(200);
     expect(await memberList.text()).not.toContain("render-header-secret");
-    const memberMutate = await SELF.fetch(`http://localhost/app/api/sessions/${session.id}/mcp-servers`, {
+    const memberMutate = await SELF.fetch(`http://localhost/api/sessions/${session.id}/mcp-servers`, {
       method: "POST",
       headers: jsonHeaders(member.headers),
       body: JSON.stringify({ name: "member-server", transport: "http", url: "https://member.example.com" }),
     });
     expect(memberMutate.status).toBe(404);
-    expect((await SELF.fetch(`http://localhost/app/api/sessions/${session.id}/mcp-servers`, { headers: outsider.headers })).status).toBe(404);
+    expect((await SELF.fetch(`http://localhost/api/sessions/${session.id}/mcp-servers`, { headers: outsider.headers })).status).toBe(404);
 
-    const disabled = await SELF.fetch(`http://localhost/app/api/sessions/${session.id}/mcp-servers/${servers[0].id}`, {
+    const disabled = await SELF.fetch(`http://localhost/api/sessions/${session.id}/mcp-servers/${servers[0].id}`, {
       method: "PATCH",
       headers: jsonHeaders(owner.headers),
       body: JSON.stringify({ enabled: false }),
@@ -92,7 +92,7 @@ describe("session MCP server routes", () => {
     expect(disabled.status).toBe(200);
     expect(((await disabled.json()) as { servers: Array<{ enabled: boolean }> }).servers[0].enabled).toBe(false);
 
-    const removed = await SELF.fetch(`http://localhost/app/api/sessions/${session.id}/mcp-servers/${servers[0].id}`, {
+    const removed = await SELF.fetch(`http://localhost/api/sessions/${session.id}/mcp-servers/${servers[0].id}`, {
       method: "DELETE",
       headers: owner.headers,
     });

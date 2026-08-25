@@ -15,11 +15,11 @@ test("returning through a different login method reaches the same session, not a
   const firstLoginContext = await authenticatedContext(browser, "otp-login", "return-bug@example.com", "Returning", "Owner");
   const firstLogin = await firstLoginContext.newPage();
 
-  await firstLogin.goto("/app/home");
+  await firstLogin.goto("/home");
   await firstLogin.getByRole("button", { name: "New session" }).click();
   await firstLogin.getByLabel("Session title").fill("Session from the first login");
   await firstLogin.getByRole("button", { name: "Create session" }).click();
-  await expect(firstLogin).toHaveURL(/\/app\/session\/[0-9a-f-]+$/);
+  await expect(firstLogin).toHaveURL(/\/session\/[0-9a-f-]+$/);
   const sessionUrl = firstLogin.url();
   await firstLoginContext.close();
 
@@ -39,11 +39,11 @@ test("returning through a different login method reaches the same session, not a
 test("a genuine stranger with a different email still cannot open the session", async ({ browser }) => {
   const ownerContext = await authenticatedContext(browser, "stranger-test-owner", "stranger-test-owner@example.com", "Owner", "Example");
   const owner = await ownerContext.newPage();
-  await owner.goto("/app/home");
+  await owner.goto("/home");
   await owner.getByRole("button", { name: "New session" }).click();
   await owner.getByLabel("Session title").fill("Private to the owner");
   await owner.getByRole("button", { name: "Create session" }).click();
-  await expect(owner).toHaveURL(/\/app\/session\/[0-9a-f-]+$/);
+  await expect(owner).toHaveURL(/\/session\/[0-9a-f-]+$/);
   const sessionUrl = owner.url();
   await ownerContext.close();
 

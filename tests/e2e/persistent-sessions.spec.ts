@@ -12,34 +12,34 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
 
   const webhookPayload = JSON.stringify({ zen: "phase-one" });
   const webhookSignature = createHmac("sha256", "e2e-test-github-webhook-secret").update(webhookPayload).digest("hex");
-  const rejectedWebhook = await owner.request.post("/app/webhooks/github", {
+  const rejectedWebhook = await owner.request.post("/webhooks/github", {
     data: webhookPayload,
     headers: { "content-type": "application/json", "x-github-event": "ping", "x-hub-signature-256": "sha256=invalid" },
   });
   expect(rejectedWebhook.status()).toBe(401);
-  const acceptedWebhook = await owner.request.post("/app/webhooks/github", {
+  const acceptedWebhook = await owner.request.post("/webhooks/github", {
     data: webhookPayload,
     headers: { "content-type": "application/json", "x-github-event": "ping", "x-hub-signature-256": `sha256=${webhookSignature}` },
   });
   expect(acceptedWebhook.status()).toBe(200);
 
-  await owner.goto("/app/home");
+  await owner.goto("/home");
   await owner.getByRole("button", { name: "New session" }).click();
   await owner.getByLabel("Session title").fill("Release coordination");
   await owner.getByLabel(/Objective/).fill("Ship persistent multiplayer sessions");
   await owner.getByRole("button", { name: "Create session" }).click();
-  await expect(owner).toHaveURL(/\/app\/session\/[0-9a-f-]+$/);
+  await expect(owner).toHaveURL(/\/session\/[0-9a-f-]+$/);
   await expect(owner.getByText("Owner E.").first()).toBeVisible();
   await expect(owner.getByText("Online", { exact: true })).toBeVisible();
 
   const inviteUrl = await owner.getByLabel("Active invite link").inputValue();
-  expect(inviteUrl).toContain("/app/join/");
+  expect(inviteUrl).toContain("/join/");
 
   await member.goto(new URL(inviteUrl).pathname);
   await expect(member.getByRole("heading", { name: "Release coordination" })).toBeVisible();
   await expect(member.getByText("Owner E.")).toBeVisible();
   await member.getByRole("button", { name: "Join session" }).click();
-  await expect(member).toHaveURL(/\/app\/session\/[0-9a-f-]+$/);
+  await expect(member).toHaveURL(/\/session\/[0-9a-f-]+$/);
 
   await expect(owner.getByText("Member E.")).toBeVisible();
   await expect(owner.locator("li", { hasText: "Member E." }).getByText("Online", { exact: true })).toBeVisible();
@@ -106,7 +106,7 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
 
   await owner.getByRole("link", { name: "Enter agent floor" }).click();
   await member.getByRole("link", { name: "Enter agent floor" }).click();
-  await expect(owner).toHaveURL(/\/app\/session\/[0-9a-f-]+\/floor$/);
+  await expect(owner).toHaveURL(/\/session\/[0-9a-f-]+\/floor$/);
   await expect(owner.getByRole("heading", { name: "Agent floor" })).toBeVisible();
   await expect(owner.getByRole("region", { name: "Team" }).locator(".avatar").filter({ hasText: "OE" })).toBeVisible();
   await expect(owner.getByRole("region", { name: "Team" }).locator(".avatar").filter({ hasText: "ME" })).toBeVisible();
@@ -138,7 +138,7 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await expect(member.getByTitle("Edit session objective")).toHaveText("Coordinate the restored agent floor");
 
   await owner.getByRole("button", { name: "Invite" }).click();
-  await expect(owner.getByLabel("Session invite link")).toHaveValue(/\/app\/join\//);
+  await expect(owner.getByLabel("Session invite link")).toHaveValue(/\/join\//);
   await owner.getByRole("button", { name: "Done" }).click();
 
   const agentFloor = owner.getByRole("region", { name: "Agent floor" });
@@ -293,8 +293,8 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
 
   await owner.getByRole("link", { name: "Release coordination" }).click();
   await member.getByRole("link", { name: "Release coordination" }).click();
-  await expect(owner).toHaveURL(/\/app\/session\/[0-9a-f-]+$/);
-  await expect(member).toHaveURL(/\/app\/session\/[0-9a-f-]+$/);
+  await expect(owner).toHaveURL(/\/session\/[0-9a-f-]+$/);
+  await expect(member).toHaveURL(/\/session\/[0-9a-f-]+$/);
 
   await member.reload();
   await expect(member.getByRole("heading", { name: "Release coordination" })).toBeVisible();
@@ -307,7 +307,7 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await reconnectedMember.goto(owner.url());
   await expect(owner.locator("li", { hasText: "Member E." }).getByText("Online", { exact: true })).toBeVisible();
   await reconnectedMember.getByRole("button", { name: "Leave session" }).click();
-  await expect(reconnectedMember).toHaveURL(/\/app\/home$/);
+  await expect(reconnectedMember).toHaveURL(/\/home$/);
   await expect(owner.getByText("Member E.")).toHaveCount(0);
 
   await owner.reload();
@@ -315,14 +315,14 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await expect(owner.getByText("Ended session", { exact: true })).toBeVisible();
 
   const repositorySessionId = new URL(owner.url()).pathname.split("/").at(-1)!;
-  const endedMessage = await owner.request.post(`/app/api/sessions/${repositorySessionId}/messages`, { data: { text: "too late" } });
+  const endedMessage = await owner.request.post(`/api/sessions/${repositorySessionId}/messages`, { data: { text: "too late" } });
   expect(endedMessage.status()).toBe(409);
-  const endedRun = await owner.request.post(`/app/api/sessions/${repositorySessionId}/queue/missing/run`);
+  const endedRun = await owner.request.post(`/api/sessions/${repositorySessionId}/queue/missing/run`);
   expect(endedRun.status()).toBe(409);
-  const endedReview = await owner.request.post(`/app/api/sessions/${repositorySessionId}/review/ready`);
+  const endedReview = await owner.request.post(`/api/sessions/${repositorySessionId}/review/ready`);
   expect(endedReview.status()).toBe(409);
 
-  await owner.goto("/app/home");
+  await owner.goto("/home");
   await owner.getByRole("button", { name: /^Ended/ }).click();
   const retainedCard = owner.locator(".session-card", { hasText: "Release coordination" });
   await retainedCard.getByRole("button", { name: "Delete" }).click();
@@ -334,7 +334,7 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await owner.getByRole("button", { name: "Create session" }).click();
   await owner.getByRole("button", { name: "End session", exact: true }).click();
   await owner.getByRole("dialog").getByRole("button", { name: "End session", exact: true }).click();
-  await owner.goto("/app/home");
+  await owner.goto("/home");
   await owner.getByRole("button", { name: /^Ended/ }).click();
   const disposableCard = owner.locator(".session-card", { hasText: "Disposable session" });
   await disposableCard.getByRole("button", { name: "Delete" }).click();

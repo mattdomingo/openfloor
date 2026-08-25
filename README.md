@@ -61,12 +61,12 @@ for the capture boundary, outputs, and voiceover.
 
 Production authentication is provided by one Cloudflare Access self-hosted application. Keep the public landing page and assets outside Access, and add these protected public hostnames to the same application so they share one audience tag:
 
-- `opnflr.com/app/home`
-- `opnflr.com/app/settings`
-- `opnflr.com/app/onboarding`
-- `opnflr.com/app/session/*`
-- `opnflr.com/app/join/*`
-- `opnflr.com/app/api/*`
+- `app.opnflr.com/home`
+- `app.opnflr.com/settings`
+- `app.opnflr.com/onboarding`
+- `app.opnflr.com/session/*`
+- `app.opnflr.com/join/*`
+- `app.opnflr.com/api/*`
 
 This path list is manually maintained in the Access application, not covered by a wildcard — every new protected page needs its path added here (and in the two copies of this list in `AGENTS.md` and `docs/github-production.md`) in the same change, or the page bounces every visitor back to sign-in.
 

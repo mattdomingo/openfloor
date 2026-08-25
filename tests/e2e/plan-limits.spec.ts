@@ -16,12 +16,12 @@ test("free-tier seat cap refuses a fourth member with the session already full",
   const memberTwo = await memberTwoContext.newPage();
   const memberThree = await memberThreeContext.newPage();
 
-  await owner.goto("/app/home");
+  await owner.goto("/home");
   await expect(owner.getByText("Free plan · 0s of 2h session time used this month (UTC)")).toBeVisible();
   await owner.getByRole("button", { name: "New session" }).click();
   await owner.getByLabel("Session title").fill("Free tier session");
   await owner.getByRole("button", { name: "Create session" }).click();
-  await expect(owner).toHaveURL(/\/app\/session\/[0-9a-f-]+$/);
+  await expect(owner).toHaveURL(/\/session\/[0-9a-f-]+$/);
   const inviteUrl = await owner.getByLabel("Active invite link").inputValue();
   const invitePath = new URL(inviteUrl).pathname;
 
@@ -29,11 +29,11 @@ test("free-tier seat cap refuses a fourth member with the session already full",
   // exactly, matching PLAN_LIMITS.free in lib/plans.ts.
   await memberOne.goto(invitePath);
   await memberOne.getByRole("button", { name: "Join session" }).click();
-  await expect(memberOne).toHaveURL(/\/app\/session\/[0-9a-f-]+$/);
+  await expect(memberOne).toHaveURL(/\/session\/[0-9a-f-]+$/);
 
   await memberTwo.goto(invitePath);
   await memberTwo.getByRole("button", { name: "Join session" }).click();
-  await expect(memberTwo).toHaveURL(/\/app\/session\/[0-9a-f-]+$/);
+  await expect(memberTwo).toHaveURL(/\/session\/[0-9a-f-]+$/);
 
   await expect(owner.getByText("MemberOne E.")).toBeVisible();
   await expect(owner.getByText("MemberTwo E.")).toBeVisible();
@@ -46,7 +46,7 @@ test("free-tier seat cap refuses a fourth member with the session already full",
   await expect(joinButton).toBeDisabled();
 
   // The advisory button being disabled is not the enforcement — the 403 is.
-  const refused = await memberThree.request.post(`/app/api/invites/${invitePath.split("/").pop()}/accept`);
+  const refused = await memberThree.request.post(`/api/invites/${invitePath.split("/").pop()}/accept`);
   expect(refused.status()).toBe(403);
   const body = await refused.json() as { error?: string };
   expect(body.error).toContain("seat limit");

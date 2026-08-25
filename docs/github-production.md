@@ -4,24 +4,24 @@ openfloor connects the production application to a GitHub App, keeps one real ca
 
 ## Production host and Cloudflare Access
 
-The application is served at `https://opnflr.com/app`. The existing Cloudflare Access application protects:
+The application is served at `https://app.opnflr.com`. The existing Cloudflare Access application protects:
 
-- `opnflr.com/app/home`
-- `opnflr.com/app/settings`
-- `opnflr.com/app/onboarding`
-- `opnflr.com/app/session/*`
-- `opnflr.com/app/join/*`
-- `opnflr.com/app/api/*`
+- `app.opnflr.com/home`
+- `app.opnflr.com/settings`
+- `app.opnflr.com/onboarding`
+- `app.opnflr.com/session/*`
+- `app.opnflr.com/join/*`
+- `app.opnflr.com/api/*`
 
 This list is per-path, dashboard-configured state (see `docs/cloudflare-access-branding.md` and AGENTS.md's "Authentication and identity") — every new protected page needs its path added to the Access application in Zero Trust, or visitors get bounced back to sign-in on that page even while authenticated everywhere else.
 
-Do not put `opnflr.com/app/webhooks/github` or `opnflr.com/app/webhooks/stripe` behind Access. Both are public only so GitHub and Stripe can reach them; the Worker rejects payloads without the configured HMAC signature. Neither is `opnflr.com/app/runtime/*`, which run containers fetch with bearer tokens — an Access rule over those paths breaks every agent run.
+Do not put `app.opnflr.com/webhooks/github` or `app.opnflr.com/webhooks/stripe` behind Access. Both are public only so GitHub and Stripe can reach them; the Worker rejects payloads without the configured HMAC signature. Neither is `app.opnflr.com/runtime/*`, which run containers fetch with bearer tokens — an Access rule over those paths breaks every agent run.
 
 Verify all three stay reachable after any Zero Trust edit:
 
 ```bash
-for p in /app/webhooks/github /app/webhooks/stripe /app/runtime/run/source; do
-  printf '%-32s ' "$p"; curl -sI "https://opnflr.com$p" | head -1
+for p in /webhooks/github /webhooks/stripe /runtime/run/source; do
+  printf '%-32s ' "$p"; curl -sI "https://app.opnflr.com$p" | head -1
 done
 ```
 
@@ -32,10 +32,10 @@ A `302` to `*.cloudflareaccess.com` on any of them is a misconfiguration; the Wo
 Create a private GitHub App in GitHub settings with:
 
 - GitHub App name: a unique name, such as `openfloor`.
-- Homepage URL: `https://opnflr.com/app`.
-- Setup URL: `https://opnflr.com/app/api/github/callback`.
+- Homepage URL: `https://app.opnflr.com`.
+- Setup URL: `https://app.opnflr.com/api/github/callback`.
 - Redirect on update: enabled.
-- Webhook URL: `https://opnflr.com/app/webhooks/github`.
+- Webhook URL: `https://app.opnflr.com/webhooks/github`.
 - Webhook secret: a new random value used only by this App.
 - Request user authorization during installation: disabled.
 

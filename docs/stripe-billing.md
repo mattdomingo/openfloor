@@ -26,7 +26,7 @@ The configuration is an external Stripe invariant. `STRIPE_PORTAL_CONFIGURATION_
 Create a Stripe webhook endpoint at:
 
 ```text
-https://opnflr.com/app/webhooks/stripe
+https://app.opnflr.com/webhooks/stripe
 ```
 
 Subscribe it to:

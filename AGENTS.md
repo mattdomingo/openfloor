@@ -279,15 +279,14 @@ Per-session WebSocket
 
 ### Important hosting topology
 
-- The marketing site owns the apex `opnflr.com` deployment.
-- The openfloor application is peeled off under `/app` by a more-specific Worker route.
-- `next.config.ts` sets `basePath` to `/app` only for production. Enabling it in development breaks stylesheet resolution because the source `app/` directory and URL prefix collide.
-- `components/basePath.ts` exists for literal public/API/WebSocket paths that the framework does not rewrite automatically.
-- Use Next `Link` with unprefixed application paths such as `/home` and `/session/...`; Next applies the production base path.
+- The marketing site owns the apex `opnflr.com` deployment (a separate Cloudflare Pages project, repo `openfloor-ai/openfloor.ai`).
+- The openfloor application is a sibling deployment on its own subdomain, `app.opnflr.com`, claimed by a Workers custom domain — not a path nested under the marketing site.
+- `next.config.ts` sets `basePath` to `components/basePath.ts`'s `BASE_PATH`, which is `""` in every environment now that the app owns its own origin.
+- `components/basePath.ts` exists for literal public/API/WebSocket paths that the framework does not rewrite automatically; it's kept wired through (typed `: string` so truthiness checks on it don't narrow to `never`) so remounting under a path prefix again is a one-line change.
+- Use Next `Link` with unprefixed application paths such as `/home` and `/session/...`; Next applies `BASE_PATH` automatically.
 - Use `BASE_PATH` for manual `fetch`, `WebSocket`, and `public/` URLs.
-- `wrangler.jsonc` claims `opnflr.com/app*` because Cloudflare route matching cannot express the desired query-string behavior with a bare exact route. This prefix is broader than ideal; the marketing-site test guards collisions such as `/approach`.
-- The font route `opnflr.com/assets/_vinext_fonts/*` is also claimed because generated font URLs are not under the application base path.
-- Asset `not_found_handling` must remain `none` so `/app`-prefixed asset requests can fall through to the Worker, be stripped, and be resolved through `ASSETS`.
+- `wrangler.jsonc` claims `app.opnflr.com` via a `custom_domain: true` route, which has Cloudflare provision and own the DNS record. There is no longer a marketing-site path prefix to reserve or guard against collisions.
+- Asset `not_found_handling` must remain `none` so asset requests that miss the static bundle can fall through to the Worker and be resolved through `ASSETS`.
 - `.openai/hosting.json` and `build/sites-vite-plugin.ts` package Sites metadata and migrations during builds, but the current production runbook deploys the built Worker directly with Wrangler because Durable Object presence is a required capability. Do not switch the deployment path without proving D1, Durable Object, Access, asset, and route behavior end to end.
 
 ## Authentication and identity
@@ -296,14 +295,14 @@ Per-session WebSocket
 
 Production identity is Cloudflare Access, not application-owned “Sign in with ChatGPT.” Google and One-time PIN are the intended Access identity providers. The Access application protects:
 
-- `opnflr.com/app/home`
-- `opnflr.com/app/settings`
-- `opnflr.com/app/onboarding`
-- `opnflr.com/app/session/*`
-- `opnflr.com/app/join/*`
-- `opnflr.com/app/api/*`
+- `app.opnflr.com/home`
+- `app.opnflr.com/settings`
+- `app.opnflr.com/onboarding`
+- `app.opnflr.com/session/*`
+- `app.opnflr.com/join/*`
+- `app.opnflr.com/api/*`
 
-The public `/app` landing and required assets remain outside Access. **This list is enumerated per path in the Access application, not covered by a wildcard — it is dashboard state, external to this repo (`docs/cloudflare-access-branding.md`).** Adding any new protected page requires adding its path to the Access application in the Zero Trust dashboard in the same change; forgetting this step causes exactly the failure mode the (now-fixed) 2026-08-21 gap did — the page bounces every visitor back to sign-in because Cloudflare Access never attaches an identity header to it, `getAccessUser()` (`app/access-auth.ts`) sees nothing to trust, and `requireAccessUser`/`requireOnboardedUser` redirect to the landing interstitial regardless of whether the visitor is actually signed in elsewhere in the app.
+The public landing (`app.opnflr.com/`) and required assets remain outside Access. **This list is enumerated per path in the Access application, not covered by a wildcard — it is dashboard state, external to this repo (`docs/cloudflare-access-branding.md`).** Adding any new protected page requires adding its path to the Access application in the Zero Trust dashboard in the same change; forgetting this step causes exactly the failure mode the (now-fixed) 2026-08-21 gap did — the page bounces every visitor back to sign-in because Cloudflare Access never attaches an identity header to it, `getAccessUser()` (`app/access-auth.ts`) sees nothing to trust, and `requireAccessUser`/`requireOnboardedUser` redirect to the landing interstitial regardless of whether the visitor is actually signed in elsewhere in the app.
 
 The Worker validates the `cf-access-jwt-assertion` using:
 
@@ -1112,8 +1111,8 @@ Pushes to `main` run this exact sequence automatically via `.github/workflows/de
 
 ### Smoke test after deployment
 
-1. Open public `https://opnflr.com/app` without an Access session.
-2. Sign in through a protected path and verify return to `/app/home`.
+1. Open public `https://app.opnflr.com` without an Access session.
+2. Sign in through a protected path and verify return to `/home`.
 3. Create a session and confirm it starts empty.
 4. Open a second authenticated browser identity and accept an invite explicitly.
 5. Verify lobby and floor presence.
@@ -1182,13 +1181,13 @@ Pushes to `main` run this exact sequence automatically via `.github/workflows/de
 ## Known limitations and footguns
 
 - The database provider-identity column is still named `chatgpt_user_id`; it is not ChatGPT-specific anymore.
-- Production uses `/app`; local development does not. Manual paths are a common source of broken links and sockets.
-- Next `Link` and manual `fetch` have different base-path responsibilities.
+- `BASE_PATH` is `""` in every environment (the app owns `app.opnflr.com` outright); it's kept wired through rather than deleted in case a path prefix is needed again later.
+- Next `Link` and manual `fetch` have different base-path responsibilities, even though `BASE_PATH` is currently empty.
 - Cloudflare Access configuration is external state; code passing locally does not prove the production policy paths are correct. The hosted login screen's branding is dashboard-applied too — steps in `docs/cloudflare-access-branding.md`.
-- The Worker route `opnflr.com/app*` is intentionally broader than `/app/*` due query-string routing behavior.
+- The Worker claims `app.opnflr.com` via a `custom_domain: true` route in `wrangler.jsonc`, which has Cloudflare manage the DNS record.
 - Access protects the app at the edge, but the Worker still verifies JWTs. Do not remove defense in depth.
-- `/app/webhooks/github` is deliberately public and must never process a payload before its raw-body HMAC and size are verified.
-- `/app/webhooks/stripe` is deliberately public and must never process a payload before its 256 KB limit and raw-body Stripe signature are verified. Cloudflare Access must not protect it.
+- `/webhooks/github` is deliberately public and must never process a payload before its raw-body HMAC and size are verified.
+- `/webhooks/stripe` is deliberately public and must never process a payload before its 256 KB limit and raw-body Stripe signature are verified. Cloudflare Access must not protect it.
 - Stripe Portal behavior is dashboard state: the configured Portal must allow only the two exact monthly prices and their seat quantities, prorate changes immediately, and cancel immediately. A permissive Portal configuration weakens application-side validation.
 - Candidate naming never accepts a complete Git ref. Contents write creates only the server-generated `openfloor/<session-short>/candidate/<safe-name>-<candidate-short>` ref; no generic branch CRUD, force push, base write, protection change, or arbitrary deletion is exposed.
 - Phase 3 source checkout proxies an exact GitHub archive through `/runtime/preflight/source`; the Sandbox receives only a short-lived source-only JWT, never the GitHub installation token.
@@ -1272,13 +1271,13 @@ An owner cannot remove a member from a session today — `leaveSession` is self-
 
 **Consequences:** Access subject is the stable provider identity. The legacy `chatgpt_user_id` column remains but is semantically generic. Protected production paths must stay synchronized with Access configuration.
 
-### 2026-08-18 — Mount the product under `/app`
+### 2026-08-18 — Mount the product under `/app` (superseded 2026-08-23)
 
 **Decision:** Keep the marketing site at the apex and serve openfloor under `opnflr.com/app` in production; serve at root in local development.
 
 **Rationale:** Marketing and product are separate deployments on one domain, and vinext development stylesheet behavior does not tolerate the production prefix cleanly.
 
-**Consequences:** Next base-path configuration, manual `BASE_PATH` use, Worker asset stripping, Access paths, invite URLs, WebSocket URLs, tests, and smoke tests must all preserve the distinction.
+**Consequences:** Next base-path configuration, manual `BASE_PATH` use, Worker asset stripping, Access paths, invite URLs, WebSocket URLs, tests, and smoke tests must all preserve the distinction. Superseded by the 2026-08-23 subdomain decision below: the app now owns `app.opnflr.com` outright, `BASE_PATH` is `""` everywhere, and dev/production parity no longer needs a distinction.
 
 ### 2026-08-18 — D1 is authoritative for collaboration
 
@@ -1573,6 +1572,14 @@ An owner cannot remove a member from a session today — `leaveSession` is self-
 **Rationale:** Polar and Midnight are distinct product themes, not marketing aliases for generic Light and Dark. Their token definitions and selector behavior are reused from the existing `UI/reorg` branch so the website recordings and product selector share one authoritative appearance.
 
 **Consequences:** `openfloor:theme` may now contain `polar` or `midnight`; readers must preserve those values rather than resetting them to System. New theme-sensitive colors still belong in `tokens.css`, and the code workbench remains intentionally dark across all themes.
+
+### 2026-08-23 — Move the product off `/app` onto its own subdomain
+
+**Decision:** The app now owns `app.opnflr.com` outright, claimed by a Workers `custom_domain` route, instead of being peeled off `opnflr.com/app` by a path-prefix route. `BASE_PATH` (`components/basePath.ts`) is `""` in every environment. The marketing site's "Open the app" CTA (`openfloor-ai/openfloor.ai`, every page's nav and hero) is now labelled "Sign In" and links straight at `https://app.opnflr.com/home` — a Cloudflare-Access-protected path — instead of the public landing, so the click goes directly to the Access login rather than the animated landing/sign-in interstitial.
+
+**Rationale:** Supersedes the 2026-08-18 "mount under `/app`" decision. A dedicated subdomain removes the query-string wildcard route (`opnflr.com/app*`, which also silently swallowed anything else starting with "app") and the dev/production `BASE_PATH` split that existed only because the production prefix collided with the source `app/` directory during local stylesheet resolution. `custom_domain: true` also has Cloudflare manage the DNS record instead of requiring one to pre-exist.
+
+**Consequences:** `wrangler.jsonc` routes, `OPENFLOOR_RUNTIME_ORIGIN`, the Cloudflare Access application's protected-path list (here, `README.md`, `docs/github-production.md`), the GitHub App's Homepage/Setup/Webhook URLs (`docs/github-production.md`), the Stripe webhook endpoint (`docs/stripe-billing.md`), and the Access branding logo/verification URL (`docs/cloudflare-access-branding.md`) all moved from `opnflr.com/app/...` to `app.opnflr.com/...`. `worker/index.ts`'s asset-serving no longer strips a `/app` prefix. `BASE_PATH` is typed `: string` rather than left to infer the literal `""`, because a bare `export const BASE_PATH = ""` narrows truthiness checks like `BASE_PATH && ...` to `never` at every call site. Tests across `tests/render`, `tests/worker`, `tests/unit`, and `tests/e2e` had their hardcoded `/app` path segments dropped to match. The marketing site's `test.mjs` no longer needs to carve `/app` out of its own route space (`OFF_SITE` removed) since the Worker no longer claims any path on the marketing zone.
 
 ### 2026-08-24 — Add Kimi (Moonshot) as a provider by reusing the Claude runner against a second Anthropic-compat gateway
 

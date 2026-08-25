@@ -300,7 +300,7 @@ describe("authenticated presence upgrade", () => {
       fullName: "Owner",
     }, env.DB);
     const created = await createSession(owner.id, { title: "Protected", objective: null }, env.DB);
-    const url = `http://localhost/app/api/sessions/${created.session.id}/presence`;
+    const url = `http://localhost/api/sessions/${created.session.id}/presence`;
     const anonymous = await worker.fetch(new Request(url, { headers: { upgrade: "websocket" } }), env);
     expect(anonymous.status).toBe(401);
 
@@ -340,7 +340,7 @@ describe("authenticated presence upgrade", () => {
     await acceptInvite(created.inviteId, member.id, env.DB);
     await removeMember(created.session.id, owner.id, member.id, env.DB);
 
-    const response = await worker.fetch(new Request(`http://localhost/app/api/sessions/${created.session.id}/presence`, { headers: {
+    const response = await worker.fetch(new Request(`http://localhost/api/sessions/${created.session.id}/presence`, { headers: {
       host: "localhost",
       upgrade: "websocket",
       "x-openfloor-dev-user-id": "chatgpt-remove-presence-member",
@@ -361,7 +361,7 @@ describe("authenticated presence upgrade", () => {
       .bind(owner.id, currentMonth(), 30 * 3600)
       .run();
 
-    const response = await worker.fetch(new Request(`http://localhost/app/api/sessions/${created.session.id}/presence`, { headers: {
+    const response = await worker.fetch(new Request(`http://localhost/api/sessions/${created.session.id}/presence`, { headers: {
       host: "localhost",
       upgrade: "websocket",
       "x-openfloor-dev-user-id": "chatgpt-quota-owner",
@@ -429,7 +429,7 @@ describe("authenticated presence upgrade", () => {
     const created = await createSession(attacker.id, { title: "Ended", objective: null }, env.DB);
     await endSession(created.session.id, attacker.id, "owner", env.DB);
 
-    const response = await worker.fetch(new Request(`http://localhost/app/api/sessions/${created.session.id}/presence`, { headers: {
+    const response = await worker.fetch(new Request(`http://localhost/api/sessions/${created.session.id}/presence`, { headers: {
       host: "localhost",
       upgrade: "websocket",
       "x-openfloor-dev-user-id": "chatgpt-spoof-attacker",
@@ -473,7 +473,7 @@ describe("authenticated presence upgrade", () => {
     }, env.DB);
     const created = await createSession(owner.id, { title: "Live", objective: null }, env.DB);
 
-    const response = await worker.fetch(new Request(`http://localhost/app/api/sessions/${created.session.id}/presence`, { headers: {
+    const response = await worker.fetch(new Request(`http://localhost/api/sessions/${created.session.id}/presence`, { headers: {
       host: "localhost",
       upgrade: "websocket",
       "x-openfloor-dev-user-id": "chatgpt-spoof-owner",
@@ -523,7 +523,7 @@ describe("hour-quota gate fails closed", () => {
       .bind(created.session.id)
       .run();
 
-    await expect(worker.fetch(new Request(`http://localhost/app/api/sessions/${created.session.id}/presence`, {
+    await expect(worker.fetch(new Request(`http://localhost/api/sessions/${created.session.id}/presence`, {
       headers: {
         host: "localhost",
         upgrade: "websocket",

@@ -82,7 +82,7 @@ async function runningRun(suffix: string, agentOwner?: "member") {
 }
 
 function gatewayRequest(token: string) {
-  return new Request("https://opnflr.com/app/runtime/openai/v1/responses", {
+  return new Request("https://app.opnflr.com/runtime/openai/v1/responses", {
     method: "POST",
     headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
     body: JSON.stringify({ model: "test", input: [] }),
@@ -262,7 +262,7 @@ describe("OpenAI gateway credential resolution", () => {
     );
     function anthropicRequest(path: string) {
       return postAnthropicGateway(
-        new Request(`https://opnflr.com/app/runtime/anthropic/${path}`, {
+        new Request(`https://app.opnflr.com/runtime/anthropic/${path}`, {
           method: "POST",
           headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
           body: JSON.stringify({ model: "claude-opus-5" }),
@@ -289,7 +289,7 @@ describe("OpenAI gateway credential resolution", () => {
       GATEWAY_SECRET,
     );
     const refused = await postAnthropicGateway(
-      new Request("https://opnflr.com/app/runtime/anthropic/v1/messages", {
+      new Request("https://app.opnflr.com/runtime/anthropic/v1/messages", {
         method: "POST",
         headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
         body: "{}",
@@ -304,7 +304,7 @@ describe("OpenAI gateway credential resolution", () => {
       GATEWAY_SECRET,
     );
     const crossed = await postAnthropicGateway(
-      new Request("https://opnflr.com/app/runtime/anthropic/v1/messages", {
+      new Request("https://app.opnflr.com/runtime/anthropic/v1/messages", {
         method: "POST",
         headers: { authorization: `Bearer ${openaiOperation}`, "content-type": "application/json" },
         body: "{}",
@@ -482,7 +482,7 @@ describe("OpenAI gateway credential resolution", () => {
     const { sessionId, owner, runId } = await runningRun("gw-reject");
     await connectOpenAiKey(owner.id, "sk-openai-owner-key4");
     const noToken = await postOpenAiGateway(
-      new Request("https://opnflr.com/app/runtime/openai/v1/responses", { method: "POST", body: "{}" }),
+      new Request("https://app.opnflr.com/runtime/openai/v1/responses", { method: "POST", body: "{}" }),
       gatewayParams(),
     );
     expect(noToken.status).toBe(404);

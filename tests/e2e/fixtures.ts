@@ -12,6 +12,6 @@ export async function authenticatedContext(browser: Browser, id: string, email: 
   const context = await browser.newContext({ extraHTTPHeaders: identityHeaders(id, email, `${firstName} ${lastName}`) });
   // Every protected page redirects to /onboarding until first/last name are set, so
   // complete it here rather than in each test.
-  await context.request.post("/app/api/account/onboarding", { multipart: { firstName, lastName, plan: "free", returnTo: "/app/home" } });
+  await context.request.post("/api/account/onboarding", { multipart: { firstName, lastName, plan: "free", returnTo: "/home" } });
   return context;
 }
