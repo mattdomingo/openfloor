@@ -1,0 +1,399 @@
+/* The opnflr.com marketing identity, scoped to /home only via .shop-shell
+   (set on HomeScreen.tsx's <main>). Every rule below is prefixed .shop-shell
+   so it can only ever reach this one page — /session, /settings, and /join
+   keep the cream product theme untouched, exactly the same scoping .entry-
+   shell already does for the pre-auth screen in layout.css.
+
+   Palette is ported verbatim from openfloor-ai/openfloor.ai's styles.css
+   (:root and :root[data-theme="dark"]). Type and the button motif diverge
+   from the marketing site on purpose: Anton/Martian Mono read as a retro
+   poster face here, so display and data both ride the one variable-weight
+   Archivo already loaded (weight carries the emphasis) plus Geist Mono
+   (already loaded for the rest of the app) for tracked data. Radius/shadow
+   stay at zero and motion stays at .16s ease, same as the marketing site. */
+
+.shop-shell {
+  --shop: #c6ccd4;
+  --shop-2: #d3d8df;
+  --sheet: #dce1e7;
+  --bone: #d7dadf;
+  --ink: #12181f;
+  --muted: #3d4652;
+  --steel: #4a525c;
+  --rule: #a9b1bd;
+  --edge: #1e262f;
+  --accent-ink: #1A3FA6;
+  --accent-fill: #1B45B8;
+  --btn-ink: #fff;
+  --wave: 30, 38, 47;
+
+  --gutter: clamp(20px, 5vw, 68px);
+  --measure: 1280px; /* narrower than the marketing site's 1680px — this is a page, not a landing */
+  --sans: var(--font-brand-sans), -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+  --mono: var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  position: relative;
+  isolation: isolate;
+  color-scheme: light;
+  background: var(--shop);
+  color: var(--ink);
+  font-family: var(--sans);
+}
+
+/* Dark resolution: app themes light/polar stay on the light shop palette
+   above, dark/midnight resolve to the dark one below. No bare
+   prefers-color-scheme branch — unlike .entry-shell, /home sits behind the
+   theme toggle, so a system preference alone should not override a light
+   theme the user explicitly picked. Kept byte-identical between the two
+   blocks, same discipline as tokens.css:137-209. */
+:root[data-theme="dark"] .shop-shell,
+:root[data-theme="midnight"] .shop-shell {
+  color-scheme: dark;
+  --shop: #20262e;
+  --shop-2: #292f37;
+  --sheet: #313740;
+  --ink: #dfe3e8;
+  --muted: #a5acb6;
+  --steel: #8a919b;
+  --rule: #404751;
+  --edge: #4e5560;
+  --accent-ink: #7FB0FF;
+  --accent-fill: #6EA3FF;
+  --btn-ink: #0d1319;
+  --wave: 190, 200, 214;
+}
+
+/* ── Backdrop ────────────────────────────────────────────────────────── */
+
+/* One fixed canvas behind the entire page, not just the head band — it
+   sits at z-index -1 inside .shop-shell's own stacking context (the
+   isolation above), so the shell's background paints first, the wave
+   paints next, and every normal-flow descendant (header, tiles, dialog)
+   paints over it without needing a z-index of its own. Solid surfaces
+   (.session-card, .app-header, dialogs) occlude it locally just by having
+   a background — no mask needed. */
+.shop-wave {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  width: 100%;
+  height: 100%;
+  opacity: .28;
+  pointer-events: none;
+}
+
+/* ── Header ──────────────────────────────────────────────────────────── */
+
+.shop-shell .app-header {
+  min-height: 62px;
+  padding: 0 var(--gutter);
+  border-bottom: 1px solid var(--edge);
+  background: var(--shop);
+  backdrop-filter: none;
+  gap: var(--gutter);
+}
+.shop-shell .brand {
+  font-family: var(--sans);
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: -.015em;
+  text-transform: none;
+}
+.shop-shell .account-menu-panel {
+  border-radius: 0;
+  border-color: var(--edge);
+  background: var(--sheet);
+  box-shadow: none;
+  animation: none;
+}
+.shop-shell .account-menu-trigger:hover .avatar,
+.shop-shell .account-menu-trigger[aria-expanded="true"] .avatar { outline-color: var(--edge); }
+.shop-shell .account-menu-item:hover { background: var(--shop-2); }
+
+/* ── Head band ───────────────────────────────────────────────────────── */
+
+.shop-shell .page-body {
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  padding: 0;
+}
+.shop-shell .page-heading {
+  align-items: flex-end;
+  padding: clamp(34px, 3.6vw, 54px) var(--gutter);
+  border-bottom: 1px solid var(--edge);
+}
+.shop-shell .page-heading > div:first-child { max-width: 68ch; }
+.shop-shell .page-heading h1 {
+  margin-top: 0;
+  font: 800 clamp(32px, 4vw, 52px)/1.05 var(--sans);
+  letter-spacing: -.02em;
+  color: var(--ink);
+}
+
+/* One bar reads the plan quota at a glance; the mono line beside it still
+   carries the exact hours and plan name for anyone who wants them. */
+.shop-shell .usage-panel { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 16px; margin-top: 18px; max-width: 480px; }
+.shop-shell .usage-meter {
+  flex: 1 1 140px;
+  display: block;
+  height: 6px;
+  appearance: none;
+  border: none;
+  background: var(--rule);
+}
+.shop-shell .usage-meter::-webkit-progress-bar { background: var(--rule); }
+.shop-shell .usage-meter::-webkit-progress-value { background: var(--accent-ink); }
+.shop-shell .usage-meter::-moz-progress-bar { background: var(--accent-ink); }
+.shop-shell .page-heading .usage-line {
+  margin: 0;
+  color: var(--muted);
+  font: 500 11px var(--mono);
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+
+/* ── Bracket buttons ─────────────────────────────────────────────────── */
+
+/* Same motif as the pre-auth sign-in mark (app/page.tsx SignInMark): the
+   label sits between two bracket strokes instead of inside a filled pill.
+   No fill anywhere — hierarchy comes from color and weight only, and the
+   brackets widen slightly on hover the way the sign-in mark's gap does. */
+.shop-shell .button {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  min-height: 0;
+  gap: 9px;
+  padding: 3px 1px;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  color: var(--muted);
+  font: 600 13px var(--sans);
+  letter-spacing: .01em;
+  box-shadow: none;
+  transition: gap .16s ease, color .16s ease;
+}
+.shop-shell .button::before,
+.shop-shell .button::after {
+  content: "";
+  flex: none;
+  align-self: stretch;
+  width: 6px;
+  border: 1.5px solid currentColor;
+}
+.shop-shell .button::before { border-right: 0; }
+.shop-shell .button::after { border-left: 0; }
+.shop-shell .button:hover,
+.shop-shell .button[data-variant="primary"]:hover {
+  gap: 13px;
+  color: var(--ink);
+  background: none;
+  border-color: transparent;
+  transform: none;
+  box-shadow: none;
+}
+.shop-shell .button:active,
+.shop-shell .button[data-variant="primary"]:active {
+  gap: 9px;
+  background: none;
+  border-color: transparent;
+}
+
+.shop-shell .button[data-variant="primary"] { color: var(--accent-ink); font-weight: 700; }
+:root[data-theme="dark"] .shop-shell .button[data-variant="primary"],
+:root[data-theme="midnight"] .shop-shell .button[data-variant="primary"] { color: var(--accent-fill); }
+
+.shop-shell .button[data-size="sm"] { padding: 2px 1px; gap: 6px; font-size: 11px; }
+.shop-shell .button[data-size="sm"]::before,
+.shop-shell .button[data-size="sm"]::after { width: 4px; border-width: 1.25px; }
+.shop-shell .button[data-size="sm"]:hover { gap: 9px; }
+
+.shop-shell .danger-button { color: #b8453a; }
+.shop-shell .danger-button:hover { color: #d9584a; }
+
+/* ── Tabs ────────────────────────────────────────────────────────────── */
+
+.shop-shell .segmented {
+  gap: var(--gutter);
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+}
+.shop-shell .segmented button {
+  padding: 10px 0;
+  border-radius: 0;
+  border-bottom: 2px solid transparent;
+  color: var(--muted);
+  font: 500 11px var(--mono);
+  letter-spacing: .1em;
+  text-transform: uppercase;
+}
+.shop-shell .segmented button[aria-pressed="true"] {
+  background: none;
+  border-bottom-color: var(--accent-ink);
+  color: var(--ink);
+  box-shadow: none;
+}
+.shop-shell .page-body > .segmented {
+  width: auto;
+  margin: 0;
+  padding: 0 var(--gutter);
+  border-bottom: 1px solid var(--edge);
+}
+
+/* ── Session tiles ───────────────────────────────────────────────────── */
+
+.shop-shell .session-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 18px;
+  margin: 0;
+  padding: clamp(28px, 3vw, 44px) var(--gutter);
+}
+.shop-shell .session-card {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 22px;
+  border: 1px solid var(--edge);
+  border-radius: 0;
+  background: var(--sheet);
+  box-shadow: none;
+  transition: border-color .16s ease;
+}
+.shop-shell .session-card:hover,
+.shop-shell .session-card:focus-within {
+  transform: none;
+  box-shadow: none;
+  border-color: var(--accent-ink);
+}
+.shop-shell .session-card-head strong {
+  font: 700 20px var(--sans);
+  letter-spacing: -.018em;
+}
+.shop-shell .session-card-link:hover strong { color: var(--accent-ink); }
+.shop-shell .session-card-meta {
+  margin-top: 8px;
+  color: var(--muted);
+  font: 500 11px var(--mono);
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.shop-shell .session-card > p {
+  margin-top: 12px;
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1.65;
+}
+.shop-shell .role-pill {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+}
+
+/* ── Forms ───────────────────────────────────────────────────────────── */
+
+.shop-shell .create-card {
+  margin: clamp(28px, 3vw, 44px) var(--gutter);
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  max-width: 560px;
+}
+.shop-shell .create-card label { font: 500 10px var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
+.shop-shell .create-card label em { color: var(--steel); text-transform: none; letter-spacing: normal; font-family: var(--sans); }
+.shop-shell input,
+.shop-shell textarea {
+  border-radius: 0;
+  border-color: var(--edge);
+  background: var(--sheet);
+  color: var(--ink);
+  font: 400 14.5px var(--sans);
+  padding: 12px 14px;
+}
+.shop-shell input::placeholder,
+.shop-shell textarea::placeholder { color: var(--steel); }
+.shop-shell input:focus-visible,
+.shop-shell textarea:focus-visible {
+  box-shadow: none;
+  outline: 2px solid var(--accent-ink);
+  outline-offset: 2px;
+  border-color: var(--edge);
+}
+.shop-shell .form-error { color: #b8453a; }
+
+/* ── Empty states & notices ──────────────────────────────────────────── */
+
+.shop-shell .empty-state {
+  margin: clamp(28px, 3vw, 44px) var(--gutter) 0;
+  padding: 26px 28px;
+  border: 1px solid var(--edge);
+  border-radius: 0;
+  background: var(--sheet);
+  box-shadow: none;
+  max-width: 62ch;
+  text-align: left;
+}
+.shop-shell .empty-state strong { font: 700 22px var(--sans); }
+.shop-shell .empty-state p { color: var(--muted); }
+
+.shop-shell .notice {
+  border-left: 0;
+  border: 1px solid var(--accent-ink);
+  background: none;
+  color: var(--muted);
+  font: 400 12px var(--mono);
+  line-height: 1.7;
+}
+.shop-shell .notice[data-tone="attention"] { border-color: #b5761f; background: none; }
+.shop-shell .notice a { color: var(--accent-ink); }
+
+/* ── Delete dialog ───────────────────────────────────────────────────── */
+
+.shop-shell .dialog {
+  border-radius: 0;
+  border-color: var(--edge);
+  background: var(--sheet);
+  color: var(--ink);
+  box-shadow: none;
+}
+.shop-shell .dialog::backdrop { background: rgba(13, 19, 25, .55); }
+.shop-shell .dialog-head,
+.shop-shell .dialog-foot {
+  border-color: var(--edge);
+  background: var(--sheet);
+}
+.shop-shell .dialog-body { background: var(--sheet); }
+.shop-shell .dialog-title h2 { font: 700 20px var(--sans); letter-spacing: -.018em; }
+.shop-shell .dialog-title p,
+.shop-shell .dialog-body p { color: var(--muted); }
+
+/* ── Focus ───────────────────────────────────────────────────────────── */
+
+.shop-shell :focus-visible {
+  box-shadow: none;
+  outline: 2px solid var(--accent-ink);
+  outline-offset: 3px;
+  border-radius: 0;
+}
+
+/* ── Mobile ──────────────────────────────────────────────────────────── */
+
+@media (max-width: 760px) {
+  .shop-shell .page-heading { padding-inline: 16px; }
+  .shop-shell .page-body > .segmented,
+  .shop-shell .session-grid,
+  .shop-shell .empty-state { padding-inline: 16px; }
+  .shop-shell .create-card { margin-inline: 16px; }
+  .shop-shell .session-grid { grid-template-columns: 1fr; }
+  .shop-shell .session-card-head { align-items: flex-start; flex-direction: column; gap: 8px; }
+}

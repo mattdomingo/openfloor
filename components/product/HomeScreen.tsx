@@ -9,6 +9,7 @@ import { formatDuration } from "@/lib/date-format";
 import { SegmentedControl, useDialogDismiss } from "@/components/session/primitives";
 import { planLabel, type Plan, type PlanStatus } from "@/lib/plans";
 import type { AppUser, SessionSummary } from "@/lib/session-types";
+import { WaveField } from "@/app/entry-wave";
 import { AppHeader } from "./AppHeader";
 
 type SessionTab = "active" | "archived" | "ended";
@@ -61,6 +62,8 @@ export function HomeScreen({
   // (and documented) behavior.
   const liveOwnedSessions = sessions.filter((session) => session.role === "owner" && session.endedAt == null).length;
   const quotaExhausted = Number.isFinite(usage.limitHours) && usage.seconds >= usage.limitHours * 3600;
+  const usageLimitSeconds = usage.limitHours * 3600;
+  const usagePercent = Number.isFinite(usage.limitHours) ? Math.min(100, Math.round((usage.seconds / usageLimitSeconds) * 100)) : null;
   // One computed string, not several adjacent JSX expressions: React SSR
   // inserts an <!-- --> hydration-boundary comment between adjacent text
   // nodes, which would otherwise split "Free plan" across a comment.
@@ -97,13 +100,19 @@ export function HomeScreen({
   }
 
   return (
-    <main className="product-shell">
+    <main className="product-shell shop-shell">
+      <WaveField varName="--wave" className="shop-wave" />
       <AppHeader user={user} />
       <section className="page-body">
         <div className="page-heading">
           <div>
-            <p className="eyebrow">Sessions</p><h1>Your sessions</h1><p>Durable sessions for the people doing the work.</p>
-            <p className="usage-line">{usageLine}</p>
+            <h1>Your sessions</h1>
+            <div className="usage-panel">
+              {usagePercent != null && (
+                <progress className="usage-meter" value={Math.min(usage.seconds, usageLimitSeconds)} max={usageLimitSeconds} aria-label={`${usagePercent}% of monthly session time used`} />
+              )}
+              <p className="usage-line">{usageLine}</p>
+            </div>
             {removedNotice && (
               <p className="notice" data-tone="attention" role="status">
                 {removedNotice} <button type="button" className="button" data-variant="quiet" data-size="sm" onClick={() => setRemovedNotice(null)}>Dismiss</button>
@@ -180,28 +189,35 @@ function SessionGrid({
 }) {
   return (
     <div className="session-grid">
-      {sessions.map((session) => (
-        <div className="session-card" key={session.id}>
-          <div className="session-card-head">
-            {/* The link stays on the title text so tests and readers keep one obvious target. */}
-            <Link className="session-card-link" href={`/session/${session.id}`}><strong>{session.title}</strong></Link>
-            <span className="session-card-pills">{session.endedAt != null && <span className="role-pill">Ended</span>}<span className="role-pill">{session.role}</span></span>
+      {sessions.map((session) => {
+        // Ledger row: title + actions, then one mono meta line carrying every
+        // machine value that used to be split across pills and the foot row,
+        // then the objective — the site's own .study idiom (rule-separated
+        // rows, tracked-mono data line) rather than a boxed card.
+        const seatsOrMembers =
+          session.role === "owner" && Number.isFinite(limitSeats)
+            ? `${session.memberCount} of ${limitSeats} seats`
+            : `${session.memberCount} ${session.memberCount === 1 ? "member" : "members"}`;
+        return (
+          <div className="session-card" key={session.id}>
+            <div className="session-card-head">
+              {/* The link stays on the title text so tests and readers keep one obvious target. */}
+              <Link className="session-card-link" href={`/session/${session.id}`}><strong>{session.title}</strong></Link>
+              <span className="session-card-foot-end">
+                <button type="button" className="button" data-variant="quiet" data-size="sm" onClick={() => onSetArchived(session, !archived)}>{archived ? "Unarchive" : "Archive"}</button>
+                {session.role === "owner" && <button type="button" className="button danger-button" data-size="sm" onClick={() => onDelete(session)}>Delete</button>}
+              </span>
+            </div>
+            <p className="session-card-meta">
+              <span className="role-pill">{session.role}</span>
+              {session.endedAt != null && <span className="role-pill"> · Ended</span>}
+              {` · ${seatsOrMembers} · ${formatDuration(session.activeSeconds)} active · Updated `}
+              <LocalDateTime timestamp={session.updatedAt} mode="date" />
+            </p>
+            <p>{session.objective || "No objective has been written yet."}</p>
           </div>
-          <p>{session.objective || "No objective has been written yet."}</p>
-          <div className="session-card-foot">
-            <span>{`${
-              session.role === "owner" && Number.isFinite(limitSeats)
-                ? `${session.memberCount} of ${limitSeats} seats`
-                : `${session.memberCount} ${session.memberCount === 1 ? "member" : "members"}`
-            } · ${formatDuration(session.activeSeconds)} active`}</span>
-            <span className="session-card-foot-end">
-              <button type="button" className="button" data-variant="quiet" data-size="sm" onClick={() => onSetArchived(session, !archived)}>{archived ? "Unarchive" : "Archive"}</button>
-              {session.role === "owner" && <button type="button" className="button danger-button" data-size="sm" onClick={() => onDelete(session)}>Delete</button>}
-              <time><LocalDateTime timestamp={session.updatedAt} mode="date" /></time>
-            </span>
-          </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
