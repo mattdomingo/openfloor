@@ -274,20 +274,24 @@
   --elevation-2: 0 16px 36px rgba(0, 0, 0, 0.75);
 }
 
-/* Floor palette: the session floor (.app-shell, components/session/Workspace.tsx)
-   resolves onto the same cool blue-gray palette as .shop-shell (app/styles/shop.css)
-   instead of the cream tokens above — /home, /settings, /onboarding, and the session
-   lobby already moved there; the floor was the holdout. Values are ported from
-   shop.css's --shop/--ink/--muted/--rule/--accent-fill family, with the extra
-   surface step (--surface-raised) and the soft/line/status/agent variants the
+/* Floor + join palette: the session floor (.app-shell,
+   components/session/Workspace.tsx) and the invite page (.join-shell,
+   components/product/JoinScreen.tsx) resolve onto the same cool blue-gray
+   palette as .shop-shell (app/styles/shop.css) instead of the cream tokens
+   above — /home, /settings, /onboarding, and the session lobby already moved
+   there; these two were the holdouts. Values are ported from shop.css's
+   --shop/--ink/--muted/--rule/--accent-fill family, with the extra surface
+   step (--surface-raised) and the soft/line/status/agent variants the
    3-level shop ramp doesn't need derived to sit in the same family. Identity
-   tints (--who-*) and per-agent tones (app/styles/components.css) are retuned
-   here too — the old warm values were picked against cream and read muddy on
-   this palette's dark surfaces.
+   tints (--who-*) and per-agent tones (app/styles/components.css) are
+   retuned here too, scoped to .app-shell only since .join-shell has no
+   avatars or agent cards — the old warm values were picked against cream
+   and read muddy on this palette's dark surfaces.
 
    Same resolution rule as tokens.css and shop.css: keep the two dark blocks
    below byte-identical. */
-.app-shell {
+.app-shell,
+.join-shell {
   color-scheme: light;
   background: var(--surface-page);
   /* `color` is inheritable and body (legacy-floor-base.css) already resolved
@@ -342,7 +346,8 @@
 }
 
 :root[data-theme="dark"] .app-shell,
-:root[data-theme="midnight"] .app-shell {
+:root[data-theme="dark"] .join-shell,
+:root[data-theme="midnight"] .join-shell {
   color-scheme: dark;
 
   --surface-page: #20262e;
@@ -379,8 +384,46 @@
   --elevation-2: 0 16px 36px rgba(0, 0, 0, 0.55);
 }
 
+/* Floor-only Polar/Midnight: unlike .join-shell (which still aliases Polar
+   to Light and Midnight to Dark, matching every other shop-shell page),
+   the floor keeps these as genuinely distinct manual variants — same
+   relationship the original cream Polar/Midnight blocks above had to Light/
+   Dark: only the surface + line stack shifts (cooler/near-white for Polar,
+   pushed past charcoal for Midnight); text, accent, and status stay
+   whatever the light/dark .app-shell block above already set, so they're
+   intentionally not redeclared here. */
+:root[data-theme="polar"] .app-shell {
+  color-scheme: light;
+
+  --surface-page: #eef0f2;
+  --surface-header: #f4f5f7;
+  --surface-panel: #f9fafb;
+  --surface-raised: #ffffff;
+  --surface-sunken: #e1e4e7;
+
+  --line-strong: #b6bbc2;
+  --line-soft: #dadee2;
+}
+
+:root[data-theme="midnight"] .app-shell {
+  color-scheme: dark;
+
+  --surface-page: #0a0d11;
+  --surface-header: #0d1014;
+  --surface-panel: #11151a;
+  --surface-raised: #171c22;
+  --surface-sunken: #000000;
+
+  --line-strong: #2b323b;
+  --line-soft: #1a1f25;
+
+  --elevation-1: 0 1px 2px rgba(0, 0, 0, 0.7), 0 1px 0 rgba(0, 0, 0, 0.4);
+  --elevation-2: 0 16px 36px rgba(0, 0, 0, 0.75);
+}
+
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme]) .app-shell {
+  :root:not([data-theme]) .app-shell,
+  :root:not([data-theme]) .join-shell {
     color-scheme: dark;
 
     --surface-page: #20262e;
