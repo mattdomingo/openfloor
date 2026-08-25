@@ -469,7 +469,7 @@ function DeleteAccountDialog({ onClose }: { onClose: () => void }) {
       return;
     }
     // Leaves the app entirely — not a router navigation.
-    window.location.assign("/cdn-cgi/access/logout");
+    window.location.assign(`${BASE_PATH}/signout`);
   }
 
   return (

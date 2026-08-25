@@ -70,16 +70,20 @@ This path list is manually maintained in the Access applications, not covered by
 
 Check Zero Trust → Settings → "Require Access Protection" is off. If it's on, an unmatched hostname/path is blocked (error 1050) instead of passed through, which breaks the "unlisted = public" assumption this setup relies on.
 
+App 2's only destination is a wildcard path, so its App Launcher tile would otherwise be the literal, unroutable `app.opnflr.com/api/*`. Turn off App 2's **Experience settings → "Show application in App Launcher"** so the launcher only ever offers App 1's real tile. Also leave **Cookie Path Attribute** off on both apps, or moving between App 1's paths and App 2's forces re-authentication on every crossing.
+
 Enable Google and One-time PIN as identity providers. The application policy determines who may authenticate; session membership and invite acceptance remain enforced by openfloor.
 
-Copy the Access team domain and the application's Audience (AUD) tag into Worker secrets:
+Sign out through the app's own `/signout` route, not Cloudflare's `/cdn-cgi/access/logout` directly — neither Access logout endpoint accepts a return URL, and the app-domain one alone leaves the team-domain global session (and therefore silent re-authentication on the next sign-in) intact. `/signout` clears the app-domain cookie and hands off to the team-domain logout itself.
+
+Copy the Access team domain and both applications' Audience (AUD) tags into Worker secrets:
 
 ```bash
 npx wrangler secret put CF_ACCESS_TEAM_DOMAIN
 npx wrangler secret put CF_ACCESS_AUD
 ```
 
-`CF_ACCESS_TEAM_DOMAIN` must be the full origin, for example `https://your-team.cloudflareaccess.com`. The Worker validates the Access JWT signature, issuer, audience, and expiry before forwarding trusted identity to the application.
+`CF_ACCESS_TEAM_DOMAIN` must be the full origin, for example `https://your-team.cloudflareaccess.com`. `CF_ACCESS_AUD` is comma-separated, one tag per Access application, e.g. `app-1-aud,app-2-aud` — a page load and its first `/api` call can each carry a JWT minted for a different app. The Worker validates the Access JWT signature, issuer, audience (against either tag), and expiry before forwarding trusted identity to the application.
 
 ## Test and deploy
 

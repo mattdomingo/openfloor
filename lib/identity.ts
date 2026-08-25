@@ -41,7 +41,7 @@ export async function cloudflareAccessIdentity(
 ): Promise<AuthenticatedIdentity | null> {
   const token = headers.get(ACCESS_JWT_HEADER)?.trim();
   const teamDomain = normalizedTeamDomain(environment.CF_ACCESS_TEAM_DOMAIN);
-  const audience = environment.CF_ACCESS_AUD?.trim();
+  const audience = parseAudienceList(environment.CF_ACCESS_AUD);
   if (!token || !teamDomain || !audience) return null;
 
   try {
@@ -122,7 +122,9 @@ export function localDevelopmentIdentity(
   return { providerUserId, email, fullName, displayName: fullName || email };
 }
 
-function normalizedTeamDomain(value: string | undefined): string | null {
+// Exported so app/signout/route.ts can validate CF_ACCESS_TEAM_DOMAIN with the
+// same rule before building the team-domain logout URL.
+export function normalizedTeamDomain(value: string | undefined): string | null {
   if (!value) return null;
   try {
     const url = new URL(value);
@@ -131,4 +133,17 @@ function normalizedTeamDomain(value: string | undefined): string | null {
   } catch {
     return null;
   }
+}
+
+// Production splits the protected paths across two self-hosted Access
+// applications on the same hostname (five-destination cap per app — see
+// AGENTS.md "Authentication and identity"), so a page request and its first
+// /api call can carry JWTs minted for two different AUD tags. Whether one
+// hostname's CF_Authorization cookie merges both apps' tags into a single
+// token's aud array is undocumented by Cloudflare, so this trusts either tag
+// explicitly rather than depending on that. CF_ACCESS_AUD is a comma-
+// separated list; a single value (today's secret) keeps working unchanged.
+function parseAudienceList(value: string | undefined): string[] | null {
+  const audiences = (value ?? "").split(",").map((entry) => entry.trim()).filter(Boolean);
+  return audiences.length > 0 ? audiences : null;
 }

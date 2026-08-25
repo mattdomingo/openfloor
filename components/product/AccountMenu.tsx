@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { DoNotDisturbToggle } from "@/components/DoNotDisturbToggle";
 import { Avatar, Icon } from "@/components/session/primitives";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { BASE_PATH } from "@/components/basePath";
 import { initials } from "@/lib/display-name";
 import type { AppUser } from "@/lib/session-types";
 
@@ -69,7 +70,7 @@ export function AccountMenu({ user }: { user: AppUser }) {
             <span>Do Not Disturb</span>
             <DoNotDisturbToggle initialValue={user.doNotDisturb} />
           </div>
-          <a className="account-menu-item" href="/cdn-cgi/access/logout">Sign out</a>
+          <a className="account-menu-item" href={`${BASE_PATH}/signout`}>Sign out</a>
         </div>
       )}
     </div>
