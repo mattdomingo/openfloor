@@ -373,3 +373,30 @@ describe("plan-selection onboarding", () => {
     expect((await SELF.fetch(`http://localhost${invitePath}`, { headers })).status).toBe(200);
   });
 });
+
+describe("sign-out", () => {
+  it("clears the app-domain cookie and hands off to the team-domain Access logout", async () => {
+    const response = await SELF.fetch("http://localhost/signout", { redirect: "manual" });
+    expect(response.status).toBe(302);
+    expect(response.headers.get("location")).toBe("https://openfloor-render-test.cloudflareaccess.com/cdn-cgi/access/logout");
+    expect(response.headers.get("set-cookie")).toMatch(/^CF_Authorization=;.*Max-Age=0/);
+  });
+});
+
+describe("a browser navigation stranded on a bare /api path", () => {
+  it("redirects to /home instead of rendering Not Found", async () => {
+    const response = await SELF.fetch("http://localhost/api/nope", {
+      headers: { accept: "text/html", "sec-fetch-mode": "navigate" },
+      redirect: "manual",
+    });
+    expect(response.status).toBe(302);
+    expect(response.headers.get("location")).toBe("http://localhost/home");
+  });
+
+  it("leaves a real API 404 alone", async () => {
+    const response = await SELF.fetch("http://localhost/api/nope", {
+      headers: { accept: "application/json" },
+    });
+    expect(response.status).toBe(404);
+  });
+});

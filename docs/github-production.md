@@ -11,6 +11,8 @@ The application is served at `https://app.opnflr.com`. Cloudflare Access protect
 
 This list is per-path, dashboard-configured state (see `docs/cloudflare-access-branding.md` and AGENTS.md's "Authentication and identity") — every new protected page needs its path added to whichever Access application has room in Zero Trust, or visitors get bounced back to sign-in on that page even while authenticated everywhere else.
 
+App 2's only destination is a wildcard path, so its App Launcher tile must stay hidden (**Experience settings → "Show application in App Launcher"** off) — otherwise it's the literal, unroutable `app.opnflr.com/api/*`, and a user re-entering through the team domain after signing out has a real chance of picking it (2026-08-24 decision log).
+
 Do not put `app.opnflr.com/webhooks/github` or `app.opnflr.com/webhooks/stripe` behind Access. Both are public only so GitHub and Stripe can reach them; the Worker rejects payloads without the configured HMAC signature. Neither is `app.opnflr.com/runtime/*`, which run containers fetch with bearer tokens — an Access rule over those paths breaks every agent run. None of the three need a bypass rule: a path with no matching Access-application destination is simply never touched by Access. (Do not try to express "public" as a bypass destination scoped to `/` — Cloudflare has no root-only Path syntax; a blank or `*` Path means the hostname plus everything beneath it, so a "bypass `/`" destination bypasses the whole domain.)
 
 Verify all three stay reachable after any Zero Trust edit:

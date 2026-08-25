@@ -56,6 +56,55 @@ describe("Cloudflare Access identity", () => {
     )).resolves.toBeNull();
   });
 
+  it("trusts a token minted for either tag when CF_ACCESS_AUD lists two apps", async () => {
+    // Production splits protected paths across two self-hosted Access
+    // applications on one hostname (five-destination cap per app — see
+    // AGENTS.md "Authentication and identity"), so a page request and its
+    // first /api call can carry JWTs for two different AUD tags.
+    // A distinct team domain from the other test in this file: identity.ts
+    // caches the remote JWKS by URL for production reuse, and reusing the
+    // same domain here would resolve against a stale keyset from that test.
+    const teamDomain = "https://openfloor-unit-test-multi-aud.cloudflareaccess.com";
+    const pageAudience = "openfloor-page-app";
+    const apiAudience = "openfloor-api-app";
+    const { privateKey, publicKey } = await generateKeyPair("RS256");
+    const publicJwk = await exportJWK(publicKey);
+    Object.assign(publicJwk, { kid: "test-key", alg: "RS256", use: "sig" });
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ keys: [publicJwk] })));
+
+    async function tokenFor(audience: string) {
+      return new SignJWT({ email: "owner@example.com", name: "Owner Example" })
+        .setProtectedHeader({ alg: "RS256", kid: "test-key" })
+        .setIssuer(teamDomain)
+        .setAudience(audience)
+        .setSubject("access-owner")
+        .setIssuedAt()
+        .setExpirationTime("5m")
+        .sign(privateKey);
+    }
+
+    const environment = {
+      CF_ACCESS_TEAM_DOMAIN: teamDomain,
+      // Whitespace and a trailing comma should be tolerated.
+      CF_ACCESS_AUD: ` ${pageAudience} , ${apiAudience}, `,
+    };
+
+    await expect(cloudflareAccessIdentity(
+      new Headers({ "cf-access-jwt-assertion": await tokenFor(pageAudience) }),
+      environment,
+    )).resolves.toMatchObject({ providerUserId: "cloudflare-access:access-owner" });
+
+    await expect(cloudflareAccessIdentity(
+      new Headers({ "cf-access-jwt-assertion": await tokenFor(apiAudience) }),
+      environment,
+    )).resolves.toMatchObject({ providerUserId: "cloudflare-access:access-owner" });
+
+    await expect(cloudflareAccessIdentity(
+      new Headers({ "cf-access-jwt-assertion": await tokenFor("some-other-app") }),
+      environment,
+    )).resolves.toBeNull();
+  });
+
   it("does not trust identity metadata without a JWT", async () => {
     await expect(cloudflareAccessIdentity(
       new Headers({ "cf-access-authenticated-user-email": "person@example.com" }),

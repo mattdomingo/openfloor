@@ -4,6 +4,7 @@ declare global {
   namespace Cloudflare {
     interface Env {
       DB: D1Database;
+      CF_ACCESS_TEAM_DOMAIN?: string;
       INVITE_SIGNING_SECRET: string;
       GITHUB_APP_ID: string;
       GITHUB_APP_SLUG: string;
