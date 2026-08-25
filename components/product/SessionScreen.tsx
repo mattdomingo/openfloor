@@ -6,6 +6,8 @@ import { useRouter } from "next/navigation";
 import { BASE_PATH } from "@/components/basePath";
 import { LocalDateTime } from "@/components/LocalDateTime";
 import { useDialogDismiss } from "@/components/session/primitives";
+import { QuotaNotice } from "@/components/session/QuotaNotice";
+import { usePresenceSocket } from "@/components/session/usePresenceSocket";
 import { initials } from "@/lib/display-name";
 import { reducePresence } from "@/lib/presence";
 import { isRepositoryReadyForFloor } from "@/lib/repository-gate";
@@ -19,8 +21,6 @@ import type { SessionMcpServerSummary } from "@/db/mcp-servers";
 import type { SessionSkillSummary } from "@/db/skills";
 import { WaveField } from "@/app/entry-wave";
 import { ProviderCredentials } from "./ProviderCredentials";
-
-type ConnectionState = "connecting" | "connected" | "reconnecting";
 
 export function SessionScreen({
   user,
@@ -59,7 +59,6 @@ export function SessionScreen({
   const [members, setMembers] = useState(initialMembers);
   const [removedMembers, setRemovedMembers] = useState(initialRemovedMembers);
   const [onlineIds, setOnlineIds] = useState<Set<string>>(new Set());
-  const [connection, setConnection] = useState<ConnectionState>("connecting");
   const [inviteUrl, setInviteUrl] = useState<string | null | undefined>(undefined);
   const [inviteBusy, setInviteBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -89,7 +88,6 @@ export function SessionScreen({
   const [githubSetupActive, setGithubSetupActive] = useState(githubSetup);
   const [repositoryHighlighted, setRepositoryHighlighted] = useState(false);
   const repositoryCardRef = useRef<HTMLDivElement>(null);
-  const retryRef = useRef(0);
 
   function enterAgentFloor(event: MouseEvent<HTMLAnchorElement>) {
     if (floorAccessible) return;
@@ -132,61 +130,34 @@ export function SessionScreen({
     setRemovedMembers(body.removedMembers);
   }, [router, session.id]);
 
-  useEffect(() => {
-    let socket: WebSocket | null = null;
-    let retryTimer: number | null = null;
-    let disposed = false;
-
-    function connect() {
-      if (disposed) return;
-      setConnection(retryRef.current === 0 ? "connecting" : "reconnecting");
-      const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-      socket = new WebSocket(`${protocol}//${window.location.host}${BASE_PATH}/api/sessions/${session.id}/presence`);
-      socket.addEventListener("open", () => {
-        retryRef.current = 0;
-        setConnection("connected");
-      });
-      socket.addEventListener("message", (message) => {
-        let event: PresenceEvent;
-        try {
-          event = JSON.parse(String(message.data)) as PresenceEvent;
-        } catch {
-          return;
-        }
-        if (event.type === "presence.snapshot" || event.type === "presence.changed") {
-          setOnlineIds((current) => reducePresence(current, event));
-        }
-        if (event.type === "members.changed") void refreshMembers();
-        if (event.type === "session.ended") router.refresh();
-        // Re-fetches session.lockedAt from the server rather than patching
-        // local state, matching how session.ended is already handled here.
-        if (event.type === "session.locked") router.refresh();
-        if (event.type === "floor.changed" && event.domains.some((domain) => domain === "repository" || domain === "review")) router.refresh();
-      });
-      socket.addEventListener("close", (event) => {
-        if (disposed) return;
-        if (event.code === 4005) {
-          // Owner-initiated removal: leave instead of retrying, and carry the
-          // reason to /home the same way AgentFloorScreen already does for
-          // its own presence socket.
-          sessionStorage.setItem("openfloor:removed-notice", event.reason || "The owner removed you from this session.");
-          router.replace("/home");
-          return;
-        }
-        retryRef.current += 1;
-        setConnection("reconnecting");
-        const delay = Math.min(10_000, 500 * 2 ** Math.min(retryRef.current - 1, 5));
-        retryTimer = window.setTimeout(connect, delay);
-      });
+  const handlePresenceEvent = useCallback((event: PresenceEvent) => {
+    if (event.type === "presence.snapshot" || event.type === "presence.changed") {
+      setOnlineIds((current) => reducePresence(current, event));
     }
+    if (event.type === "members.changed") void refreshMembers();
+    if (event.type === "session.ended") router.refresh();
+    // Re-fetches session.lockedAt from the server rather than patching local
+    // state, matching how session.ended is already handled here.
+    if (event.type === "session.locked") router.refresh();
+    if (event.type === "floor.changed" && event.domains.some((domain) => domain === "repository" || domain === "review")) router.refresh();
+  }, [refreshMembers, router]);
 
-    connect();
-    return () => {
-      disposed = true;
-      if (retryTimer) window.clearTimeout(retryTimer);
-      socket?.close(1000, "Session page closed");
-    };
-  }, [refreshMembers, router, session.id]);
+  const handleLive = useCallback(() => {}, []);
+
+  const handleLeave = useCallback((code: 4001 | 4005, reason: string) => {
+    if (code === 4005) {
+      // Owner-initiated removal: distinct from a plain 4001 (e.g. voluntary
+      // leave) so /home can say what actually happened.
+      sessionStorage.setItem("openfloor:removed-notice", reason || "The owner removed you from this session.");
+    }
+    router.replace("/home");
+  }, [router]);
+
+  const { connection } = usePresenceSocket(session.id, {
+    onEvent: handlePresenceEvent,
+    onLive: handleLive,
+    onLeave: handleLeave,
+  });
 
   useEffect(() => {
     if (session.role !== "owner") return;
@@ -268,7 +239,7 @@ export function SessionScreen({
           </div>
         </div>
         <div className="session-hero-actions">
-          <div className="connection-state" data-state={connection}><span aria-hidden="true" />{connection === "connected" ? `${onlineCount} online` : connection}</div>
+          <div className="connection-state" data-state={connection.status === "live" ? "connected" : connection.status}><span aria-hidden="true" />{connection.status === "live" ? `${onlineCount} online` : connection.status}</div>
           {session.role === "owner" && endedAt == null && !repositoryReady && (
             <button type="button" className="button" onClick={() => { setSetupStep(1); setSetupOpen(true); }}>Setup</button>
           )}
@@ -277,6 +248,7 @@ export function SessionScreen({
       </section>
 
       <div className="lobby-body">
+        {connection.status === "quota-exhausted" && endedAt == null && <QuotaNotice sessionId={session.id} role={session.role} />}
         {endedAt != null && (
           <section className="lobby-ended" aria-label="Session ended">
             <p className="eyebrow">Read only</p>

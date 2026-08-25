@@ -1,7 +1,6 @@
 "use client";
 
 import { CSSProperties, PointerEvent as ReactPointerEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import Link from "next/link";
 import { LocalDateTime } from "@/components/LocalDateTime";
 import type { CredentialProvider } from "@/lib/provider-credentials";
 import type { AppUser, SessionMember, SessionSummary, TypingDraft } from "@/lib/session-types";
@@ -11,6 +10,7 @@ import type { AgentLayout, ChatThread, PanelId, QueueOrderMode, QueueScope, Rail
 import { floorParticipants, type PersistentFloorDataSource } from "./usePersistentFloorData";
 import type { RunActivitySource } from "./useRunActivity";
 import { type PanelChrome } from "./Rail";
+import { QuotaNotice } from "./QuotaNotice";
 import { TopBar } from "./TopBar";
 import { BriefRail } from "./BriefRail";
 import { AgentFloor } from "./AgentFloor";
@@ -202,17 +202,7 @@ export function Workspace({ user, session, members, floorData, activity, typingD
          stale control just surfaces its 409 through the dock status line. */
       <p className="notice" data-tone="attention" role="status">This session ended <LocalDateTime timestamp={session.endedAt} mode="date" />{session.endedReason === "merged" ? " because the candidate branch was merged" : ""}. The floor is read-only.</p>
     )}
-    {quotaExhausted && session.endedAt == null && (
-      /* Same advisory-only pattern as the ended-session banner above: the
-         presence gate (close code 4003) is the enforcement, this is just
-         the persistent explanation for why new connections keep failing. */
-      <p className="notice" data-tone="attention" role="status">
-        {`${session.role === "owner"
-          ? "Your plan's monthly session hours are used up."
-          : "Your host has used up their plan's monthly session hours."} New connections are paused until next month. `}
-        <Link href={`/settings?section=plan&from=${encodeURIComponent(`/session/${session.id}`)}`}>Upgrade for more session hours</Link>.
-      </p>
-    )}
+    {quotaExhausted && session.endedAt == null && <QuotaNotice sessionId={session.id} role={session.role} />}
     {screen === "review" ? <ReviewScreen review={review} owner={session.role === "owner"} busy={floorData.busy} blockingRunId={floorData.blockingRunId} onReady={async () => { if (await floorData.readyReview()) setNotice("GitHub review status synchronized"); }} onMerge={async (deleteCandidateBranch) => { const result = await floorData.squashMergeReview(deleteCandidateBranch); if (result) setNotice(deleteCandidateBranch ? "Pull request squash merged and branches cleaned up" : "Pull request squash merged; candidate branch kept"); return Boolean(result); }} onDeleteBranch={async () => { const result = await floorData.deleteReviewBranch(); if (result) setNotice("Candidate branch deleted"); return Boolean(result); }} onCancelRun={async (runId) => { await floorData.cancelRun(runId); }} teamChat={messages} onSendTeamMessage={async (text, recipient) => Boolean(await floorData.sendMessage(text, recipient))} participants={participants} currentUserId={user.id} /> : <><div className="workspace" data-expanded={expandedPanel ? "true" : "false"} data-resizing={resizing ? "true" : "false"}>{panelOrder.map((panel, index) => { const next = panelOrder[index + 1]; const showHandle = !expandedPanel && next !== undefined && !(isCollapsed(panel) && panel !== "floor"); return <div key={panel} ref={(element) => { if (element) panelSlotRefs.current.set(panel, element); else panelSlotRefs.current.delete(panel); }} className="panel-slot" style={slotStyle(panel)} data-expanded={expandedPanel === panel ? "true" : "false"} data-collapsed={isCollapsed(panel) ? "true" : "false"} data-dragging={draggedPanel === panel ? "true" : "false"} data-drop-target={dragOverPanel === panel ? "true" : "false"} onDragOver={(event) => { event.preventDefault(); if (draggedPanel && draggedPanel !== panel) setDragOverPanel(panel); }} onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragOverPanel((current) => current === panel ? null : current); }} onDrop={() => dropPanel(panel)}>{renderPanel(panel, chromeFor(panel, index))}{showHandle && <div className="resize-handle" role="separator" aria-label={`Resize ${panel} panel`} onPointerDown={(event) => startResize(panel, next, event)} />}</div>; })}</div><FloorDock onSubmit={enqueuePrompt} agents={agents} queueTarget={queueTarget} onQueueTargetChange={setQueueTarget} textareaRef={composerRef} notice={notice} error={floorData.error} busy={floorData.busy} participants={participants} typingDrafts={typingDrafts} onTypingUpdate={onTypingUpdate} /></>}
     {screen === "review" && (notice || floorData.error) && <StatusBar notice={floorData.error ?? notice ?? ""} visible tone={floorData.error ? "error" : "notice"} />}
   </main>;
