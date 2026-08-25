@@ -1,15 +1,17 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import type { FloorMessage, FloorParticipant, FloorReviewSnapshot, ReviewContributor } from "@/lib/floor-types";
+import { LocalDateTime } from "@/components/LocalDateTime";
+import type { FloorMessage, FloorParticipant, FloorReviewSnapshot, MergeConflictCase, ReviewContributor } from "@/lib/floor-types";
 import { agentTone } from "./data";
 import { Icon, useDialogDismiss } from "./primitives";
 import { TeamChat } from "./TeamChat";
 
 type PendingAction = { type: "merge"; deleteCandidateBranch: boolean } | { type: "deleteBranch" };
 
-export function ReviewScreen({ review, owner, busy, blockingRunId, onReady, onMerge, onDeleteBranch, onCancelRun, teamChat, onSendTeamMessage, participants, currentUserId }: {
+export function ReviewScreen({ review, selectedConflictCaseId, owner, busy, blockingRunId, onReady, onMerge, onDeleteBranch, onCancelRun, onResolveConflict, onAnswerConflict, teamChat, onSendTeamMessage, participants, currentUserId }: {
   review: FloorReviewSnapshot | null;
+  selectedConflictCaseId: string | null;
   owner: boolean;
   busy: boolean;
   blockingRunId: string | null;
@@ -17,6 +19,8 @@ export function ReviewScreen({ review, owner, busy, blockingRunId, onReady, onMe
   onMerge: (deleteCandidateBranch: boolean) => Promise<boolean>;
   onDeleteBranch: () => Promise<boolean>;
   onCancelRun: (runId: string) => Promise<void>;
+  onResolveConflict: (caseId: string) => Promise<boolean>;
+  onAnswerConflict: (caseId: string, answers: Array<{ questionId: string; answer: string }>) => Promise<boolean>;
   teamChat: FloorMessage[];
   onSendTeamMessage: (text: string, recipientUserId: string | null) => Promise<boolean>;
   participants: FloorParticipant[];
@@ -66,12 +70,58 @@ export function ReviewScreen({ review, owner, busy, blockingRunId, onReady, onMe
     <header className="review-hero"><div className="review-hero-copy"><h2 className="review-title">Review</h2><div className="review-branch-summary"><span className="label">Candidate branch</span><h3><Icon name="branch" size={16} />{review.branch}</h3><p>{review.pullRequest ? <a href={review.pullRequest.url} target="_blank" rel="noreferrer">{review.pullRequest.draft ? "Draft " : ""}PR #{review.pullRequest.number} · {review.pullRequest.merged ? "merged" : review.pullRequest.state}</a> : "Waiting for the candidate pull request."}</p></div></div><div className="review-hero-facts"><div><span className="label">Commit</span><strong className="value" title={review.commitSha ?? undefined}>{commitLabel}</strong></div><div><span className="label">Base</span><strong className="value">{review.baseBranch}</strong></div><div><span className="label">Diff</span><strong><span className="add">+{additions}</span> <span className="del">−{deletions}</span></strong></div><div><span className="label">Status</span><strong>{review.status}</strong></div><div><span className="label">Mergeability</span><strong>{review.pullRequest?.mergeable == null ? "unknown" : review.pullRequest.mergeable ? review.pullRequest.mergeableState ?? "mergeable" : "blocked"}</strong></div><div><span className="label">GitHub checks</span><strong>{review.githubChecksPassing == null ? "not synchronized" : review.githubChecksPassing ? "passing" : "blocked"}</strong></div></div>{owner && review.pullRequest && review.status !== "merged" && <div className="review-actions"><button type="button" className="button" disabled={busy} onClick={() => void onReady()}>{review.status === "draft" ? "Ready for review" : "Refresh GitHub status"}</button><button type="button" className="button primary-button" disabled={busy || !canMerge} title={canMerge ? "Squash merge through GitHub" : review.integrationRunId ? "A run is still integrating into this candidate" : "The PR must be ready, mergeable, and passing checks"} onClick={() => setMergeConfirmOpen(true)}>Squash merge</button></div>}</header>
     <div className="review-grid"><aside className="review-pane" aria-label="Changed files"><div className="review-pane-head"><h3>Files changed</h3><span>{review.files.length}</span></div>{review.files.length === 0 ? <p className="review-empty">No changed files.</p> : <ul className="review-file-list">{review.files.map((file) => <li key={file.id}><button type="button" className="review-file" data-selected={selected?.id === file.id ? "true" : "false"} onClick={() => setSelectedId(file.id)}><span className="file-copy" title={file.path}><strong>{file.path.split("/").pop()}</strong><span>{file.path}</span><FileAttribution contributors={file.contributors} /></span><span className="diff-stat"><i className="add">+{file.additions}</i><i className="del">−{file.deletions}</i></span></button></li>)}</ul>}</aside>
       <section className="review-pane review-diff" aria-label="Diff preview"><div className="review-pane-head"><h3>{selected?.path ?? "Diff preview"}</h3>{selected && <FileAttribution contributors={selected.contributors} expanded />}</div>{selected?.summary && <p className="review-summary">{selected.summary}</p>}{selected && selected.diff.length > 0 ? <pre className="review-code" aria-label={`Diff preview for ${selected.path}`}>{selected.diff.map((line, index) => <span key={`${index}-${line.text}`} className="review-line" data-type={line.type}><i>{line.type === "add" ? "+" : line.type === "remove" ? "−" : " "}</i><code>{line.text}</code></span>)}</pre> : <p className="review-empty">No diff preview available.</p>}</section>
-      <aside className="review-side"><section className="review-pane" aria-label="Integration warnings"><div className="review-pane-head"><h3>Integration</h3><span>{review.warnings.length}</span></div>{review.warnings.length === 0 ? <p className="review-empty">No integration warnings.</p> : <ul className="review-warning-list">{review.warnings.map((warning) => <li key={warning.id} data-severity={warning.severity}><strong>{warning.title}</strong><p>{warning.detail}</p></li>)}</ul>}</section><section className="review-pane" aria-label="Checks"><div className="review-pane-head"><h3>Checks</h3><span>{review.checks.length}</span></div>{review.checks.length === 0 ? <p className="review-empty">No checks reported by GitHub or openfloor.</p> : <ul className="review-check-list">{review.checks.map((check) => <li key={check.id}><span className="check-mark" aria-label={check.state}>{check.state === "passed" ? "✓" : check.state === "failed" ? "!" : "…"}</span><div><strong>{check.name}</strong>{check.detail && <span>{check.detail}</span>}</div></li>)}</ul>}</section>{review.status === "merged" && <section className="review-pane" aria-label="Branch cleanup"><div className="review-pane-head"><h3>Branch cleanup</h3><span>{review.cleanupStatus ?? "pending"}</span></div><p className="review-empty">{review.cleanupStatus === "complete" ? "Recorded candidate and run branches were deleted after exact-SHA verification." : "Any branch that did not match its recorded SHA was preserved."}</p>{owner && !review.branchDeletedAt && <div className="review-actions"><button type="button" className="button danger-button" disabled={busy || retrying} onClick={() => setDeleteConfirmOpen(true)}>Delete candidate branch</button></div>}</section>}<section className="review-pane review-team-chat" aria-label="Team chat"><div className="review-pane-head"><h3>Team chat</h3><span>{teamChat.filter((message) => message.recipientUserId === null).length}</span></div><TeamChat messages={teamChat} onSend={onSendTeamMessage} participants={participants} currentUserId={currentUserId} /></section></aside>
+      <aside className="review-side"><ConflictCases conflicts={review.conflicts} selectedCaseId={selectedConflictCaseId} owner={owner} busy={busy} onResolve={onResolveConflict} onAnswer={onAnswerConflict} /><section className="review-pane" aria-label="Integration warnings"><div className="review-pane-head"><h3>Integration</h3><span>{review.warnings.length}</span></div>{review.warnings.length === 0 ? <p className="review-empty">No integration warnings.</p> : <ul className="review-warning-list">{review.warnings.map((warning) => <li key={warning.id} data-severity={warning.severity}><strong>{warning.title}</strong><p>{warning.detail}</p></li>)}</ul>}</section><section className="review-pane" aria-label="Checks"><div className="review-pane-head"><h3>Checks</h3><span>{review.checks.length}</span></div>{review.checks.length === 0 ? <p className="review-empty">No checks reported by GitHub or openfloor.</p> : <ul className="review-check-list">{review.checks.map((check) => <li key={check.id}><span className="check-mark" aria-label={check.state}>{check.state === "passed" ? "✓" : check.state === "failed" ? "!" : "…"}</span><div><strong>{check.name}</strong>{check.detail && <span>{check.detail}</span>}</div></li>)}</ul>}</section>{review.status === "merged" && <section className="review-pane" aria-label="Branch cleanup"><div className="review-pane-head"><h3>Branch cleanup</h3><span>{review.cleanupStatus ?? "pending"}</span></div><p className="review-empty">{review.cleanupStatus === "complete" ? "Recorded candidate and run branches were deleted after exact-SHA verification." : "Any branch that did not match its recorded SHA was preserved."}</p>{owner && !review.branchDeletedAt && <div className="review-actions"><button type="button" className="button danger-button" disabled={busy || retrying} onClick={() => setDeleteConfirmOpen(true)}>Delete candidate branch</button></div>}</section>}<section className="review-pane review-team-chat" aria-label="Team chat"><div className="review-pane-head"><h3>Team chat</h3><span>{teamChat.filter((message) => message.recipientUserId === null).length}</span></div><TeamChat messages={teamChat} onSend={onSendTeamMessage} participants={participants} currentUserId={currentUserId} /></section></aside>
     </div>
     {mergeConfirmOpen && <MergeConfirmDialog busy={busy} onClose={() => setMergeConfirmOpen(false)} onConfirm={runMerge} />}
     {deleteConfirmOpen && <DeleteBranchConfirmDialog branch={review.branch} busy={busy} onClose={() => setDeleteConfirmOpen(false)} onConfirm={runDeleteBranch} />}
     {blockingRunId && pendingAction && <IntegrationBlockedDialog retrying={retrying} onClose={() => setPendingAction(null)} onConfirm={cancelBlockingRunAndRetry} />}
   </section>;
+}
+
+function ConflictCases({ conflicts, selectedCaseId, owner, busy, onResolve, onAnswer }: {
+  conflicts: MergeConflictCase[];
+  selectedCaseId: string | null;
+  owner: boolean;
+  busy: boolean;
+  onResolve: (caseId: string) => Promise<boolean>;
+  onAnswer: (caseId: string, answers: Array<{ questionId: string; answer: string }>) => Promise<boolean>;
+}) {
+  if (conflicts.length === 0) return null;
+  const ordered = [...conflicts].sort((a, b) => Number(b.id === selectedCaseId) - Number(a.id === selectedCaseId) || b.updatedAt - a.updatedAt);
+  return <section className="review-pane conflict-cases" aria-label="Merge conflicts"><div className="review-pane-head"><h3>Merge conflicts</h3><span>{conflicts.length}</span></div><ul className="conflict-case-list">{ordered.map((conflict) => <ConflictCaseCard key={conflict.id} conflict={conflict} selected={conflict.id === selectedCaseId} owner={owner} busy={busy} onResolve={onResolve} onAnswer={onAnswer} />)}</ul></section>;
+}
+
+function ConflictCaseCard({ conflict, selected, owner, busy, onResolve, onAnswer }: {
+  conflict: MergeConflictCase;
+  selected: boolean;
+  owner: boolean;
+  busy: boolean;
+  onResolve: (caseId: string) => Promise<boolean>;
+  onAnswer: (caseId: string, answers: Array<{ questionId: string; answer: string }>) => Promise<boolean>;
+}) {
+  const unanswered = conflict.questions.filter((question) => question.answer === null);
+  const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [submitting, setSubmitting] = useState(false);
+  const canSubmit = unanswered.length > 0 && unanswered.every((question) => answers[question.id]?.trim());
+  async function submitAnswers(event: React.FormEvent) {
+    event.preventDefault();
+    if (!canSubmit) return;
+    setSubmitting(true);
+    await onAnswer(conflict.id, unanswered.map((question) => ({ questionId: question.id, answer: answers[question.id].trim() })));
+    setSubmitting(false);
+  }
+  return <li className="conflict-case" data-selected={selected ? "true" : undefined} data-status={conflict.status}>
+    <div className="conflict-case-head"><strong>Merge Resolver</strong><span className="queue-chip" data-kind="status" data-status={conflict.status}>{conflict.status.replace("_", " ")}</span></div>
+    <p>{conflict.explanation ?? conflict.conflictReason}</p>
+    <dl><div><dt>Source</dt><dd>{conflict.agentName} · run {conflict.sourceRunId.slice(0, 8)}</dd></div><div><dt>Attempts</dt><dd>{conflict.automaticAttempts}/2 automatic attempts since last answer</dd></div></dl>
+    {conflict.prompts.length > 0 && <><span className="label">Original intent</span><ul className="conflict-answer-audit">{conflict.prompts.map((prompt) => <li key={prompt.id}><strong>{prompt.authorName}</strong><p>{prompt.text}</p></li>)}</ul></>}
+    {conflict.conflictPaths.length > 0 && <><span className="label">Affected paths</span><ul className="conflict-paths">{conflict.conflictPaths.map((path) => <li key={path}><code>{path}</code></li>)}</ul></>}
+    {conflict.attempts.length > 0 && <><span className="label">Resolver attempts</span><ul className="conflict-answer-audit">{conflict.attempts.map((attempt, index) => <li key={attempt.runId}><strong>Attempt {index + 1} · {attempt.launchKind} · {attempt.status.replace("_", " ")}</strong>{attempt.summary && <p>{attempt.summary}</p>}{attempt.checks.map((check) => <small key={check.command}>{check.status} · <code>{check.command}</code></small>)}</li>)}</ul></>}
+    {conflict.questions.some((question) => question.answer !== null) && <ul className="conflict-answer-audit">{conflict.questions.filter((question) => question.answer !== null).map((question) => <li key={question.id}><strong>{question.question}</strong><p>{question.answer}</p><small>Answered by {question.answeredByName ?? "former member"}{question.answeredAt && <> · <LocalDateTime timestamp={question.answeredAt} /></>}</small></li>)}</ul>}
+    {conflict.status === "awaiting_input" && unanswered.length > 0 && <form className="conflict-answer-form" onSubmit={submitAnswers}>{unanswered.map((question) => <label key={question.id}><span>{question.question}</span><textarea required maxLength={2000} value={answers[question.id] ?? ""} onChange={(event) => setAnswers((current) => ({ ...current, [question.id]: event.target.value }))} /></label>)}<button type="submit" className="button primary-button" disabled={busy || submitting || !canSubmit}>Submit answers</button><small>First complete submission wins. Team chat remains available for discussion.</small></form>}
+    {owner && (conflict.status === "failed" || conflict.status === "pending") && <button type="button" className="button" disabled={busy} onClick={() => void onResolve(conflict.id)}>{conflict.status === "failed" ? "Retry Merge Resolver" : "Start Merge Resolver"}</button>}
+    {conflict.failureReason && <p className="objective-error">{conflict.failureReason}</p>}
+  </li>;
 }
 
 function requesterLabel(requestedBy: ReviewContributor["requestedBy"]) {

@@ -25,4 +25,12 @@ describe("agent run gateway tokens", () => {
     await expect(verifyRunGatewayToken(token, "runtime-secret", "bundle_upload")).resolves.toEqual(claims);
     await expect(verifyRunGatewayToken(token, "runtime-secret", "bundle_read")).resolves.toBeNull();
   });
+
+  it("does not interchange resolver source and question capabilities", async () => {
+    const claims = { runId: "resolver-1", sessionId: "session-1", repositoryId: "repo-1", candidateSha: "d".repeat(40), operation: "conflict_input" as const };
+    const token = await signRunGatewayToken(claims, "runtime-secret");
+    await expect(verifyRunGatewayToken(token, "runtime-secret", "conflict_input")).resolves.toEqual(claims);
+    await expect(verifyRunGatewayToken(token, "runtime-secret", "conflict_source")).resolves.toBeNull();
+    await expect(verifyRunGatewayToken(token, "runtime-secret", "context")).resolves.toBeNull();
+  });
 });

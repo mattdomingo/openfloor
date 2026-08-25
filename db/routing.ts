@@ -1,5 +1,6 @@
 import { getDb, type D1DatabaseLike } from "./index";
 import type { StartRunResult } from "@/lib/agent-run-start";
+import { getPendingConflict, type PendingConflict } from "./conflicts";
 
 export const GLOBAL_RUN_BUDGET = 5;
 export const SESSION_RUN_CAP = 2;
@@ -12,6 +13,7 @@ export type TickOutcome = { acted: boolean; held: boolean; revision: number | nu
 
 export type RoutingDeps = {
   startRun: (sessionId: string, queueItemId: string, userId: string) => Promise<StartRunResult>;
+  startConflictResolution?: (conflict: PendingConflict) => Promise<StartRunResult>;
   // Providers whose runs cannot start right now (rollout gates, e.g.
   // CLAUDE_RUN_ENABLED=false). Items targeting these agents are SKIPPED like
   // busy agents — never held — because a "disabled" StartRunResult from the
@@ -69,15 +71,47 @@ export async function runRoutingTick(
   database: D1DatabaseLike = getDb(),
 ): Promise<TickOutcome> {
   const session = await database.prepare(
-    "SELECT auto_dispatch AS autoDispatch, ended_at AS endedAt FROM sessions WHERE id = ?",
-  ).bind(sessionId).first<{ autoDispatch: number; endedAt: number | null }>();
-  if (!session || !session.autoDispatch || session.endedAt !== null) {
+    "SELECT auto_dispatch AS autoDispatch, auto_resolve_conflicts AS autoResolveConflicts, ended_at AS endedAt FROM sessions WHERE id = ?",
+  ).bind(sessionId).first<{ autoDispatch: number; autoResolveConflicts: number; endedAt: number | null }>();
+  if (!session || session.endedAt !== null) {
     return { acted: false, held: false, revision: null };
   }
   const owner = await database.prepare(
     "SELECT user_id AS userId FROM session_members WHERE session_id = ? AND role = 'owner' AND removed_at IS NULL ORDER BY joined_at, user_id LIMIT 1",
   ).bind(sessionId).first<{ userId: string }>();
   if (!owner) return { acted: false, held: false, revision: null };
+
+  // Conflict resolution is a separate automation from ordinary dispatch.
+  // An eligible case gets the next available slot, but a busy inherited
+  // agent or gated provider is not eligible and therefore cannot freeze
+  // unrelated ordinary work.
+  const pendingConflict = await getPendingConflict(sessionId, database);
+  if (pendingConflict && deps.startConflictResolution && !(deps.disabledProviders?.has(pendingConflict.agentProvider) ?? false)) {
+    const [agentActive, sessionCount, globalCount] = await Promise.all([
+      database.prepare(`SELECT COUNT(*) AS count FROM agent_runs WHERE agent_id = ? AND status IN ${ACTIVE_RUN_STATUSES}`)
+        .bind(pendingConflict.agentId).first<{ count: number }>(),
+      database.prepare(`SELECT COUNT(*) AS count FROM agent_runs WHERE session_id = ? AND status IN ${ACTIVE_RUN_STATUSES}`)
+        .bind(sessionId).first<{ count: number }>(),
+      database.prepare(`SELECT COUNT(*) AS count FROM agent_runs WHERE status IN ${ACTIVE_RUN_STATUSES}`)
+        .first<{ count: number }>(),
+    ]);
+    const sessionActive = Number(sessionCount?.count ?? 0);
+    const globalActive = Number(globalCount?.count ?? 0);
+    if (Number(agentActive?.count ?? 0) === 0) {
+      if (sessionActive >= SESSION_RUN_CAP || globalActive >= GLOBAL_RUN_BUDGET) {
+        return { acted: false, held: true, revision: null };
+      }
+      const result = await deps.startConflictResolution(pendingConflict);
+      if (result.ok) {
+        const revision = await database.prepare("SELECT floor_revision AS revision FROM sessions WHERE id = ?")
+          .bind(sessionId).first<{ revision: number }>();
+        return { acted: true, held: false, revision: Number(revision?.revision ?? 0) };
+      }
+      // A stable conflict-specific condition (provider/quota/race/readiness)
+      // leaves the case visible but must not halt other agents' queued work.
+    }
+  }
+  if (!session.autoDispatch) return { acted: false, held: false, revision: null };
 
   const [queueResult, promptResult, agentResult, activityResult, globalCount] = await Promise.all([
     database.prepare(

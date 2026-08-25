@@ -22,6 +22,8 @@ Repository execution additionally requires a GitHub App, Cloudflare Workflows/Sa
 
 Owners name each candidate and describe its intent, with the session title and objective supplied as defaults; openfloor safely slugs the name inside its protected branch prefix and uses the metadata for the draft pull request. openfloor runs Codex at an exact candidate SHA, validates and publishes each passing result independently, serially integrates it into one draft pull request, reconciles GitHub files/checks/mergeability, and lets only the session owner mark ready and request a protected squash merge. Confirmed merges clean only exact-SHA openfloor branches and the next run starts a fresh candidate cycle.
 
+A real GitHub integration conflict creates one durable merge-conflict case attached to the original queue item. Automatic conflict resolution is enabled by default, independent from ordinary queue auto-dispatch, and runs ahead of new queue work when capacity and provider gates allow. The resolver inherits the source agent, provider/model, and agent-owner credential policy; reconstructs a genuine three-way merge from the exact source result and latest candidate; runs configured checks; and publishes through the same verified branch pipeline. When repository intent is ambiguous, it stops without publishing and asks up to three questions in Review. Any current member may answer, while only the owner may manually start or retry a case. Browser conflict alerts are an optional per-device setting and require an explicit permission-granting click.
+
 Create the local D1 tables, then start the development server:
 
 ```bash
@@ -39,7 +41,8 @@ To exercise the product manually:
 4. Confirm the floor shows the real session title, objective, and your online presence.
 5. Create a named agent, add assigned or unassigned prompts, edit an assignment, and use team chat. Reload and confirm they persist.
 6. Open Review and confirm it remains empty until a genuine agent run records changed files.
-7. Use **Session settings** to return to the lobby.
+7. In Queue settings, confirm **Automatically resolve merge conflicts** is on by default and browser alerts remain off until explicitly enabled.
+8. Use **Session settings** to return to the lobby.
 
 The browser test runs the complete two-user flow with a temporary local database, including invite acceptance, live presence, floor navigation, reconnection, and leaving:
 

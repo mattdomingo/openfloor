@@ -10,7 +10,7 @@ import { QueueOrderMenu } from "./QueueOrderMenu";
 
 const scopeOptions: { value: QueueScope; label: string }[] = [{ value: "mine", label: "You" }, { value: "team", label: "Team" }];
 
-export function PromptQueue({ chrome, items, runs, owner, runEnabled, busy, autoDispatch, onAutoDispatch, onRun, onCancel, onDiscard, onRetry, onEditPrompt, onPause, onDelete, currentUserId, scope, onScope, orderMode, onOrderMode, draggedItemId, onItemDragStart, onItemDragEnd, onItemDrop, onFocusAgent }: {
+export function PromptQueue({ chrome, items, runs, owner, runEnabled, busy, autoDispatch, onAutoDispatch, autoResolveConflicts, onAutoResolveConflicts, browserConflictAlerts, onBrowserConflictAlerts, onRun, onCancel, onDiscard, onRetry, onEditPrompt, onPause, onDelete, currentUserId, scope, onScope, orderMode, onOrderMode, draggedItemId, onItemDragStart, onItemDragEnd, onItemDrop, onFocusAgent }: {
   chrome: PanelChrome;
   items: FloorQueueItem[];
   runs: AgentRun[];
@@ -19,6 +19,10 @@ export function PromptQueue({ chrome, items, runs, owner, runEnabled, busy, auto
   busy: boolean;
   autoDispatch: boolean;
   onAutoDispatch: (enabled: boolean) => Promise<void>;
+  autoResolveConflicts: boolean;
+  onAutoResolveConflicts: (enabled: boolean) => Promise<void>;
+  browserConflictAlerts: boolean;
+  onBrowserConflictAlerts: (enabled: boolean) => Promise<void>;
   onRun: (queueItemId: string) => Promise<void>;
   onCancel: (runId: string) => Promise<void>;
   onDiscard: (runId: string) => Promise<void>;
@@ -51,7 +55,7 @@ export function PromptQueue({ chrome, items, runs, owner, runEnabled, busy, auto
   const visible = [...scoped].sort((a, b) => Number(isDone(a)) - Number(isDone(b)));
 
   return <Panel chrome={chrome} title="Queue" meta={`${visible.length} waiting`} actions={<>
-    <QueueOrderMenu mode={orderMode} onChange={onOrderMode} canReorder={canReorder} owner={owner} autoDispatch={autoDispatch} onAutoDispatch={onAutoDispatch} busy={busy} />
+    <QueueOrderMenu mode={orderMode} onChange={onOrderMode} canReorder={canReorder} owner={owner} autoDispatch={autoDispatch} onAutoDispatch={onAutoDispatch} autoResolveConflicts={autoResolveConflicts} onAutoResolveConflicts={onAutoResolveConflicts} browserConflictAlerts={browserConflictAlerts} onBrowserConflictAlerts={onBrowserConflictAlerts} busy={busy} />
     <SegmentedControl label="Queue scope" value={scope} onChange={onScope} options={scopeOptions} />
   </>}>
     {visible.length === 0 ? <div className="queue-empty"><strong>No prompts waiting</strong><p>Submit a prompt below with an agent target or leave it unassigned.</p></div> : <ul className="queue-list">{visible.map((item) => {
@@ -90,7 +94,7 @@ export function PromptQueue({ chrome, items, runs, owner, runEnabled, busy, auto
           {item.prompts.length > 1 ? <ul className="queue-prompt queue-prompt-stack" data-expanded={open ? "true" : "false"}>{item.prompts.map((prompt) => <li key={prompt.id}><strong>{prompt.authorName}</strong> · {prompt.text}</li>)}</ul> : <p className="queue-prompt" data-expanded={open ? "true" : "false"}>{first?.text}</p>}
           {long && <button type="button" className="queue-expand" aria-expanded={open} onClick={() => setExpanded((current) => ({ ...current, [item.id]: !open }))}>{open ? "Show less" : "Show more"}</button>}
         </>}
-        <div className="queue-run-row"><span className="queue-chip" data-kind="status" data-status={statusValue}>{statusValue.replace("_", " ")}</span>{run?.runBranch && <code className="queue-run-branch">{run.runBranch}</code>}{owner && runEnabled && item.status === "queued" && item.agentId && <button type="button" className="button" data-size="sm" disabled={busy} onClick={() => void onRun(item.id)}>Run</button>}{owner && cancellable && run.status !== "cancel_requested" && <button type="button" className="button danger-button" data-size="sm" disabled={busy} onClick={() => void onCancel(run.id)}>Cancel</button>}{owner && run?.status === "published" && !run.discardedAt && <button type="button" className="button danger-button" data-size="sm" disabled={busy} onClick={() => void onDiscard(run.id)}>Discard candidate</button>}{owner && run?.status === "conflicted" && <button type="button" className="button" data-size="sm" disabled={busy} onClick={() => void onRetry(run.id)}>Retry against latest candidate</button>}{!editing && editable && <button type="button" className="button" data-size="sm" disabled={busy} onClick={() => { setEditingId(item.id); setDraftText(first?.text ?? ""); }}>Edit</button>}{pausable && <button type="button" className="button" data-size="sm" disabled={busy} onClick={() => void onPause(item.id, true)}>Pause</button>}{resumable && <button type="button" className="button" data-size="sm" disabled={busy} onClick={() => void onPause(item.id, false)}>Resume</button>}{deletable && <button type="button" className="button danger-button" data-size="sm" disabled={busy} onClick={() => void onDelete(item.id)}>Delete</button>}</div>
+        <div className="queue-run-row">{run?.purpose === "conflict_resolution" && <span className="queue-chip" data-kind="agent-auto">Merge Resolver</span>}<span className="queue-chip" data-kind="status" data-status={statusValue}>{statusValue.replace("_", " ")}</span>{run?.runBranch && <code className="queue-run-branch">{run.runBranch}</code>}{owner && runEnabled && item.status === "queued" && item.agentId && <button type="button" className="button" data-size="sm" disabled={busy} onClick={() => void onRun(item.id)}>Run</button>}{owner && cancellable && run.status !== "cancel_requested" && <button type="button" className="button danger-button" data-size="sm" disabled={busy} onClick={() => void onCancel(run.id)}>Cancel</button>}{owner && run?.status === "published" && !run.discardedAt && <button type="button" className="button danger-button" data-size="sm" disabled={busy} onClick={() => void onDiscard(run.id)}>Discard candidate</button>}{owner && run?.status === "conflicted" && !run.conflictCaseId && <button type="button" className="button" data-size="sm" disabled={busy} onClick={() => void onRetry(run.id)}>Retry against latest candidate</button>}{!editing && editable && <button type="button" className="button" data-size="sm" disabled={busy} onClick={() => { setEditingId(item.id); setDraftText(first?.text ?? ""); }}>Edit</button>}{pausable && <button type="button" className="button" data-size="sm" disabled={busy} onClick={() => void onPause(item.id, true)}>Pause</button>}{resumable && <button type="button" className="button" data-size="sm" disabled={busy} onClick={() => void onPause(item.id, false)}>Resume</button>}{deletable && <button type="button" className="button danger-button" data-size="sm" disabled={busy} onClick={() => void onDelete(item.id)}>Delete</button>}</div>
       </li>;
     })}</ul>}
   </Panel>;

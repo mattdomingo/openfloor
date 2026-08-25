@@ -7,7 +7,9 @@ export type AgentTaskInput = { task: string };
 export type AssignmentInput = { task: string | null };
 export type MessageInput = { text: string; recipientUserId: string | null };
 export type QueuePromptInput = { prompt: string; agentId: string | null };
-export type AutoDispatchInput = { autoDispatch: boolean };
+export type RoutingSettingsInput = { autoDispatch?: boolean; autoResolveConflicts?: boolean };
+export type ConflictInputRequest = { explanation: string; questions: string[] };
+export type ConflictAnswersInput = { answers: Array<{ questionId: string; answer: string }> };
 export type QueueOrderInput = { itemIds: string[] };
 export type QueuePromptTextInput = { text: string };
 export type QueueItemPauseInput = { paused: boolean };
@@ -99,11 +101,46 @@ export function parseQueuePromptInput(value: unknown): QueuePromptInput | null {
   return { prompt, agentId };
 }
 
-export function parseAutoDispatchInput(value: unknown): AutoDispatchInput | null {
+export function parseRoutingSettingsInput(value: unknown): RoutingSettingsInput | null {
   if (!value || typeof value !== "object") return null;
   const input = value as Record<string, unknown>;
-  if (typeof input.autoDispatch !== "boolean") return null;
-  return { autoDispatch: input.autoDispatch };
+  if (input.autoDispatch === undefined && input.autoResolveConflicts === undefined) return null;
+  if (input.autoDispatch !== undefined && typeof input.autoDispatch !== "boolean") return null;
+  if (input.autoResolveConflicts !== undefined && typeof input.autoResolveConflicts !== "boolean") return null;
+  return {
+    ...(typeof input.autoDispatch === "boolean" ? { autoDispatch: input.autoDispatch } : {}),
+    ...(typeof input.autoResolveConflicts === "boolean" ? { autoResolveConflicts: input.autoResolveConflicts } : {}),
+  };
+}
+
+export function parseConflictInputRequest(value: unknown): ConflictInputRequest | null {
+  if (!value || typeof value !== "object") return null;
+  const input = value as Record<string, unknown>;
+  if (typeof input.explanation !== "string" || !Array.isArray(input.questions)) return null;
+  const explanation = input.explanation.trim();
+  if (!explanation || explanation.length > 4_000 || input.questions.length < 1 || input.questions.length > 3) return null;
+  if (input.questions.some((question) => typeof question !== "string")) return null;
+  const questions = input.questions.map((question) => (question as string).trim());
+  if (questions.some((question) => !question || question.length > 500)) return null;
+  return { explanation, questions };
+}
+
+export function parseConflictAnswersInput(value: unknown): ConflictAnswersInput | null {
+  if (!value || typeof value !== "object") return null;
+  const answers = (value as Record<string, unknown>).answers;
+  if (!Array.isArray(answers) || answers.length < 1 || answers.length > 3) return null;
+  const parsed: ConflictAnswersInput["answers"] = [];
+  for (const item of answers) {
+    if (!item || typeof item !== "object") return null;
+    const answer = item as Record<string, unknown>;
+    if (typeof answer.questionId !== "string" || typeof answer.answer !== "string") return null;
+    const questionId = answer.questionId.trim();
+    const text = answer.answer.trim();
+    if (!questionId || questionId.length > 100 || !text || text.length > 2_000) return null;
+    parsed.push({ questionId, answer: text });
+  }
+  if (new Set(parsed.map((answer) => answer.questionId)).size !== parsed.length) return null;
+  return { answers: parsed };
 }
 
 export function parseQueueOrderInput(value: unknown): QueueOrderInput | null {

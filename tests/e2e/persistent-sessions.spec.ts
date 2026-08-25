@@ -3,6 +3,7 @@ import { createHmac } from "node:crypto";
 import { authenticatedContext } from "./fixtures";
 
 test("owner and member persist, share live presence, reconnect, and leave", async ({ browser }) => {
+  test.setTimeout(180_000);
   const ownerContext = await authenticatedContext(browser, "owner-e2e", "owner@example.com", "Owner", "Example");
   const memberContext = await authenticatedContext(browser, "member-e2e", "member@example.com", "Member", "Example");
   const owner = await ownerContext.newPage();
@@ -169,6 +170,39 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await expect(owner.getByText("No review available")).toHaveCount(0);
   await expect(owner.getByText(/Atlas|Nova|Sentry|Proof|OpenMind/)).toHaveCount(0);
 
+  await owner.getByRole("button", { name: "Queue settings" }).click();
+  const ownerQueueSettings = owner.getByRole("group", { name: "Queue settings" });
+  await expect(ownerQueueSettings.getByRole("button", { name: /^Automatic/ })).toHaveAttribute("aria-pressed", "true");
+  await expect(ownerQueueSettings.getByRole("button", { name: /Browser conflict alerts off/ })).toHaveAttribute("aria-pressed", "false");
+  await owner.keyboard.press("Escape");
+  await member.evaluate(() => {
+    const state = {
+      permission: "default" as NotificationPermission,
+      requestCount: 0,
+      notifications: [] as Array<{ title: string; body: string | undefined; click: () => void }>,
+    };
+    class TestNotification {
+      static get permission() { return state.permission; }
+      static async requestPermission() {
+        state.requestCount += 1;
+        state.permission = "granted";
+        return state.permission;
+      }
+      onclick: (() => void) | null = null;
+      constructor(title: string, options?: NotificationOptions) {
+        state.notifications.push({ title, body: options?.body, click: () => this.onclick?.() });
+      }
+      close() {}
+    }
+    Object.defineProperty(window, "Notification", { configurable: true, value: TestNotification });
+    Object.assign(window, { __conflictAlertTest: state });
+  });
+  await member.getByRole("button", { name: "Queue settings" }).click();
+  const memberQueueSettings = member.getByRole("group", { name: "Queue settings" });
+  await expect(memberQueueSettings.getByRole("button", { name: /^Automatic/ })).toHaveCount(0);
+  await memberQueueSettings.getByRole("button", { name: /Browser conflict alerts off/ }).click();
+  await expect.poll(() => member.evaluate(() => (window as typeof window & { __conflictAlertTest: { requestCount: number } }).__conflictAlertTest.requestCount)).toBe(1);
+
   const ownerComposer = owner.getByLabel("Prompt to add to the queue");
   const memberDraftControls = member.getByRole("group", { name: "Teammate drafts" });
   await expect(memberDraftControls.getByRole("button", { name: "Typing" })).toHaveAttribute("aria-pressed", "true");
@@ -291,13 +325,97 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await owner.getByRole("button", { name: "Add to queue" }).click();
   const conflictItem = owner.locator("li.queue-item", { hasText: "Create a deliberate integration conflict" });
   await conflictItem.getByRole("button", { name: "Run", exact: true }).click();
-  await expect(conflictItem.getByText("conflicted", { exact: true })).toBeVisible();
-  const conflictedBranch = await conflictItem.locator("code.queue-run-branch").textContent();
-  await expect(member.getByRole("button", { name: "Retry against latest candidate" })).toHaveCount(0);
-  await conflictItem.getByRole("button", { name: "Retry against latest candidate" }).click();
+  await expect(conflictItem.getByText("Merge Resolver", { exact: true })).toBeVisible();
   await expect(conflictItem.getByText("integrated", { exact: true })).toBeVisible();
-  await expect.poll(async () => conflictItem.locator("code.queue-run-branch").textContent()).not.toBe(conflictedBranch);
+  await expect(member.getByRole("button", { name: "Retry against latest candidate" })).toHaveCount(0);
+  await expect(conflictItem.getByRole("button", { name: "Retry against latest candidate" })).toHaveCount(0);
+  await owner.getByRole("button", { name: "Review" }).click();
+  const automaticConflict = owner.locator(".conflict-case", { hasText: "Create a deliberate integration conflict" });
+  await expect(automaticConflict.getByText("resolved", { exact: true })).toBeVisible();
+  await expect(owner.getByLabel("Integration warnings").getByText("No integration warnings.")).toBeVisible();
 
+  await owner.getByRole("button", { name: "Workspace" }).click();
+  await owner.getByRole("combobox", { name: "Queue target" }).click();
+  await owner.getByRole("option", { name: "Lumen" }).click();
+  await owner.getByLabel("Prompt to add to the queue").fill("Create a conflict needing a session decision");
+  await owner.getByRole("button", { name: "Add to queue" }).click();
+  const questionConflictItem = owner.locator("li.queue-item", { hasText: "Create a conflict needing a session decision" });
+  await questionConflictItem.getByRole("button", { name: "Run", exact: true }).click();
+  await expect(member.getByText("Merge conflict needs a decision", { exact: true })).toBeVisible();
+  await owner.reload();
+  await expect(owner.getByText("Merge conflict needs a decision", { exact: true })).toBeVisible();
+  await member.evaluate(() => {
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+  await expect.poll(() => member.evaluate(() => (window as typeof window & { __conflictAlertTest: { notifications: unknown[] } }).__conflictAlertTest.notifications.length)).toBe(1);
+  await member.evaluate(() => {
+    (window as typeof window & { __conflictAlertTest: { notifications: Array<{ click: () => void }> } }).__conflictAlertTest.notifications[0].click();
+  });
+  await expect(member.getByRole("heading", { name: "Review", exact: true })).toBeVisible();
+  const memberQuestionConflict = member.locator(".conflict-case[data-selected='true']", { hasText: "Create a conflict needing a session decision" });
+  await expect(memberQuestionConflict).toBeVisible();
+  const floorResponse = await member.request.get(new URL(member.url()).pathname.replace(/\/floor$/, "/floor").replace("/session/", "/api/sessions/"));
+  const questionFloor = await floorResponse.json() as { floor: { review: { conflicts: Array<{ id: string; status: string; questions: Array<{ id: string; answer: string | null }> }> } | null } };
+  const questionCase = questionFloor.floor.review?.conflicts.find((item) => item.status === "awaiting_input");
+  expect(questionCase).toBeTruthy();
+  const answerFields = memberQuestionConflict.locator("textarea");
+  await answerFields.nth(0).fill("Preserve the existing public behavior.");
+  await answerFields.nth(1).fill("Do not remove the legacy path yet.");
+  await memberQuestionConflict.getByRole("button", { name: "Submit answers" }).click();
+  await expect(memberQuestionConflict.getByText("resolved", { exact: true })).toBeVisible();
+  const staleAnswer = await owner.request.post(`/api/sessions/${new URL(owner.url()).pathname.split("/")[2]}/conflicts/${questionCase!.id}/answers`, {
+    data: { answers: questionCase!.questions.map((question) => ({ questionId: question.id, answer: "Stale answer" })) },
+  });
+  expect(staleAnswer.status()).toBe(409);
+  expect(await member.evaluate(() => (window as typeof window & { __conflictAlertTest: { notifications: unknown[] } }).__conflictAlertTest.notifications.length)).toBe(1);
+
+  await owner.getByRole("button", { name: "Workspace" }).click();
+  await owner.getByRole("combobox", { name: "Queue target" }).click();
+  await owner.getByRole("option", { name: "Lumen" }).click();
+  await owner.getByLabel("Prompt to add to the queue").fill("Create a candidate movement conflict");
+  await owner.getByRole("button", { name: "Add to queue" }).click();
+  const movementItem = owner.locator("li.queue-item", { hasText: "Create a candidate movement conflict" });
+  await movementItem.getByRole("button", { name: "Run", exact: true }).click();
+  await expect(movementItem.getByText("integrated", { exact: true })).toBeVisible();
+  await owner.getByRole("button", { name: "Review" }).click();
+  const movementConflict = owner.locator(".conflict-case", { hasText: "Create a candidate movement conflict" });
+  await expect(movementConflict.getByText("Attempt 1 · automatic · conflicted", { exact: true })).toBeVisible();
+  await expect(movementConflict.getByText("Attempt 2 · automatic · integrated", { exact: true })).toBeVisible();
+
+  await owner.getByRole("button", { name: "Workspace" }).click();
+  await owner.getByRole("combobox", { name: "Queue target" }).click();
+  await owner.getByRole("option", { name: "Lumen" }).click();
+  await owner.getByLabel("Prompt to add to the queue").fill("Create a resolver check failure");
+  await owner.getByRole("button", { name: "Add to queue" }).click();
+  const resolverCheckItem = owner.locator("li.queue-item", { hasText: "Create a resolver check failure" });
+  await resolverCheckItem.getByRole("button", { name: "Run", exact: true }).click();
+  await expect(resolverCheckItem.getByText("integrated", { exact: true })).toBeVisible();
+  await owner.getByRole("button", { name: "Review" }).click();
+  const resolverCheckConflict = owner.locator(".conflict-case", { hasText: "Create a resolver check failure" });
+  await expect(resolverCheckConflict.getByText("Attempt 1 · automatic · failed", { exact: true })).toBeVisible();
+  await expect(resolverCheckConflict.getByText("Attempt 2 · automatic · integrated", { exact: true })).toBeVisible();
+
+  await owner.getByRole("button", { name: "Workspace" }).click();
+  await owner.getByRole("button", { name: "Queue settings" }).click();
+  await owner.getByRole("group", { name: "Queue settings" }).getByRole("button", { name: /Manual Record conflicts/ }).click();
+  await owner.getByRole("combobox", { name: "Queue target" }).click();
+  await owner.getByRole("option", { name: "Lumen" }).click();
+  await owner.getByLabel("Prompt to add to the queue").fill("Create a manual merge conflict");
+  await owner.getByRole("button", { name: "Add to queue" }).click();
+  const manualConflictItem = owner.locator("li.queue-item", { hasText: "Create a manual merge conflict" });
+  await manualConflictItem.getByRole("button", { name: "Run", exact: true }).click();
+  await expect(manualConflictItem.getByText("conflicted", { exact: true })).toBeVisible();
+  await expect(manualConflictItem.getByRole("button", { name: "Retry against latest candidate" })).toHaveCount(0);
+  await owner.getByRole("button", { name: "Review" }).click();
+  const manualConflict = owner.locator(".conflict-case", { hasText: "Create a manual merge conflict" });
+  await expect(manualConflict.getByRole("button", { name: "Start Merge Resolver" })).toBeVisible();
+  await member.getByRole("button", { name: "Review" }).click();
+  await expect(member.locator(".conflict-case", { hasText: "Create a manual merge conflict" }).getByRole("button", { name: "Start Merge Resolver" })).toHaveCount(0);
+  await manualConflict.getByRole("button", { name: "Start Merge Resolver" }).click();
+  await expect(manualConflict.getByText("resolved", { exact: true })).toBeVisible();
+
+  await owner.getByRole("button", { name: "Workspace" }).click();
   await owner.getByRole("combobox", { name: "Queue target" }).click();
   await owner.getByRole("option", { name: "Lumen" }).click();
   await owner.getByLabel("Prompt to add to the queue").fill("Create an intentionally failing change");

@@ -50,6 +50,7 @@ export function TopBar({
   user,
   members,
   unreadTeamCount,
+  reviewAttentionCount,
   presenceConnected,
   staleMessageCount,
   onSaveObjective,
@@ -63,6 +64,7 @@ export function TopBar({
   user: AppUser;
   members: SessionMember[];
   unreadTeamCount: number;
+  reviewAttentionCount: number;
   presenceConnected: boolean;
   staleMessageCount: number;
   onSaveObjective: (objective: string | null) => Promise<boolean>;
@@ -195,7 +197,7 @@ export function TopBar({
         <button type="button" aria-pressed={screen === "workspace"} onClick={() => onScreen("workspace")}>
           Workspace{unreadTeamCount > 0 && <span className="nav-unread-dot" aria-label={`${unreadTeamCount} unread team messages`} />}
         </button>
-        <button type="button" aria-pressed={screen === "review"} onClick={() => onScreen("review")}>Review</button>
+        <button type="button" aria-pressed={screen === "review"} onClick={() => onScreen("review")}>Review{reviewAttentionCount > 0 && <span className="nav-review-badge" aria-label={`${reviewAttentionCount} conflict case${reviewAttentionCount === 1 ? "" : "s"} need attention`}>{reviewAttentionCount}</span>}</button>
       </nav>
 
       <div className="topbar-actions">

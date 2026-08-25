@@ -1,5 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { z } from "zod";
 
 // Spawned by the Codex CLI as a stdio MCP child, outside the agent's own
 // network-disabled sandbox — this process is the one legitimate bridge back
@@ -7,6 +8,8 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 // run-scoped token it was given; it has no other capability.
 const contextUrl = process.env.OPENFLOOR_CONTEXT_URL;
 const contextToken = process.env.OPENFLOOR_CONTEXT_TOKEN;
+const conflictInputUrl = process.env.OPENFLOOR_CONFLICT_INPUT_URL;
+const conflictInputToken = process.env.OPENFLOOR_CONFLICT_INPUT_TOKEN;
 
 const server = new McpServer({ name: "openfloor", version: "1.0.0" });
 
@@ -33,6 +36,36 @@ server.registerTool(
     }
   },
 );
+
+if (conflictInputUrl && conflictInputToken) {
+  server.registerTool(
+    "openfloor_request_conflict_input",
+    {
+      title: "Request conflict input",
+      description: "Stop this merge-resolution attempt and ask the current session members for a product decision. Use only when the code cannot be resolved safely from repository and session intent. Provide a concise explanation and one to three specific questions.",
+      inputSchema: {
+        explanation: z.string().min(1).max(4_000),
+        questions: z.array(z.string().min(1).max(500)).min(1).max(3),
+      },
+    },
+    async ({ explanation, questions }) => {
+      try {
+        const response = await fetch(conflictInputUrl, {
+          method: "POST",
+          headers: { "content-type": "application/json", authorization: `Bearer ${conflictInputToken}` },
+          body: JSON.stringify({ explanation, questions }),
+        });
+        if (!response.ok) {
+          return { content: [{ type: "text", text: `The conflict-input request was rejected (status ${response.status}).` }], isError: true };
+        }
+        return { content: [{ type: "text", text: "The questions were recorded. Stop work now; openfloor will discard this partial workspace and resume after a member answers." }] };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return { content: [{ type: "text", text: `The conflict-input request failed: ${message}` }], isError: true };
+      }
+    },
+  );
+}
 
 const transport = new StdioServerTransport();
 await server.connect(transport);
