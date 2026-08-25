@@ -219,7 +219,12 @@ input, textarea { width: 100%; padding: 11px 12px; border: 1px solid var(--line-
   :root:not([data-theme]) .agent-card[data-tone="agent-4"], :root:not([data-theme]) .spotlight[data-tone="agent-4"], :root:not([data-theme]) .review-attribution[data-tone="agent-4"], :root:not([data-theme]) .review-attribution-row[data-tone="agent-4"], :root:not([data-theme]) .agent-rail-item[data-tone="agent-4"] { --agent-color: #b39bd6; }
 }
 
-.join-card { width: min(540px, 100%); padding: clamp(28px, 6vw, 54px); text-align: center; }
+/* A single focused card, not a page of landmarks — one settle-in read as a
+   whole beats cascading each line, which would just delay the Join button.
+   shop-settle is defined in shop.css (app/styles/shop.css, "Page entrance")
+   but @keyframes aren't shell-scoped, so it's reusable here even though
+   .join-shell deliberately sits outside the .shop-shell identity. */
+.join-card { width: min(540px, 100%); padding: clamp(28px, 6vw, 54px); text-align: center; animation: shop-settle .4s var(--ease-out) both; }
 /* Every other shop-palette page title (app/styles/shop.css: .page-heading h1,
    .lobby-hero h1) is Archivo bold, not the old serif — .join-card sat outside
    that redesign and kept inheriting layout.css's shared serif rule. Matches
