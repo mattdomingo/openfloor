@@ -5,7 +5,7 @@ import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
 import { BASE_PATH } from "@/components/basePath";
 import { DoNotDisturbToggle } from "@/components/DoNotDisturbToggle";
-import { Avatar, SegmentedControl, useDialogDismiss } from "@/components/session/primitives";
+import { Avatar, useDialogDismiss } from "@/components/session/primitives";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { ACCEPTED_AVATAR_TYPE_LIST, ACCEPTED_AVATAR_TYPES, MAX_AVATAR_BYTES } from "@/lib/avatar-constraints";
 import { formatDuration } from "@/lib/date-format";
@@ -17,6 +17,7 @@ import {
   type ProviderCredentialSummary,
 } from "@/lib/provider-credentials";
 import type { AppUser } from "@/lib/session-types";
+import { WaveField } from "@/app/entry-wave";
 import { AppHeader } from "./AppHeader";
 import { ProviderCredentials } from "./ProviderCredentials";
 
@@ -25,13 +26,55 @@ type Usage = { plan: Plan; planStatus: PlanStatus; effectivePlan: Plan; seconds:
 type Billing = { customerId: string | null; subscriptionId: string | null; plan: PaidPlan | null; quantity: number | null; stripeStatus: string | null; currentPeriodEnd: number | null; cancelAtPeriodEnd: boolean };
 type BlockedSession = { id: string; title: string; reason: "repository_state" | "integration_in_progress" };
 
-export function SettingsScreen({ user: initialUser, usage, billing, credentials, initialSection, billingNotice }: {
+const SETTINGS_SECTIONS: { value: SettingsSection; label: string }[] = [
+  { value: "profile", label: "Profile" },
+  { value: "plan", label: "Plan & usage" },
+  { value: "connections", label: "Connections" },
+  { value: "preferences", label: "Preferences" },
+  { value: "danger", label: "Danger zone" },
+];
+
+// The left rail, not the horizontal ShopTabs strip /home owns: five section
+// labels wrap on a narrow strip, and settings gets its own silhouette this
+// way. Rows are fixed-height and full-width, so unlike ShopTabs (which
+// measures a variable-width button to slide an indicator under it) the
+// active row's floor-bracket marker is a plain CSS pseudo-element — no
+// layout measurement needed. See app/styles/settings.css.
+function SettingsRail({ value, onChange }: { value: SettingsSection; onChange: (value: SettingsSection) => void }) {
+  return (
+    <nav className="settings-rail" role="group" aria-label="Settings section">
+      {SETTINGS_SECTIONS.map((option) => (
+        <button
+          key={option.value}
+          type="button"
+          className="settings-rail-item"
+          data-tone={option.value === "danger" ? "danger" : undefined}
+          aria-pressed={value === option.value}
+          onClick={() => onChange(option.value)}
+        >
+          {option.label}
+        </button>
+      ))}
+    </nav>
+  );
+}
+
+export function SettingsScreen({ user: initialUser, usage, billing, credentials, initialSection, billingNotice, backTo, originPath }: {
   user: AppUser;
   usage: Usage;
   billing: Billing;
   credentials: ProviderCredentialSummary[];
   initialSection: "profile" | "plan";
   billingNotice: string | null;
+  // Where "Account settings" was opened from — resolved server-side in
+  // app/settings/page.tsx (app/settings/origin.ts) so the header link and
+  // its label ("Sessions" or a real session title) always match a page the
+  // user can actually return to.
+  backTo: { href: string; label: string };
+  // Same origin, threaded through to the Stripe round trip (PlanSection's
+  // openBilling) so returning from Checkout/the billing portal still knows
+  // where to go back to. null when the origin is just /home — nothing to add.
+  originPath: string | null;
 }) {
   const [user, setUser] = useState(initialUser);
   // Same render-time resync idiom as HomeScreen: router.refresh() re-renders
@@ -44,8 +87,9 @@ export function SettingsScreen({ user: initialUser, usage, billing, credentials,
   const [section, setSection] = useState<SettingsSection>(initialSection);
 
   return (
-    <main className="product-shell">
-      <AppHeader user={user} />
+    <main className="product-shell shop-shell settings-shell">
+      <WaveField varName="--wave" className="shop-wave" />
+      <AppHeader user={user} backTo={backTo} />
       <section className="page-body">
         <div className="page-heading">
           <div>
@@ -55,24 +99,19 @@ export function SettingsScreen({ user: initialUser, usage, billing, credentials,
           </div>
         </div>
 
-        <SegmentedControl
-          label="Settings section"
-          value={section}
-          onChange={setSection}
-          options={[
-            { value: "profile", label: "Profile" },
-            { value: "plan", label: "Plan & usage" },
-            { value: "connections", label: "Connections" },
-            { value: "preferences", label: "Preferences" },
-            { value: "danger", label: "Danger zone" },
-          ]}
-        />
-
-        {section === "profile" && <ProfileSection user={user} onSaved={setUser} />}
-        {section === "plan" && <PlanSection usage={usage} billing={billing} billingNotice={billingNotice} />}
-        {section === "connections" && <ConnectionsSection initialCredentials={credentials} />}
-        {section === "preferences" && <PreferencesSection user={user} />}
-        {section === "danger" && <DangerZoneSection />}
+        <div className="settings-layout">
+          <SettingsRail value={section} onChange={setSection} />
+          {/* key={section} remounts on every switch so the shop shell's
+              rise-and-fade (shop-tab-enter, app/styles/shop.css) replays
+              each time, same as HomeScreen's tab-panel. */}
+          <div className="settings-panel tab-panel" key={section}>
+            {section === "profile" && <ProfileSection user={user} onSaved={setUser} />}
+            {section === "plan" && <PlanSection usage={usage} billing={billing} billingNotice={billingNotice} originPath={originPath} />}
+            {section === "connections" && <ConnectionsSection initialCredentials={credentials} />}
+            {section === "preferences" && <PreferencesSection user={user} />}
+            {section === "danger" && <DangerZoneSection />}
+          </div>
+        </div>
       </section>
     </main>
   );
@@ -190,7 +229,7 @@ function ProfileSection({ user, onSaved }: { user: AppUser; onSaved: (user: AppU
   );
 }
 
-function PlanSection({ usage, billing, billingNotice }: { usage: Usage; billing: Billing; billingNotice: string | null }) {
+function PlanSection({ usage, billing, billingNotice, originPath }: { usage: Usage; billing: Billing; billingNotice: string | null; originPath: string | null }) {
   const limitSeconds = usage.limitHours * 3600;
   const limitedHours = Number.isFinite(usage.limitHours);
   const limitedSeats = Number.isFinite(usage.limitSeats);
@@ -200,6 +239,9 @@ function PlanSection({ usage, billing, billingNotice }: { usage: Usage; billing:
   const [error, setError] = useState<string | null>(null);
   const activeStripeSubscription = billing.subscriptionId != null && billing.stripeStatus != null && !["canceled", "incomplete_expired"].includes(billing.stripeStatus);
   const catalog = PAID_PLAN_CATALOG[selectedPlan];
+  // Carries the settings origin through the Stripe round trip, so returning
+  // from Checkout or the billing portal still knows where "back" goes.
+  const fromSuffix = originPath ? `&from=${encodeURIComponent(originPath)}` : "";
 
   function choosePlan(plan: PaidPlan) {
     setSelectedPlan(plan);
@@ -213,8 +255,8 @@ function PlanSection({ usage, billing, billingNotice }: { usage: Usage; billing:
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(kind === "portal"
-        ? { returnTo: `${BASE_PATH}/settings?section=plan` }
-        : { plan: selectedPlan, quantity, returnTo: `${BASE_PATH}/settings?section=plan&billing=success` }),
+        ? { returnTo: `${BASE_PATH}/settings?section=plan${fromSuffix}` }
+        : { plan: selectedPlan, quantity, returnTo: `${BASE_PATH}/settings?section=plan&billing=success${fromSuffix}` }),
     });
     const body = await response.json().catch(() => null) as { url?: string; error?: string } | null;
     if (!response.ok || !body?.url) {

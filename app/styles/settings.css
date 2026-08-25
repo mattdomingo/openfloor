@@ -1,0 +1,176 @@
+/* /settings joins the opnflr.com shop identity (app/styles/shop.css) that
+   /home already carries — same palette, type, and floor-bracket motif —
+   without editing shop.css itself. That file is being edited concurrently
+   on sibling branches (home-shop-redesign, redesign/session-lobby), so
+   everything settings-specific lives here instead, imported last, scoped
+   .settings-shell. SettingsScreen.tsx sets `product-shell shop-shell
+   settings-shell` on its <main>, so every .shop-shell rule (buttons, inputs,
+   notices, dialogs, page-heading, the wave backdrop, tab-panel's
+   rise-and-fade) already applies for free; this file only adds what's new:
+   the rail nav, the danger tone, and the settings-category-* list, which
+   shop.css has never touched. */
+
+.settings-shell { --danger-ink: #b8453a; }
+:root[data-theme="dark"] .settings-shell,
+:root[data-theme="midnight"] .settings-shell { --danger-ink: #d9584a; }
+
+/* ── Layout ──────────────────────────────────────────────────────────── */
+
+.settings-shell .settings-layout {
+  display: grid;
+  grid-template-columns: 200px minmax(0, 1fr);
+  gap: 8px clamp(28px, 3.4vw, 56px);
+  padding: clamp(28px, 3vw, 44px) var(--gutter) 72px;
+}
+.settings-shell .settings-panel { min-width: 0; }
+
+/* ── Rail ────────────────────────────────────────────────────────────── */
+
+.settings-shell .settings-rail {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  position: sticky;
+  top: 78px;
+  align-self: start;
+}
+.settings-shell .settings-rail-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0;
+  padding: 11px 4px;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font: 600 11px var(--mono);
+  letter-spacing: .09em;
+  text-transform: uppercase;
+  text-align: left;
+  cursor: pointer;
+  transition: color .16s ease, gap .18s ease;
+}
+.settings-shell .settings-rail-item:hover { color: var(--ink); }
+
+/* Same floor-bracket glyph and reveal-on-state technique as
+   .shop-shell .button (shop.css:229-247, 249-251) — collapsed to nothing at
+   rest, widening open around the label for the active row, so the marker
+   reads as one motif with every bracket button elsewhere in the shop. */
+.settings-shell .settings-rail-item::before,
+.settings-shell .settings-rail-item::after {
+  content: "";
+  flex: none;
+  width: 0;
+  height: 1.2em;
+  background-color: currentColor;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-size: 100% 100%;
+  mask-size: 100% 100%;
+  opacity: 0;
+  transform: scaleX(0);
+  transition: width .18s ease, opacity .12s ease, transform .18s ease;
+}
+.settings-shell .settings-rail-item::before {
+  transform-origin: right center;
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 3 8'%3E%3Cpath d='M0 0h1v7h2v1H0Z'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 3 8'%3E%3Cpath d='M0 0h1v7h2v1H0Z'/%3E%3C/svg%3E");
+}
+.settings-shell .settings-rail-item::after {
+  transform-origin: left center;
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 3 8'%3E%3Cpath d='M3 0h-1v7h-2v1h3Z'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 3 8'%3E%3Cpath d='M3 0h-1v7h-2v1h3Z'/%3E%3C/svg%3E");
+}
+.settings-shell .settings-rail-item[aria-pressed="true"] {
+  color: var(--ink);
+  gap: 9px;
+}
+.settings-shell .settings-rail-item[aria-pressed="true"]::before,
+.settings-shell .settings-rail-item[aria-pressed="true"]::after {
+  width: .5em;
+  opacity: 1;
+  transform: scaleX(1);
+}
+
+.settings-shell .settings-rail-item[data-tone="danger"] {
+  margin-top: 10px;
+  padding-top: 15px;
+  border-top: 1px solid var(--rule);
+  color: var(--danger-ink);
+}
+.settings-shell .settings-rail-item[data-tone="danger"]:hover,
+.settings-shell .settings-rail-item[data-tone="danger"][aria-pressed="true"] { color: var(--danger-ink); }
+
+/* ── Back link (AppHeader's backTo prop) ────────────────────────────────── */
+
+.settings-shell .app-back {
+  color: var(--muted);
+  font: 600 13px var(--sans);
+  gap: 8px;
+  transition: color .16s ease, gap .16s ease;
+}
+.settings-shell .app-back:hover,
+.settings-shell .app-back:focus-visible { color: var(--ink); gap: 11px; }
+.settings-shell .app-back span { max-width: 30ch; }
+
+/* ── Category rows (Profile/Plan/Connections/Preferences/Danger bodies) ── */
+
+.settings-shell .settings-category-list {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.settings-shell .settings-category-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 4px 20px;
+  padding: 18px 20px;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-md);
+  background: var(--sheet);
+  transition: border-color .16s ease;
+}
+.settings-shell .settings-category-row:focus-within { border-color: var(--accent-ink); }
+.settings-shell .settings-category-name {
+  font: 700 14px var(--sans);
+  color: var(--ink);
+}
+.settings-shell .settings-category-detail {
+  grid-column: 1;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.settings-shell .settings-category-detail strong { color: var(--ink); }
+.settings-shell .settings-category-row .button { grid-row: 1 / span 2; justify-self: end; }
+
+/* ── Mobile ──────────────────────────────────────────────────────────── */
+
+@media (max-width: 760px) {
+  .settings-shell .settings-layout {
+    grid-template-columns: 1fr;
+    padding-inline: 16px;
+  }
+  .settings-shell .settings-rail {
+    position: static;
+    flex-direction: row;
+    gap: 4px 18px;
+    padding-bottom: 10px;
+    overflow-x: auto;
+    border-bottom: 1px solid var(--edge);
+  }
+  .settings-shell .settings-rail-item {
+    flex: none;
+    padding: 6px 2px;
+  }
+  .settings-shell .settings-rail-item[data-tone="danger"] {
+    margin-top: 0;
+    padding-top: 6px;
+    border-top: 0;
+    border-left: 1px solid var(--rule);
+    padding-left: 16px;
+  }
+}
