@@ -2,7 +2,7 @@ import { env } from "cloudflare:workers";
 import { SELF } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 
-const BASE_PATH = "/app";
+const BASE_PATH = "";
 
 function fetchPath(path: string) {
   return SELF.fetch(`http://localhost${path}`, { headers: { accept: "text/html" }, redirect: "manual" });
@@ -34,11 +34,11 @@ describe("server rendering", () => {
   });
 
   it("explains the sign-in bounce and points the CTA back at the requested page", async () => {
-    const response = await fetchPath(`${BASE_PATH}?auth=required&return_to=${encodeURIComponent("/app/session/private-room")}`);
+    const response = await fetchPath(`${BASE_PATH}?auth=required&return_to=${encodeURIComponent("/session/private-room")}`);
     expect(response.status).toBe(200);
     const html = await response.text();
     expect(html).toContain("Sign in to continue. You will be sent back to what you were opening.");
-    expect(html).toContain('href="/app/session/private-room"');
+    expect(html).toContain('href="/session/private-room"');
     // Without the params the landing stays quiet.
     const plain = await (await render()).text();
     expect(plain).not.toContain("Sign in to open that page");
@@ -56,14 +56,14 @@ describe("server rendering", () => {
       const response = await render(path);
       expect(response.status).toBeGreaterThanOrEqual(300);
       expect(response.status).toBeLessThan(400);
-      expect(response.headers.get("location")).toContain("/app?auth=required&return_to=%2Fapp%2F");
+      expect(response.headers.get("location")).toContain("/?auth=required&return_to=%2F");
     }
   });
 
   it("emits product social metadata from the request origin", async () => {
     const html = await (await render()).text();
     expect(html).toContain('property="og:title" content="openfloor"');
-    expect(html).toContain('property="og:image" content="http://localhost:3000/app/og-v3.png"');
+    expect(html).toContain('property="og:image" content="http://localhost:3000/og-v3.png"');
     expect(html).toContain('name="twitter:card" content="summary_large_image"');
   });
 
@@ -72,15 +72,15 @@ describe("server rendering", () => {
     onboardingForm.set("firstName", "Render");
     onboardingForm.set("lastName", "Owner");
     onboardingForm.set("plan", "free");
-    onboardingForm.set("returnTo", "/app/home");
-    const onboarded = await SELF.fetch("http://localhost/app/api/account/onboarding", {
+    onboardingForm.set("returnTo", "/home");
+    const onboarded = await SELF.fetch("http://localhost/api/account/onboarding", {
       method: "POST",
       headers: authenticatedHeaders,
       body: onboardingForm,
     });
     expect(onboarded.status).toBe(200);
 
-    const created = await SELF.fetch("http://localhost/app/api/sessions", {
+    const created = await SELF.fetch("http://localhost/api/sessions", {
       method: "POST",
       headers: { ...authenticatedHeaders, "content-type": "application/json", accept: "application/json" },
       body: JSON.stringify({ title: "Empty floor" }),
@@ -110,7 +110,7 @@ describe("server rendering", () => {
                  'active', ?, ?, ?)`,
       ).bind(candidateId, session.id, connectionId, owner.id, now, now),
     ]);
-    const response = await SELF.fetch(`http://localhost/app/session/${session.id}/floor`, { headers: authenticatedHeaders });
+    const response = await SELF.fetch(`http://localhost/session/${session.id}/floor`, { headers: authenticatedHeaders });
     expect(response.status).toBe(200);
     const html = await response.text();
     expect(html).toContain("No agents yet");
@@ -120,12 +120,6 @@ describe("server rendering", () => {
     expect(html).toContain("Typing");
     expect(html).toContain("Hidden");
     expect(html).not.toMatch(/Atlas|Nova|Sentry|Proof|OpenMind|server\/session\/reducer/i);
-  });
-
-  it("serves nothing outside its base path", async () => {
-    for (const path of ["/", "/home", "/why", "/session/private-room"]) {
-      expect((await fetchPath(path)).status).toBe(404);
-    }
   });
 });
 
@@ -141,8 +135,8 @@ async function onboardedUser(providerUserId: string, firstName: string, lastName
   form.set("firstName", firstName);
   form.set("lastName", lastName);
   form.set("plan", "free");
-  form.set("returnTo", "/app/home");
-  const onboarded = await SELF.fetch("http://localhost/app/api/account/onboarding", { method: "POST", headers, body: form });
+  form.set("returnTo", "/home");
+  const onboarded = await SELF.fetch("http://localhost/api/account/onboarding", { method: "POST", headers, body: form });
   expect(onboarded.status).toBe(200);
   const row = await env.DB.prepare("SELECT id FROM users WHERE chatgpt_user_id = ?").bind(providerUserId).first<{ id: string }>();
   if (!row) throw new Error("Onboarded user was not persisted");
@@ -159,7 +153,7 @@ async function onboardedUser(providerUserId: string, firstName: string, lastName
 describe("returning through a different login method", () => {
   it("resolves a same-email, different-case, different-provider login to the account holding the session", async () => {
     const owner = await onboardedUser("otp-login-owner", "Otp", "Owner", "dup-login@example.com");
-    const created = await SELF.fetch("http://localhost/app/api/sessions", {
+    const created = await SELF.fetch("http://localhost/api/sessions", {
       method: "POST",
       headers: { ...owner.headers, "content-type": "application/json", accept: "application/json" },
       body: JSON.stringify({ title: "Reopened by Google" }),
@@ -175,11 +169,11 @@ describe("returning through a different login method", () => {
       "x-openfloor-dev-user-name": "Otp Owner",
     };
 
-    const sessionPage = await SELF.fetch(`http://localhost/app/session/${session.id}`, { headers: googleHeaders });
+    const sessionPage = await SELF.fetch(`http://localhost/session/${session.id}`, { headers: googleHeaders });
     expect(sessionPage.status).toBe(200);
     expect(await sessionPage.text()).toContain("Reopened by Google");
 
-    const floorPage = await SELF.fetch(`http://localhost/app/session/${session.id}/floor`, { headers: googleHeaders });
+    const floorPage = await SELF.fetch(`http://localhost/session/${session.id}/floor`, { headers: googleHeaders });
     expect(floorPage.status).toBe(200);
 
     const rows = await env.DB.prepare("SELECT COUNT(*) AS n FROM users WHERE email = ?").bind("dup-login@example.com").first<{ n: number }>();
@@ -188,7 +182,7 @@ describe("returning through a different login method", () => {
 
   it("still 404s for a genuine non-member with a different email", async () => {
     const owner = await onboardedUser("real-owner", "Real", "Owner", "real-owner@example.com");
-    const created = await SELF.fetch("http://localhost/app/api/sessions", {
+    const created = await SELF.fetch("http://localhost/api/sessions", {
       method: "POST",
       headers: { ...owner.headers, "content-type": "application/json", accept: "application/json" },
       body: JSON.stringify({ title: "Not shared" }),
@@ -196,21 +190,21 @@ describe("returning through a different login method", () => {
     const { session } = await created.json() as { session: { id: string } };
 
     const outsider = await onboardedUser("real-outsider", "Real", "Outsider", "real-outsider@example.com");
-    const response = await SELF.fetch(`http://localhost/app/session/${session.id}`, { headers: outsider.headers });
+    const response = await SELF.fetch(`http://localhost/session/${session.id}`, { headers: outsider.headers });
     expect(response.status).toBe(404);
   });
 
   it("404s for a session id that does not exist", async () => {
     const owner = await onboardedUser("missing-session-user", "Missing", "User", "missing-session@example.com");
-    const response = await SELF.fetch("http://localhost/app/session/does-not-exist", { headers: owner.headers });
+    const response = await SELF.fetch("http://localhost/session/does-not-exist", { headers: owner.headers });
     expect(response.status).toBe(404);
   });
 });
 
 describe("plan-limits UI", () => {
-  it("a new user's /app/home shows the free-tier copy", async () => {
+  it("a new user's /home shows the free-tier copy", async () => {
     const { headers } = await onboardedUser("plan-free-user", "Free", "User");
-    const response = await SELF.fetch("http://localhost/app/home", { headers });
+    const response = await SELF.fetch("http://localhost/home", { headers });
     expect(response.status).toBe(200);
     const html = await response.text();
     expect(html).toContain("Free plan");
@@ -223,21 +217,21 @@ describe("plan-limits UI", () => {
     await env.DB.prepare("INSERT INTO usage_months (owner_user_id, month, seconds) VALUES (?, ?, ?)")
       .bind(userId, month, 2 * 3600)
       .run();
-    const response = await SELF.fetch("http://localhost/app/home", { headers });
+    const response = await SELF.fetch("http://localhost/home", { headers });
     expect(response.status).toBe(200);
     const html = await response.text();
     expect(html).toContain("2h of monthly session time is used up");
-    expect(html).toContain('href="/app/settings?section=plan"');
+    expect(html).toContain('href="/settings?section=plan"');
     expect(html).not.toContain("buy.stripe.com");
   });
 
-  it("POST /app/api/sessions returns 403 with code quota_exhausted once the free cap is spent", async () => {
+  it("POST /api/sessions returns 403 with code quota_exhausted once the free cap is spent", async () => {
     const { userId, headers } = await onboardedUser("plan-exhausted-api-user", "ExhaustedApi", "User");
     const month = new Date().toISOString().slice(0, 7);
     await env.DB.prepare("INSERT INTO usage_months (owner_user_id, month, seconds) VALUES (?, ?, ?)")
       .bind(userId, month, 2 * 3600)
       .run();
-    const response = await SELF.fetch("http://localhost/app/api/sessions", {
+    const response = await SELF.fetch("http://localhost/api/sessions", {
       method: "POST",
       headers: { ...headers, "content-type": "application/json", accept: "application/json" },
       body: JSON.stringify({ title: "Should be refused" }),
@@ -250,7 +244,7 @@ describe("plan-limits UI", () => {
   it("an enterprise, active user renders the unlimited copy without crashing", async () => {
     const { userId, headers } = await onboardedUser("plan-enterprise-user", "Enterprise", "User");
     await env.DB.prepare("UPDATE users SET plan = 'enterprise', plan_status = 'active' WHERE id = ?").bind(userId).run();
-    const response = await SELF.fetch("http://localhost/app/home", { headers });
+    const response = await SELF.fetch("http://localhost/home", { headers });
     expect(response.status).toBe(200);
     const html = await response.text();
     expect(html).toContain("Enterprise plan");
@@ -261,9 +255,9 @@ describe("plan-limits UI", () => {
 });
 
 describe("settings page", () => {
-  it("an onboarded user's /app/settings renders their profile tab and ships usage data for the plan tab", async () => {
+  it("an onboarded user's /settings renders their profile tab and ships usage data for the plan tab", async () => {
     const { headers } = await onboardedUser("settings-user", "Settings", "User");
-    const response = await SELF.fetch("http://localhost/app/settings", { headers });
+    const response = await SELF.fetch("http://localhost/settings", { headers });
     expect(response.status).toBe(200);
     const html = await response.text();
     // The Profile tab (SegmentedControl's default) renders server-side.
@@ -278,7 +272,7 @@ describe("settings page", () => {
 
   it("renders self-serve Pro, Max, and Enterprise billing from the Plan tab", async () => {
     const { headers } = await onboardedUser("billing-settings-user", "Billing", "User");
-    const response = await SELF.fetch("http://localhost/app/settings?section=plan", { headers });
+    const response = await SELF.fetch("http://localhost/settings?section=plan", { headers });
     expect(response.status).toBe(200);
     const html = await response.text();
     expect(html).toContain("$30/seat/month");
@@ -289,7 +283,7 @@ describe("settings page", () => {
     expect(html).not.toContain("buy.stripe.com");
   });
 
-  it("an authenticated but not-yet-onboarded user is redirected to /app/onboarding", async () => {
+  it("an authenticated but not-yet-onboarded user is redirected to /onboarding", async () => {
     const headers = {
       accept: "text/html",
       host: "localhost",
@@ -297,10 +291,10 @@ describe("settings page", () => {
       "x-openfloor-dev-user-email": "settings-not-onboarded@example.com",
       "x-openfloor-dev-user-name": "Not Onboarded",
     };
-    const response = await SELF.fetch("http://localhost/app/settings", { headers, redirect: "manual" });
+    const response = await SELF.fetch("http://localhost/settings", { headers, redirect: "manual" });
     expect(response.status).toBeGreaterThanOrEqual(300);
     expect(response.status).toBeLessThan(400);
-    expect(response.headers.get("location")).toContain("/app/onboarding?return_to=%2Fapp%2Fsettings");
+    expect(response.headers.get("location")).toContain("/onboarding?return_to=%2Fsettings");
   });
 });
 
@@ -312,7 +306,7 @@ describe("plan-selection onboarding", () => {
       "x-openfloor-dev-user-email": "plan-choice-new@example.com",
       "x-openfloor-dev-user-name": "Plan Choice",
     };
-    const response = await SELF.fetch("http://localhost/app/onboarding?return_to=%2Fapp%2Fhome", { headers });
+    const response = await SELF.fetch("http://localhost/onboarding?return_to=%2Fhome", { headers });
     expect(response.status).toBe(200);
     const html = await response.text();
     expect(html).toContain("Choose your plan");
@@ -331,8 +325,8 @@ describe("plan-selection onboarding", () => {
     const form = new FormData();
     form.set("firstName", "Plan");
     form.set("lastName", "Missing");
-    form.set("returnTo", "/app/home");
-    const response = await SELF.fetch("http://localhost/app/api/account/onboarding", { method: "POST", headers, body: form });
+    form.set("returnTo", "/home");
+    const response = await SELF.fetch("http://localhost/api/account/onboarding", { method: "POST", headers, body: form });
     expect(response.status).toBe(400);
   });
 
@@ -346,14 +340,14 @@ describe("plan-selection onboarding", () => {
     const form = new FormData();
     form.set("firstName", "Fake");
     form.set("lastName", "Invite");
-    form.set("returnTo", "/app/join/fabricated.signature");
-    const response = await SELF.fetch("http://localhost/app/api/account/onboarding", { method: "POST", headers, body: form });
+    form.set("returnTo", "/join/fabricated.signature");
+    const response = await SELF.fetch("http://localhost/api/account/onboarding", { method: "POST", headers, body: form });
     expect(response.status).toBe(400);
   });
 
   it("gives a valid-invite signup Free automatically before explicit join", async () => {
     const owner = await onboardedUser("invite-plan-owner", "Invite", "Owner");
-    const created = await SELF.fetch("http://localhost/app/api/sessions", {
+    const created = await SELF.fetch("http://localhost/api/sessions", {
       method: "POST", headers: { ...owner.headers, "content-type": "application/json" },
       body: JSON.stringify({ title: "Invite plan room" }),
     });
@@ -365,7 +359,7 @@ describe("plan-selection onboarding", () => {
       "x-openfloor-dev-user-email": "invite-plan-new@example.com",
       "x-openfloor-dev-user-name": "Invite New",
     };
-    const onboardingUrl = `http://localhost/app/onboarding?return_to=${encodeURIComponent(invitePath)}`;
+    const onboardingUrl = `http://localhost/onboarding?return_to=${encodeURIComponent(invitePath)}`;
     const page = await SELF.fetch(onboardingUrl, { headers });
     expect(await page.text()).toContain("This invite includes a Free openfloor account");
 
@@ -373,7 +367,7 @@ describe("plan-selection onboarding", () => {
     form.set("firstName", "Invite");
     form.set("lastName", "New");
     form.set("returnTo", invitePath);
-    const completed = await SELF.fetch("http://localhost/app/api/account/onboarding", { method: "POST", headers, body: form });
+    const completed = await SELF.fetch("http://localhost/api/account/onboarding", { method: "POST", headers, body: form });
     expect(completed.status).toBe(200);
     expect(await completed.json()).toEqual({ url: invitePath });
     expect((await SELF.fetch(`http://localhost${invitePath}`, { headers })).status).toBe(200);

@@ -43,7 +43,7 @@ describe("GitHub webhook reconciliation", () => {
 });
 
 function webhookRequest(body: string, delivery: string, signature: string): Request {
-  return new Request("https://opnflr.com/app/webhooks/github", {
+  return new Request("https://app.opnflr.com/webhooks/github", {
     method: "POST",
     headers: { "content-type": "application/json", "x-github-event": "push", "x-github-delivery": delivery, "x-hub-signature-256": signature },
     body,

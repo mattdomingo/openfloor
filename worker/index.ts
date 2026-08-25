@@ -44,14 +44,9 @@ interface ExecutionContext {
   passThroughOnException(): void;
 }
 
-const BASE_PATH = "/app";
-
-async function serveAsset(request: Request, env: Env, url: URL): Promise<Response | null> {
+async function serveAsset(request: Request, env: Env): Promise<Response | null> {
   if (request.method !== "GET" && request.method !== "HEAD") return null;
-  if (url.pathname !== BASE_PATH && !url.pathname.startsWith(`${BASE_PATH}/`)) return null;
-  const stripped = new URL(url);
-  stripped.pathname = url.pathname.slice(BASE_PATH.length) || "/";
-  const asset = await env.ASSETS.fetch(new Request(stripped, request));
+  const asset = await env.ASSETS.fetch(request);
   return asset.status === 404 ? null : asset;
 }
 
@@ -72,7 +67,7 @@ const worker = {
       }, allowedWidths);
     }
 
-    const asset = await serveAsset(request, env, url);
+    const asset = await serveAsset(request, env);
     if (asset) return asset;
 
     const identityHeaders = new Headers(request.headers);

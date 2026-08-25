@@ -14,7 +14,7 @@ export default defineConfig({
   },
   webServer: {
     command: "node tests/e2e/server.mjs",
-    url: `${origin}/app`,
+    url: origin,
     reuseExistingServer: !process.env.CI,
     timeout: 60_000,
   },

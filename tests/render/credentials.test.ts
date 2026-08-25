@@ -21,8 +21,8 @@ async function onboardedUser(providerUserId: string, firstName: string, lastName
   form.set("firstName", firstName);
   form.set("lastName", lastName);
   form.set("plan", "free");
-  form.set("returnTo", "/app/home");
-  const onboarded = await SELF.fetch("http://localhost/app/api/account/onboarding", { method: "POST", headers, body: form });
+  form.set("returnTo", "/home");
+  const onboarded = await SELF.fetch("http://localhost/api/account/onboarding", { method: "POST", headers, body: form });
   expect(onboarded.status).toBe(200);
   const row = await env.DB.prepare("SELECT id FROM users WHERE chatgpt_user_id = ?").bind(providerUserId).first<{ id: string }>();
   if (!row) throw new Error("Onboarded user was not persisted");
@@ -35,26 +35,26 @@ function jsonHeaders(headers: Record<string, string>) {
 
 describe("provider credential routes", () => {
   it("requires authentication", async () => {
-    const list = await SELF.fetch("http://localhost/app/api/account/credentials");
+    const list = await SELF.fetch("http://localhost/api/account/credentials");
     expect(list.status).toBe(401);
-    const put = await SELF.fetch("http://localhost/app/api/account/credentials/anthropic", {
+    const put = await SELF.fetch("http://localhost/api/account/credentials/anthropic", {
       method: "PUT",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ apiKey: ACCEPTED_ANTHROPIC_KEY }),
     });
     expect(put.status).toBe(401);
-    const remove = await SELF.fetch("http://localhost/app/api/account/credentials/anthropic", { method: "DELETE" });
+    const remove = await SELF.fetch("http://localhost/api/account/credentials/anthropic", { method: "DELETE" });
     expect(remove.status).toBe(401);
   });
 
   it("connects, lists, and disconnects a credential without ever returning the key", async () => {
     const { userId, headers } = await onboardedUser("credentials-owner", "Cred", "Owner");
 
-    const empty = await SELF.fetch("http://localhost/app/api/account/credentials", { headers });
+    const empty = await SELF.fetch("http://localhost/api/account/credentials", { headers });
     expect(empty.status).toBe(200);
     expect(await empty.json()).toEqual({ credentials: [] });
 
-    const connected = await SELF.fetch("http://localhost/app/api/account/credentials/anthropic", {
+    const connected = await SELF.fetch("http://localhost/api/account/credentials/anthropic", {
       method: "PUT",
       headers: jsonHeaders(headers),
       body: JSON.stringify({ apiKey: ACCEPTED_ANTHROPIC_KEY }),
@@ -77,21 +77,21 @@ describe("provider credential routes", () => {
     expect(stored?.ciphertext).toBeTruthy();
     expect(stored?.ciphertext).not.toContain(ACCEPTED_ANTHROPIC_KEY);
 
-    const listed = await SELF.fetch("http://localhost/app/api/account/credentials", { headers });
+    const listed = await SELF.fetch("http://localhost/api/account/credentials", { headers });
     const listedText = await listed.text();
     expect(listedText).not.toContain(ACCEPTED_ANTHROPIC_KEY);
     expect((JSON.parse(listedText) as { credentials: unknown[] }).credentials).toHaveLength(1);
 
-    const removed = await SELF.fetch("http://localhost/app/api/account/credentials/anthropic", { method: "DELETE", headers });
+    const removed = await SELF.fetch("http://localhost/api/account/credentials/anthropic", { method: "DELETE", headers });
     expect(removed.status).toBe(204);
-    const afterDelete = await SELF.fetch("http://localhost/app/api/account/credentials", { headers });
+    const afterDelete = await SELF.fetch("http://localhost/api/account/credentials", { headers });
     expect(await afterDelete.json()).toEqual({ credentials: [] });
   });
 
   it("connects and disconnects the kimi and gemini providers through the same flow", async () => {
     const { headers } = await onboardedUser("credentials-new-providers", "Cred", "Newer");
     for (const [provider, apiKey] of [["kimi", ACCEPTED_KIMI_KEY], ["gemini", ACCEPTED_GEMINI_KEY]] as const) {
-      const connected = await SELF.fetch(`http://localhost/app/api/account/credentials/${provider}`, {
+      const connected = await SELF.fetch(`http://localhost/api/account/credentials/${provider}`, {
         method: "PUT",
         headers: jsonHeaders(headers),
         body: JSON.stringify({ apiKey }),
@@ -102,23 +102,23 @@ describe("provider credential routes", () => {
       expect(credential.fingerprint).toBe(apiKey.slice(-4));
       expect(credential.validatedAt).not.toBeNull();
     }
-    const rejected = await SELF.fetch("http://localhost/app/api/account/credentials/kimi", {
+    const rejected = await SELF.fetch("http://localhost/api/account/credentials/kimi", {
       method: "PUT",
       headers: jsonHeaders(headers),
       body: JSON.stringify({ apiKey: "sk-kimi-render-wrong" }),
     });
     expect(rejected.status).toBe(400);
     expect(((await rejected.json()) as { error: string }).error).toContain("Moonshot");
-    const removed = await SELF.fetch("http://localhost/app/api/account/credentials/gemini", { method: "DELETE", headers });
+    const removed = await SELF.fetch("http://localhost/api/account/credentials/gemini", { method: "DELETE", headers });
     expect(removed.status).toBe(204);
-    const list = await SELF.fetch("http://localhost/app/api/account/credentials", { headers });
+    const list = await SELF.fetch("http://localhost/api/account/credentials", { headers });
     expect(((await list.json()) as { credentials: Array<{ provider: string }> }).credentials.map((entry) => entry.provider)).toEqual(["kimi"]);
   });
 
   it("rejects invalid keys, invalid input, and unknown providers", async () => {
     const { headers } = await onboardedUser("credentials-reject", "Cred", "Reject");
 
-    const rejectedKey = await SELF.fetch("http://localhost/app/api/account/credentials/openai", {
+    const rejectedKey = await SELF.fetch("http://localhost/api/account/credentials/openai", {
       method: "PUT",
       headers: jsonHeaders(headers),
       body: JSON.stringify({ apiKey: "sk-openai-render-wrong" }),
@@ -126,14 +126,14 @@ describe("provider credential routes", () => {
     expect(rejectedKey.status).toBe(400);
     expect(((await rejectedKey.json()) as { error: string }).error).toContain("OpenAI");
 
-    const badInput = await SELF.fetch("http://localhost/app/api/account/credentials/openai", {
+    const badInput = await SELF.fetch("http://localhost/api/account/credentials/openai", {
       method: "PUT",
       headers: jsonHeaders(headers),
       body: JSON.stringify({ apiKey: "two tokens" }),
     });
     expect(badInput.status).toBe(400);
 
-    const unknownProvider = await SELF.fetch("http://localhost/app/api/account/credentials/mistral", {
+    const unknownProvider = await SELF.fetch("http://localhost/api/account/credentials/mistral", {
       method: "PUT",
       headers: jsonHeaders(headers),
       body: JSON.stringify({ apiKey: ACCEPTED_OPENAI_KEY }),
@@ -141,13 +141,13 @@ describe("provider credential routes", () => {
     expect(unknownProvider.status).toBe(404);
 
     // Nothing was stored by any of the rejected attempts.
-    const list = await SELF.fetch("http://localhost/app/api/account/credentials", { headers });
+    const list = await SELF.fetch("http://localhost/api/account/credentials", { headers });
     expect(await list.json()).toEqual({ credentials: [] });
   });
 
   it("shows the Connections section on /settings", async () => {
     const { headers } = await onboardedUser("credentials-settings", "Cred", "Settings");
-    const response = await SELF.fetch("http://localhost/app/settings", { headers });
+    const response = await SELF.fetch("http://localhost/settings", { headers });
     expect(response.status).toBe(200);
     const html = await response.text();
     expect(html).toContain("Connections");

@@ -67,7 +67,7 @@ describe("Cloudflare Access identity", () => {
   });
 
   it("replaces spoofed internal headers at the Worker handoff", () => {
-    const spoofed = new Request("https://opnflr.com/app/home", { headers: {
+    const spoofed = new Request("https://app.opnflr.com/home", { headers: {
       "x-openfloor-authenticated-user-id": "attacker",
       "x-openfloor-authenticated-user-email": "attacker@example.com",
     } });
