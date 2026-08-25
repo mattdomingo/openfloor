@@ -442,11 +442,16 @@ describe("plan-selection onboarding", () => {
 });
 
 describe("sign-out", () => {
-  it("clears the app-domain cookie and hands off to the team-domain Access logout", async () => {
+  it("clears the app-domain cookie and returns a page that ends the team-domain session client-side then lands on '/'", async () => {
     const response = await SELF.fetch("http://localhost/signout", { redirect: "manual" });
-    expect(response.status).toBe(302);
-    expect(response.headers.get("location")).toBe("https://openfloor-render-test.cloudflareaccess.com/cdn-cgi/access/logout");
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toMatch(/^text\/html\b/i);
     expect(response.headers.get("set-cookie")).toMatch(/^CF_Authorization=;.*Max-Age=0/);
+
+    const html = await response.text();
+    expect(html).toContain('"https://openfloor-render-test.cloudflareaccess.com/cdn-cgi/access/logout"');
+    expect(html).toContain('mode: "no-cors"');
+    expect(html).toContain('window.location.replace("/")');
   });
 });
 
