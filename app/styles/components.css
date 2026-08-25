@@ -149,6 +149,7 @@ input, textarea { width: 100%; padding: 11px 12px; border: 1px solid var(--line-
 .invite-empty { margin-bottom: var(--space-3); padding: var(--space-4); border: 1px dashed var(--line-strong); color: var(--text-tertiary); text-align: center; }
 .notice { padding: var(--space-3) var(--space-4); border-left: 3px solid var(--status-running); background: var(--status-running-soft); color: var(--text-secondary); font-size: var(--text-sm); line-height: 1.45; }
 .notice[data-tone="attention"] { border-left-color: var(--status-attention); background: var(--status-attention-soft); }
+.notice a { color: var(--accent); }
 
 .floor-panel { min-width: 0; overflow: hidden; border: 1px solid var(--line-strong); border-radius: var(--radius-md); background: var(--surface-panel); box-shadow: var(--elevation-1); }
 .floor-panel-heading { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); min-height: 72px; padding: var(--space-4) var(--space-5); border-bottom: 1px solid var(--line-soft); background: var(--surface-raised); }
