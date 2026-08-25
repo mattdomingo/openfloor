@@ -48,6 +48,7 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await expect.poll(() => connectGitHub.evaluate((button) => getComputedStyle(button, "::before").opacity)).toBe("1");
 
   await setupDialog.getByRole("button", { name: "Continue to model keys" }).click();
+  await expect(setupDialog.getByText(/No personal key is connected.*OpenAI server-key fallback/)).toBeVisible();
   const credentialRow = setupDialog.locator(".provider-credential-row").first();
   const credentialInput = credentialRow.locator("input");
   await expect(credentialRow).toHaveCSS("background-color", "rgb(211, 216, 223)");
@@ -166,6 +167,8 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await expect(owner.getByRole("navigation", { name: "Session location" }).getByRole("link", { name: "Release coordination" })).toBeVisible();
   await expect(owner.getByText("Member E.").first()).toBeVisible();
   await expect(owner.getByText("No agents yet")).toBeVisible();
+  await expect(owner.getByRole("region", { name: "Agent floor" }).getByRole("button", { name: "Auto agents on" })).toHaveAttribute("aria-pressed", "true");
+  await expect(member.getByRole("region", { name: "Agent floor" }).getByRole("button", { name: /Auto agents/ })).toHaveCount(0);
   await expect(owner.getByText("No prompts waiting")).toBeVisible();
   await expect(owner.getByText("No review available")).toHaveCount(0);
   await expect(owner.getByText(/Atlas|Nova|Sentry|Proof|OpenMind/)).toHaveCount(0);
@@ -249,6 +252,31 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await expect(member.getByRole("region", { name: "Agent floor" }).getByRole("tab", { name: "Lumen" })).toBeVisible();
   await expect(agentFloor.getByText(/server\/|app\/|tests\//)).toHaveCount(0);
 
+  await owner.getByRole("button", { name: "Queue settings" }).click();
+  await owner.getByRole("group", { name: "Queue settings" }).getByRole("button", { name: /^On openfloor assigns/ }).click();
+  for (const prompt of ["Hold persistent for auto provisioning", "Hold generated for auto provisioning"]) {
+    await owner.getByRole("combobox", { name: "Queue target" }).click();
+    await owner.getByRole("option", { name: "Auto" }).click();
+    await owner.getByLabel("Prompt to add to the queue").fill(prompt);
+    await owner.getByRole("button", { name: "Add to queue" }).click();
+  }
+  const persistentHold = owner.locator("li.queue-item", { hasText: "Hold persistent for auto provisioning" });
+  const generatedHold = owner.locator("li.queue-item", { hasText: "Hold generated for auto provisioning" });
+  await expect(persistentHold.getByText("running", { exact: true })).toBeVisible();
+  await expect(generatedHold.getByText("running", { exact: true })).toBeVisible();
+  await expect(agentFloor.getByRole("tab", { name: "Auto Worker, auto-generated" })).toBeVisible();
+  await agentFloor.getByRole("tab", { name: "Auto Worker, auto-generated" }).click();
+  await expect(agentFloor.getByText("Auto-generated", { exact: true })).toBeVisible();
+  await agentFloor.getByRole("button", { name: "Auto agents on" }).click();
+  await expect(agentFloor.getByRole("button", { name: "Auto agents off" })).toHaveAttribute("aria-pressed", "false");
+  await persistentHold.getByRole("button", { name: "Cancel", exact: true }).click();
+  await generatedHold.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(agentFloor.getByRole("tab", { name: "Auto Worker, auto-generated" })).toHaveCount(0);
+  await expect(agentFloor.getByRole("tab", { name: "Lumen" })).toBeVisible();
+  await agentFloor.getByRole("button", { name: "Auto agents off" }).click();
+  await owner.getByRole("button", { name: "Queue settings" }).click();
+  await owner.getByRole("group", { name: "Queue settings" }).getByRole("button", { name: /^Off Assign and run/ }).click();
+
   await owner.getByLabel("Prompt to add to the queue").fill("Document the next backend contract");
   await expect(owner.getByLabel("Prompt to add to the queue")).toHaveValue("Document the next backend contract");
   await owner.getByRole("button", { name: "Add to queue" }).click();
@@ -274,7 +302,8 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await owner.getByRole("option", { name: "Lumen" }).click();
   await owner.getByLabel("Prompt to add to the queue").fill("Inspect the real session contract");
   await owner.getByRole("button", { name: "Add to queue" }).click();
-  await expect(owner.locator(".queue-item").getByText("Inspect the real session contract", { exact: true })).toBeVisible();
+  const firstPublishedItem = owner.locator("li.queue-item", { hasText: "Inspect the real session contract" });
+  await expect(firstPublishedItem.getByText("Inspect the real session contract", { exact: true })).toBeVisible();
   await expect(member.locator(".queue-item").getByText("Inspect the real session contract", { exact: true })).toBeVisible();
   const inspectContractItem = owner.locator("li.queue-item", { hasText: "Inspect the real session contract" });
 
@@ -359,7 +388,8 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   const secondPublishedItem = owner.locator("li.queue-item", { hasText: "Create a second published change" });
   await secondPublishedItem.getByRole("button", { name: "Run", exact: true }).click();
   await expect(secondPublishedItem.getByText("integrated", { exact: true })).toBeVisible();
-  await expect(owner.locator("code.queue-run-branch")).toHaveCount(2);
+  await expect(firstPublishedItem.locator("code.queue-run-branch")).toHaveCount(1);
+  await expect(secondPublishedItem.locator("code.queue-run-branch")).toHaveCount(1);
   await owner.getByRole("button", { name: "Review" }).click();
   await expect(owner.getByText("second-change.ts", { exact: true })).toBeVisible();
   await expect(owner.getByRole("link", { name: /Draft PR #1/ })).toHaveCount(1);
