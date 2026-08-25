@@ -172,6 +172,17 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
 
   await owner.getByRole("button", { name: "Queue settings" }).click();
   const ownerQueueSettings = owner.getByRole("group", { name: "Queue settings" });
+  // Sessions now default to auto-dispatch on; this test exercises the
+  // manual "unassigned prompt, manual target, Run" path below, so turn it
+  // off first (mirroring the pre-fix default the rest of this journey
+  // assumes — every later run in this file is started by an explicit
+  // "Run" click, never automatic dispatch).
+  await expect(ownerQueueSettings.getByRole("button", { name: /^On/ })).toHaveAttribute("aria-pressed", "true");
+  // Choosing closes the menu, like the browser-alerts toggle below — reopen
+  // it to confirm the choice stuck.
+  await ownerQueueSettings.getByRole("button", { name: /^Off/ }).click();
+  await owner.getByRole("button", { name: "Queue settings" }).click();
+  await expect(ownerQueueSettings.getByRole("button", { name: /^Off/ })).toHaveAttribute("aria-pressed", "true");
   await expect(ownerQueueSettings.getByRole("button", { name: /^Automatic/ })).toHaveAttribute("aria-pressed", "true");
   await expect(ownerQueueSettings.getByRole("button", { name: /Browser conflict alerts off/ })).toHaveAttribute("aria-pressed", "false");
   await owner.keyboard.press("Escape");
@@ -243,8 +254,21 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await owner.getByRole("button", { name: "Add to queue" }).click();
   expect(pageErrors).toEqual([]);
   await expect(owner.locator(".queue-item").getByText("Document the next backend contract", { exact: true })).toBeVisible();
-  await expect(owner.getByText("Unassigned", { exact: true }).first()).toBeVisible();
   await expect(member.locator(".queue-item").getByText("Document the next backend contract", { exact: true })).toBeVisible();
+
+  // With auto-dispatch off, an unassigned prompt used to have no path to a
+  // Run button at all. The owner (who can manage it) sees a target menu in
+  // place of the static "Unassigned" chip since Lumen already exists;
+  // targeting it manually is what unblocks the Run button. The member
+  // can't manage this item (didn't author it, isn't the owner), so they
+  // still see the plain "Unassigned" chip, unaffected by the new control.
+  await expect(member.getByText("Unassigned", { exact: true }).first()).toBeVisible();
+  const unassignedItem = owner.locator("li.queue-item", { hasText: "Document the next backend contract" });
+  await expect(unassignedItem.getByRole("button", { name: "Run", exact: true })).toHaveCount(0);
+  await unassignedItem.getByRole("combobox", { name: "Queue target" }).click();
+  await owner.getByRole("option", { name: "Lumen" }).click();
+  await expect(unassignedItem.getByText("Unassigned", { exact: true })).toHaveCount(0);
+  await expect(unassignedItem.getByRole("button", { name: "Run", exact: true })).toBeVisible();
 
   await owner.getByRole("combobox", { name: "Queue target" }).click();
   await owner.getByRole("option", { name: "Lumen" }).click();
@@ -252,6 +276,7 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await owner.getByRole("button", { name: "Add to queue" }).click();
   await expect(owner.locator(".queue-item").getByText("Inspect the real session contract", { exact: true })).toBeVisible();
   await expect(member.locator(".queue-item").getByText("Inspect the real session contract", { exact: true })).toBeVisible();
+  const inspectContractItem = owner.locator("li.queue-item", { hasText: "Inspect the real session contract" });
 
   const teamPanel = owner.getByRole("region", { name: "Team" });
   await teamPanel.getByRole("button", { name: "Chat" }).click();
@@ -292,7 +317,11 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
 
   await owner.getByRole("button", { name: "Workspace" }).click();
   await expect(member.getByRole("button", { name: "Run", exact: true })).toHaveCount(0);
-  await owner.getByRole("button", { name: "Run", exact: true }).click();
+  // Scoped, not the bare "Run" button: "Document the next backend contract"
+  // (targeted earlier to demonstrate the manual-retarget path) is left
+  // queued and unrun for the rest of this test, so it also has a visible
+  // Run button now.
+  await inspectContractItem.getByRole("button", { name: "Run", exact: true }).click();
   await expect(owner.getByText("integrated", { exact: true }).first()).toBeVisible();
   await expect(agentFloor.getByText("1 changed file", { exact: false })).toBeVisible();
   await expect(agentFloor.getByText("Reviewing the requested change before editing.")).toBeVisible();

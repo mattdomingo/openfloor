@@ -77,7 +77,7 @@ async function readFloorSnapshot(sessionId: string, userId: string, database: D1
               q.created_at AS createdAt, q.updated_at AS updatedAt
        FROM floor_queue_items q
        LEFT JOIN floor_agents a ON a.id = q.agent_id
-       WHERE q.session_id = ?
+       WHERE q.session_id = ? AND q.dismissed_at IS NULL
        ORDER BY q.position, q.created_at, q.id`,
     ).bind(sessionId).all<QueueRecord>(),
     database.prepare(
@@ -388,7 +388,7 @@ export async function createFloorQueueItem(
     throw new FloorTargetError("Queue target must belong to this session.");
   }
   const last = await database.prepare(
-    "SELECT COALESCE(MAX(position), 0) AS position FROM floor_queue_items WHERE session_id = ?",
+    "SELECT COALESCE(MAX(position), 0) AS position FROM floor_queue_items WHERE session_id = ? AND dismissed_at IS NULL",
   ).bind(sessionId).first<{ position: number }>();
   const itemId = crypto.randomUUID();
   const now = Date.now();
@@ -454,7 +454,7 @@ export async function updateFloorQueuePrompt(
   const results = await database.batch([
     database.prepare(
       `UPDATE floor_queue_prompts SET text = ? WHERE id = ? AND queue_item_id = ?
-       AND EXISTS (SELECT 1 FROM floor_queue_items WHERE id = ? AND session_id = ? AND status IN ('queued', 'paused'))`,
+       AND EXISTS (SELECT 1 FROM floor_queue_items WHERE id = ? AND session_id = ? AND status IN ('queued', 'paused') AND dismissed_at IS NULL)`,
     ).bind(text, promptId, itemId, itemId, sessionId),
     database.prepare(`UPDATE floor_queue_items SET updated_at = ? WHERE id = ?`).bind(now, itemId),
     bumpFloorRevision(database, sessionId, now),
@@ -481,7 +481,7 @@ export async function setFloorQueueItemPaused(
   const results = await database.batch([
     database.prepare(
       `UPDATE floor_queue_items SET status = ?, updated_at = ? WHERE id = ? AND session_id = ?
-       AND status IN (${fromStatuses.map(() => "?").join(", ")})`,
+       AND status IN (${fromStatuses.map(() => "?").join(", ")}) AND dismissed_at IS NULL`,
     ).bind(paused ? "paused" : "queued", now, itemId, sessionId, ...fromStatuses),
     bumpFloorRevision(database, sessionId, now),
   ]);
@@ -492,6 +492,44 @@ export async function setFloorQueueItemPaused(
   return readFloorSnapshot(sessionId, userId, database);
 }
 
+// Gives an unassigned queued item a target so it can be Run manually — the
+// only other assigner is the router's assign phase, which never runs while
+// auto-dispatch is off, so a targetless prompt otherwise had no way to reach
+// a Run button (PromptQueue.tsx's Run condition requires item.agentId).
+export async function setFloorQueueItemAgent(
+  sessionId: string,
+  userId: string,
+  itemId: string,
+  agentId: string,
+  database = getDb(),
+): Promise<FloorSnapshot | null> {
+  if (!(await canManageQueueItem(sessionId, userId, itemId, database))) return null;
+  if (!(await isSessionAgent(sessionId, agentId, database))) {
+    throw new FloorTargetError("Queue target must belong to this session.");
+  }
+  const now = Date.now();
+  const results = await database.batch([
+    database.prepare(
+      `UPDATE floor_queue_items SET agent_id = ?, assigned_by = 'user', assigned_reason = NULL, updated_at = ?
+       WHERE id = ? AND session_id = ? AND status = 'queued' AND agent_id IS NULL AND dismissed_at IS NULL`,
+    ).bind(agentId, now, itemId, sessionId),
+    bumpFloorRevision(database, sessionId, now),
+  ]);
+  if (Number(results[0]?.meta?.changes ?? 0) === 0) {
+    if (!(await getActiveMembershipRole(sessionId, userId, database))) return null;
+    throw new FloorConflictError("This prompt already has a target, or is no longer queued.");
+  }
+  return readFloorSnapshot(sessionId, userId, database);
+}
+
+// Soft-delete: agent_runs.queue_item_id has no ON DELETE cascade (agent_runs
+// keeps four inbound cascades already — see its schema comment — so adding
+// one more here would force a table recreate against production data). A
+// failed/cancelled item always has a run row, so a hard DELETE on it raised
+// a raw FOREIGN KEY constraint failure, which the client misreported as
+// "The floor could not be reached." Dismissal preserves the run's audit
+// history and simply hides the item; every queue read and mutation guard
+// filters on dismissed_at IS NULL.
 export async function deleteFloorQueueItem(
   sessionId: string,
   userId: string,
@@ -499,16 +537,17 @@ export async function deleteFloorQueueItem(
   database = getDb(),
 ): Promise<FloorSnapshot | null> {
   if (!(await canManageQueueItem(sessionId, userId, itemId, database))) return null;
-  const item = await database.prepare("SELECT status FROM floor_queue_items WHERE id = ? AND session_id = ?")
-    .bind(itemId, sessionId).first<{ status: string }>();
+  const item = await database.prepare("SELECT status, dismissed_at AS dismissedAt FROM floor_queue_items WHERE id = ? AND session_id = ?")
+    .bind(itemId, sessionId).first<{ status: string; dismissedAt: number | null }>();
   if (!item) return null;
-  if (!["queued", "paused", "failed", "cancelled"].includes(item.status)) {
+  if (!["queued", "paused", "failed", "cancelled"].includes(item.status) || item.dismissedAt !== null) {
     throw new FloorConflictError("This prompt can no longer be removed.");
   }
   const remaining = (await queueIds(sessionId, database)).filter((id) => id !== itemId);
   const now = Date.now();
   const results = await database.batch([
-    database.prepare("DELETE FROM floor_queue_items WHERE id = ? AND session_id = ?").bind(itemId, sessionId),
+    database.prepare("UPDATE floor_queue_items SET dismissed_at = ?, updated_at = ? WHERE id = ? AND session_id = ? AND dismissed_at IS NULL")
+      .bind(now, now, itemId, sessionId),
     ...remaining.map((id, index) => database.prepare(
       `UPDATE floor_queue_items SET position = ?, updated_at = ? WHERE id = ? AND session_id = ?
        AND EXISTS (SELECT 1 FROM sessions WHERE id = ? AND ended_at IS NULL)`,
@@ -546,7 +585,7 @@ async function isSessionAgent(sessionId: string, agentId: string, database: D1Da
 
 async function queueIds(sessionId: string, database: D1DatabaseLike) {
   const result = await database.prepare(
-    "SELECT id FROM floor_queue_items WHERE session_id = ? ORDER BY position, created_at, id",
+    "SELECT id FROM floor_queue_items WHERE session_id = ? AND dismissed_at IS NULL ORDER BY position, created_at, id",
   ).bind(sessionId).all<{ id: string }>();
   return result.results.map((row) => row.id);
 }

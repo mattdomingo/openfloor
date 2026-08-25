@@ -250,8 +250,13 @@ export async function createSession(
   const now = Date.now();
 
   await database.batch([
+    // auto_dispatch named explicitly as 1: the SQL column default stays
+    // false (flipping db/schema.ts's .default(true) would make drizzle-kit
+    // emit a sessions table recreate, which drizzle/0019 documents as
+    // cascade-deleting session_members/session_invites/github_connection_states).
+    // Existing sessions get the same value via migration 0027's one-time backfill.
     database
-      .prepare("INSERT INTO sessions (id, title, objective, created_at, updated_at, objective_updated_at) VALUES (?, ?, ?, ?, ?, ?)")
+      .prepare("INSERT INTO sessions (id, title, objective, auto_dispatch, created_at, updated_at, objective_updated_at) VALUES (?, ?, ?, 1, ?, ?, ?)")
       .bind(sessionId, input.title, input.objective, now, now, now),
     database
       .prepare("INSERT INTO session_members (session_id, user_id, role, joined_at) VALUES (?, ?, 'owner', ?)")

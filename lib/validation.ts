@@ -13,6 +13,7 @@ export type ConflictAnswersInput = { answers: Array<{ questionId: string; answer
 export type QueueOrderInput = { itemIds: string[] };
 export type QueuePromptTextInput = { text: string };
 export type QueueItemPauseInput = { paused: boolean };
+export type QueueItemTargetInput = { agentId: string };
 export type RepositoryConnectionInput = { repositoryId: string; baseBranch: string; checkCommands: string[] };
 export type RepositoryCandidateInput = { name: string; description: string };
 export type ProfileInput = { firstName: string; lastName: string; githubHandle: string | null };
@@ -161,6 +162,15 @@ export function parseQueueItemPauseInput(value: unknown): QueueItemPauseInput | 
   const input = value as Record<string, unknown>;
   if (typeof input.paused !== "boolean") return null;
   return { paused: input.paused };
+}
+
+export function parseQueueItemTargetInput(value: unknown): QueueItemTargetInput | null {
+  if (!value || typeof value !== "object") return null;
+  const input = value as Record<string, unknown>;
+  if (typeof input.agentId !== "string") return null;
+  const agentId = input.agentId.trim();
+  if (!agentId || agentId.length > 100) return null;
+  return { agentId };
 }
 
 export function parseRepositoryConnectionInput(value: unknown): RepositoryConnectionInput | null {

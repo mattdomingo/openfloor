@@ -235,6 +235,36 @@ describe("D1 session persistence", () => {
     ]);
   });
 
+  it("defaults a new session to auto-dispatch on", async () => {
+    // Otherwise a prompt submitted with target "Auto" has no path to a Run
+    // button at all until an owner finds the queue's automation menu.
+    const owner = await upsertUser(identity("autodispatch-owner", "Owner"), env.DB);
+    const created = await createSession(owner.id, { title: "Auto room", objective: null }, env.DB);
+    const floor = await getFloorSnapshot(created.session.id, owner.id, env.DB);
+    expect(floor?.autoDispatch).toBe(true);
+  });
+
+  it("migration 0027's one-time backfill turns auto-dispatch on for live sessions only", async () => {
+    // Simulates a session created before auto_dispatch defaulted to true, plus
+    // an ended one that must NOT be turned on retroactively (AGENTS.md: an
+    // ended session is read-only). Mirrors drizzle/0027's UPDATE exactly.
+    const owner = await upsertUser(identity("backfill-owner", "Owner"), env.DB);
+    const live = await createSession(owner.id, { title: "Pre-existing live room", objective: null }, env.DB);
+    const ended = await createSession(owner.id, { title: "Pre-existing ended room", objective: null }, env.DB);
+    await env.DB.prepare("UPDATE sessions SET auto_dispatch = 0 WHERE id IN (?, ?)")
+      .bind(live.session.id, ended.session.id).run();
+    await endSession(ended.session.id, owner.id, "owner", env.DB);
+
+    await env.DB.prepare("UPDATE sessions SET auto_dispatch = 1 WHERE ended_at IS NULL").run();
+
+    const liveRow = await env.DB.prepare("SELECT auto_dispatch AS autoDispatch FROM sessions WHERE id = ?")
+      .bind(live.session.id).first<{ autoDispatch: number }>();
+    const endedRow = await env.DB.prepare("SELECT auto_dispatch AS autoDispatch FROM sessions WHERE id = ?")
+      .bind(ended.session.id).first<{ autoDispatch: number }>();
+    expect(liveRow?.autoDispatch).toBe(1);
+    expect(endedRow?.autoDispatch).toBe(0);
+  });
+
   it("accepts invites idempotently and enforces one membership", async () => {
     const owner = await upsertUser(identity("owner", "Owner"), env.DB);
     const member = await upsertUser(identity("member", "Member"), env.DB);

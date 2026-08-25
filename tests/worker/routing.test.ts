@@ -17,7 +17,10 @@ async function routingRoom(suffix: string, autoDispatch = true) {
   const member = await upsertUser(identity(`${suffix}-member`, "Member Example"), env.DB);
   const created = await createSession(owner.id, { title: `Routing ${suffix}`, objective: null }, env.DB);
   await acceptInvite(created.inviteId, member.id, env.DB);
-  if (autoDispatch) await setSessionAutoDispatch(created.session.id, owner.id, true, env.DB);
+  // Sessions now default to auto_dispatch = 1 (db/sessions.ts createSession),
+  // so the "off" case has to explicitly turn it back off rather than relying
+  // on the old false default.
+  await setSessionAutoDispatch(created.session.id, owner.id, autoDispatch, env.DB);
   return { sessionId: created.session.id, owner, member };
 }
 
@@ -415,7 +418,7 @@ describe("agent router tick", () => {
     const item = await queueItem(itemId);
     expect(item?.status).toBe("running");
     const run = await env.DB.prepare("SELECT id FROM agent_runs WHERE queue_item_id = ?").bind(itemId).first<{ id: string }>();
-    const outcome = await finishAgentReply(run!.id, "ready", "Hi! How can I help?", "Answered the prompt.", env.DB);
+    const outcome = await finishAgentReply(run!.id, "ready", "Hi! How can I help?", "Answered the prompt.", null, env.DB);
     expect(outcome).not.toBeNull();
     const finished = await queueItem(itemId);
     expect(finished?.status).toBe("completed");
