@@ -13,7 +13,7 @@ import {
   resolveRunModel,
   usesClaudeRunner,
 } from "@/lib/provider-credentials";
-import { validateProviderApiKey } from "@/lib/provider-validation";
+import { validateProviderApiKey, validateProviderOauthSecret } from "@/lib/provider-validation";
 
 describe("provider parsing and labels", () => {
   it("accepts only known providers", () => {
@@ -160,6 +160,28 @@ describe("connect-time key validation", () => {
     expect(calls[1].headers.authorization).toBe("Bearer sk-openai-key");
     expect(calls[2].url).toBe("https://api.z.ai/api/paas/v4/models");
     expect(calls[2].headers.authorization).toBe("Bearer zai-key");
+  });
+
+  it("validates a setup token against GET /v1/models with a plain Bearer — anthropic only", async () => {
+    const calls: Array<{ url: string; headers: Record<string, string> }> = [];
+    vi.stubGlobal("fetch", async (url: string, init: { headers: Record<string, string> }) => {
+      calls.push({ url, headers: init.headers });
+      return new Response("{}", { status: 200 });
+    });
+    expect(await validateProviderOauthSecret("anthropic", "sk-ant-oat01-tok")).toEqual({ ok: true });
+    expect(calls[0].url).toBe("https://api.anthropic.com/v1/models");
+    expect(calls[0].headers.authorization).toBe("Bearer sk-ant-oat01-tok");
+    expect(calls[0].headers["anthropic-version"]).toBeTruthy();
+    // No beta flag is needed for validation (Spike C rerun) — none is sent.
+    expect(calls[0].headers["anthropic-beta"]).toBeUndefined();
+    // No other provider has a free oauth probe: null, and no network call —
+    // the caller stores validated_at null instead of faking a timestamp.
+    expect(await validateProviderOauthSecret("openai", "bundle-json")).toBeNull();
+    expect(await validateProviderOauthSecret("kimi", "token")).toBeNull();
+    expect(calls).toHaveLength(1);
+    // The deterministic adapter covers oauth the same way it covers keys.
+    expect(await validateProviderOauthSecret("anthropic", "sk-good", { testAcceptedKeys: { anthropic: ["sk-good"] } })).toEqual({ ok: true });
+    expect(await validateProviderOauthSecret("anthropic", "sk-bad", { testAcceptedKeys: { anthropic: ["sk-good"] } })).toEqual({ ok: false, reason: "unauthorized" });
   });
 
   it("maps provider rejection and unreachability to distinct reasons", async () => {

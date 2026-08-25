@@ -9,7 +9,7 @@ import {
   parseCredentialProvider,
   providerLabel,
 } from "@/lib/provider-credentials";
-import { validateProviderApiKey } from "@/lib/provider-validation";
+import { validateProviderApiKey, validateProviderOauthSecret } from "@/lib/provider-validation";
 import { isApiError, requireApiUser } from "@/lib/server-auth";
 import { parseCredentialConnectInput } from "@/lib/validation";
 
@@ -30,17 +30,22 @@ export async function PUT(request: Request, { params }: { params: Promise<{ prov
   if (!credentialKindsForProvider(provider).includes(input.kind)) {
     return Response.json({ error: `${providerLabel(provider)} does not accept a subscription credential.` }, { status: 400 });
   }
-  // API keys validate against the provider's models endpoint on connect. A
-  // subscription credential has no equivalent free probe yet, so it stores
-  // with validated_at = null ("Connected — not yet verified") and the first
-  // run is the real validation. Never fake a validation timestamp.
+  // API keys validate against the provider's models endpoint on connect;
+  // a Claude setup token validates the same way (GET /v1/models, plain
+  // Bearer — Spike C rerun). Where no free probe exists (a ChatGPT auth
+  // bundle), the row stores validated_at = null ("Connected — not yet
+  // verified") and the first run is the real validation. Never fake a
+  // validation timestamp.
   let validatedAt: number | null = null;
-  if (input.kind === "api_key") {
-    const check = await validateProviderApiKey(provider, input.secret, { testAcceptedKeys: getTestProviderKeys() });
+  const check = input.kind === "api_key"
+    ? await validateProviderApiKey(provider, input.secret, { testAcceptedKeys: getTestProviderKeys() })
+    : await validateProviderOauthSecret(provider, input.secret, { testAcceptedKeys: getTestProviderKeys() });
+  if (check) {
     if (!check.ok) {
+      const noun = input.kind === "api_key" ? "API key" : "setup token";
       return check.reason === "unauthorized"
-        ? Response.json({ error: `${providerLabel(provider)} rejected that API key.` }, { status: 400 })
-        : Response.json({ error: `${providerLabel(provider)} could not be reached to verify the key. Try again.` }, { status: 502 });
+        ? Response.json({ error: `${providerLabel(provider)} rejected that ${noun}.` }, { status: 400 })
+        : Response.json({ error: `${providerLabel(provider)} could not be reached to verify the ${noun}. Try again.` }, { status: 502 });
     }
     validatedAt = Date.now();
   }

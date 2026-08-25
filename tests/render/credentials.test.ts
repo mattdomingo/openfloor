@@ -124,9 +124,17 @@ describe("provider credential routes", () => {
       body: JSON.stringify({ apiKey: ACCEPTED_ANTHROPIC_KEY }),
     });
     expect(key.status).toBe(200);
-    // A setup token has no free validation probe: stored encrypted with
-    // validated_at null ("Connected — not yet verified"), never a faked one.
-    const setupToken = "sk-ant-oat01-render-tok1";
+    // A setup token validates on connect (GET /v1/models, plain Bearer —
+    // Spike C rerun), so a good one stores a real validated_at and a bad one
+    // is a 400, exactly like an API key.
+    const rejectedSub = await SELF.fetch("http://localhost/api/account/credentials/anthropic", {
+      method: "PUT",
+      headers: jsonHeaders(headers),
+      body: JSON.stringify({ setupToken: "sk-ant-oat01-render-wrong" }),
+    });
+    expect(rejectedSub.status).toBe(400);
+    expect(((await rejectedSub.json()) as { error: string }).error).toContain("setup token");
+    const setupToken = "sk-ant-oat01-render-accepted";
     const sub = await SELF.fetch("http://localhost/api/account/credentials/anthropic", {
       method: "PUT",
       headers: jsonHeaders(headers),
@@ -137,12 +145,24 @@ describe("provider credential routes", () => {
     expect(subText).not.toContain(setupToken);
     const { credential } = JSON.parse(subText) as { credential: { kind: string; fingerprint: string; validatedAt: number | null } };
     expect(credential.kind).toBe("oauth");
-    expect(credential.fingerprint).toBe("tok1");
-    expect(credential.validatedAt).toBeNull();
-    // Both rows list deterministically, api_key first.
+    expect(credential.fingerprint).toBe(setupToken.slice(-4));
+    expect(credential.validatedAt).not.toBeNull();
+    // A ChatGPT auth bundle has no free probe: stored encrypted with
+    // validated_at null ("Connected — not yet verified"), never a faked one.
+    const bundle = await SELF.fetch("http://localhost/api/account/credentials/openai", {
+      method: "PUT",
+      headers: jsonHeaders(headers),
+      body: JSON.stringify({ authJson: JSON.stringify({ tokens: { account_id: "acct-render-1234", access_token: "at" } }) }),
+    });
+    expect(bundle.status).toBe(200);
+    const bundleCredential = ((await bundle.json()) as { credential: { kind: string; fingerprint: string; validatedAt: number | null } }).credential;
+    expect(bundleCredential.kind).toBe("oauth");
+    expect(bundleCredential.fingerprint).toBe("1234");
+    expect(bundleCredential.validatedAt).toBeNull();
+    // Rows list deterministically: by provider, then kind.
     const listed = await SELF.fetch("http://localhost/api/account/credentials", { headers });
     expect(((await listed.json()) as { credentials: Array<{ provider: string; kind: string }> }).credentials
-      .map((entry) => `${entry.provider}:${entry.kind}`)).toEqual(["anthropic:api_key", "anthropic:oauth"]);
+      .map((entry) => `${entry.provider}:${entry.kind}`)).toEqual(["anthropic:api_key", "anthropic:oauth", "openai:oauth"]);
     // Providers without a subscription kind refuse it.
     const refused = await SELF.fetch("http://localhost/api/account/credentials/kimi", {
       method: "PUT",
@@ -150,11 +170,13 @@ describe("provider credential routes", () => {
       body: JSON.stringify({ setupToken }),
     });
     expect(refused.status).toBe(400);
-    // Disconnect is kind-scoped: the subscription goes, the API key stays.
+    // Disconnect is kind-scoped: the anthropic subscription goes, the
+    // anthropic API key and the openai bundle stay.
     expect((await SELF.fetch("http://localhost/api/account/credentials/anthropic?kind=bogus", { method: "DELETE", headers })).status).toBe(404);
     expect((await SELF.fetch("http://localhost/api/account/credentials/anthropic?kind=oauth", { method: "DELETE", headers })).status).toBe(204);
     const after = await SELF.fetch("http://localhost/api/account/credentials", { headers });
-    expect(((await after.json()) as { credentials: Array<{ kind: string }> }).credentials.map((entry) => entry.kind)).toEqual(["api_key"]);
+    expect(((await after.json()) as { credentials: Array<{ provider: string; kind: string }> }).credentials
+      .map((entry) => `${entry.provider}:${entry.kind}`)).toEqual(["anthropic:api_key", "openai:oauth"]);
   });
 
   it("rejects invalid keys, invalid input, and unknown providers", async () => {

@@ -19,7 +19,7 @@ export default defineConfig({
           CF_ACCESS_TEAM_DOMAIN: "https://openfloor-render-test.cloudflareaccess.com",
           CREDENTIAL_ENCRYPTION_KEY: "render-test-credential-encryption-key",
           OPENFLOOR_TEST_PROVIDER_KEYS: JSON.stringify({
-            anthropic: ["sk-ant-render-accepted"],
+            anthropic: ["sk-ant-render-accepted", "sk-ant-oat01-render-accepted"],
             openai: ["sk-openai-render-accepted"],
             kimi: ["sk-kimi-render-accepted"],
             gemini: ["AIza-gemini-render-accepted"],

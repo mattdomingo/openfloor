@@ -444,7 +444,7 @@ function ProviderCredentialRow({ provider, kind, credential, onChanged }: {
           )}
           <div className="form-actions">
             <button className="button" data-variant="primary" data-size="sm" disabled={!secret.trim() || busy}>
-              {busy ? (kind === "api_key" ? "Verifying…" : "Connecting…") : "Connect"}
+              {busy ? (bundle ? "Connecting…" : "Verifying…") : "Connect"}
             </button>
           </div>
         </form>

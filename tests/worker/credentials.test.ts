@@ -644,12 +644,16 @@ describe("OpenAI gateway credential resolution", () => {
     await connectKey(owner.id, "anthropic", "sk-ant-oat01-gwbb", "oauth");
     const apiKeyRun = await kindAgentRun(sessionId, owner.id, "KeyAgent", "api_key");
     const oauthRun = await kindAgentRun(sessionId, owner.id, "SubAgent", "oauth");
-    const captured: Array<string | null> = [];
+    const captured: Array<{ apiKey: string | null; bearer: string | null; beta: string | null }> = [];
     vi.stubGlobal("fetch", async (_url: string, init: { headers: Headers }) => {
-      captured.push(init.headers.get("x-api-key"));
+      captured.push({
+        apiKey: init.headers.get("x-api-key"),
+        bearer: init.headers.get("authorization"),
+        beta: init.headers.get("anthropic-beta"),
+      });
       return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
     });
-    async function callGateway(runId: string) {
+    async function callGateway(runId: string, clientBeta?: string) {
       const token = await signRunGatewayToken(
         { runId, sessionId, repositoryId: "repo", candidateSha: "sha-run", operation: "anthropic" },
         GATEWAY_SECRET,
@@ -657,17 +661,35 @@ describe("OpenAI gateway credential resolution", () => {
       return postAnthropicGateway(
         new Request("https://app.opnflr.com/runtime/anthropic/v1/messages", {
           method: "POST",
-          headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+          headers: {
+            authorization: `Bearer ${token}`,
+            "content-type": "application/json",
+            ...(clientBeta ? { "anthropic-beta": clientBeta } : {}),
+          },
           body: JSON.stringify({ model: "claude-opus-5" }),
         }),
         { params: Promise.resolve({ path: ["v1", "messages"] }) },
       );
     }
-    expect((await callGateway(apiKeyRun)).status).toBe(200);
+    expect((await callGateway(apiKeyRun, "claude-code-20250219")).status).toBe(200);
+    expect((await callGateway(oauthRun, "claude-code-20250219,interleaved-thinking-2025-05-14")).status).toBe(200);
+    // Same owner, same provider, two agents — each run resolved the
+    // credential its agent named, in that credential's native auth form:
+    // the API key as x-api-key, the setup token as a Bearer with the oauth
+    // beta flag MERGED after the client's own flags (never overwriting them,
+    // and never the incidental extended-cache-ttl flag).
+    expect(captured[0]).toEqual({ apiKey: "sk-ant-api03-gwaa", bearer: null, beta: "claude-code-20250219" });
+    expect(captured[1]).toEqual({
+      apiKey: null,
+      bearer: "Bearer sk-ant-oat01-gwbb",
+      beta: "claude-code-20250219,interleaved-thinking-2025-05-14,oauth-2025-04-20",
+    });
+    // A client that already carries the oauth flag does not get a duplicate;
+    // a client with no beta header gets exactly the flag.
+    expect((await callGateway(oauthRun, "oauth-2025-04-20,claude-code-20250219")).status).toBe(200);
+    expect(captured[2].beta).toBe("oauth-2025-04-20,claude-code-20250219");
     expect((await callGateway(oauthRun)).status).toBe(200);
-    // Same owner, same provider, two agents, two different secrets on the
-    // wire — each run resolved the credential its agent named.
-    expect(captured).toEqual(["sk-ant-api03-gwaa", "sk-ant-oat01-gwbb"]);
+    expect(captured[3].beta).toBe("oauth-2025-04-20");
     // Disconnect the subscription: the subscription-bound agent refuses with
     // the actionable message — never the api_key row, never the server key —
     // while the api_key agent keeps running.
@@ -677,8 +699,46 @@ describe("OpenAI gateway credential resolution", () => {
     expect(refused.status).toBe(503);
     expect(await refused.text()).toContain("This agent is set to use your Anthropic subscription, which is not connected");
     expect((await callGateway(apiKeyRun)).status).toBe(200);
-    expect(captured).toEqual(["sk-ant-api03-gwaa", "sk-ant-oat01-gwbb", "sk-ant-api03-gwaa"]);
+    expect(captured[4]).toEqual({ apiKey: "sk-ant-api03-gwaa", bearer: null, beta: null });
     delete (env as unknown as Record<string, unknown>).ANTHROPIC_API_KEY;
+  });
+
+  it("forwards retry-after and the anthropic-ratelimit-* family to the run", async () => {
+    const { sessionId, owner, runId } = await runningRun("ratelimit");
+    await connectKey(owner.id, "anthropic", "sk-ant-owner-rlkey");
+    vi.stubGlobal("fetch", async () =>
+      new Response("{}", {
+        status: 429,
+        headers: {
+          "content-type": "application/json",
+          "retry-after": "42",
+          "anthropic-ratelimit-unified-status": "allowed_warning",
+          "anthropic-ratelimit-unified-5h-utilization": "0.97",
+          "anthropic-ratelimit-requests-remaining": "3",
+          "x-internal-secret": "never-forward",
+        },
+      }));
+    const token = await signRunGatewayToken(
+      { runId, sessionId, repositoryId: "repo", candidateSha: "sha-run", operation: "anthropic" },
+      GATEWAY_SECRET,
+    );
+    const response = await postAnthropicGateway(
+      new Request("https://app.opnflr.com/runtime/anthropic/v1/messages", {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+        body: "{}",
+      }),
+      { params: Promise.resolve({ path: ["v1", "messages"] }) },
+    );
+    // A subscription limit reaches the run as an actionable failure — the
+    // vendor's status, its retry hint, and the unified utilization family —
+    // never as an opaque 429; unrelated upstream headers stay behind.
+    expect(response.status).toBe(429);
+    expect(response.headers.get("retry-after")).toBe("42");
+    expect(response.headers.get("anthropic-ratelimit-unified-status")).toBe("allowed_warning");
+    expect(response.headers.get("anthropic-ratelimit-unified-5h-utilization")).toBe("0.97");
+    expect(response.headers.get("anthropic-ratelimit-requests-remaining")).toBe("3");
+    expect(response.headers.get("x-internal-secret")).toBeNull();
   });
 
   it("refuses an oauth credential on a provider that does not allow the kind", async () => {
