@@ -4,6 +4,7 @@ import {
   createFloorAgent,
   createFloorMessage,
   createFloorQueueItem,
+  deleteFloorQueueItem,
   FloorConflictError,
   FloorTargetError,
   getFloorSnapshot,
@@ -32,6 +33,30 @@ function agentInput(ownerUserId: string, name = "Lumen") {
   const input = parseAgentInput({ name, role: "Researcher", task: "Map the API", ownerUserId });
   if (!input) throw new Error("Invalid test agent");
   return input;
+}
+
+/** Minimal scaffolding + a 'failed' agent_runs row bound to an existing queue
+    item — reproduces the exact shape that used to make deleteFloorQueueItem
+    raise a FOREIGN KEY constraint failure (agent_runs.queue_item_id has no
+    ON DELETE cascade). */
+async function insertFailedRun(sessionId: string, agentId: string, userId: string, queueItemId: string): Promise<string> {
+  const now = Date.now();
+  const connectionId = crypto.randomUUID();
+  await env.DB.prepare(
+    `INSERT INTO repository_connections (id, session_id, installation_id, repository_id, repository_node_id, repository_owner, repository_name, repository_full_name, repository_private, default_branch, base_branch, status, connected_by, connected_at, updated_at)
+     VALUES (?, ?, 'inst', 'repo', 'node', 'owner', 'name', 'owner/name', 1, 'main', 'main', 'ready', ?, ?, ?)`,
+  ).bind(connectionId, sessionId, userId, now, now).run();
+  const candidateId = crypto.randomUUID();
+  await env.DB.prepare(
+    `INSERT INTO repository_candidates (id, session_id, connection_id, branch_name, base_branch, base_sha, status, created_by, created_at, updated_at)
+     VALUES (?, ?, ?, 'candidate', 'main', 'sha-base', 'active', ?, ?, ?)`,
+  ).bind(candidateId, sessionId, connectionId, userId, now, now).run();
+  const runId = crypto.randomUUID();
+  await env.DB.prepare(
+    `INSERT INTO agent_runs (id, session_id, queue_item_id, agent_id, candidate_id, candidate_sha, attempt, status, model, sandbox_id, created_by, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, 'sha-run', 1, 'failed', 'test-model', 'sandbox', ?, ?, ?)`,
+  ).bind(runId, sessionId, queueItemId, agentId, candidateId, userId, now, now).run();
+  return runId;
 }
 
 describe("D1 persistent floor", () => {
@@ -81,6 +106,31 @@ describe("D1 persistent floor", () => {
     expect(floor!.queue.map((item) => item.id)).toEqual(reversed);
 
     await expect(createFloorQueueItem(room.sessionId, room.owner.id, { prompt: "Wrong target", agentId: "missing" }, env.DB)).rejects.toBeInstanceOf(FloorTargetError);
+  });
+
+  it("soft-deletes a failed prompt that still has an agent_runs row, preserving the run", async () => {
+    const room = await floorRoom("delete-failed");
+    let floor = await createFloorAgent(room.sessionId, room.owner.id, agentInput(room.owner.id), env.DB);
+    const agentId = floor!.agents[0].id;
+    floor = await createFloorQueueItem(room.sessionId, room.owner.id, { prompt: "Will fail", agentId }, env.DB);
+    const failedItemId = floor!.queue[0].id;
+    floor = await createFloorQueueItem(room.sessionId, room.owner.id, { prompt: "Stays queued", agentId }, env.DB);
+    const survivingItemId = floor!.queue.find((item) => item.id !== failedItemId)!.id;
+    await env.DB.prepare("UPDATE floor_queue_items SET status = 'failed' WHERE id = ?").bind(failedItemId).run();
+    const runId = await insertFailedRun(room.sessionId, agentId, room.owner.id, failedItemId);
+
+    // Before the fix this raised a raw FOREIGN KEY constraint failure — an
+    // unhandled error that usePersistentFloorData's client misreported as
+    // "The floor could not be reached."
+    floor = await deleteFloorQueueItem(room.sessionId, room.owner.id, failedItemId, env.DB);
+    expect(floor).not.toBeNull();
+    expect(floor!.queue.map((item) => item.id)).toEqual([survivingItemId]);
+    expect(floor!.queue[0].position).toBe(1);
+
+    const run = await env.DB.prepare("SELECT id, status FROM agent_runs WHERE id = ?").bind(runId).first<{ id: string; status: string }>();
+    expect(run).toEqual({ id: runId, status: "failed" });
+
+    await expect(deleteFloorQueueItem(room.sessionId, room.owner.id, failedItemId, env.DB)).rejects.toBeInstanceOf(FloorConflictError);
   });
 
   it("persists assignments and protects direct messages from other members", async () => {

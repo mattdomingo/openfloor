@@ -154,14 +154,14 @@ export async function runRoutingTick(
   const [queueResult, promptResult, agentResult, activityResult, globalCount] = await Promise.all([
     database.prepare(
       `SELECT id, agent_id AS agentId, assigned_by AS assignedBy, intent, position
-       FROM floor_queue_items WHERE session_id = ? AND status = 'queued'
+       FROM floor_queue_items WHERE session_id = ? AND status = 'queued' AND dismissed_at IS NULL
        ORDER BY position, created_at, id`,
     ).bind(sessionId).all<QueueRow>(),
     database.prepare(
       `SELECT p.queue_item_id AS queueItemId, p.text
        FROM floor_queue_prompts p
        JOIN floor_queue_items q ON q.id = p.queue_item_id
-       WHERE q.session_id = ? AND q.status = 'queued'
+       WHERE q.session_id = ? AND q.status = 'queued' AND q.dismissed_at IS NULL
        ORDER BY p.created_at, p.id`,
     ).bind(sessionId).all<{ queueItemId: string; text: string }>(),
     database.prepare(

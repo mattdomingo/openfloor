@@ -271,6 +271,12 @@ export const floorQueueItems = sqliteTable(
     // Set once by the router's classifyPrompt (db/routing.ts) in the same
     // guarded assignment UPDATE that sets agentId/assignedBy/assignedReason.
     intent: text("intent", { enum: ["task", "question", "noise"] }),
+    // Soft-delete marker: a removed prompt is dismissed, not deleted, because
+    // agent_runs.queue_item_id has no ON DELETE cascade (a hard delete on a
+    // run-bearing item raises a FOREIGN KEY constraint failure — run audit
+    // history must survive). Null means still live; every queue read and
+    // mutation guard filters WHERE dismissed_at IS NULL.
+    dismissedAt: integer("dismissed_at"),
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
   },
