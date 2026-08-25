@@ -25,7 +25,7 @@ const githubTestData = JSON.stringify({
 });
 const wranglerConfig = "tests/e2e/wrangler.jsonc";
 const agentRunTestData = process.env.OPENFLOOR_TEST_AGENT_RUN_DATA ?? JSON.stringify({
-  holdPrompts: ["Hold for cancellation"],
+  holdPrompts: ["Hold for cancellation", "Hold persistent for auto provisioning", "Hold generated for auto provisioning"],
   failPrompts: ["intentionally failing"],
   conflictFirstAttemptPrompts: [
     "deliberate integration conflict",

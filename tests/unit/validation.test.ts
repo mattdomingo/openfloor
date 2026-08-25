@@ -173,8 +173,12 @@ describe("merge conflict input validation", () => {
   it("preserves omitted routing settings and requires at least one setting", () => {
     expect(parseRoutingSettingsInput({ autoResolveConflicts: false })).toEqual({ autoResolveConflicts: false });
     expect(parseRoutingSettingsInput({ autoDispatch: true, autoResolveConflicts: false })).toEqual({ autoDispatch: true, autoResolveConflicts: false });
+    expect(parseRoutingSettingsInput({ autoProvisionAgents: false, autoAgentProvider: "gemini" })).toEqual({ autoProvisionAgents: false, autoAgentProvider: "gemini" });
+    expect(parseRoutingSettingsInput({ autoAgentProvider: null })).toEqual({ autoAgentProvider: null });
     expect(parseRoutingSettingsInput({})).toBeNull();
     expect(parseRoutingSettingsInput({ autoResolveConflicts: "yes" })).toBeNull();
+    expect(parseRoutingSettingsInput({ autoProvisionAgents: "true" })).toBeNull();
+    expect(parseRoutingSettingsInput({ autoAgentProvider: "unknown" })).toBeNull();
   });
 
   it("bounds resolver questions and exact member answers", () => {

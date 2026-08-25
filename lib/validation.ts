@@ -4,10 +4,11 @@ export type SessionInput = { title: string; objective: string | null };
 export type ObjectiveInput = { objective: string | null };
 export type AgentInput = { name: string; nameKey: string; role: string; task: string; ownerUserId: string; provider: CredentialProvider };
 export type AgentTaskInput = { task: string };
+export type AgentPauseInput = { paused: boolean };
 export type AssignmentInput = { task: string | null };
 export type MessageInput = { text: string; recipientUserId: string | null };
 export type QueuePromptInput = { prompt: string; agentId: string | null };
-export type RoutingSettingsInput = { autoDispatch?: boolean; autoResolveConflicts?: boolean };
+export type RoutingSettingsInput = { autoDispatch?: boolean; autoProvisionAgents?: boolean; autoAgentProvider?: CredentialProvider | null; autoResolveConflicts?: boolean };
 export type ConflictInputRequest = { explanation: string; questions: string[] };
 export type ConflictAnswersInput = { answers: Array<{ questionId: string; answer: string }> };
 export type QueueOrderInput = { itemIds: string[] };
@@ -105,11 +106,15 @@ export function parseQueuePromptInput(value: unknown): QueuePromptInput | null {
 export function parseRoutingSettingsInput(value: unknown): RoutingSettingsInput | null {
   if (!value || typeof value !== "object") return null;
   const input = value as Record<string, unknown>;
-  if (input.autoDispatch === undefined && input.autoResolveConflicts === undefined) return null;
+  if (input.autoDispatch === undefined && input.autoProvisionAgents === undefined && input.autoAgentProvider === undefined && input.autoResolveConflicts === undefined) return null;
   if (input.autoDispatch !== undefined && typeof input.autoDispatch !== "boolean") return null;
+  if (input.autoProvisionAgents !== undefined && typeof input.autoProvisionAgents !== "boolean") return null;
+  if (input.autoAgentProvider !== undefined && input.autoAgentProvider !== null && parseCredentialProvider(input.autoAgentProvider) === null) return null;
   if (input.autoResolveConflicts !== undefined && typeof input.autoResolveConflicts !== "boolean") return null;
   return {
     ...(typeof input.autoDispatch === "boolean" ? { autoDispatch: input.autoDispatch } : {}),
+    ...(typeof input.autoProvisionAgents === "boolean" ? { autoProvisionAgents: input.autoProvisionAgents } : {}),
+    ...(input.autoAgentProvider === null ? { autoAgentProvider: null } : parseCredentialProvider(input.autoAgentProvider) ? { autoAgentProvider: parseCredentialProvider(input.autoAgentProvider)! } : {}),
     ...(typeof input.autoResolveConflicts === "boolean" ? { autoResolveConflicts: input.autoResolveConflicts } : {}),
   };
 }
@@ -158,6 +163,13 @@ export function parseQueuePromptTextInput(value: unknown): QueuePromptTextInput 
 }
 
 export function parseQueueItemPauseInput(value: unknown): QueueItemPauseInput | null {
+  if (!value || typeof value !== "object") return null;
+  const input = value as Record<string, unknown>;
+  if (typeof input.paused !== "boolean") return null;
+  return { paused: input.paused };
+}
+
+export function parseAgentPauseInput(value: unknown): AgentPauseInput | null {
   if (!value || typeof value !== "object") return null;
   const input = value as Record<string, unknown>;
   if (typeof input.paused !== "boolean") return null;

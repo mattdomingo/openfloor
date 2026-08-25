@@ -4,7 +4,9 @@ openfloor is a persistent multiplayer session shell for teams coordinating agent
 
 Members enter a session at `/app/session/[id]`, then continue to the authenticated workspace at `/app/session/[id]/floor`. A new floor starts empty. Everything shown comes from the session, persisted member actions, or a connected backend; openfloor does not seed sample agents, prompts, files, checks, or review candidates.
 
-Creating a session sends its owner to `/session/[id]?setup=1` and opens the lobby’s two-step setup: connect and enable the required GitHub repository, then optionally connect the owner’s model-provider API keys. “Set up later” leaves the lobby usable and removes the query state. Provider keys remain per-user: a run uses its agent owner’s connected key, then the configured server key, and otherwise refuses clearly. Returning members never enter this creation flow automatically, and entering the live floor still requires the existing repository-ready invariant.
+Creating a session sends its owner to `/session/[id]?setup=1` and opens the lobby’s two-step setup: connect and enable the required GitHub repository, then optionally connect the owner’s model-provider API keys and choose the default for generated agents. One connected, rollout-enabled provider is selected automatically; multiple require an explicit default; zero use the existing OpenAI owner-key/server-key/refuse ladder. “Set up later” leaves the lobby usable and removes the query state. Provider keys remain per-user. Returning members never enter this creation flow automatically, and entering the live floor still requires the existing repository-ready invariant.
+
+The Agent Floor keeps persistent user-created agents and **New agent** unchanged. When the owner enables both auto-dispatch and **Auto agents**, routing assigns idle persistent agents first, then activates durable generated workers for additional tasks. Generated workers and Concierge carry an **Auto-generated** badge, retire when idle, and are reused without losing queue/run attribution. Concierge handles only read-only reply runs and can never publish code changes. Automated scheduling is capped at 15 active runs per session and 30 globally.
 
 ## Local development
 
@@ -36,10 +38,10 @@ Open the URL printed by the server, normally [http://localhost:3000](http://loca
 To exercise the product manually:
 
 1. Open `/home` and create a session.
-2. Confirm the owner-only setup dialog opens. Connect a repository and create its candidate branch; optionally connect provider API keys, or choose **Set up later** and reopen **Setup** from the lobby.
+2. Confirm the owner-only setup dialog opens. Connect a repository and create its candidate branch; connect or choose the generated-agent provider when applicable, or choose **Set up later** and reopen **Setup** from the lobby.
 3. Click **Enter agent floor**. Without a ready repository, confirm only the focused repository-required dialog opens.
 4. Confirm the floor shows the real session title, objective, and your online presence.
-5. Create a named agent, add assigned or unassigned prompts, edit an assignment, and use team chat. Reload and confirm they persist.
+5. Confirm **New agent** still creates a persistent named agent. Turn on auto-dispatch and **Auto agents**, add more unassigned tasks than idle persistent agents, and confirm generated workers appear with badges and disappear after work finishes.
 6. Open Review and confirm it remains empty until a genuine agent run records changed files.
 7. In Queue settings, confirm **Automatically resolve merge conflicts** is on by default and browser alerts remain off until explicitly enabled.
 8. Use **Session settings** to return to the lobby.

@@ -34,7 +34,7 @@ export class SessionRouter extends DurableObject {
     try {
       const outcome = await runRoutingTick(sessionId, trigger, { startRun: startQueueItemRun, startConflictResolution: startConflictResolverRun, disabledProviders: disabledRunProviders() });
       if (outcome.revision !== null) {
-        await notifyFloorChanged(sessionId, outcome.revision, ["queue", "runs"]);
+        await notifyFloorChanged(sessionId, outcome.revision, ["agents", "queue", "runs"]);
       }
       if (outcome.held) {
         const misses = ((await this.ctx.storage.get<number>("misses")) ?? 0) + 1;
@@ -50,7 +50,7 @@ export class SessionRouter extends DurableObject {
         await this.ctx.storage.put("trigger", "alarm");
         const followUp = await runRoutingTick(sessionId, "alarm", { startRun: startQueueItemRun, startConflictResolution: startConflictResolverRun, disabledProviders: disabledRunProviders() });
         if (followUp.revision !== null) {
-          await notifyFloorChanged(sessionId, followUp.revision, ["queue", "runs"]);
+          await notifyFloorChanged(sessionId, followUp.revision, ["agents", "queue", "runs"]);
         }
         if (followUp.held || followUp.acted) {
           await this.ctx.storage.setAlarm(Date.now() + 1_000);

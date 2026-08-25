@@ -57,7 +57,8 @@ export async function createAgentRun(sessionId: string, queueItemId: string, use
   if ((await getActiveMembershipRole(sessionId, userId, database)) !== "owner") throw new AgentRunNotReadyError("Session not found");
   const context = await database.prepare(
     `SELECT q.id AS queueItemId, q.status AS queueStatus, q.agent_id AS agentId,
-            a.provider AS agentProvider, a.model AS agentModel,
+            a.provider AS agentProvider, a.model AS agentModel, a.kind AS agentKind,
+            a.deprovisioned_at AS agentDeprovisionedAt,
             rc.id AS connectionId, rc.status AS connectionStatus,
             c.id AS candidateId, c.candidate_sha AS candidateSha, c.remote_candidate_sha AS remoteCandidateSha
      FROM floor_queue_items q
@@ -67,7 +68,7 @@ export async function createAgentRun(sessionId: string, queueItemId: string, use
      WHERE q.session_id = ? AND q.id = ?`,
   ).bind(sessionId, queueItemId).first<{
     queueItemId: string; queueStatus: string; agentId: string | null; agentProvider: CredentialProvider | null;
-    agentModel: string | null; connectionId: string | null;
+    agentModel: string | null; agentKind: "answer" | "worker" | null; agentDeprovisionedAt: number | null; connectionId: string | null;
     connectionStatus: string | null; candidateId: string | null; candidateSha: string | null; remoteCandidateSha: string | null;
   }>();
   if (!context) throw new AgentRunNotReadyError("Queue item not found");
@@ -75,6 +76,12 @@ export async function createAgentRun(sessionId: string, queueItemId: string, use
   if (context.queueStatus !== "queued") throw new AgentRunConflictError("This queue item is not ready to run");
   if (!context.connectionId || context.connectionStatus !== "ready" || !context.candidateId || !context.candidateSha || context.remoteCandidateSha !== context.candidateSha) {
     throw new AgentRunNotReadyError("Synchronize a ready, unmodified candidate before starting an agent run");
+  }
+  const effectiveKind: "task" | "reply" = context.agentKind === "answer" ? "reply" : kind;
+  if (context.agentDeprovisionedAt !== null && context.agentKind) {
+    await database.prepare(
+      "UPDATE floor_agents SET deprovisioned_at = NULL, updated_at = ? WHERE id = ? AND session_id = ? AND kind IN ('answer', 'worker')",
+    ).bind(Date.now(), context.agentId, sessionId).run();
   }
   const commands = await database.prepare(
     "SELECT position, command FROM repository_check_commands WHERE connection_id = ? ORDER BY position",
@@ -87,7 +94,7 @@ export async function createAgentRun(sessionId: string, queueItemId: string, use
   // the placeholder name here would leave the UI pointing at a branch that
   // doesn't exist in git. Same reasoning skips its check rows below: the
   // workflow's reply path never runs required checks.
-  const runBranch = kind === "reply" ? null : `openfloor/${sessionId.slice(0, 8)}/run/${id.slice(0, 8)}`;
+  const runBranch = effectiveKind === "reply" ? null : `openfloor/${sessionId.slice(0, 8)}/run/${id.slice(0, 8)}`;
   const now = Date.now();
   try {
     await database.batch([
@@ -97,8 +104,8 @@ export async function createAgentRun(sessionId: string, queueItemId: string, use
           workflow_instance_id, sandbox_id, created_by, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'provisioning', ?, ?, ?, ?, ?, ?, ?)`,
       ).bind(id, sessionId, queueItemId, context.agentId, context.candidateId, context.candidateSha, runBranch, attempt,
-        resolveRunModel(context.agentProvider ?? "openai", context.agentModel), kind === "reply" ? "reply" : null, id, `run-${id}`, userId, now, now),
-      ...(kind === "reply" ? [] : commands.results.map((check) => database.prepare(
+        resolveRunModel(context.agentProvider ?? "openai", context.agentModel), effectiveKind === "reply" ? "reply" : null, id, `run-${id}`, userId, now, now),
+      ...(effectiveKind === "reply" ? [] : commands.results.map((check) => database.prepare(
         `INSERT INTO agent_run_checks (id, run_id, position, command, status, updated_at)
          VALUES (?, ?, ?, ?, 'pending', ?)`,
       ).bind(crypto.randomUUID(), id, Number(check.position), check.command, now))),

@@ -3,6 +3,7 @@ import type { AuthenticatedIdentity } from "@/lib/identity";
 import { currentMonth, effectivePlan, effectiveSeatLimit, PLAN_LIMITS, type Plan, type PlanStatus } from "@/lib/plans";
 import type { AppUser, RemovedSessionMember, SessionMember, SessionRole, SessionSummary } from "@/lib/session-types";
 import { getDb, type D1DatabaseLike } from "./index";
+import type { CredentialProvider } from "@/lib/provider-credentials";
 
 // Re-exported so existing importers (worker/presence.ts, tests) don't need
 // to churn — the model itself lives in lib/plans.ts, which (unlike this
@@ -25,6 +26,8 @@ type SessionRecord = {
   archivedAt: number | null;
   activeSeconds: number;
   lockedAt: number | null;
+  autoProvisionAgents: number | boolean;
+  autoAgentProvider: CredentialProvider | null;
 };
 
 export class SessionEndedError extends Error {
@@ -32,6 +35,8 @@ export class SessionEndedError extends Error {
     super("This session has ended.");
   }
 }
+
+export class SessionRoutingError extends Error {}
 
 export type InvitePreview = {
   inviteId: string;
@@ -228,7 +233,8 @@ export async function listSessionsForUser(userId: string, database = getDb()): P
               COUNT(all_members.user_id) AS memberCount,
               s.created_at AS createdAt, s.updated_at AS updatedAt, s.objective_updated_at AS objectiveUpdatedAt,
               s.ended_at AS endedAt, s.ended_reason AS endedReason,
-              mine.archived_at AS archivedAt, s.active_seconds AS activeSeconds, s.locked_at AS lockedAt
+              mine.archived_at AS archivedAt, s.active_seconds AS activeSeconds, s.locked_at AS lockedAt,
+              s.auto_provision_agents AS autoProvisionAgents, s.auto_agent_provider AS autoAgentProvider
        FROM sessions s
        JOIN session_members mine ON mine.session_id = s.id AND mine.user_id = ? AND mine.removed_at IS NULL
        JOIN session_members all_members ON all_members.session_id = s.id AND all_members.removed_at IS NULL
@@ -281,6 +287,8 @@ export async function createSession(
       archivedAt: null,
       activeSeconds: 0,
       lockedAt: null,
+      autoProvisionAgents: true,
+      autoAgentProvider: null,
     },
     inviteId,
   };
@@ -297,7 +305,8 @@ export async function getSessionForMember(
               COUNT(all_members.user_id) AS memberCount,
               s.created_at AS createdAt, s.updated_at AS updatedAt, s.objective_updated_at AS objectiveUpdatedAt,
               s.ended_at AS endedAt, s.ended_reason AS endedReason,
-              mine.archived_at AS archivedAt, s.active_seconds AS activeSeconds, s.locked_at AS lockedAt
+              mine.archived_at AS archivedAt, s.active_seconds AS activeSeconds, s.locked_at AS lockedAt,
+              s.auto_provision_agents AS autoProvisionAgents, s.auto_agent_provider AS autoAgentProvider
        FROM sessions s
        JOIN session_members mine ON mine.session_id = s.id AND mine.user_id = ? AND mine.removed_at IS NULL
        JOIN session_members all_members ON all_members.session_id = s.id AND all_members.removed_at IS NULL
@@ -617,18 +626,29 @@ export async function revokeInvite(
 export async function setSessionRoutingSettings(
   sessionId: string,
   ownerId: string,
-  input: { autoDispatch?: boolean; autoResolveConflicts?: boolean },
+  input: { autoDispatch?: boolean; autoProvisionAgents?: boolean; autoAgentProvider?: CredentialProvider | null; autoResolveConflicts?: boolean },
   database = getDb(),
 ): Promise<boolean> {
   if ((await getActiveMembershipRole(sessionId, ownerId, database)) !== "owner") return false;
+  if (input.autoAgentProvider) {
+    const credential = await database.prepare(
+      "SELECT 1 AS present FROM user_provider_credentials WHERE user_id = ? AND provider = ?",
+    ).bind(ownerId, input.autoAgentProvider).first<{ present: number }>();
+    if (!credential) throw new SessionRoutingError("Connect that provider key before selecting it for generated agents.");
+  }
   const result = await database.prepare(
     `UPDATE sessions SET
        auto_dispatch = COALESCE(?, auto_dispatch),
+       auto_provision_agents = COALESCE(?, auto_provision_agents),
+       auto_agent_provider = CASE WHEN ? = 1 THEN ? ELSE auto_agent_provider END,
        auto_resolve_conflicts = COALESCE(?, auto_resolve_conflicts),
        floor_revision = floor_revision + 1, updated_at = ?
      WHERE id = ? AND ended_at IS NULL`,
   ).bind(
     input.autoDispatch === undefined ? null : input.autoDispatch ? 1 : 0,
+    input.autoProvisionAgents === undefined ? null : input.autoProvisionAgents ? 1 : 0,
+    input.autoAgentProvider === undefined ? 0 : 1,
+    input.autoAgentProvider ?? null,
     input.autoResolveConflicts === undefined ? null : input.autoResolveConflicts ? 1 : 0,
     Date.now(), sessionId,
   ).run();
@@ -986,5 +1006,5 @@ export async function hourQuotaExhausted(userId: string, database = getDb()): Pr
 }
 
 function normalizeSession(record: SessionRecord): SessionSummary {
-  return { ...record, memberCount: Number(record.memberCount) };
+  return { ...record, memberCount: Number(record.memberCount), autoProvisionAgents: Boolean(record.autoProvisionAgents) };
 }

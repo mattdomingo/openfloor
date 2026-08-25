@@ -24,6 +24,43 @@ export async function listProviderCredentials(
   return rows.results;
 }
 
+export type AutoAgentProviderResolution = {
+  configuredProvider: CredentialProvider | null;
+  effectiveProvider: CredentialProvider | null;
+  state: "selected" | "single_connected" | "openai_fallback" | "selection_required";
+};
+
+/** Resolve generated-agent provider policy without exposing credential data. */
+export async function resolveAutoAgentProvider(
+  sessionId: string,
+  database: D1DatabaseLike = getDb(),
+  disabledProviders: ReadonlySet<CredentialProvider> = new Set(),
+): Promise<AutoAgentProviderResolution> {
+  const session = await database.prepare(
+    `SELECT s.auto_agent_provider AS configuredProvider, owner.user_id AS ownerUserId
+     FROM sessions s
+     JOIN session_members owner ON owner.session_id = s.id AND owner.role = 'owner' AND owner.removed_at IS NULL
+     WHERE s.id = ?`,
+  ).bind(sessionId).first<{ configuredProvider: CredentialProvider | null; ownerUserId: string }>();
+  if (!session) return { configuredProvider: null, effectiveProvider: null, state: "selection_required" };
+  const credentials = await database.prepare(
+    "SELECT provider FROM user_provider_credentials WHERE user_id = ? ORDER BY provider",
+  ).bind(session.ownerUserId).all<{ provider: CredentialProvider }>();
+  const enabledCredentials = credentials.results
+    .map((credential) => credential.provider)
+    .filter((provider) => !disabledProviders.has(provider));
+  if (session.configuredProvider && enabledCredentials.includes(session.configuredProvider)) {
+    return { configuredProvider: session.configuredProvider, effectiveProvider: session.configuredProvider, state: "selected" };
+  }
+  if (enabledCredentials.length === 0) {
+    return { configuredProvider: null, effectiveProvider: "openai", state: "openai_fallback" };
+  }
+  if (enabledCredentials.length === 1) {
+    return { configuredProvider: null, effectiveProvider: enabledCredentials[0], state: "single_connected" };
+  }
+  return { configuredProvider: null, effectiveProvider: null, state: "selection_required" };
+}
+
 export async function upsertProviderCredential(
   userId: string,
   provider: CredentialProvider,

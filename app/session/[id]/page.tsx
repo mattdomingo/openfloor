@@ -7,7 +7,7 @@ import { listSessionMcpServersForMember } from "@/db/mcp-servers";
 import { listSessionSkillsForMember } from "@/db/skills";
 import { listProviderCredentials } from "@/db/provider-credentials";
 import { SessionScreen } from "@/components/product/SessionScreen";
-import { disabledRunProviders } from "@/lib/agent-run-start";
+import { disabledRunProviders } from "@/lib/provider-rollout";
 import { CREDENTIAL_PROVIDERS } from "@/lib/provider-credentials";
 import { env } from "cloudflare:workers";
 

@@ -118,12 +118,29 @@ describe("server rendering", () => {
     expect(response.status).toBe(200);
     const html = await response.text();
     expect(html).toContain("No agents yet");
+    expect(html).toContain('class="chip auto-agent-toggle" data-selected="true" aria-pressed="true"');
+    expect(html).toContain("New agent");
     expect(html).toContain("No prompts waiting");
     expect(html).toContain("Teammate drafts");
     expect(html).toContain("Everyone");
     expect(html).toContain("Typing");
     expect(html).toContain("Hidden");
     expect(html).not.toMatch(/Atlas|Nova|Sentry|Proof|OpenMind|server\/session\/reducer/i);
+
+    const generatedId = crypto.randomUUID();
+    await env.DB.prepare(
+      `INSERT INTO floor_agents
+         (id, session_id, created_by, owner_user_id, name, name_key, role, task, state, provider, kind, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'Auto Worker', 'auto worker', 'Auto-provisioned engineer', 'Implement real work', 'created', 'openai', 'worker', ?, ?)`,
+    ).bind(generatedId, session.id, owner.id, owner.id, now, now).run();
+    const generatedHtml = await (await SELF.fetch(`http://localhost/session/${session.id}/floor`, { headers: authenticatedHeaders })).text();
+    expect(generatedHtml).toContain("Auto-generated");
+    expect(generatedHtml).toContain('aria-label="Auto Worker, auto-generated"');
+    expect(generatedHtml).toContain("New agent");
+
+    await env.DB.prepare("UPDATE floor_agents SET deprovisioned_at = ? WHERE id = ?").bind(Date.now(), generatedId).run();
+    const retiredHtml = await (await SELF.fetch(`http://localhost/session/${session.id}/floor`, { headers: authenticatedHeaders })).text();
+    expect(retiredHtml).not.toContain('aria-label="Auto Worker, auto-generated"');
   });
 });
 

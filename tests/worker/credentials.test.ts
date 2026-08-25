@@ -9,9 +9,10 @@ import {
   deleteProviderCredential,
   getRunAgentOwnerCredential,
   listProviderCredentials,
+  resolveAutoAgentProvider,
   upsertProviderCredential,
 } from "@/db/provider-credentials";
-import { acceptInvite, createSession, deleteAccount, removeMember, upsertUser } from "@/db/sessions";
+import { acceptInvite, createSession, deleteAccount, removeMember, SessionRoutingError, setSessionRoutingSettings, upsertUser } from "@/db/sessions";
 import { encryptCredential } from "@/lib/credential-crypto";
 import { signRunGatewayToken } from "@/lib/runtime-token";
 import { parseAgentInput } from "@/lib/validation";
@@ -120,6 +121,45 @@ describe("provider credential persistence", () => {
     expect(await deleteProviderCredential(user.id, "openai", env.DB)).toBe(true);
     expect(await deleteProviderCredential(user.id, "openai", env.DB)).toBe(false);
     expect(await listProviderCredentials(user.id, env.DB)).toHaveLength(0);
+  });
+
+  it("resolves generated-agent defaults from connected, rollout-enabled owner keys", async () => {
+    const { sessionId, owner } = await room("auto-provider");
+    expect(await resolveAutoAgentProvider(sessionId, env.DB)).toEqual({
+      configuredProvider: null, effectiveProvider: "openai", state: "openai_fallback",
+    });
+
+    await connectKey(owner.id, "anthropic", "sk-ant-auto-one");
+    expect(await resolveAutoAgentProvider(sessionId, env.DB)).toEqual({
+      configuredProvider: null, effectiveProvider: "anthropic", state: "single_connected",
+    });
+    expect(await resolveAutoAgentProvider(sessionId, env.DB, new Set(["anthropic"]))).toEqual({
+      configuredProvider: null, effectiveProvider: "openai", state: "openai_fallback",
+    });
+
+    await connectOpenAiKey(owner.id, "sk-openai-auto-two");
+    expect(await resolveAutoAgentProvider(sessionId, env.DB)).toEqual({
+      configuredProvider: null, effectiveProvider: null, state: "selection_required",
+    });
+    await setSessionRoutingSettings(sessionId, owner.id, { autoAgentProvider: "anthropic" }, env.DB);
+    expect(await resolveAutoAgentProvider(sessionId, env.DB)).toEqual({
+      configuredProvider: "anthropic", effectiveProvider: "anthropic", state: "selected",
+    });
+
+    await deleteProviderCredential(owner.id, "anthropic", env.DB);
+    expect(await resolveAutoAgentProvider(sessionId, env.DB)).toEqual({
+      configuredProvider: null, effectiveProvider: "openai", state: "single_connected",
+    });
+  });
+
+  it("keeps generated-agent provider changes owner-only and requires a connected key", async () => {
+    const { sessionId, owner, member } = await room("auto-provider-auth");
+    const outsider = await upsertUser(identity("auto-provider-outsider", "Outsider"), env.DB);
+    await expect(setSessionRoutingSettings(sessionId, member.id, { autoAgentProvider: "openai" }, env.DB)).resolves.toBe(false);
+    await expect(setSessionRoutingSettings(sessionId, outsider.id, { autoAgentProvider: "openai" }, env.DB)).resolves.toBe(false);
+    await expect(setSessionRoutingSettings(sessionId, owner.id, { autoAgentProvider: "openai" }, env.DB)).rejects.toBeInstanceOf(SessionRoutingError);
+    await connectOpenAiKey(owner.id, "sk-openai-owner-selection");
+    await expect(setSessionRoutingSettings(sessionId, owner.id, { autoAgentProvider: "openai" }, env.DB)).resolves.toBe(true);
   });
 
   it("resolves only the agent owner's credential for a provider", async () => {

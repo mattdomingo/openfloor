@@ -1,13 +1,14 @@
 import { getDb, type D1DatabaseLike } from "./index";
-import { ensureAnswerAgent } from "./floor";
+import { deprovisionIdleGeneratedAgents, ensureAnswerAgent, ensureWorkerAgent } from "./floor";
 import type { StartRunResult } from "@/lib/agent-run-start";
 import { getPendingConflict, type PendingConflict } from "./conflicts";
 import type { PromptIntent } from "@/lib/floor-types";
+import { resolveAutoAgentProvider } from "./provider-credentials";
 
-export const GLOBAL_RUN_BUDGET = 5;
-export const SESSION_RUN_CAP = 2;
+export const GLOBAL_RUN_BUDGET = 30;
+export const SESSION_RUN_CAP = 15;
 
-const ACTIVE_RUN_STATUSES = "('provisioning', 'running', 'checking', 'cancel_requested')";
+const ACTIVE_RUN_STATUSES = "('provisioning', 'running', 'checking', 'ready', 'publishing', 'published', 'integrating', 'cancel_requested')";
 
 export type RoutingTrigger = "enqueue" | "run_completed" | "toggle" | "agent_changed" | "alarm";
 
@@ -31,6 +32,7 @@ type AgentRow = {
   role: string;
   task: string;
   provider: string;
+  kind: "answer" | "worker" | null;
   createdAt: number;
 };
 
@@ -108,8 +110,8 @@ export async function runRoutingTick(
   database: D1DatabaseLike = getDb(),
 ): Promise<TickOutcome> {
   const session = await database.prepare(
-    "SELECT auto_dispatch AS autoDispatch, auto_resolve_conflicts AS autoResolveConflicts, ended_at AS endedAt FROM sessions WHERE id = ?",
-  ).bind(sessionId).first<{ autoDispatch: number; autoResolveConflicts: number; endedAt: number | null }>();
+    "SELECT auto_dispatch AS autoDispatch, auto_provision_agents AS autoProvisionAgents, auto_resolve_conflicts AS autoResolveConflicts, ended_at AS endedAt FROM sessions WHERE id = ?",
+  ).bind(sessionId).first<{ autoDispatch: number; autoProvisionAgents: number; autoResolveConflicts: number; endedAt: number | null }>();
   if (!session || session.endedAt !== null) {
     return { acted: false, held: false, revision: null };
   }
@@ -149,7 +151,25 @@ export async function runRoutingTick(
       // leaves the case visible but must not halt other agents' queued work.
     }
   }
-  if (!session.autoDispatch) return { acted: false, held: false, revision: null };
+  const lifecycleChanged = await deprovisionIdleGeneratedAgents(sessionId, Boolean(session.autoProvisionAgents), database);
+  if (!session.autoDispatch) {
+    if (!lifecycleChanged) return { acted: false, held: false, revision: null };
+    const now = Date.now();
+    await database.prepare("UPDATE sessions SET floor_revision = floor_revision + 1, updated_at = ? WHERE id = ? AND ended_at IS NULL").bind(now, sessionId).run();
+    const revision = await database.prepare("SELECT floor_revision AS revision FROM sessions WHERE id = ?").bind(sessionId).first<{ revision: number }>();
+    return { acted: true, held: false, revision: Number(revision?.revision ?? 0) };
+  }
+
+  const providerResolution = session.autoProvisionAgents
+    ? await resolveAutoAgentProvider(
+        sessionId,
+        database,
+        deps.disabledProviders as ReadonlySet<import("@/lib/provider-credentials").CredentialProvider> | undefined,
+      )
+    : null;
+  const generatedProvider = providerResolution?.effectiveProvider ?? null;
+  const providerDisabled = generatedProvider ? (deps.disabledProviders?.has(generatedProvider) ?? false) : false;
+  const canProvision = Boolean(session.autoProvisionAgents && generatedProvider && !providerDisabled);
 
   const [queueResult, promptResult, agentResult, activityResult, globalCount] = await Promise.all([
     database.prepare(
@@ -165,8 +185,8 @@ export async function runRoutingTick(
        ORDER BY p.created_at, p.id`,
     ).bind(sessionId).all<{ queueItemId: string; text: string }>(),
     database.prepare(
-      `SELECT id, name, role, task, provider, created_at AS createdAt FROM floor_agents
-       WHERE session_id = ? ORDER BY created_at, id`,
+      `SELECT id, name, role, task, provider, kind, created_at AS createdAt FROM floor_agents
+       WHERE session_id = ? AND deprovisioned_at IS NULL AND paused_at IS NULL ORDER BY created_at, id`,
     ).bind(sessionId).all<AgentRow>(),
     database.prepare(
       `SELECT agent_id AS agentId,
@@ -206,7 +226,7 @@ export async function runRoutingTick(
     reason: string;
     candidates: CandidateSnapshot[];
   }> = [];
-  let changedQueueOrRuns = false;
+  let changedQueueOrRuns = lifecycleChanged;
   let held = false;
 
   // Every queued item's intent, computed once whether or not it was already
@@ -216,26 +236,52 @@ export async function runRoutingTick(
   for (const item of queue) {
     intentByItem.set(item.id, item.intent ?? classifyPrompt((promptsByItem.get(item.id) ?? []).join(" ")));
   }
-  let answerAgentId: string | null = null;
-  async function resolveAnswerAgent(): Promise<string> {
-    if (!answerAgentId) answerAgentId = await ensureAnswerAgent(sessionId, ownerUserId, database);
+  let answerAgentId: string | null = agents.find((agent) => agent.kind === "answer")?.id ?? null;
+  async function resolveAnswerAgent(): Promise<string | null> {
+    if (!canProvision || !generatedProvider) return null;
+    if (!answerAgentId) {
+      const provisioned = await ensureAnswerAgent(sessionId, ownerUserId, generatedProvider, database);
+      answerAgentId = provisioned.id;
+      if (provisioned.changed) {
+        changedQueueOrRuns = true;
+        agents.push({ id: provisioned.id, name: provisioned.name, role: "Session answers", task: "Answer questions about this session and its repository.", provider: generatedProvider, kind: "answer", createdAt: now });
+      }
+    }
     return answerAgentId;
   }
 
   // --- Assign phase: give every unassigned queued item an agent. ---
   const unassigned = queue.filter((item) => item.agentId === null);
-  const unassignedTaskItems = unassigned.filter((item) => intentByItem.get(item.id) === "task");
-  if (unassignedTaskItems.length > 0 && agents.length === 0) {
-    decisions.push({ queueItemId: null, agentId: null, runId: null, decision: "held", reason: "No agents exist in this session", candidates: [] });
-    held = true;
-  }
+  const taskAgents = agents.filter((agent) => agent.kind !== "answer");
+  const routingCapacity = Math.max(0, Math.min(SESSION_RUN_CAP - sessionActive, GLOBAL_RUN_BUDGET - globalActive));
   if (unassigned.length > 0) {
-    const claimedThisTick = new Set<string>();
+    // Existing targeted/router assignments get the first available slots.
+    // Seeding the set prevents us from provisioning workers that cannot
+    // dispatch in this tick, and also keeps another item off the same agent.
+    const claimedThisTick = new Set(
+      queue
+        .filter((item) => item.agentId && !busyAgents.has(item.agentId))
+        .filter((item) => {
+          const agent = agents.find((candidate) => candidate.id === item.agentId);
+          return !agent || !(deps.disabledProviders?.has(agent.provider) ?? false);
+        })
+        .map((item) => item.agentId!),
+    );
     for (const item of unassigned) {
       const intent = intentByItem.get(item.id) ?? "task";
 
       if (intent !== "task") {
         const agentId = await resolveAnswerAgent();
+        if (!agentId) {
+          const reason = providerResolution?.state === "selection_required"
+            ? "Choose a default generated-agent provider"
+            : providerDisabled
+              ? "The generated-agent provider is not enabled"
+              : "Automatic agent provisioning is off";
+          decisions.push({ queueItemId: item.id, agentId: null, runId: null, decision: "held", reason, candidates: [] });
+          held = true;
+          continue;
+        }
         const reason = intent === "question"
           ? "Question — routed to the session answer agent"
           : "Not a task — routed to the session answer agent";
@@ -247,15 +293,16 @@ export async function runRoutingTick(
         item.agentId = agentId;
         item.assignedBy = "router";
         item.intent = intent;
+        claimedThisTick.add(agentId);
         changedQueueOrRuns = true;
         decisions.push({ queueItemId: item.id, agentId, runId: null, decision: "assigned", reason, candidates: [] });
         continue;
       }
 
-      if (agents.length === 0) continue; // already recorded as held above
+      let availableAgents = taskAgents;
 
       const promptTokens = tokenize((promptsByItem.get(item.id) ?? []).join(" "));
-      const candidates: CandidateSnapshot[] = agents.map((agent) => {
+      let candidates: CandidateSnapshot[] = availableAgents.map((agent) => {
         const agentTokens = tokenize(`${agent.role} ${agent.task}`);
         let overlap = 0;
         const matched: string[] = [];
@@ -276,9 +323,35 @@ export async function runRoutingTick(
           why: matched.length > 0 ? `matched: ${matched.join(", ")}` : busy ? "busy" : providerDisabled ? "provider disabled" : "idle",
         };
       });
-      // Prefer idle, enabled agents; fall back to the rest (assignment is not dispatch).
-      const pool = candidates.filter((candidate) => candidate.eligible);
-      const ranked = (pool.length > 0 ? pool : candidates).slice().sort((a, b) => {
+      // Persistent agents are the first elastic tier. Only when every
+      // persistent/generated task agent is occupied do we activate a worker.
+      let pool = candidates.filter((candidate) => candidate.eligible);
+      const persistentPool = pool.filter((candidate) => availableAgents.find((agent) => agent.id === candidate.agentId)?.kind === null);
+      if (persistentPool.length > 0) pool = persistentPool;
+      if (pool.length === 0 && canProvision && generatedProvider && claimedThisTick.size < routingCapacity) {
+        const task = (promptsByItem.get(item.id) ?? []).join(" ").slice(0, 1_000);
+        const provisioned = await ensureWorkerAgent(sessionId, ownerUserId, generatedProvider, task, database);
+        const worker: AgentRow = { id: provisioned.id, name: provisioned.name, role: "Auto-provisioned engineer", task, provider: generatedProvider, kind: "worker", createdAt: now };
+        availableAgents = [...availableAgents, worker];
+        taskAgents.push(worker);
+        agents.push(worker);
+        candidates = [...candidates, { agentId: worker.id, name: worker.name, overlap: 0, lastRunAt: null, eligible: true, why: "auto-provisioned" }];
+        pool = [candidates[candidates.length - 1]];
+        if (provisioned.changed) changedQueueOrRuns = true;
+      }
+      if (pool.length === 0) {
+        const reason = taskAgents.length === 0 && !session.autoProvisionAgents
+          ? "No agents exist in this session"
+          : providerResolution?.state === "selection_required"
+            ? "Choose a default generated-agent provider"
+            : providerDisabled
+              ? "The generated-agent provider is not enabled"
+              : "No idle agent or automatic run capacity is available";
+        decisions.push({ queueItemId: item.id, agentId: null, runId: null, decision: "held", reason, candidates });
+        held = true;
+        continue;
+      }
+      const ranked = pool.slice().sort((a, b) => {
         if (a.overlap !== b.overlap) return b.overlap - a.overlap;
         const aLast = a.lastRunAt ?? -1;
         const bLast = b.lastRunAt ?? -1;
@@ -290,7 +363,9 @@ export async function runRoutingTick(
       const matchedTokens = chosen.why.startsWith("matched: ") ? chosen.why.slice("matched: ".length) : "";
       const reason = chosen.overlap > 0
         ? `Matched ${chosen.overlap} task keyword(s): ${matchedTokens}`
-        : pool.length === 1 && candidates.length > 1
+        : chosen.why === "auto-provisioned"
+          ? "Auto-provisioned for this task"
+          : pool.length === 1 && candidates.length > 1
           ? "No keyword match; only idle agent"
           : "No keyword match; least recently used agent";
       const update = await database.prepare(
@@ -341,6 +416,14 @@ export async function runRoutingTick(
       }
       if (!item.agentId) continue;
       const agent = agents.find((candidate) => candidate.id === item.agentId);
+      if (!agent) {
+        // Assigned before it went paused/deprovisioned — the query above
+        // already excludes such agents from `agents`, so a lookup miss here
+        // means "no longer eligible", not "unknown". Must not fall through
+        // to startRun below, which has no such guard of its own.
+        decisions.push({ queueItemId: item.id, agentId: item.agentId, runId: null, decision: "skipped", reason: "Agent is paused or no longer on the floor", candidates: [] });
+        continue;
+      }
       if (busyAgents.has(item.agentId) || dispatchedAgents.has(item.agentId)) {
         decisions.push({
           queueItemId: item.id, agentId: item.agentId, runId: null, decision: "skipped",
@@ -357,7 +440,7 @@ export async function runRoutingTick(
         });
         continue;
       }
-      const runKind = item.intent === "task" || item.intent === null ? "task" : "reply";
+      const runKind = agent?.kind === "answer" || (item.intent !== "task" && item.intent !== null) ? "reply" : "task";
       const result = await deps.startRun(sessionId, item.id, owner.userId, runKind);
       if (result.ok) {
         dispatchedAgents.add(item.agentId);

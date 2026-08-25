@@ -10,6 +10,9 @@ const migrations = await readD1Migrations("./drizzle");
 // guarantees the test executes precisely what applyD1Migrations would.
 const accountEmailMergeMigration = migrations.find((migration) => migration.name.startsWith("0022_"));
 if (!accountEmailMergeMigration) throw new Error("Expected drizzle/0022_*.sql (the account email merge migration) to exist.");
+const autoAgentMigration = migrations.find((migration) => migration.name.startsWith("0028_"));
+if (!autoAgentMigration) throw new Error("Expected drizzle/0028_*.sql (the auto-agent migration) to exist.");
+const autoAgentDataQueries = autoAgentMigration.queries.filter((query) => query.trimStart().startsWith("UPDATE"));
 
 export default defineConfig({
   resolve: { alias: { "@": fileURLToPath(new URL(".", import.meta.url)) } },
@@ -39,6 +42,7 @@ export default defineConfig({
           CREDENTIAL_ENCRYPTION_KEY: "worker-test-credential-encryption-key",
           TEST_MIGRATIONS: JSON.stringify(migrations),
           ACCOUNT_EMAIL_MERGE_QUERIES: JSON.stringify(accountEmailMergeMigration.queries),
+          AUTO_AGENT_DATA_MIGRATION_QUERIES: JSON.stringify(autoAgentDataQueries),
         },
       },
     }),

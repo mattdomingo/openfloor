@@ -112,6 +112,15 @@ export const sessions = sqliteTable("sessions", {
   endedReason: text("ended_reason", { enum: ["owner", "merged"] }),
   floorRevision: integer("floor_revision").notNull().default(0),
   autoDispatch: integer("auto_dispatch", { mode: "boolean" }).notNull().default(false),
+  // Owner-controlled elastic agent lifecycle. When enabled alongside
+  // auto-dispatch, the router may activate system-managed worker/answer
+  // agents for unassigned work and deactivate them once that work is done.
+  autoProvisionAgents: integer("auto_provision_agents", { mode: "boolean" }).notNull().default(true),
+  // Explicit owner choice when more than one connected provider is
+  // available. Null means resolve from the owner's current credential set:
+  // one provider selects itself, none falls back to OpenAI, several require
+  // an explicit selection before generated agents can start.
+  autoAgentProvider: text("auto_agent_provider", { enum: ["anthropic", "openai", "kimi", "gemini"] }),
   // Merge-conflict work is a separate queue automation from ordinary prompt
   // dispatch. Existing and new sessions opt in by default; owners may turn it
   // off without changing auto_dispatch.
@@ -208,11 +217,18 @@ export const floorAgents = sqliteTable(
     provider: text("provider", { enum: ["anthropic", "openai", "kimi", "gemini"] }).notNull().default("openai"),
     model: text("model"),
     // Open enum, TS-only, no SQL CHECK, same convention as `provider` above.
-    // Null means an ordinary user-created agent. "answer" marks the one
-    // built-in per-session agent that answers questions/non-actionable
-    // prompts; identified by kind (not name) so a user agent named the same
-    // thing can never shadow it. See db/floor.ts's ensureAnswerAgent.
-    kind: text("kind", { enum: ["answer"] }),
+    // Null means a persistent user-created agent. System-managed agents use
+    // an open TS-only kind: "answer" is the concierge and "worker" handles
+    // code tasks. The router activates/deactivates both kinds without
+    // deleting their run history.
+    kind: text("kind", { enum: ["answer", "worker"] }),
+    deprovisionedAt: integer("deprovisioned_at"),
+    // Manual owner/member lifecycle control for a persistent agent
+    // (kind IS NULL only — system-managed agents are router-controlled via
+    // deprovisionedAt above and never touch this column). Non-null blocks
+    // new router assignment/dispatch; an in-flight run is left to finish.
+    // See db/floor.ts's pauseFloorAgent/stopFloorAgent.
+    pausedAt: integer("paused_at"),
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
   },
@@ -221,6 +237,7 @@ export const floorAgents = sqliteTable(
     index("idx_floor_agents_session_created").on(table.sessionId, table.createdAt),
     index("idx_floor_agents_owner").on(table.ownerUserId),
     index("idx_floor_agents_session_kind").on(table.sessionId, table.kind),
+    index("idx_floor_agents_session_active").on(table.sessionId, table.deprovisionedAt),
     check("floor_agents_state_check", sql`${table.state} in ('created')`),
   ],
 );

@@ -14,10 +14,12 @@ export function ProviderCredentials({
   initialCredentials,
   providers,
   showAgentDefaults = false,
+  onCredentialsChange,
 }: {
   initialCredentials: ProviderCredentialSummary[];
   providers: CredentialProvider[];
   showAgentDefaults?: boolean;
+  onCredentialsChange?: (credentials: ProviderCredentialSummary[]) => void;
 }) {
   const [credentials, setCredentials] = useState(initialCredentials);
 
@@ -31,7 +33,9 @@ export function ProviderCredentials({
           showAgentDefaults={showAgentDefaults}
           onChanged={(next) => setCredentials((current) => {
             const others = current.filter((credential) => credential.provider !== provider);
-            return next ? [...others, next] : others;
+            const updated = next ? [...others, next] : others;
+            onCredentialsChange?.(updated);
+            return updated;
           })}
         />
       ))}

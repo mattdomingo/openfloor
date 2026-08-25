@@ -9,7 +9,7 @@ import { usePresenceSocket } from "@/components/session/usePresenceSocket";
 import { useRepositoryTree } from "@/components/session/useRepositoryTree";
 import { useRunActivity } from "@/components/session/useRunActivity";
 import { reducePresence } from "@/lib/presence";
-import type { CredentialProvider } from "@/lib/provider-credentials";
+import type { CredentialProvider, ProviderCredentialSummary } from "@/lib/provider-credentials";
 import type { FloorSnapshot } from "@/lib/floor-types";
 import { shouldRefreshFloor } from "@/lib/floor-state";
 import { reduceTypingDrafts } from "@/lib/typing-drafts";
@@ -22,6 +22,7 @@ export function AgentFloorScreen({
   initialFloor,
   agentRunEnabled,
   enabledProviders,
+  providerCredentials,
 }: {
   user: AppUser;
   session: SessionSummary;
@@ -29,6 +30,7 @@ export function AgentFloorScreen({
   initialFloor: FloorSnapshot;
   agentRunEnabled: boolean;
   enabledProviders: CredentialProvider[];
+  providerCredentials: ProviderCredentialSummary[];
 }) {
   const router = useRouter();
   const [session, setSession] = useState(initialSession);
@@ -156,5 +158,5 @@ export function AgentFloorScreen({
     send(update);
   }, [send]);
 
-  return <Workspace user={user} session={session} members={visibleMembers} floorData={floorData} activity={activity} repositoryTree={repositoryTree} typingDrafts={typingDrafts} onTypingUpdate={sendTypingUpdate} onSaveObjective={saveObjective} agentRunEnabled={agentRunEnabled} enabledProviders={enabledProviders} presenceConnected={presenceConnected} quotaExhausted={quotaExhausted} />;
+  return <Workspace user={user} session={session} members={visibleMembers} floorData={floorData} activity={activity} repositoryTree={repositoryTree} typingDrafts={typingDrafts} onTypingUpdate={sendTypingUpdate} onSaveObjective={saveObjective} agentRunEnabled={agentRunEnabled} enabledProviders={enabledProviders} providerCredentials={providerCredentials} presenceConnected={presenceConnected} quotaExhausted={quotaExhausted} />;
 }

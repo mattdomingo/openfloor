@@ -23,18 +23,20 @@ function glyphFor(kind: string): string {
   return KIND_GLYPHS[kind] ?? "•";
 }
 
-export function AgentCard({ agent, tone, latestRun, activityEvents, selected, onFocus, onHistory }: { agent: FloorAgent; tone: string; latestRun: AgentRun | null; activityEvents: RunActivityEvent[]; selected: boolean; onFocus: () => void; onHistory: () => void }) {
+export function AgentCard({ agent, tone, latestRun, activityEvents, selected, onFocus, onHistory, onPause, onStop, onDelete }: { agent: FloorAgent; tone: string; latestRun: AgentRun | null; activityEvents: RunActivityEvent[]; selected: boolean; onFocus: () => void; onHistory: () => void; onPause: (agentId: string, paused: boolean) => void; onStop: (agentId: string) => void; onDelete: (agentId: string) => void }) {
   const live = isRunLive(latestRun);
   const latestEvent = live ? activityEvents[activityEvents.length - 1] ?? null : null;
   const reply = agentReplyText(latestRun);
+  const paused = agent.pausedAt !== null;
+  const stateLabel = paused ? "Paused" : latestRun ? runStatusToken(latestRun).replace("_", " ") : "Created";
   return (
-    <article className="agent-card" data-selected={selected ? "true" : "false"} data-status={latestRun ? runStatusToken(latestRun) : "idle"} data-tone={tone} role="button" tabIndex={0} onClick={onFocus} onKeyDown={(event) => {
+    <article className="agent-card" data-selected={selected ? "true" : "false"} data-status={paused ? "paused" : latestRun ? runStatusToken(latestRun) : "idle"} data-tone={tone} role="button" tabIndex={0} onClick={onFocus} onKeyDown={(event) => {
       if (event.target === event.currentTarget && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); onFocus(); }
     }}>
       <div className="agent-head">
         <span className="agent-glyph" aria-hidden="true">{agent.name.slice(0, 1)}</span>
-        <span className="agent-identity"><strong>{agent.name}</strong><span>{agent.role}</span></span>
-        <span className="agent-head-trailing"><span className="agent-state">{latestRun ? runStatusToken(latestRun).replace("_", " ") : "Created"}</span><button type="button" className="button agent-chat-button" data-size="sm" onClick={(event) => { event.stopPropagation(); onHistory(); }}><Icon name="message" size={12} />Prompts</button></span>
+        <span className="agent-identity"><strong>{agent.name}{agent.kind && <em className="kind-tag" data-kind="auto">Auto-generated</em>}</strong><span>{agent.role}</span></span>
+        <span className="agent-head-trailing"><span className="agent-state">{stateLabel}</span><button type="button" className="button agent-chat-button" data-size="sm" onClick={(event) => { event.stopPropagation(); onHistory(); }}><Icon name="message" size={12} />Prompts</button></span>
       </div>
       <div className="agent-task"><strong title={agent.task}>{agent.task}</strong></div>
       {latestEvent && (
@@ -48,23 +50,40 @@ export function AgentCard({ agent, tone, latestRun, activityEvents, selected, on
           {reply}
         </button>
       )}
+      {!agent.kind && (
+        <div className="agent-controls" onClick={(event) => event.stopPropagation()}>
+          <button type="button" className="button" data-size="sm" title={paused ? "Resume" : "Pause"} aria-label={paused ? `Resume ${agent.name}` : `Pause ${agent.name}`} onClick={() => onPause(agent.id, !paused)}><Icon name={paused ? "play" : "pause"} size={12} /></button>
+          {live && <button type="button" className="button" data-size="sm" title="Stop" aria-label={`Stop ${agent.name}`} onClick={() => onStop(agent.id)}><Icon name="stop" size={12} /></button>}
+          <button type="button" className="button danger-button" data-size="sm" title="Delete" aria-label={`Delete ${agent.name}`} onClick={() => onDelete(agent.id)}><Icon name="trash" size={12} /></button>
+        </div>
+      )}
       <div className="agent-foot"><span>Owned by {agent.ownerName}</span><span><LocalDateTime timestamp={agent.createdAt} /></span></div>
     </article>
   );
 }
 
-export function AgentSpotlight({ agent, tone, sessionId, latestRun, activity, onHistory, onUpdateTask }: { agent: FloorAgent; tone: string; sessionId: string; latestRun: AgentRun | null; activity: RunActivitySource; onHistory: () => void; onUpdateTask: (agentId: string, task: string) => Promise<boolean> }) {
+export function AgentSpotlight({ agent, tone, sessionId, latestRun, activity, onHistory, onUpdateTask, onPause, onStop, onDelete }: { agent: FloorAgent; tone: string; sessionId: string; latestRun: AgentRun | null; activity: RunActivitySource; onHistory: () => void; onUpdateTask: (agentId: string, task: string) => Promise<boolean>; onPause: (agentId: string, paused: boolean) => void; onStop: (agentId: string) => void; onDelete: (agentId: string) => void }) {
   // A reply run never runs checks, exports files, or publishes a branch —
   // that execution summary belongs only to a task run.
   const isReply = latestRun?.kind === "reply";
+  const paused = agent.pausedAt !== null;
+  const live = isRunLive(latestRun);
+  const stateLabel = paused ? "Paused" : latestRun ? runStatusToken(latestRun).replace("_", " ") : "Created";
   return (
-    <article className="spotlight" data-status={latestRun ? runStatusToken(latestRun) : "idle"} data-tone={tone}>
+    <article className="spotlight" data-status={paused ? "paused" : latestRun ? runStatusToken(latestRun) : "idle"} data-tone={tone}>
       <div className="spotlight-head">
         <span className="agent-glyph" data-size="lg" aria-hidden="true">{agent.name.slice(0, 1)}</span>
-        <div className="agent-identity"><h3>{agent.name}</h3><span>{agent.role} · {AGENT_PROVIDER_LABELS[agent.provider]} · owned by {agent.ownerName}</span></div>
-        <span className="agent-state">{latestRun ? runStatusToken(latestRun).replace("_", " ") : "Created"}</span>
+        <div className="agent-identity"><h3>{agent.name}{agent.kind && <em className="kind-tag" data-kind="auto">Auto-generated</em>}</h3><span>{agent.role} · {AGENT_PROVIDER_LABELS[agent.provider]} · owned by {agent.ownerName}</span></div>
+        <span className="agent-state">{stateLabel}</span>
       </div>
-      <div className="spotlight-row"><span className="label">Task</span><AgentTaskEditor key={`${agent.id}-${agent.updatedAt}`} agent={agent} onSave={onUpdateTask} /></div>
+      {!agent.kind && (
+        <div className="agent-controls">
+          <button type="button" className="button" data-size="sm" onClick={() => onPause(agent.id, !paused)}><Icon name={paused ? "play" : "pause"} size={12} />{paused ? "Resume" : "Pause"}</button>
+          {live && <button type="button" className="button" data-size="sm" onClick={() => onStop(agent.id)}><Icon name="stop" size={12} />Stop</button>}
+          <button type="button" className="button danger-button" data-size="sm" onClick={() => onDelete(agent.id)}><Icon name="trash" size={12} />Delete</button>
+        </div>
+      )}
+      <div className="spotlight-row"><span className="label">Task</span>{agent.kind ? <p className="agent-detail-line">{agent.task}</p> : <AgentTaskEditor key={`${agent.id}-${agent.updatedAt}`} agent={agent} onSave={onUpdateTask} />}</div>
       {latestRun?.finalResponse && (
         <div className="spotlight-row"><span className="label">Response</span><div className="spotlight-response">{latestRun.finalResponse}</div></div>
       )}

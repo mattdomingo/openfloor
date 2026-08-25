@@ -1,0 +1,1 @@
+ALTER TABLE `floor_agents` ADD `paused_at` integer;

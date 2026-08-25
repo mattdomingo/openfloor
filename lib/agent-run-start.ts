@@ -45,6 +45,7 @@ import {
 import { createDraftPullRequest, createRepositoryBranch, getInstallationRepository, getRepositoryRefSha, GitHubApiError, mergeRepositoryBranch, setTestRepositoryMergeConflict } from "@/lib/github";
 import { renderConflictResolverPrompt } from "@/lib/conflict-resolver-prompt";
 import { providerLabel } from "@/lib/provider-credentials";
+import { disabledRunProviders } from "@/lib/provider-rollout";
 import { openFloorBranchName } from "@/lib/repository-refs";
 import { notifyFloorChanged, notifyRunActivity } from "@/lib/presence-server";
 import { env } from "cloudflare:workers";
@@ -88,23 +89,7 @@ export type StartRunResult =
 // router passes this into runRoutingTick so gated items are SKIPPED during
 // auto-dispatch (a per-item condition); the seam check below still refuses a
 // direct manual start with kind "disabled" (the correct answer there).
-export function disabledRunProviders(): ReadonlySet<import("@/lib/provider-credentials").CredentialProvider> {
-  const bindings = env as unknown as {
-    CLAUDE_RUN_ENABLED?: string;
-    KIMI_RUN_ENABLED?: string;
-    GEMINI_RUN_ENABLED?: string;
-    OPENFLOOR_TEST_ALLOW_IDENTITY_HEADERS?: string;
-  };
-  if (bindings.OPENFLOOR_TEST_ALLOW_IDENTITY_HEADERS === "true") return new Set();
-  const flags = {
-    anthropic: bindings.CLAUDE_RUN_ENABLED,
-    kimi: bindings.KIMI_RUN_ENABLED,
-    gemini: bindings.GEMINI_RUN_ENABLED,
-  } as const;
-  return new Set(
-    (Object.keys(flags) as Array<keyof typeof flags>).filter((provider) => flags[provider] !== "true"),
-  );
-}
+export { disabledRunProviders } from "@/lib/provider-rollout";
 
 // This is the one seam that covers every way a run can start: the two HTTP
 // routes (run, retry) AND worker/session-router.ts's auto-dispatch DO, which
@@ -154,11 +139,12 @@ export async function startQueueItemRun(sessionId: string, queueItemId: string, 
   try {
     await ensureNextCandidateCycle(sessionId, userId);
     const run = await createAgentRun(sessionId, queueItemId, userId, kind);
+    const effectiveKind = run.kind === "reply" ? "reply" : "task";
     if (bindings.OPENFLOOR_TEST_ALLOW_IDENTITY_HEADERS === "true" && bindings.OPENFLOOR_TEST_AGENT_RUN_DATA && bindings.PREFLIGHT_LOGS) {
-      const result = kind === "reply"
+      const result = effectiveKind === "reply"
         ? await runTestAgentReply(run.id, bindings.OPENFLOOR_TEST_AGENT_RUN_DATA, bindings.PREFLIGHT_LOGS)
         : await runTestAgent(run.id, bindings.OPENFLOOR_TEST_AGENT_RUN_DATA, bindings.PREFLIGHT_LOGS);
-      if (result === "ready" && kind !== "reply") await publishTestRun(run.id, bindings.OPENFLOOR_TEST_AGENT_RUN_DATA);
+      if (result === "ready" && effectiveKind !== "reply") await publishTestRun(run.id, bindings.OPENFLOOR_TEST_AGENT_RUN_DATA);
     } else {
       if (!bindings.AGENT_RUN_WORKFLOW) throw new Error("Agent run Workflow binding is unavailable");
       await bindings.AGENT_RUN_WORKFLOW.create({ id: run.id, params: { runId: run.id } });
