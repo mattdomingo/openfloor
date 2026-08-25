@@ -99,14 +99,15 @@ export function HomeScreen({
   const quotaExhausted = Number.isFinite(usage.limitHours) && usage.seconds >= usage.limitHours * 3600;
   const usageLimitSeconds = usage.limitHours * 3600;
   const usagePercent = Number.isFinite(usage.limitHours) ? Math.min(100, Math.round((usage.seconds / usageLimitSeconds) * 100)) : null;
-  // One computed string, not several adjacent JSX expressions: React SSR
-  // inserts an <!-- --> hydration-boundary comment between adjacent text
-  // nodes, which would otherwise split "Free plan" across a comment.
-  const usageLine = `${planLabel(usage.effectivePlan)} plan · ${
-    Number.isFinite(usage.limitHours)
-      ? `${formatDuration(usage.seconds)} of ${usage.limitHours}h session time used this month (UTC)`
-      : `${formatDuration(usage.seconds)} session time used this month (UTC)`
-  }${liveOwnedSessions > 1 ? ` · ${liveOwnedSessions} live sessions, all counting toward your usage` : ""}`;
+  // Each line below is its own single template-string expression (not
+  // several adjacent JSX text nodes) — React SSR inserts an <!-- -->
+  // hydration-boundary comment between adjacent text nodes, which would
+  // otherwise split a phrase like "Free plan" across a comment.
+  const usagePlanLine = `${planLabel(usage.effectivePlan)} plan`;
+  const usageStatLine = Number.isFinite(usage.limitHours)
+    ? `${formatDuration(usage.seconds)} of ${usage.limitHours}h session time used this month (UTC)`
+    : `${formatDuration(usage.seconds)} session time used this month (UTC)`;
+  const usageLiveLine = `${liveOwnedSessions} live sessions, all counting toward your usage`;
 
   async function setArchived(session: SessionSummary, archived: boolean) {
     const response = await fetch(`${BASE_PATH}/api/sessions/${session.id}/${archived ? "archive" : "unarchive"}`, { method: "POST" });
@@ -140,32 +141,39 @@ export function HomeScreen({
       <AppHeader user={user} />
       <section className="page-body">
         <div className="page-heading">
-          <div>
+          <div className="page-heading-title">
             <h1>{user.displayName.split(" ")[0]}’s sessions</h1>
-            <div className="usage-panel">
-              {usagePercent != null && (
-                <progress className="usage-meter" value={Math.min(usage.seconds, usageLimitSeconds)} max={usageLimitSeconds} aria-label={`${usagePercent}% of monthly session time used`} />
-              )}
-              <p className="usage-line">{usageLine}</p>
-            </div>
             {removedNotice && (
               <p className="notice" data-tone="attention" role="status">
                 {removedNotice} <button type="button" className="button" data-variant="quiet" data-size="sm" onClick={() => setRemovedNotice(null)}>Dismiss</button>
               </p>
             )}
-            {quotaExhausted && (
-              /* Advisory only, same as the ended-session banner in
-                 Workspace.tsx: the 403s on create/dispatch are the
-                 enforcement. */
-              <p className="notice" data-tone="attention" role="status">
-                {`Your ${planLabel(usage.effectivePlan)} plan's ${usage.limitHours}h of monthly session time is used up. `}
-                <Link href="/settings?section=plan">Upgrade for more session hours</Link>.
-              </p>
-            )}
           </div>
-          <button className="button" data-variant="primary" onClick={() => setCreating((value) => !value)}>
-            {creating ? "Cancel" : "New session"}
-          </button>
+          {/* Plan, quota bar, and the notes that go with them, gathered into
+              one card to the right of the heading instead of a single line
+              underneath it. */}
+          <div className="page-heading-usage">
+            <button className="button" data-variant="primary" onClick={() => setCreating((value) => !value)}>
+              {creating ? "Cancel" : "New session"}
+            </button>
+            <div className="usage-card">
+              <p className="usage-card-plan">{usagePlanLine}</p>
+              {usagePercent != null && (
+                <progress className="usage-meter" value={Math.min(usage.seconds, usageLimitSeconds)} max={usageLimitSeconds} aria-label={`${usagePercent}% of monthly session time used`} />
+              )}
+              <p className="usage-card-stat">{usageStatLine}</p>
+              {liveOwnedSessions > 1 && <p className="usage-card-note">{usageLiveLine}</p>}
+              {quotaExhausted && (
+                /* Advisory only, same as the ended-session banner in
+                   Workspace.tsx: the 403s on create/dispatch are the
+                   enforcement. */
+                <p className="usage-card-note usage-card-upgrade" role="status">
+                  {`Your ${planLabel(usage.effectivePlan)} plan's ${usage.limitHours}h of monthly session time is used up. `}
+                  <Link href="/settings?section=plan">Upgrade for more session hours</Link>.
+                </p>
+              )}
+            </div>
+          </div>
         </div>
 
         {creating && (

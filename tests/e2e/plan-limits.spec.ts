@@ -17,7 +17,10 @@ test("free-tier seat cap refuses a fourth member with the session already full",
   const memberThree = await memberThreeContext.newPage();
 
   await owner.goto("/home");
-  await expect(owner.getByText("Free plan · 0s of 2h session time used this month (UTC)")).toBeVisible();
+  // Plan label and the exact-hours stat now live in their own rows of the
+  // usage card (HomeScreen.tsx page-heading-usage), not one combined line.
+  await expect(owner.getByText("Free plan", { exact: true })).toBeVisible();
+  await expect(owner.getByText("0s of 2h session time used this month (UTC)")).toBeVisible();
   await owner.getByRole("button", { name: "New session" }).click();
   await owner.getByLabel("Session title").fill("Free tier session");
   await owner.getByRole("button", { name: "Create session" }).click();
