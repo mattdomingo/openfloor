@@ -196,6 +196,127 @@
   }
 }
 
+/* /signin (app/signin/page.tsx, app/signin/code/route.ts): the landing's
+   hover-open bracket state, held rather than triggered — the gesture the
+   user just completed on the landing page, continued here as this page's
+   one signature element. Not interactive, so it's a plain span/svg group,
+   not .entry-signin's <a>. Everything else in this shell (black canvas,
+   glow, grain, Archivo, card width) is untouched .entry-* — these are the
+   only new classes this page adds. */
+.signin-mark { display: flex; align-items: center; color: var(--entry-ink); }
+.signin-mark-bracket { display: block; flex: none; height: 44px; width: auto; }
+.signin-mark-gap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 44px;
+  width: 176px;
+  animation: signin-gap-open .4s cubic-bezier(.2, .8, .2, 1) both;
+}
+.signin-mark-text {
+  white-space: nowrap;
+  font-family: var(--font-brand-sans);
+  font-weight: 600;
+  font-size: 15px;
+  opacity: 0;
+  animation: signin-text-in .25s ease .28s both;
+}
+@keyframes signin-gap-open {
+  from { width: 40px; }
+  to { width: 176px; }
+}
+@keyframes signin-text-in {
+  to { opacity: 1; }
+}
+
+.signin-card { gap: 22px; }
+
+.signin-email-form { display: grid; gap: 10px; width: 100%; }
+
+.signin-input {
+  width: 100%;
+  min-height: 44px;
+  padding: 0 var(--space-4);
+  border: 1px solid color-mix(in srgb, var(--entry-ink) 30%, transparent);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--entry-ink);
+  font-family: var(--font-brand-sans);
+  font-size: 15px;
+}
+.signin-input::placeholder { color: var(--entry-ink-muted); }
+/* base.css's global `input:focus-visible` rule (line 12) paints every input's
+   focus ring from the app's cream-theme --accent/--accent-soft tokens — on
+   dark-mode systems that's a visible orange leak onto this page's isolated
+   black/blue entry-shell palette. box-shadow and border-color must be
+   overridden explicitly, not just outline: an unset property still cascades
+   in from the less-specific global rule. */
+.signin-input:focus-visible {
+  outline: 2px solid var(--entry-accent);
+  outline-offset: 2px;
+  border-color: var(--entry-accent);
+  box-shadow: none;
+}
+
+.signin-code-input { font-family: var(--font-mono); font-size: 20px; letter-spacing: .3em; text-align: center; }
+
+.signin-button {
+  min-height: 44px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: var(--entry-accent);
+  color: #fff;
+  font-family: var(--font-brand-sans);
+  font-weight: 600;
+  font-size: 15px;
+  cursor: pointer;
+}
+.signin-button:hover { background: var(--entry-accent-hover); }
+.signin-button:focus-visible { outline: 2px solid var(--entry-ink); outline-offset: 2px; }
+
+.signin-divider {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  color: var(--entry-ink-muted);
+  font-family: var(--font-brand-sans);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+}
+.signin-divider::before, .signin-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: color-mix(in srgb, var(--entry-ink) 18%, transparent);
+}
+
+/* Shared by page.tsx's Google link and route.ts's "Use a different email"
+   link — both are secondary, text-only exits from the primary form. */
+.signin-google {
+  color: var(--entry-ink-muted);
+  font-family: var(--font-brand-sans);
+  font-size: 14px;
+  text-decoration: none;
+}
+.signin-google:hover, .signin-google:focus-visible { color: var(--entry-ink); text-decoration: underline; }
+
+.signin-code-body {
+  margin: 0;
+  color: var(--entry-ink-muted);
+  font-family: var(--font-brand-sans);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .signin-mark-gap, .signin-mark-text { animation: none; }
+  .signin-mark-gap { width: 176px; }
+  .signin-mark-text { opacity: 1; }
+}
+
 .app-header {
   display: flex;
   align-items: center;
