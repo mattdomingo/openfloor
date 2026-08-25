@@ -220,6 +220,13 @@ input, textarea { width: 100%; padding: 11px 12px; border: 1px solid var(--line-
 }
 
 .join-card { width: min(540px, 100%); padding: clamp(28px, 6vw, 54px); text-align: center; }
+/* Every other shop-palette page title (app/styles/shop.css: .page-heading h1,
+   .lobby-hero h1) is Archivo bold, not the old serif — .join-card sat outside
+   that redesign and kept inheriting layout.css's shared serif rule. Matches
+   the same family/weight, sized down for this card's 540px width rather than
+   a full-bleed hero. --font-brand-sans (not shop.css's --sans alias) since
+   .join-shell doesn't carry that shell-local custom property. */
+.join-card h1 { margin-top: var(--space-2); font: 800 clamp(30px, 4.4vw, 44px)/1.05 var(--font-brand-sans), -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif; letter-spacing: -.02em; }
 .join-objective { margin: var(--space-5) auto; color: var(--text-secondary); font-size: var(--text-lg); line-height: 1.55; }
 .join-card dl { display: grid; grid-template-columns: 1fr 1fr; margin: var(--space-6) 0; border-block: 1px solid var(--line-soft); }
 .join-card dl div { padding: var(--space-4); }
