@@ -1,4 +1,5 @@
 import type { Plan, PlanStatus } from "./plans";
+import type { CredentialProvider } from "./provider-credentials";
 
 export type SessionRole = "owner" | "member";
 
@@ -15,6 +16,8 @@ export type SessionSummary = {
   endedReason: "owner" | "merged" | null;
   archivedAt: number | null;
   activeSeconds: number;
+  autoProvisionAgents: boolean;
+  autoAgentProvider: CredentialProvider | null;
   // Reversible door-seal: null means new joins are accepted. Distinct from
   // endedAt, which is terminal and makes the floor read-only for everyone.
   lockedAt: number | null;

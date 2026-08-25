@@ -1,6 +1,7 @@
 import { finishAgentRun, requestAgentRunCancellation } from "@/db/runs";
 import { getFloorSnapshot } from "@/db/floor";
 import { notifyFloorChanged } from "@/lib/presence-server";
+import { pokeSessionRouter } from "@/lib/router-server";
 import { isApiError, requireApiUser } from "@/lib/server-auth";
 import { env } from "cloudflare:workers";
 
@@ -15,8 +16,9 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
   if (bindings.OPENFLOOR_TEST_ALLOW_IDENTITY_HEADERS === "true" && bindings.OPENFLOOR_TEST_AGENT_RUN_DATA) {
     await finishAgentRun(runId, "cancelled", "Agent run cancelled. No repository changes were published.");
   }
+  await pokeSessionRouter(sessionId, "run_completed");
   const floor = await getFloorSnapshot(sessionId, user.id);
   if (!floor) return Response.json({ error: "Session not found" }, { status: 404 });
-  await notifyFloorChanged(sessionId, floor.revision, ["queue", "runs", "review"]);
+  await notifyFloorChanged(sessionId, floor.revision, ["agents", "queue", "runs", "review"]);
   return Response.json({ floor }, { status: 202 });
 }

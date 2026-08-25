@@ -1,5 +1,5 @@
 import { FloorConflictError, FloorTargetError } from "@/db/floor";
-import { getActiveMembershipRole, getOwnerHourQuota, PLAN_LIMITS, SessionEndedError } from "@/db/sessions";
+import { getActiveMembershipRole, getOwnerHourQuota, PLAN_LIMITS, SessionEndedError, SessionRoutingError } from "@/db/sessions";
 import { getDb } from "@/db";
 import type { FloorDomain, FloorSnapshot } from "./floor-types";
 import { notifyFloorChanged } from "./presence-server";
@@ -20,6 +20,7 @@ export function mutationErrorResponse(error: unknown): Response {
   if (error instanceof SessionEndedError) return Response.json({ error: error.message }, { status: 409 });
   if (error instanceof FloorConflictError) return Response.json({ error: error.message }, { status: 409 });
   if (error instanceof FloorTargetError) return Response.json({ error: error.message }, { status: 400 });
+  if (error instanceof SessionRoutingError) return Response.json({ error: error.message }, { status: 400 });
   throw error;
 }
 

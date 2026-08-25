@@ -15,10 +15,10 @@ export type FloorParticipant = {
 
 export type FloorAgentState = "created";
 
-// The one built-in per-session agent kind. Null means an ordinary
-// user-created agent. "answer" marks the lazily-created agent that answers
-// questions and non-actionable prompts (db/floor.ts's ensureAnswerAgent).
-export type FloorAgentKind = "answer" | null;
+// Null means a persistent user-created agent. System-managed agents are
+// activated and deactivated by the router: "answer" is the concierge and
+// "worker" handles code tasks.
+export type FloorAgentKind = "answer" | "worker" | null;
 
 export type FloorAgent = {
   id: string;
@@ -35,6 +35,10 @@ export type FloorAgent = {
   // writes the selected provider; model selection is a later milestone.
   provider: CredentialProvider;
   model: string | null;
+  // Manual pause/stop state for a persistent agent (kind === null). Non-null
+  // blocks new router assignment/dispatch; an in-flight run finishes
+  // normally. Always null for a system-managed agent.
+  pausedAt: number | null;
   createdAt: number;
   updatedAt: number;
 };
@@ -245,6 +249,10 @@ export type FloorReviewSnapshot = {
 export type FloorSnapshot = {
   revision: number;
   autoDispatch: boolean;
+  autoProvisionAgents: boolean;
+  autoAgentProvider: CredentialProvider | null;
+  effectiveAutoAgentProvider: CredentialProvider | null;
+  autoAgentProviderState: "selected" | "single_connected" | "openai_fallback" | "selection_required";
   autoResolveConflicts: boolean;
   agents: FloorAgent[];
   assignments: FloorAssignment[];

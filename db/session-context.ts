@@ -55,7 +55,7 @@ export async function getSessionContext(
     database.prepare(
       `SELECT a.id, a.name, a.role, a.task, owner.display_name AS ownerName
        FROM floor_agents a JOIN users owner ON owner.id = a.owner_user_id
-       WHERE a.session_id = ? ORDER BY a.created_at, a.id LIMIT ?`,
+       WHERE a.session_id = ? AND a.deprovisioned_at IS NULL ORDER BY a.created_at, a.id LIMIT ?`,
     ).bind(sessionId, AGENT_LIMIT).all<SessionContextAgent>(),
     database.prepare(
       `SELECT u.display_name AS userName, fa.task
