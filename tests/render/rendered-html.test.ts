@@ -28,7 +28,10 @@ describe("server rendering", () => {
 
     const html = await response.text();
     expect(html).toMatch(/<title>openfloor — Multiplayer agent development<\/title>/i);
-    expect(html).toContain("Continue with Google or a one-time code sent to your email.");
+    // The redesigned entry card: one real sign-in affordance, labeled for
+    // assistive tech, whose visible text is the brand line.
+    expect(html).toContain('aria-label="Sign in"');
+    expect(html).toContain("open the floor");
     expect(html).not.toMatch(/Register|Guest|Session code|type="password"|mock/i);
     expect(html).not.toContain("signin-with-chatgpt");
   });
