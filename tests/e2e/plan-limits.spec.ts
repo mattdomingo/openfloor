@@ -17,7 +17,13 @@ test("free-tier seat cap refuses a fourth member with the session already full",
   const memberThree = await memberThreeContext.newPage();
 
   await owner.goto("/home");
-  await expect(owner.getByText("Free plan · 0s of 2h session time used this month (UTC)")).toBeVisible();
+  // Usage is its own tab now (HomeScreen.tsx ShopTabs), not always-rendered
+  // prose — the plan/hours detail only appears once it's selected.
+  await owner.getByRole("button", { name: "Usage (100%)" }).click();
+  await expect(owner.getByText("Free plan", { exact: true })).toBeVisible();
+  await expect(owner.getByText("0s of 2h session time used this month (UTC)")).toBeVisible();
+  // The New session tile only renders on the Active tab.
+  await owner.getByRole("button", { name: /^Active/ }).click();
   await owner.getByRole("button", { name: "New session" }).click();
   await owner.getByLabel("Session title").fill("Free tier session");
   await owner.getByRole("button", { name: "Create session" }).click();
