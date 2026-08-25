@@ -50,20 +50,25 @@ function useIsTruncated<T extends HTMLElement>() {
 type SessionTab = "active" | "archived" | "ended" | "usage";
 type ShopTabOption = { value: SessionTab; label: string; tone?: "usage" };
 
-// A tab strip whose selection is marked by a pair of floor brackets (the
-// same mask-image glyph as the bracket buttons) that slide to whichever
-// option is active, instead of a bar. Position/width are measured off the
-// real DOM (labels vary in length — "Active (2)" vs "Usage (0%)" — so this
-// can't be done in pure CSS) and written as an inline transform, which
-// keeps it off React's render path and lets it animate smoothly.
+// A tab strip whose selected option is marked only by its text color — the
+// pair of floor brackets (the same mask-image glyph as the bracket buttons)
+// is a hover mark instead: it slides/snaps to whichever tab the pointer (or
+// focus) is currently over and fades out smoothly once nothing is hovered.
+// Position/width are measured off the real DOM (labels vary in length —
+// "Active (2)" vs "Usage (0%)" — so this can't be done in pure CSS) and
+// written as an inline transform, which keeps it off React's render path
+// and lets it animate smoothly. The indicator's last position/width is kept
+// after hover ends (only its opacity drops) so the fade-out has somewhere
+// to fade from instead of jumping.
 function ShopTabs({ value, onChange, options }: { value: SessionTab; onChange: (value: SessionTab) => void; options: ShopTabOption[] }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const buttonRefs = useRef(new Map<string, HTMLButtonElement>());
   const [indicator, setIndicator] = useState<{ x: number; width: number } | null>(null);
+  const [hovered, setHovered] = useState<SessionTab | null>(null);
 
   useLayoutEffect(() => {
     const container = containerRef.current;
-    const button = buttonRefs.current.get(value);
+    const button = hovered ? buttonRefs.current.get(hovered) : null;
     if (!container || !button) return;
     const measure = () => {
       const containerBox = container.getBoundingClientRect();
@@ -74,12 +79,12 @@ function ShopTabs({ value, onChange, options }: { value: SessionTab; onChange: (
     const observer = new ResizeObserver(measure);
     observer.observe(container);
     return () => observer.disconnect();
-  }, [value, options.length]);
+  }, [hovered, options.length]);
 
-  const selectedTone = options.find((option) => option.value === value)?.tone;
+  const hoveredTone = options.find((option) => option.value === hovered)?.tone;
 
   return (
-    <div className="shop-tabs" ref={containerRef} role="group" aria-label="Filter sessions">
+    <div className="shop-tabs" ref={containerRef} role="group" aria-label="Filter sessions" onMouseLeave={() => setHovered(null)}>
       {options.map((option) => (
         <button
           key={option.value}
@@ -92,6 +97,9 @@ function ShopTabs({ value, onChange, options }: { value: SessionTab; onChange: (
           data-tone={option.tone}
           aria-pressed={value === option.value}
           onClick={() => onChange(option.value)}
+          onMouseEnter={() => setHovered(option.value)}
+          onFocus={() => setHovered(option.value)}
+          onBlur={() => setHovered((current) => (current === option.value ? null : current))}
         >
           {option.label}
         </button>
@@ -99,7 +107,8 @@ function ShopTabs({ value, onChange, options }: { value: SessionTab; onChange: (
       {indicator && (
         <span
           className="shop-tab-indicator"
-          data-tone={selectedTone}
+          data-tone={hoveredTone}
+          data-visible={hovered ? "true" : "false"}
           aria-hidden="true"
           style={{ transform: `translate(${indicator.x}px, -50%)`, width: indicator.width }}
         />

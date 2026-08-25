@@ -163,23 +163,25 @@
 .shop-shell .shop-tab[data-tone="usage"] { color: var(--usage-tone); }
 .shop-shell .shop-tab[data-tone="usage"][aria-pressed="true"] { color: var(--usage-tone); font-weight: 700; }
 
-/* The selection mark is a pair of floor brackets (the sign-in mark's own
-   glyph, viewBox 0 0 3 8) that slide to whichever tab is active, instead of
-   a bar underneath it. Position/width come from HomeScreen.tsx measuring
-   the real button (label lengths vary), written as an inline transform so
-   the slide is a compositor-only animation. */
-/* Matches the selected tab's own text color (.shop-tab[aria-pressed="true"]
-   is var(--ink); the Usage tab is var(--usage-tone)) rather than a fixed
-   accent — the brackets read as part of that label, not a separate mark. */
+/* The hover mark is a pair of floor brackets (the sign-in mark's own glyph,
+   viewBox 0 0 3 8) that slide/snap to whichever tab is hovered or focused,
+   instead of a bar underneath it — selection itself is carried only by the
+   selected tab's text color above. Position/width come from HomeScreen.tsx
+   measuring the real hovered button (label lengths vary), written as an
+   inline transform so the slide is a compositor-only animation. Opacity is
+   the only thing toggled on hover-out — position/width hold their last
+   value so the mark fades in place instead of jumping before it vanishes. */
 .shop-shell .shop-tab-indicator {
   position: absolute;
   top: 50%;
   left: 0;
   height: 26px;
   color: var(--ink);
-  transition: transform .32s cubic-bezier(.2, .8, .2, 1), width .32s cubic-bezier(.2, .8, .2, 1);
+  opacity: 0;
+  transition: transform .32s cubic-bezier(.2, .8, .2, 1), width .32s cubic-bezier(.2, .8, .2, 1), opacity .2s ease;
   pointer-events: none;
 }
+.shop-shell .shop-tab-indicator[data-visible="true"] { opacity: 1; }
 .shop-shell .shop-tab-indicator[data-tone="usage"] { color: var(--usage-tone); }
 .shop-shell .shop-tab-indicator::before,
 .shop-shell .shop-tab-indicator::after {
