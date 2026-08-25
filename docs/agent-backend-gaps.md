@@ -25,6 +25,10 @@ Every dispatched agent's prompt is a unified session brief (`db/session-context.
 
 Per-user credentials are keyed `(user_id, provider, kind)` with kinds `api_key` and `oauth` (pasted Claude setup token / ChatGPT auth bundle), and each agent's `credential_kind` names which one its runs bill. Deliberately not built: gateway-native handling of `oauth` upstream auth (the standing brief's §4/§5, gated on their spikes — until then a subscription-bound run fails honestly at the vendor); more than one row per user+provider+kind (raising the ceiling later means a nickname column and a picker, not another recreate); automatic failover between a member's own two credentials on a rate-limit response (rejected: it switches billing ledgers mid-run); showing a member their remaining subscription quota or another member's connection status (no authoritative source; not the creator's to see).
 
+## Grok (xAI) — excluded twice, now on both integration routes
+
+The Anthropic-compat route died on xAI rejecting system-role messages (2026-08-24 decision log); the Responses route died the same day on xAI rejecting the `"content": null` Codex 0.148.0 writes on replayed reasoning input items (400 "Could not decode the compaction blob" on every thread's second request — Spike B). Both blockers are upstream (xAI tolerance or a Codex serialization change); gateway body rewriting stays rejected. `parseCredentialProvider("grok")` stays pinned null.
+
 ## Deployment order
 
 1. Run `npm test`.
