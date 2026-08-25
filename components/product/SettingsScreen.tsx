@@ -14,7 +14,10 @@ import { initialsFromParts } from "@/lib/display-name";
 import { PAID_PLAN_CATALOG, planLabel, planLimitsSummary, type PaidPlan, type Plan, type PlanStatus } from "@/lib/plans";
 import {
   CREDENTIAL_PROVIDERS,
+  credentialKindLabel,
+  credentialKindsForProvider,
   providerLabel,
+  type CredentialKind,
   type CredentialProvider,
   type ProviderCredentialSummary,
 } from "@/lib/provider-credentials";
@@ -311,50 +314,59 @@ function ConnectionsSection({ initialCredentials }: { initialCredentials: Provid
       <p className="settings-category-detail">
         Connect your own API keys. Runs in sessions you own use your key for that provider instead of openfloor&rsquo;s.
         Keys are encrypted, shown only by their last four characters, and never sent back to the browser.
+        Subscriptions are per-user, never shared, and never used as openfloor&rsquo;s fallback.
       </p>
       <ul className="settings-category-list">
-        {CREDENTIAL_PROVIDERS.map((provider) => (
-          <ProviderCredentialRow
-            key={provider}
-            provider={provider}
-            credential={credentials.find((credential) => credential.provider === provider) ?? null}
-            onChanged={(next) => setCredentials((current) => {
-              const others = current.filter((credential) => credential.provider !== provider);
-              return next ? [...others, next] : others;
-            })}
-          />
-        ))}
+        {CREDENTIAL_PROVIDERS.flatMap((provider) =>
+          credentialKindsForProvider(provider).map((kind) => (
+            <ProviderCredentialRow
+              key={`${provider}:${kind}`}
+              provider={provider}
+              kind={kind}
+              credential={credentials.find((credential) => credential.provider === provider && credential.kind === kind) ?? null}
+              onChanged={(next) => setCredentials((current) => {
+                const others = current.filter((credential) => !(credential.provider === provider && credential.kind === kind));
+                return next ? [...others, next] : others;
+              })}
+            />
+          )),
+        )}
       </ul>
     </>
   );
 }
 
-function ProviderCredentialRow({ provider, credential, onChanged }: {
+function ProviderCredentialRow({ provider, kind, credential, onChanged }: {
   provider: CredentialProvider;
+  kind: CredentialKind;
   credential: ProviderCredentialSummary | null;
   onChanged: (credential: ProviderCredentialSummary | null) => void;
 }) {
-  const [apiKey, setApiKey] = useState("");
+  const [secret, setSecret] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The row's connect form maps one-to-one onto the PUT body shapes: an API
+  // key, a Claude setup token, or a pasted ChatGPT auth bundle.
+  const bundle = provider === "openai" && kind === "oauth";
+  const field = kind === "api_key" ? "apiKey" : bundle ? "authJson" : "setupToken";
 
   async function connect(event: FormEvent) {
     event.preventDefault();
-    if (!apiKey.trim() || busy) return;
+    if (!secret.trim() || busy) return;
     setBusy(true);
     setError(null);
     const response = await fetch(`${BASE_PATH}/api/account/credentials/${provider}`, {
       method: "PUT",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ apiKey: apiKey.trim() }),
+      body: JSON.stringify({ [field]: secret.trim() }),
     });
     const body = (await response.json().catch(() => null)) as { credential?: ProviderCredentialSummary; error?: string } | null;
     if (!response.ok || !body?.credential) {
-      setError(body?.error ?? "Unable to verify that key. Try again.");
+      setError(body?.error ?? "Unable to verify that credential. Try again.");
       setBusy(false);
       return;
     }
-    setApiKey("");
+    setSecret("");
     setBusy(false);
     onChanged(body.credential);
   }
@@ -363,7 +375,7 @@ function ProviderCredentialRow({ provider, credential, onChanged }: {
     if (busy) return;
     setBusy(true);
     setError(null);
-    const response = await fetch(`${BASE_PATH}/api/account/credentials/${provider}`, { method: "DELETE" });
+    const response = await fetch(`${BASE_PATH}/api/account/credentials/${provider}?kind=${kind}`, { method: "DELETE" });
     if (!response.ok) {
       setError("Unable to disconnect. Try again.");
       setBusy(false);
@@ -375,11 +387,20 @@ function ProviderCredentialRow({ provider, credential, onChanged }: {
 
   return (
     <li className="settings-category-row">
-      <span className="settings-category-name">{providerLabel(provider)}</span>
+      <span className="settings-category-name">
+        {kind === "api_key" ? providerLabel(provider) : credentialKindLabel(provider, kind)}
+      </span>
       {credential ? (
         <>
           <span className="settings-category-detail">
-            <strong>Connected</strong> — API key ending in ····{credential.fingerprint}.
+            {kind === "api_key" ? (
+              <><strong>Connected</strong> — API key ending in ····{credential.fingerprint}.</>
+            ) : (
+              <>
+                <strong>{credential.validatedAt ? "Connected" : "Connected — not yet verified"}</strong>
+                {" — "}{bundle ? <>account ····{credential.fingerprint}</> : <>····{credential.fingerprint}</>}.
+              </>
+            )}
           </span>
           <button type="button" className="button" data-variant="quiet" data-size="sm" onClick={disconnect} disabled={busy}>
             {busy ? "Disconnecting…" : "Disconnect"}
@@ -387,20 +408,43 @@ function ProviderCredentialRow({ provider, credential, onChanged }: {
         </>
       ) : (
         <form className="settings-category-detail" onSubmit={connect}>
-          <label className="field">
-            <span className="label">API key</span>
-            <input
-              type="password"
-              value={apiKey}
-              onChange={(event) => setApiKey(event.target.value)}
-              maxLength={512}
-              autoComplete="off"
-              spellCheck={false}
-            />
-          </label>
+          {kind === "oauth" && (
+            <p className="settings-category-detail">
+              {bundle
+                ? <>Run <code>codex login</code> on your machine, then paste the contents of <code>~/.codex/auth.json</code>.</>
+                : <>Run <code>claude setup-token</code> on your machine and paste the token.</>}
+              {" "}Used only for runs of agents you own; the subscription&rsquo;s rate limits are yours and apply here too.
+              openfloor never uses it for anyone else, and disconnecting is immediate.
+            </p>
+          )}
+          {bundle ? (
+            <label className="field">
+              <span className="label">auth.json</span>
+              <textarea
+                value={secret}
+                onChange={(event) => setSecret(event.target.value)}
+                maxLength={8192}
+                rows={4}
+                autoComplete="off"
+                spellCheck={false}
+              />
+            </label>
+          ) : (
+            <label className="field">
+              <span className="label">{kind === "api_key" ? "API key" : "Setup token"}</span>
+              <input
+                type="password"
+                value={secret}
+                onChange={(event) => setSecret(event.target.value)}
+                maxLength={512}
+                autoComplete="off"
+                spellCheck={false}
+              />
+            </label>
+          )}
           <div className="form-actions">
-            <button className="button" data-variant="primary" data-size="sm" disabled={!apiKey.trim() || busy}>
-              {busy ? "Verifying…" : "Connect"}
+            <button className="button" data-variant="primary" data-size="sm" disabled={!secret.trim() || busy}>
+              {busy ? (kind === "api_key" ? "Verifying…" : "Connecting…") : "Connect"}
             </button>
           </div>
         </form>

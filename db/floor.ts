@@ -243,10 +243,10 @@ export async function createFloorAgent(
     const results = await database.batch([
       database.prepare(
         `INSERT INTO floor_agents
-           (id, session_id, created_by, owner_user_id, name, name_key, role, task, state, provider, created_at, updated_at)
-         SELECT ?, ?, ?, ?, ?, ?, ?, ?, 'created', ?, ?, ?
+           (id, session_id, created_by, owner_user_id, name, name_key, role, task, state, provider, credential_kind, created_at, updated_at)
+         SELECT ?, ?, ?, ?, ?, ?, ?, ?, 'created', ?, ?, ?, ?
          WHERE EXISTS (SELECT 1 FROM sessions WHERE id = ? AND ended_at IS NULL)`,
-      ).bind(id, sessionId, userId, input.ownerUserId, input.name, input.nameKey, input.role, input.task, input.provider, now, now, sessionId),
+      ).bind(id, sessionId, userId, input.ownerUserId, input.name, input.nameKey, input.role, input.task, input.provider, input.credentialKind, now, now, sessionId),
       bumpFloorRevision(database, sessionId, now),
     ]);
     if (!(await activeBatchApplied(results, sessionId, userId, database))) return null;

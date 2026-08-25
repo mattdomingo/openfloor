@@ -176,6 +176,13 @@
       "when": 1787357646640,
       "tag": "0024_shocking_goblin_queen",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "6",
+      "when": 1787630367076,
+      "tag": "0025_worthless_serpent_society",
+      "breakpoints": true
     }
   ]
 }

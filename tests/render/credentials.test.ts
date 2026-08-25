@@ -115,6 +115,47 @@ describe("provider credential routes", () => {
     expect(((await list.json()) as { credentials: Array<{ provider: string }> }).credentials.map((entry) => entry.provider)).toEqual(["kimi"]);
   });
 
+  it("connects a subscription credential alongside the API key, disconnecting per kind", async () => {
+    const { headers } = await onboardedUser("credentials-subscription", "Cred", "Sub");
+    const key = await SELF.fetch("http://localhost/api/account/credentials/anthropic", {
+      method: "PUT",
+      headers: jsonHeaders(headers),
+      body: JSON.stringify({ apiKey: ACCEPTED_ANTHROPIC_KEY }),
+    });
+    expect(key.status).toBe(200);
+    // A setup token has no free validation probe: stored encrypted with
+    // validated_at null ("Connected — not yet verified"), never a faked one.
+    const setupToken = "sk-ant-oat01-render-tok1";
+    const sub = await SELF.fetch("http://localhost/api/account/credentials/anthropic", {
+      method: "PUT",
+      headers: jsonHeaders(headers),
+      body: JSON.stringify({ setupToken }),
+    });
+    expect(sub.status).toBe(200);
+    const subText = await sub.text();
+    expect(subText).not.toContain(setupToken);
+    const { credential } = JSON.parse(subText) as { credential: { kind: string; fingerprint: string; validatedAt: number | null } };
+    expect(credential.kind).toBe("oauth");
+    expect(credential.fingerprint).toBe("tok1");
+    expect(credential.validatedAt).toBeNull();
+    // Both rows list deterministically, api_key first.
+    const listed = await SELF.fetch("http://localhost/api/account/credentials", { headers });
+    expect(((await listed.json()) as { credentials: Array<{ provider: string; kind: string }> }).credentials
+      .map((entry) => `${entry.provider}:${entry.kind}`)).toEqual(["anthropic:api_key", "anthropic:oauth"]);
+    // Providers without a subscription kind refuse it.
+    const refused = await SELF.fetch("http://localhost/api/account/credentials/kimi", {
+      method: "PUT",
+      headers: jsonHeaders(headers),
+      body: JSON.stringify({ setupToken }),
+    });
+    expect(refused.status).toBe(400);
+    // Disconnect is kind-scoped: the subscription goes, the API key stays.
+    expect((await SELF.fetch("http://localhost/api/account/credentials/anthropic?kind=bogus", { method: "DELETE", headers })).status).toBe(404);
+    expect((await SELF.fetch("http://localhost/api/account/credentials/anthropic?kind=oauth", { method: "DELETE", headers })).status).toBe(204);
+    const after = await SELF.fetch("http://localhost/api/account/credentials", { headers });
+    expect(((await after.json()) as { credentials: Array<{ kind: string }> }).credentials.map((entry) => entry.kind)).toEqual(["api_key"]);
+  });
+
   it("rejects invalid keys, invalid input, and unknown providers", async () => {
     const { headers } = await onboardedUser("credentials-reject", "Cred", "Reject");
 

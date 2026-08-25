@@ -202,6 +202,13 @@ export const floorAgents = sqliteTable(
     // existing rows keep current behavior via the default. `model` null means
     // "use the provider's default" (lib/provider-credentials.ts).
     provider: text("provider", { enum: ["anthropic", "openai", "kimi", "gemini"] }).notNull().default("openai"),
+    // Which of the owner's credential kinds pays for this agent's runs. Open
+    // enum, nullable, no CHECK and no default: null means "the owner's
+    // default" — api_key when connected, else whatever single row exists —
+    // so every pre-existing agent bills exactly what it billed before its
+    // owner connects a subscription. A named kind the owner lacks REFUSES the
+    // run (never the other kind, never the server key).
+    credentialKind: text("credential_kind", { enum: ["api_key", "oauth"] }),
     model: text("model"),
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
@@ -688,24 +695,27 @@ export const sessionMcpServers = sqliteTable(
 // secret). `ciphertext` never leaves the server — routes return only the
 // fingerprint (last four characters). `provider` and `kind` are open enums,
 // TS-typed but deliberately without a SQL CHECK (same convention as
-// agent_run_artifacts.kind) so adding a provider never requires a table
-// recreate. The users FK cascade never fires in practice — deleteAccount
-// scrubs the row instead of deleting it, so it deletes credentials explicitly.
+// agent_run_artifacts.kind) so adding an enum VALUE never requires a table
+// recreate; widening the primary key to include `kind` was the one recreate
+// (drizzle __new_ table swap — safe here because nothing references this
+// table). A user holds at most one row per (provider, kind): an API key and
+// a subscription credential side by side; `floor_agents.credential_kind`
+// picks which one a run bills. AAD is the bare legacy "<userId>:<provider>"
+// for api_key rows and "<userId>:<provider>:<kind>" for newer kinds
+// (lib/provider-credentials.ts's credentialAadContext). The users FK cascade
+// never fires in practice — deleteAccount scrubs the row instead of deleting
+// it, so it deletes credentials explicitly.
 export const userProviderCredentials = sqliteTable(
   "user_provider_credentials",
   {
     userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
     provider: text("provider", { enum: ["anthropic", "openai", "kimi", "gemini"] }).notNull(),
-    // ponytail: kind stays "api_key" until Anthropic approves third-party
-    // OAuth for openfloor (claude.ai/Max/Pro login is disallowed for
-    // third-party products). If that approval lands, a kind:"oauth" row slots
-    // into this same identity and ciphertext column unchanged.
-    kind: text("kind", { enum: ["api_key"] }).notNull().default("api_key"),
+    kind: text("kind", { enum: ["api_key", "oauth"] }).notNull().default("api_key"),
     ciphertext: text("ciphertext").notNull(),
     fingerprint: text("fingerprint").notNull(),
     validatedAt: integer("validated_at"),
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
   },
-  (table) => [primaryKey({ columns: [table.userId, table.provider] })],
+  (table) => [primaryKey({ columns: [table.userId, table.provider, table.kind] })],
 );

@@ -1,8 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   AGENT_PROVIDER_LABELS,
+  credentialAadContext,
   credentialFingerprint,
+  credentialKindLabel,
+  credentialKindsForProvider,
   DEFAULT_PROVIDER_MODELS,
+  parseCredentialKind,
   parseCredentialProvider,
   providerLabel,
   resolveRunCredentialSource,
@@ -73,8 +77,46 @@ describe("run credential resolution order", () => {
     expect(resolveRunCredentialSource({ ownerCredentialPresent: false, serverKeyPresent: true })).toEqual({ source: "server" });
   });
 
-  it("refuses when neither exists", () => {
-    expect(resolveRunCredentialSource({ ownerCredentialPresent: false, serverKeyPresent: false })).toEqual({ source: "none" });
+  it("refuses when neither exists, saying which absence it is", () => {
+    expect(resolveRunCredentialSource({ ownerCredentialPresent: false, serverKeyPresent: false }))
+      .toEqual({ source: "none", reason: "no_credential" });
+  });
+
+  it("refuses an agent-named kind the owner lacks — never the server key", () => {
+    // The single most important resolution assertion: an agent bound to a
+    // disconnected subscription must NOT silently bill openfloor's key.
+    expect(resolveRunCredentialSource({ ownerCredentialPresent: false, serverKeyPresent: true, missingSelectedKind: true }))
+      .toEqual({ source: "none", reason: "missing_selected_kind" });
+    expect(resolveRunCredentialSource({ ownerCredentialPresent: false, serverKeyPresent: false, missingSelectedKind: true }))
+      .toEqual({ source: "none", reason: "missing_selected_kind" });
+  });
+});
+
+describe("credential kinds", () => {
+  it("allows a subscription kind only where one exists to sell", () => {
+    expect(credentialKindsForProvider("anthropic")).toEqual(["api_key", "oauth"]);
+    expect(credentialKindsForProvider("openai")).toEqual(["api_key", "oauth"]);
+    expect(credentialKindsForProvider("kimi")).toEqual(["api_key"]);
+    expect(credentialKindsForProvider("gemini")).toEqual(["api_key"]);
+  });
+
+  it("parses kinds strictly", () => {
+    expect(parseCredentialKind("api_key")).toBe("api_key");
+    expect(parseCredentialKind("oauth")).toBe("oauth");
+    expect(parseCredentialKind("subscription")).toBeNull();
+    expect(parseCredentialKind(undefined)).toBeNull();
+  });
+
+  it("keeps the legacy AAD shape for api_key rows and binds the kind for new ones", () => {
+    expect(credentialAadContext("user-1", "anthropic", "api_key")).toBe("user-1:anthropic");
+    expect(credentialAadContext("user-1", "anthropic", "oauth")).toBe("user-1:anthropic:oauth");
+    expect(credentialAadContext("user-1", "openai", "oauth")).toBe("user-1:openai:oauth");
+  });
+
+  it("labels kinds for Settings rows and refusal messages", () => {
+    expect(credentialKindLabel("anthropic", "api_key")).toBe("API key");
+    expect(credentialKindLabel("anthropic", "oauth")).toBe("Claude subscription");
+    expect(credentialKindLabel("openai", "oauth")).toBe("ChatGPT subscription");
   });
 });
 

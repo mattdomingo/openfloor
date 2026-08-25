@@ -2,7 +2,15 @@
 
 import { FormEvent, useEffect, useId, useRef, useState } from "react";
 import type { CreateFloorAgentInput, FloorParticipant } from "@/lib/floor-types";
-import { AGENT_PROVIDER_LABELS, parseCredentialProvider, providerLabel, type CredentialProvider } from "@/lib/provider-credentials";
+import {
+  AGENT_PROVIDER_LABELS,
+  credentialKindsForProvider,
+  parseCredentialKind,
+  parseCredentialProvider,
+  providerLabel,
+  type CredentialKind,
+  type CredentialProvider,
+} from "@/lib/provider-credentials";
 import { Icon, useDialogDismiss } from "./primitives";
 import { SelectMenu } from "./SelectMenu";
 
@@ -27,6 +35,10 @@ export function CreateAgentDialog({
   const [task, setTask] = useState("");
   const [ownerUserId, setOwnerUserId] = useState(currentUserId);
   const [provider, setProvider] = useState<CredentialProvider>("openai");
+  // null = "the owner's default" (api_key when connected). Offered only for
+  // providers with more than one credential kind; switching provider resets
+  // it so a kind can never outlive a provider that does not accept it.
+  const [credentialKind, setCredentialKind] = useState<CredentialKind | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const ready = name.trim().length > 0 && role.trim().length > 0 && task.trim().length > 0 && ownerUserId.length > 0;
 
@@ -36,7 +48,7 @@ export function CreateAgentDialog({
     event.preventDefault();
     if (!ready || submitting) return;
     setSubmitting(true);
-    const created = await onCreate({ name, role, task, ownerUserId, provider });
+    const created = await onCreate({ name, role, task, ownerUserId, provider, credentialKind });
     setSubmitting(false);
     if (created) dismiss();
   }
@@ -70,11 +82,29 @@ export function CreateAgentDialog({
               <SelectMenu
                 label="Agent provider"
                 value={provider}
-                onChange={(value) => setProvider(parseCredentialProvider(value) ?? "openai")}
+                onChange={(value) => {
+                  setProvider(parseCredentialProvider(value) ?? "openai");
+                  setCredentialKind(null);
+                }}
                 options={enabledProviders.map((option) => ({
                   value: option,
                   label: `${AGENT_PROVIDER_LABELS[option]} (${providerLabel(option)})`,
                 }))}
+              />
+            </div>
+          )}
+          {credentialKindsForProvider(provider).length > 1 && (
+            <div className="field">
+              <span className="label">Billing</span>
+              <SelectMenu
+                label="Agent billing credential"
+                value={credentialKind ?? "default"}
+                onChange={(value) => setCredentialKind(parseCredentialKind(value))}
+                options={[
+                  { value: "default", label: "Owner's default" },
+                  { value: "oauth", label: "Subscription" },
+                  { value: "api_key", label: "API key" },
+                ]}
               />
             </div>
           )}

@@ -1,7 +1,6 @@
-import { getRunAgentOwnerCredential } from "@/db/provider-credentials";
+import { resolveRunProviderSecret } from "@/db/provider-credentials";
 import { getRunGatewayContext } from "@/db/runs";
-import { decryptCredential } from "@/lib/credential-crypto";
-import { providerLabel, resolveRunCredentialSource, type CredentialProvider } from "@/lib/provider-credentials";
+import { type CredentialProvider } from "@/lib/provider-credentials";
 import { verifyRunGatewayToken, type RunGatewayClaims } from "@/lib/runtime-token";
 import { env } from "cloudflare:workers";
 
@@ -55,32 +54,17 @@ export async function handleAnthropicCompatProxy(
     console.warn(`${config.provider} gateway rejected path: POST /${parts.join("/")}`);
     return new Response("Not found", { status: 404 });
   }
-  // Same resolution order as the OpenAI gateway, decided by
-  // resolveRunCredentialSource: the agent owner's connected key, else the
-  // server key, else refuse — and a present-but-unreadable owner credential
-  // refuses rather than switching payer.
-  const ownerCredential = await getRunAgentOwnerCredential(claims.runId, config.provider);
-  const serverKey = bindings[config.serverKeyBinding];
-  const resolution = resolveRunCredentialSource({
-    ownerCredentialPresent: Boolean(ownerCredential),
-    serverKeyPresent: Boolean(serverKey),
+  // The shared ladder (db/provider-credentials.ts): the agent owner's
+  // connected credential of the kind the agent names, else the server key,
+  // else refuse — a present-but-unreadable owner credential and a named-but-
+  // unconnected kind both refuse rather than switching payer.
+  const resolved = await resolveRunProviderSecret(claims.runId, config.provider, {
+    serverKey: bindings[config.serverKeyBinding],
+    encryptionKey: bindings.CREDENTIAL_ENCRYPTION_KEY,
   });
-  let apiKey: string;
-  if (resolution.source === "owner") {
-    const decrypted = ownerCredential && bindings.CREDENTIAL_ENCRYPTION_KEY
-      ? await decryptCredential(ownerCredential.ciphertext, bindings.CREDENTIAL_ENCRYPTION_KEY, `${ownerCredential.ownerUserId}:${config.provider}`)
-      : null;
-    if (!decrypted) {
-      return new Response(`The agent owner's connected ${providerLabel(config.provider)} key could not be read. Reconnect it in Settings.`, { status: 503 });
-    }
-    apiKey = decrypted;
-  } else if (resolution.source === "server" && serverKey) {
-    apiKey = serverKey;
-  } else {
-    return new Response(`No ${providerLabel(config.provider)} credential is available for this run.`, { status: 503 });
-  }
+  if (!resolved.ok) return new Response(resolved.message, { status: 503 });
   const headers = new Headers();
-  for (const [name, value] of Object.entries(config.buildAuthHeaders(apiKey))) headers.set(name, value);
+  for (const [name, value] of Object.entries(config.buildAuthHeaders(resolved.secret))) headers.set(name, value);
   headers.set("anthropic-version", request.headers.get("anthropic-version") ?? "2023-06-01");
   headers.set("content-type", request.headers.get("content-type") ?? "application/json");
   headers.set("accept", request.headers.get("accept") ?? "application/json");
