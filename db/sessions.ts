@@ -468,7 +468,7 @@ export async function getInvitePreview(inviteId: string, database = getDb()): Pr
     .prepare(
       `SELECT i.id AS inviteId, s.id AS sessionId, s.title, s.objective, s.locked_at AS lockedAt,
               owner.display_name AS ownerName, owner.plan AS ownerPlan, owner.plan_status AS ownerPlanStatus,
-              owner.seat_limit AS ownerSeatLimit,
+              owner.seat_limit AS ownerSeatLimit, owner.email AS ownerEmail,
               (SELECT COUNT(*) FROM session_members m WHERE m.session_id = s.id AND m.removed_at IS NULL) AS memberCount
        FROM session_invites i
        JOIN sessions s ON s.id = i.session_id
@@ -479,11 +479,11 @@ export async function getInvitePreview(inviteId: string, database = getDb()): Pr
     .bind(inviteId)
     .first<{
       inviteId: string; sessionId: string; title: string; objective: string | null; lockedAt: number | null; ownerName: string;
-      ownerPlan: Plan; ownerPlanStatus: PlanStatus; ownerSeatLimit: number | null; memberCount: number;
+      ownerPlan: Plan; ownerPlanStatus: PlanStatus; ownerSeatLimit: number | null; ownerEmail: string; memberCount: number;
     }>();
   if (!row) return null;
-  const { ownerPlan, ownerPlanStatus, ownerSeatLimit, lockedAt, ...preview } = row;
-  return { ...preview, seatLimit: effectiveSeatLimit(ownerPlan, ownerPlanStatus, ownerSeatLimit), locked: lockedAt != null };
+  const { ownerPlan, ownerPlanStatus, ownerSeatLimit, ownerEmail, lockedAt, ...preview } = row;
+  return { ...preview, seatLimit: effectiveSeatLimit(ownerPlan, ownerPlanStatus, ownerSeatLimit, ownerEmail), locked: lockedAt != null };
 }
 
 export async function acceptInvite(
@@ -500,6 +500,8 @@ export async function acceptInvite(
                  WHERE o.session_id = i.session_id AND o.role = 'owner' AND o.removed_at IS NULL) AS ownerPlanStatus,
               (SELECT u.seat_limit FROM session_members o JOIN users u ON u.id = o.user_id
                  WHERE o.session_id = i.session_id AND o.role = 'owner' AND o.removed_at IS NULL) AS ownerSeatLimit,
+              (SELECT u.email FROM session_members o JOIN users u ON u.id = o.user_id
+                 WHERE o.session_id = i.session_id AND o.role = 'owner' AND o.removed_at IS NULL) AS ownerEmail,
               EXISTS(SELECT 1 FROM session_members m
                  WHERE m.session_id = i.session_id AND m.user_id = ?1) AS callerExists,
               (SELECT m.removed_at FROM session_members m
@@ -512,7 +514,7 @@ export async function acceptInvite(
     .bind(userId, inviteId)
     .first<{
       memberCount: number; ownerPlan: Plan | null; ownerPlanStatus: PlanStatus | null; ownerSeatLimit: number | null;
-      callerExists: number; callerRemovedAt: number | null; lockedAt: number | null;
+      ownerEmail: string | null; callerExists: number; callerRemovedAt: number | null; lockedAt: number | null;
     }>();
   if (!gate) return null;
   // A removed row still exists, so callerExists is true for it — check the
@@ -531,7 +533,7 @@ export async function acceptInvite(
   // ponytail: check-then-insert; concurrent accepts can exceed the cap by the
   // number of racers. Upgrade path if it matters: conditional INSERT...SELECT
   // guarded by the count inside the batch.
-  if (!alreadyMember && gate.memberCount >= effectiveSeatLimit(plan, status, gate.ownerSeatLimit)) {
+  if (!alreadyMember && gate.memberCount >= effectiveSeatLimit(plan, status, gate.ownerSeatLimit, gate.ownerEmail)) {
     return "full";
   }
 
@@ -728,14 +730,14 @@ export async function restoreMember(
 
   const owner = await database
     .prepare(
-      `SELECT u.plan AS plan, u.plan_status AS planStatus, u.seat_limit AS seatLimit,
+      `SELECT u.plan AS plan, u.plan_status AS planStatus, u.seat_limit AS seatLimit, u.email AS email,
               (SELECT COUNT(*) FROM session_members m WHERE m.session_id = ? AND m.removed_at IS NULL) AS memberCount
        FROM session_members o JOIN users u ON u.id = o.user_id
        WHERE o.session_id = ? AND o.role = 'owner' AND o.removed_at IS NULL`,
     )
     .bind(sessionId, sessionId)
-    .first<{ plan: Plan; planStatus: PlanStatus; seatLimit: number | null; memberCount: number }>();
-  const seatLimit = effectiveSeatLimit(owner?.plan ?? "free", owner?.planStatus ?? "inactive", owner?.seatLimit ?? null);
+    .first<{ plan: Plan; planStatus: PlanStatus; seatLimit: number | null; email: string | null; memberCount: number }>();
+  const seatLimit = effectiveSeatLimit(owner?.plan ?? "free", owner?.planStatus ?? "inactive", owner?.seatLimit ?? null, owner?.email);
   if ((owner?.memberCount ?? 0) >= seatLimit) return "full";
 
   const now = Date.now();
@@ -926,7 +928,7 @@ export async function getOwnerHourQuota(
 ): Promise<{ ownerId: string; plan: Plan; seconds: number; endedAt: number | null } | null> {
   const row = await database
     .prepare(
-      `SELECT o.user_id AS ownerId, u.plan AS plan, u.plan_status AS planStatus,
+      `SELECT o.user_id AS ownerId, u.plan AS plan, u.plan_status AS planStatus, u.email AS email,
               COALESCE(um.seconds, 0) AS seconds, s.ended_at AS endedAt
        FROM session_members o
        JOIN sessions s ON s.id = o.session_id
@@ -935,9 +937,9 @@ export async function getOwnerHourQuota(
        WHERE o.session_id = ? AND o.role = 'owner' AND o.removed_at IS NULL`,
     )
     .bind(currentMonth(), sessionId)
-    .first<{ ownerId: string; plan: Plan; planStatus: PlanStatus; seconds: number; endedAt: number | null }>();
+    .first<{ ownerId: string; plan: Plan; planStatus: PlanStatus; email: string | null; seconds: number; endedAt: number | null }>();
   if (!row) return null;
-  return { ownerId: row.ownerId, plan: effectivePlan(row.plan, row.planStatus), seconds: row.seconds, endedAt: row.endedAt };
+  return { ownerId: row.ownerId, plan: effectivePlan(row.plan, row.planStatus, row.email), seconds: row.seconds, endedAt: row.endedAt };
 }
 
 export async function getUsageForUser(
@@ -953,23 +955,23 @@ export async function getUsageForUser(
 }> {
   const row = await database
     .prepare(
-      `SELECT u.plan AS plan, u.plan_status AS planStatus, u.seat_limit AS seatLimit, COALESCE(um.seconds, 0) AS seconds
+      `SELECT u.plan AS plan, u.plan_status AS planStatus, u.seat_limit AS seatLimit, u.email AS email, COALESCE(um.seconds, 0) AS seconds
        FROM users u
        LEFT JOIN usage_months um ON um.owner_user_id = u.id AND um.month = ?
        WHERE u.id = ?`,
     )
     .bind(currentMonth(), userId)
-    .first<{ plan: Plan; planStatus: PlanStatus; seatLimit: number | null; seconds: number }>();
+    .first<{ plan: Plan; planStatus: PlanStatus; seatLimit: number | null; email: string | null; seconds: number }>();
   const plan = row?.plan ?? "free";
   const planStatus = row?.planStatus ?? "inactive";
-  const effective = effectivePlan(plan, planStatus);
+  const effective = effectivePlan(plan, planStatus, row?.email);
   return {
     plan,
     planStatus,
     effectivePlan: effective,
     seconds: row?.seconds ?? 0,
     limitHours: PLAN_LIMITS[effective].hours,
-    limitSeats: effectiveSeatLimit(plan, planStatus, row?.seatLimit ?? null),
+    limitSeats: effectiveSeatLimit(plan, planStatus, row?.seatLimit ?? null, row?.email),
   };
 }
 
