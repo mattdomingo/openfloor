@@ -19,6 +19,7 @@ import { PromptQueue } from "./PromptQueue";
 import { ReviewScreen } from "./ReviewScreen";
 import { FloorDock } from "./FloorDock";
 import { StatusBar } from "./StatusLine";
+import { useTransientNotice } from "./useTransientNotice";
 import { CONFLICT_ALERT_STORAGE_KEY, conflictAttentionEvent, withConflictAlertClaim } from "@/lib/conflict-notifications";
 
 const RAIL_COLLAPSED_WIDTH = 40;
@@ -55,7 +56,10 @@ export function Workspace({ user, session, members, floorData, activity, reposit
   const [draggedPanel, setDraggedPanel] = useState<PanelId | null>(null);
   const [dragOverPanel, setDragOverPanel] = useState<PanelId | null>(null);
   const [resizing, setResizing] = useState(false);
-  const [notice, setNotice] = useState<string | null>(null);
+  // The dock toast's lifetime — dwell then fade, instead of the old plain
+  // useState that nothing ever cleared. `setNotice` keeps its name so the
+  // ~20 existing call sites below are unchanged.
+  const { message: notice, tone: noticeTone, visible: noticeVisible, show: setNotice } = useTransientNotice();
   const [selectedConflictCaseId, setSelectedConflictCaseId] = useState<string | null>(null);
   const [browserConflictAlerts, setBrowserConflictAlerts] = useState(() => typeof window !== "undefined" && window.localStorage.getItem(CONFLICT_ALERT_STORAGE_KEY) === "true");
   const [documentVisibility, setDocumentVisibility] = useState<DocumentVisibilityState>(() => typeof document === "undefined" ? "visible" : document.visibilityState);
@@ -95,6 +99,20 @@ export function Workspace({ user, session, members, floorData, activity, reposit
     () => review?.conflicts.filter((conflict) => conflict.status === "awaiting_input" || conflict.status === "failed") ?? [],
     [review?.conflicts],
   );
+
+  // Folds floorData.error into the same toast lifetime as `notice`, so a
+  // mutation failure dwells and fades exactly like any other notice instead
+  // of sitting forever — and finally gives floorData.clearError a caller.
+  useEffect(() => {
+    if (!floorData.error) return;
+    setNotice(floorData.error, "error");
+    floorData.clearError();
+    // Only floorData.error is a meaningful dependency: clearError's identity
+    // changes every render (it's an inline closure), but calling it here
+    // flips floorData.error back to null, which is what actually re-arms
+    // this effect for the next failure.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [floorData.error, setNotice]);
 
   useEffect(() => {
     const update = () => setDocumentVisibility(document.visibilityState);
@@ -258,7 +276,7 @@ export function Workspace({ user, session, members, floorData, activity, reposit
     )}
     {quotaExhausted && session.endedAt == null && <QuotaNotice sessionId={session.id} role={session.role} />}
     {screen !== "review" && attentionConflicts[0] && <button type="button" className="notice conflict-attention-banner" data-tone="attention" onClick={() => { setSelectedConflictCaseId(attentionConflicts[0].id); setScreen("review"); }}><strong>{attentionConflicts[0].status === "awaiting_input" ? "Merge conflict needs a decision" : "Merge Resolver needs attention"}</strong><span>Open Review to see the conflict and {attentionConflicts[0].status === "awaiting_input" ? "answer its questions" : "retry resolution"}.</span></button>}
-    {screen === "review" ? <ReviewScreen review={review} repository={repository} repositoryTree={repositoryTree} selectedConflictCaseId={selectedConflictCaseId} owner={session.role === "owner"} busy={floorData.busy} blockingRunId={floorData.blockingRunId} onResolveConflict={async (caseId) => Boolean(await floorData.resolveConflict(caseId))} onAnswerConflict={async (caseId, answers) => Boolean(await floorData.answerConflict(caseId, answers))} onReady={async () => { if (await floorData.readyReview()) setNotice("GitHub review status synchronized"); }} onMerge={async (deleteCandidateBranch) => { const result = await floorData.squashMergeReview(deleteCandidateBranch); if (result) setNotice(deleteCandidateBranch ? "Pull request squash merged and branches cleaned up" : "Pull request squash merged; candidate branch kept"); return Boolean(result); }} onDeleteBranch={async () => { const result = await floorData.deleteReviewBranch(); if (result) setNotice("Candidate branch deleted"); return Boolean(result); }} onCancelRun={async (runId) => { await floorData.cancelRun(runId); }} teamChat={messages} onSendTeamMessage={async (text, recipient) => Boolean(await floorData.sendMessage(text, recipient))} participants={participants} currentUserId={user.id} /> : <><div className="workspace" data-expanded={expandedPanel ? "true" : "false"} data-resizing={resizing ? "true" : "false"}>{panelOrder.map((panel, index) => { const next = panelOrder[index + 1]; const showHandle = !expandedPanel && next !== undefined && !(isCollapsed(panel) && panel !== "floor"); return <div key={panel} ref={(element) => { if (element) panelSlotRefs.current.set(panel, element); else panelSlotRefs.current.delete(panel); }} className="panel-slot" style={slotStyle(panel)} data-expanded={expandedPanel === panel ? "true" : "false"} data-collapsed={isCollapsed(panel) ? "true" : "false"} data-dragging={draggedPanel === panel ? "true" : "false"} data-drop-target={dragOverPanel === panel ? "true" : "false"} onDragOver={(event) => { event.preventDefault(); if (draggedPanel && draggedPanel !== panel) setDragOverPanel(panel); }} onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragOverPanel((current) => current === panel ? null : current); }} onDrop={() => dropPanel(panel)}>{renderPanel(panel, chromeFor(panel, index))}{showHandle && <div className="resize-handle" role="separator" aria-label={`Resize ${panel} panel`} onPointerDown={(event) => startResize(panel, next, event)} />}</div>; })}</div><FloorDock onSubmit={enqueuePrompt} agents={agents} queueTarget={queueTarget} onQueueTargetChange={setQueueTarget} textareaRef={composerRef} notice={notice} error={floorData.error} busy={floorData.busy} participants={participants} typingDrafts={typingDrafts} onTypingUpdate={onTypingUpdate} /></>}
-    {screen === "review" && (notice || floorData.error) && <StatusBar notice={floorData.error ?? notice ?? ""} visible tone={floorData.error ? "error" : "notice"} />}
+    {screen === "review" ? <ReviewScreen review={review} repository={repository} repositoryTree={repositoryTree} selectedConflictCaseId={selectedConflictCaseId} owner={session.role === "owner"} busy={floorData.busy} blockingRunId={floorData.blockingRunId} onResolveConflict={async (caseId) => Boolean(await floorData.resolveConflict(caseId))} onAnswerConflict={async (caseId, answers) => Boolean(await floorData.answerConflict(caseId, answers))} onReady={async () => { if (await floorData.readyReview()) setNotice("GitHub review status synchronized"); }} onMerge={async (deleteCandidateBranch) => { const result = await floorData.squashMergeReview(deleteCandidateBranch); if (result) setNotice(deleteCandidateBranch ? "Pull request squash merged and branches cleaned up" : "Pull request squash merged; candidate branch kept"); return Boolean(result); }} onDeleteBranch={async () => { const result = await floorData.deleteReviewBranch(); if (result) setNotice("Candidate branch deleted"); return Boolean(result); }} onCancelRun={async (runId) => { await floorData.cancelRun(runId); }} teamChat={messages} onSendTeamMessage={async (text, recipient) => Boolean(await floorData.sendMessage(text, recipient))} participants={participants} currentUserId={user.id} /> : <><div className="workspace" data-expanded={expandedPanel ? "true" : "false"} data-resizing={resizing ? "true" : "false"}>{panelOrder.map((panel, index) => { const next = panelOrder[index + 1]; const showHandle = !expandedPanel && next !== undefined && !(isCollapsed(panel) && panel !== "floor"); return <div key={panel} ref={(element) => { if (element) panelSlotRefs.current.set(panel, element); else panelSlotRefs.current.delete(panel); }} className="panel-slot" style={slotStyle(panel)} data-expanded={expandedPanel === panel ? "true" : "false"} data-collapsed={isCollapsed(panel) ? "true" : "false"} data-dragging={draggedPanel === panel ? "true" : "false"} data-drop-target={dragOverPanel === panel ? "true" : "false"} onDragOver={(event) => { event.preventDefault(); if (draggedPanel && draggedPanel !== panel) setDragOverPanel(panel); }} onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragOverPanel((current) => current === panel ? null : current); }} onDrop={() => dropPanel(panel)}>{renderPanel(panel, chromeFor(panel, index))}{showHandle && <div className="resize-handle" role="separator" aria-label={`Resize ${panel} panel`} onPointerDown={(event) => startResize(panel, next, event)} />}</div>; })}</div><FloorDock onSubmit={enqueuePrompt} agents={agents} queueTarget={queueTarget} onQueueTargetChange={setQueueTarget} textareaRef={composerRef} notice={notice} noticeTone={noticeTone} noticeVisible={noticeVisible} busy={floorData.busy} participants={participants} typingDrafts={typingDrafts} onTypingUpdate={onTypingUpdate} /></>}
+    {screen === "review" && notice && <StatusBar notice={notice} visible={noticeVisible} tone={noticeTone} />}
   </main>;
 }

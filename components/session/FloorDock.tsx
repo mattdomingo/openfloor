@@ -17,11 +17,12 @@ const draftVisibilityOptions: { value: DraftVisibility; label: ReactNode; title:
   { value: "hidden", label: <Icon name="eyeOff" size={13} />, title: "Hidden" },
 ];
 
-export function FloorDock({ onSubmit, agents, queueTarget, onQueueTargetChange, textareaRef, notice, error, busy, participants, typingDrafts, onTypingUpdate }: {
+export function FloorDock({ onSubmit, agents, queueTarget, onQueueTargetChange, textareaRef, notice, noticeTone, noticeVisible, busy, participants, typingDrafts, onTypingUpdate }: {
   onSubmit: (value: string) => Promise<boolean>;
   textareaRef: RefObject<HTMLTextAreaElement | null>;
   notice: string | null;
-  error: string | null;
+  noticeTone: "notice" | "error";
+  noticeVisible: boolean;
   agents: FloorAgent[];
   queueTarget: string | null;
   onQueueTargetChange: (id: string | null) => void;
@@ -86,8 +87,10 @@ export function FloorDock({ onSubmit, agents, queueTarget, onQueueTargetChange, 
 
   return <section className="dock" aria-label="Open floor" data-mode={draftVisibility}>
     {/* Floats above the dock instead of reserving a permanent band — only
-        takes space while there's something to say. */}
-    {(notice || error) && <div className="dock-toast"><StatusLine notice={error ?? notice ?? ""} visible tone={error ? "error" : "notice"} /></div>}
+        takes space while there's something to say, and only for as long as
+        useTransientNotice keeps `notice` non-null (dwell, then a fade before
+        unmount — see StatusLine's data-visible exit transition). */}
+    {notice && <div className="dock-toast" data-visible={noticeVisible ? "true" : "false"}><StatusLine notice={notice} visible={noticeVisible} tone={noticeTone} /></div>}
     <div className="dock-inner"><form className="composer" onSubmit={(event) => { event.preventDefault(); void submitPrompt(); }}>
       {teammates.length > 0 && <div className="composer-head"><div className="floor-presence"><span>Live drafts</span><div className="presence">{teammates.map((person) => <Avatar key={person.id} userId={person.id} initials={person.initials} tone={person.tone} online={person.online} typing={typingDrafts.get(person.id)?.typing} />)}</div></div></div>}
       <MentionComposer textareaRef={textareaRef} agents={agents} ariaLabel="Prompt to add to the queue" value={value} onValueChange={updateDraft} />
