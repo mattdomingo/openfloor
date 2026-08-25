@@ -347,6 +347,7 @@
 
 :root[data-theme="dark"] .app-shell,
 :root[data-theme="dark"] .join-shell,
+:root[data-theme="midnight"] .app-shell,
 :root[data-theme="midnight"] .join-shell {
   color-scheme: dark;
 
