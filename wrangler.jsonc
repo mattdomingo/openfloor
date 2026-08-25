@@ -95,7 +95,17 @@
 		"KIMI_RUN_ENABLED": "true",
 		// Gemini rollout gate: enabled — the v3 image (Gemini CLI + runner),
 		// gemini gateway route, and the GEMINI_API_KEY fallback are live.
-		"GEMINI_RUN_ENABLED": "true"
+		"GEMINI_RUN_ENABLED": "true",
+		// Custom sign-in page rollout gate: on per explicit ship decision
+		// 2026-08-25, ahead of the live production Access verification
+		// (real Google + real email-code sign-in, plus the upstream-
+		// extraction fallback drill) called for in the original decision log
+		// entry — that check has NOT been run against production. Verify
+		// immediately after deploy; if sign-in breaks, flip this back to
+		// "false" first (accessSignInPath() then points straight at the
+		// Access-protected path, i.e. pre-2026-08-25 behavior) and diagnose
+		// after.
+		"ACCESS_CUSTOM_LOGIN_ENABLED": "true"
 	},
 	"r2_buckets": [
 		{

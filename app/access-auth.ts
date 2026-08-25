@@ -1,10 +1,10 @@
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
-import { BASE_PATH } from "@/components/basePath";
 import {
   identityFromTrustedHeaders,
   type AuthenticatedIdentity,
 } from "@/lib/identity";
+import { accessRequiredPath, accessSignInPath, protectedAccessPath, safeAppReturnPath } from "@/lib/access-paths";
 
 export type AccessUser = AuthenticatedIdentity;
 
@@ -19,45 +19,11 @@ export async function requireAccessUser(returnTo: string): Promise<AccessUser> {
   redirect(accessRequiredPath(returnTo));
 }
 
-// Navigating to a protected path causes Cloudflare Access to begin login while
-// preserving the requested URL. There is intentionally no application-owned
-// login callback or password flow.
-export function accessSignInPath(returnTo: string): string {
-  return appPath(safeRelativeReturnPath(returnTo));
-}
-
-// Validate browser-supplied return_to values with URL parsing. Browsers
-// normalize `/\\host` into `//host`, so prefix checks alone are unsafe.
-export function safeAppReturnPath(value: unknown): string | null {
-  if (typeof value !== "string") return null;
-  let url: URL;
-  try {
-    url = new URL(value, "https://app.local");
-  } catch {
-    return null;
-  }
-  if (url.origin !== "https://app.local") return null;
-  if (BASE_PATH && url.pathname !== BASE_PATH && !url.pathname.startsWith(`${BASE_PATH}/`)) return null;
-  return `${url.pathname}${url.search}${url.hash}`;
-}
-
-function accessRequiredPath(returnTo: string): string {
-  const landing = appPath("/");
-  return `${landing}?auth=required&return_to=${encodeURIComponent(appPath(safeRelativeReturnPath(returnTo)))}`;
-}
-
-function appPath(path: string): string {
-  return `${BASE_PATH}${path === "/" ? "" : path}` || "/";
-}
-
-function safeRelativeReturnPath(value: string): string {
-  if (!value.startsWith("/") || value.startsWith("//")) return "/home";
-  let url: URL;
-  try {
-    url = new URL(value, "https://app.local");
-  } catch {
-    return "/home";
-  }
-  if (url.origin !== "https://app.local") return "/home";
-  return `${url.pathname}${url.search}${url.hash}`;
-}
+// The pure path helpers live in lib/access-paths.ts — this file re-exports
+// them so existing importers (app/page.tsx, app/onboarding/page.tsx, the
+// billing/onboarding API routes) are unaffected. Anything that only needs
+// these, with no Next request context (a plain route handler, a worker
+// test), should import lib/access-paths.ts directly instead: importing
+// anything from this file also imports next/navigation's `redirect`, which
+// fails outside a real Next-rendered request.
+export { accessSignInPath, protectedAccessPath, safeAppReturnPath };

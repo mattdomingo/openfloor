@@ -28,7 +28,7 @@ describe("server rendering", () => {
 
     const html = await response.text();
     expect(html).toMatch(/<title>openfloor — Multiplayer agent development<\/title>/i);
-    expect(html).toContain("Continue with Google or a one-time code sent to your email.");
+    expect(html).toContain('aria-label="Sign in"');
     expect(html).not.toMatch(/Register|Guest|Session code|type="password"|mock/i);
     expect(html).not.toContain("signin-with-chatgpt");
   });
@@ -47,7 +47,11 @@ describe("server rendering", () => {
   it("rejects browser-normalized external return URLs", async () => {
     const response = await fetchPath(`${BASE_PATH}?return_to=${encodeURIComponent("/\\evil.example/phish")}`);
     const html = await response.text();
-    expect(html).toContain(`href="${BASE_PATH}/home"`);
+    // safeAppReturnPath rejects the tampered value, so the CTA falls back to
+    // accessSignInPath("/home") — which, with this pool's
+    // ACCESS_CUSTOM_LOGIN_ENABLED, routes through /signin rather than the
+    // protected path directly (see the "custom sign-in" describe block).
+    expect(html).toContain(`href="${BASE_PATH}/signin?return_to=%2Fhome"`);
     expect(html).not.toMatch(/<a[^>]+href="\/\\evil\.example\/phish"/i);
   });
 
@@ -380,6 +384,43 @@ describe("sign-out", () => {
     expect(response.status).toBe(302);
     expect(response.headers.get("location")).toBe("https://openfloor-render-test.cloudflareaccess.com/cdn-cgi/access/logout");
     expect(response.headers.get("set-cookie")).toMatch(/^CF_Authorization=;.*Max-Age=0/);
+  });
+});
+
+// The pool's ACCESS_CUSTOM_LOGIN_ENABLED and OPENFLOOR_TEST_ACCESS_LOGIN_*
+// bindings (vitest.render.config.ts) are fixed for this whole suite, so this
+// only proves the built app wires the happy path together end to end
+// through real Next rendering — flag-off behavior, extraction failure, and
+// SSRF-shaped inputs are covered with full per-case control in
+// tests/worker/access-paths.test.ts, tests/worker/access-login.test.ts, and
+// tests/worker/signin-code-route.test.ts instead.
+describe("custom sign-in", () => {
+  it("renders the extracted email form and a Google link at the real protected path", async () => {
+    const response = await SELF.fetch(`http://localhost/signin?return_to=${encodeURIComponent("/session/private-room")}`, {
+      headers: { accept: "text/html" },
+    });
+    expect(response.status).toBe(200);
+    const html = await response.text();
+    expect(html).toContain('name="action" value="https://openfloor-render-test.cloudflareaccess.com/cdn-cgi/access/verify-code/app.opnflr.com?kid=render-fixture&amp;meta=render-fixture"');
+    expect(html).toContain('href="/session/private-room">Continue with Google');
+    expect(html).toContain('action="/signin/code?return_to=%2Fsession%2Fprivate-room"');
+  });
+
+  it("code step: submitting the email renders the code form pointed at Cloudflare's real callback", async () => {
+    const form = new FormData();
+    form.set("email", "render-signin@example.com");
+    form.set("action", "https://openfloor-render-test.cloudflareaccess.com/cdn-cgi/access/verify-code/app.opnflr.com?kid=render-fixture&meta=render-fixture");
+    const response = await SELF.fetch("http://localhost/signin/code?return_to=%2Fhome", { method: "POST", body: form });
+    expect(response.status).toBe(200);
+    const html = await response.text();
+    expect(html).toContain('action="https://openfloor-render-test.cloudflareaccess.com/cdn-cgi/access/callback"');
+    expect(html).toContain('value="render-fixture-nonce"');
+    expect(html).toContain("We sent a code to render-signin@example.com.");
+    // Regression: this page is a hand-built standalone document, not
+    // rendered through Next's page pipeline, so it gets no stylesheet
+    // automatically — confirmed live, the page loaded completely unstyled
+    // before this link was added.
+    expect(html).toContain('<link rel="stylesheet" href="/assets/render-fixture.css">');
   });
 });
 
