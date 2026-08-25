@@ -273,3 +273,147 @@
   --elevation-1: 0 1px 2px rgba(0, 0, 0, 0.7), 0 1px 0 rgba(0, 0, 0, 0.4);
   --elevation-2: 0 16px 36px rgba(0, 0, 0, 0.75);
 }
+
+/* Floor palette: the session floor (.app-shell, components/session/Workspace.tsx)
+   resolves onto the same cool blue-gray palette as .shop-shell (app/styles/shop.css)
+   instead of the cream tokens above — /home, /settings, /onboarding, and the session
+   lobby already moved there; the floor was the holdout. Values are ported from
+   shop.css's --shop/--ink/--muted/--rule/--accent-fill family, with the extra
+   surface step (--surface-raised) and the soft/line/status/agent variants the
+   3-level shop ramp doesn't need derived to sit in the same family. Identity
+   tints (--who-*) and per-agent tones (app/styles/components.css) are retuned
+   here too — the old warm values were picked against cream and read muddy on
+   this palette's dark surfaces.
+
+   Same resolution rule as tokens.css and shop.css: keep the two dark blocks
+   below byte-identical. */
+.app-shell {
+  color-scheme: light;
+  background: var(--surface-page);
+  /* `color` is inheritable and body (legacy-floor-base.css) already resolved
+     it from the bare :root's cream --text-primary before this element is
+     reached — declaring it again here, like .shop-shell does (shop.css:39),
+     restarts inheritance from .app-shell's own --text-primary so descendants
+     that don't set `color` themselves (e.g. .panel-head) pick up this palette
+     instead of the cream one. */
+  color: var(--text-primary);
+
+  --surface-page: #c6ccd4;
+  --surface-header: #d3d8df;
+  --surface-panel: #dce1e7;
+  --surface-raised: #e6eaee;
+  --surface-sunken: #b9c0c9;
+
+  --text-primary: #12181f;
+  --text-secondary: #3d4652;
+  --text-tertiary: #4a525c;
+
+  --line-strong: #a9b1bd;
+  --line-soft: #c2c9d1;
+
+  --accent: #1b45b8;
+  --accent-hover: #143391;
+  --accent-soft: #d3dcf2;
+  --accent-line: #9fb0dd;
+  --accent-contrast: #ffffff;
+
+  --status-running: #207052;
+  --status-running-soft: #d4e4dc;
+  --status-blocked: #b3423a;
+  --status-blocked-soft: #f0dcd8;
+  --status-review: #35608f;
+  --status-review-soft: #d8e2ee;
+  --status-waiting: #5c6672;
+  --status-waiting-soft: #ced5dd;
+  --status-attention: #8b5917;
+  --status-attention-soft: #ecdfc9;
+
+  /* Identity tints: fills paired with --who-ink as text (app/styles/components.css
+     :178-179), so these stay mid-light regardless of page theme — same invariant
+     as the original warm set, just recolored. Not redeclared below: the dark
+     blocks below fall through to these. */
+  --who-1: #8fa8d0;
+  --who-2: #d3ad5e;
+  --who-3: #7fae93;
+  --who-ink: #12181f;
+
+  --elevation-1: 0 1px 2px rgba(18, 24, 31, 0.1), 0 1px 0 rgba(18, 24, 31, 0.04);
+  --elevation-2: 0 16px 36px rgba(18, 24, 31, 0.18);
+}
+
+:root[data-theme="dark"] .app-shell,
+:root[data-theme="midnight"] .app-shell {
+  color-scheme: dark;
+
+  --surface-page: #20262e;
+  --surface-header: #292f37;
+  --surface-panel: #313740;
+  --surface-raised: #3a4149;
+  --surface-sunken: #171c22;
+
+  --text-primary: #dfe3e8;
+  --text-secondary: #a5acb6;
+  --text-tertiary: #8a919b;
+
+  --line-strong: #4e5560;
+  --line-soft: #404751;
+
+  --accent: #6ea3ff;
+  --accent-hover: #7fb0ff;
+  --accent-soft: #1e2c44;
+  --accent-line: #38507a;
+  --accent-contrast: #0d1319;
+
+  --status-running: #6dd4aa;
+  --status-running-soft: #1f3a31;
+  --status-blocked: #e08b80;
+  --status-blocked-soft: #3c2723;
+  --status-review: #8fb6da;
+  --status-review-soft: #232f3c;
+  --status-waiting: #98a1ac;
+  --status-waiting-soft: #2a2f36;
+  --status-attention: #e7b76d;
+  --status-attention-soft: #3a301c;
+
+  --elevation-1: 0 1px 2px rgba(0, 0, 0, 0.5), 0 1px 0 rgba(0, 0, 0, 0.3);
+  --elevation-2: 0 16px 36px rgba(0, 0, 0, 0.55);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) .app-shell {
+    color-scheme: dark;
+
+    --surface-page: #20262e;
+    --surface-header: #292f37;
+    --surface-panel: #313740;
+    --surface-raised: #3a4149;
+    --surface-sunken: #171c22;
+
+    --text-primary: #dfe3e8;
+    --text-secondary: #a5acb6;
+    --text-tertiary: #8a919b;
+
+    --line-strong: #4e5560;
+    --line-soft: #404751;
+
+    --accent: #6ea3ff;
+    --accent-hover: #7fb0ff;
+    --accent-soft: #1e2c44;
+    --accent-line: #38507a;
+    --accent-contrast: #0d1319;
+
+    --status-running: #6dd4aa;
+    --status-running-soft: #1f3a31;
+    --status-blocked: #e08b80;
+    --status-blocked-soft: #3c2723;
+    --status-review: #8fb6da;
+    --status-review-soft: #232f3c;
+    --status-waiting: #98a1ac;
+    --status-waiting-soft: #2a2f36;
+    --status-attention: #e7b76d;
+    --status-attention-soft: #3a301c;
+
+    --elevation-1: 0 1px 2px rgba(0, 0, 0, 0.5), 0 1px 0 rgba(0, 0, 0, 0.3);
+    --elevation-2: 0 16px 36px rgba(0, 0, 0, 0.55);
+  }
+}

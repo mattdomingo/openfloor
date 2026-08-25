@@ -1,7 +1,10 @@
 /* The opnflr.com marketing identity, scoped via .shop-shell to /home,
-   /onboarding, and the session lobby. Every shared rule below is prefixed
-   .shop-shell so /floor, /settings, and /join keep their established product
-   styling; route-owned rules receive a narrower shell prefix.
+   /onboarding, /settings, and the session lobby. Every shared rule below is
+   prefixed .shop-shell so /join keeps its established product styling.
+   /floor resolves onto the same cool palette too, but via its own
+   .app-shell-scoped tokens in tokens.css rather than this file — its
+   layout and components stay the legacy-floor-* stylesheets, only the
+   token values move. route-owned rules receive a narrower shell prefix.
 
    Palette is ported verbatim from openfloor-ai/openfloor.ai's styles.css
    (:root and :root[data-theme="dark"]). Type and the button motif diverge
