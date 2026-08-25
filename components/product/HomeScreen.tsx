@@ -1,16 +1,53 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useState } from "react";
+import { FormEvent, MouseEvent as ReactMouseEvent, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { BASE_PATH } from "@/components/basePath";
 import { LocalDateTime } from "@/components/LocalDateTime";
 import { formatDuration } from "@/lib/date-format";
-import { SegmentedControl, useDialogDismiss } from "@/components/session/primitives";
+import { HoverTip, SegmentedControl, useDialogDismiss, useHoverTip } from "@/components/session/primitives";
 import { planLabel, type Plan, type PlanStatus } from "@/lib/plans";
 import type { AppUser, SessionSummary } from "@/lib/session-types";
 import { WaveField } from "@/app/entry-wave";
 import { AppHeader } from "./AppHeader";
+
+// How far a tile is willing to lean toward the cursor, in pixels.
+const CARD_MAGNET_REACH = 7;
+
+function handleCardPointerMove(event: ReactMouseEvent<HTMLDivElement>) {
+  const card = event.currentTarget;
+  const rect = card.getBoundingClientRect();
+  const px = (event.clientX - rect.left) / rect.width;
+  const py = (event.clientY - rect.top) / rect.height;
+  card.style.setProperty("--tilt-x", `${(px - 0.5) * 2 * CARD_MAGNET_REACH}px`);
+  card.style.setProperty("--tilt-y", `${(py - 0.5) * 2 * CARD_MAGNET_REACH}px`);
+  card.style.setProperty("--spot-x", `${px * 100}%`);
+  card.style.setProperty("--spot-y", `${py * 100}%`);
+}
+
+function handleCardPointerLeave(event: ReactMouseEvent<HTMLDivElement>) {
+  const card = event.currentTarget;
+  card.style.setProperty("--tilt-x", "0px");
+  card.style.setProperty("--tilt-y", "0px");
+}
+
+// True once the (line-clamped) element is actually cut off — the hover tip
+// that reveals the rest should only ever appear when there's more to read.
+function useIsTruncated<T extends HTMLElement>() {
+  const ref = useRef<T>(null);
+  const [truncated, setTruncated] = useState(false);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const check = () => setTruncated(el.scrollHeight > el.clientHeight + 1);
+    check();
+    const observer = new ResizeObserver(check);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+  return { ref, truncated };
+}
 
 type SessionTab = "active" | "archived" | "ended";
 type Usage = { plan: Plan; planStatus: PlanStatus; effectivePlan: Plan; seconds: number; limitHours: number; limitSeats: number };
@@ -106,7 +143,7 @@ export function HomeScreen({
       <section className="page-body">
         <div className="page-heading">
           <div>
-            <h1>Your sessions</h1>
+            <h1>{user.displayName.split(" ")[0]}’s sessions</h1>
             <div className="usage-panel">
               {usagePercent != null && (
                 <progress className="usage-meter" value={Math.min(usage.seconds, usageLimitSeconds)} max={usageLimitSeconds} aria-label={`${usagePercent}% of monthly session time used`} />
@@ -189,35 +226,106 @@ function SessionGrid({
 }) {
   return (
     <div className="session-grid">
-      {sessions.map((session) => {
-        // Ledger row: title + actions, then one mono meta line carrying every
-        // machine value that used to be split across pills and the foot row,
-        // then the objective — the site's own .study idiom (rule-separated
-        // rows, tracked-mono data line) rather than a boxed card.
-        const seatsOrMembers =
-          session.role === "owner" && Number.isFinite(limitSeats)
-            ? `${session.memberCount} of ${limitSeats} seats`
-            : `${session.memberCount} ${session.memberCount === 1 ? "member" : "members"}`;
-        return (
-          <div className="session-card" key={session.id}>
-            <div className="session-card-head">
-              {/* The link stays on the title text so tests and readers keep one obvious target. */}
-              <Link className="session-card-link" href={`/session/${session.id}`}><strong>{session.title}</strong></Link>
-              <span className="session-card-foot-end">
-                <button type="button" className="button" data-variant="quiet" data-size="sm" onClick={() => onSetArchived(session, !archived)}>{archived ? "Unarchive" : "Archive"}</button>
-                {session.role === "owner" && <button type="button" className="button danger-button" data-size="sm" onClick={() => onDelete(session)}>Delete</button>}
-              </span>
-            </div>
-            <p className="session-card-meta">
-              <span className="role-pill">{session.role}</span>
-              {session.endedAt != null && <span className="role-pill"> · Ended</span>}
-              {` · ${seatsOrMembers} · ${formatDuration(session.activeSeconds)} active · Updated `}
-              <LocalDateTime timestamp={session.updatedAt} mode="date" />
-            </p>
-            <p>{session.objective || "No objective has been written yet."}</p>
-          </div>
-        );
-      })}
+      {sessions.map((session) => (
+        <SessionCard key={session.id} session={session} archived={archived} onDelete={onDelete} onSetArchived={onSetArchived} limitSeats={limitSeats} />
+      ))}
+    </div>
+  );
+}
+
+function SessionCard({
+  session,
+  archived,
+  onDelete,
+  onSetArchived,
+  limitSeats,
+}: {
+  session: SessionSummary;
+  archived: boolean;
+  onDelete: (session: SessionSummary) => void;
+  onSetArchived: (session: SessionSummary, archived: boolean) => void;
+  limitSeats: number;
+}) {
+  // Title, then when it last changed (a quiet caption, not competing with
+  // the meta strip below), then the objective — clamped, the full text is
+  // a hover away only when it's actually cut off — then the foot strip,
+  // now down to just the two facts that matter together: who and how much.
+  const tip = useHoverTip();
+  const desc = useIsTruncated<HTMLParagraphElement>();
+  const seatsOrMembers =
+    session.role === "owner" && Number.isFinite(limitSeats)
+      ? `${session.memberCount} of ${limitSeats} seats`
+      : `${session.memberCount} ${session.memberCount === 1 ? "member" : "members"}`;
+  return (
+    <div className="session-card" onMouseMove={handleCardPointerMove} onMouseLeave={handleCardPointerLeave}>
+      <div className="session-card-head">
+        {/* The link stays on the title text so tests and readers keep one obvious target. */}
+        <Link className="session-card-link" href={`/session/${session.id}`}><strong>{session.title}</strong></Link>
+        <SessionActionsMenu session={session} archived={archived} onDelete={onDelete} onSetArchived={onSetArchived} />
+      </div>
+      <p className="session-card-updated">Updated <LocalDateTime timestamp={session.updatedAt} mode="date" /></p>
+      {session.objective ? (
+        <>
+          <p className="session-card-desc" ref={desc.ref} {...(desc.truncated ? tip.handlers : {})}>{session.objective}</p>
+          {desc.truncated && <HoverTip position={tip.position}>{session.objective}</HoverTip>}
+        </>
+      ) : (
+        <p className="session-card-desc" data-empty="true">No objective has been written yet.</p>
+      )}
+      <div className="session-card-meta">
+        <span className="session-card-role">
+          {session.role}
+          {session.endedAt != null && " · Ended"}
+        </span>
+        <span className="session-card-stats">{`${seatsOrMembers} · ${formatDuration(session.activeSeconds)} active`}</span>
+      </div>
+    </div>
+  );
+}
+
+// Archive/Delete collapse behind a dot trigger and reveal inline — the same
+// widening-gap idea as the pre-auth sign-in mark — rather than sitting
+// permanently exposed on every tile. Dismisses on outside click or Escape,
+// same interaction model as AccountMenu.
+function SessionActionsMenu({
+  session,
+  archived,
+  onDelete,
+  onSetArchived,
+}: {
+  session: SessionSummary;
+  archived: boolean;
+  onDelete: (session: SessionSummary) => void;
+  onSetArchived: (session: SessionSummary, archived: boolean) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function onPointerDown(event: PointerEvent) {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    }
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") setOpen(false);
+    }
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open]);
+
+  return (
+    <div className="session-card-menu" data-open={open ? "true" : "false"} ref={rootRef}>
+      <button type="button" className="session-card-menu-trigger" aria-haspopup="true" aria-expanded={open} aria-label="Session actions" onClick={() => setOpen((value) => !value)}>
+        <span aria-hidden="true" /><span aria-hidden="true" /><span aria-hidden="true" />
+      </button>
+      <span className="session-card-menu-actions" inert={!open}>
+        <button type="button" className="button" data-variant="quiet" data-size="sm" onClick={() => { onSetArchived(session, !archived); setOpen(false); }}>{archived ? "Unarchive" : "Archive"}</button>
+        {session.role === "owner" && <button type="button" className="button danger-button" data-size="sm" onClick={() => { onDelete(session); setOpen(false); }}>Delete</button>}
+      </span>
     </div>
   );
 }

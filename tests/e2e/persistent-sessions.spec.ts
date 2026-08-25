@@ -325,6 +325,7 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await owner.goto("/home");
   await owner.getByRole("button", { name: /^Ended/ }).click();
   const retainedCard = owner.locator(".session-card", { hasText: "Release coordination" });
+  await retainedCard.getByRole("button", { name: "Session actions" }).click();
   await retainedCard.getByRole("button", { name: "Delete" }).click();
   await owner.getByRole("dialog").getByRole("button", { name: "Delete session" }).click();
   await expect(owner.getByText("Release coordination")).toHaveCount(0);
@@ -337,6 +338,7 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await owner.goto("/home");
   await owner.getByRole("button", { name: /^Ended/ }).click();
   const disposableCard = owner.locator(".session-card", { hasText: "Disposable session" });
+  await disposableCard.getByRole("button", { name: "Session actions" }).click();
   await disposableCard.getByRole("button", { name: "Delete" }).click();
   await owner.getByRole("dialog").getByRole("button", { name: "Delete session" }).click();
   await expect(owner.getByText("Disposable session")).toHaveCount(0);

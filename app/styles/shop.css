@@ -156,9 +156,13 @@
 /* ── Bracket buttons ─────────────────────────────────────────────────── */
 
 /* Same motif as the pre-auth sign-in mark (app/page.tsx SignInMark): the
-   label sits between two bracket strokes instead of inside a filled pill.
-   No fill anywhere — hierarchy comes from color and weight only, and the
-   brackets widen slightly on hover the way the sign-in mark's gap does. */
+   label sits between two floor brackets — the exact glyph from that mark
+   (viewBox 0 0 3 8, a stroke with a foot flared out at the bottom only,
+   the mathematical ⌊⌋ "floor" shape the product is named for), not a
+   generic square-cornered box. Drawn with mask-image + currentColor so it
+   recolors for free across variants/themes. No fill anywhere — hierarchy
+   comes from color and weight, and the brackets widen slightly on hover
+   the way the sign-in mark's gap does. */
 .shop-shell .button {
   position: relative;
   display: inline-flex;
@@ -179,18 +183,27 @@
 .shop-shell .button::after {
   content: "";
   flex: none;
-  align-self: stretch;
-  width: 6px;
-  border: 1.5px solid currentColor;
+  width: .5em;
+  height: 1.3em;
+  background-color: currentColor;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-size: 100% 100%;
+  mask-size: 100% 100%;
 }
-.shop-shell .button::before { border-right: 0; }
-.shop-shell .button::after { border-left: 0; }
+.shop-shell .button::before {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 3 8'%3E%3Cpath d='M0 0h1v7h2v1H0Z'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 3 8'%3E%3Cpath d='M0 0h1v7h2v1H0Z'/%3E%3C/svg%3E");
+}
+.shop-shell .button::after {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 3 8'%3E%3Cpath d='M3 0h-1v7h-2v1h3Z'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 3 8'%3E%3Cpath d='M3 0h-1v7h-2v1h3Z'/%3E%3C/svg%3E");
+}
 .shop-shell .button:hover,
 .shop-shell .button[data-variant="primary"]:hover {
   gap: 13px;
   color: var(--ink);
   background: none;
-  border-color: transparent;
   transform: none;
   box-shadow: none;
 }
@@ -198,7 +211,6 @@
 .shop-shell .button[data-variant="primary"]:active {
   gap: 9px;
   background: none;
-  border-color: transparent;
 }
 
 .shop-shell .button[data-variant="primary"] { color: var(--accent-ink); font-weight: 700; }
@@ -207,7 +219,7 @@
 
 .shop-shell .button[data-size="sm"] { padding: 2px 1px; gap: 6px; font-size: 11px; }
 .shop-shell .button[data-size="sm"]::before,
-.shop-shell .button[data-size="sm"]::after { width: 4px; border-width: 1.25px; }
+.shop-shell .button[data-size="sm"]::after { height: 1.15em; }
 .shop-shell .button[data-size="sm"]:hover { gap: 9px; }
 
 .shop-shell .danger-button { color: #b8453a; }
@@ -253,49 +265,138 @@
   margin: 0;
   padding: clamp(28px, 3vw, 44px) var(--gutter);
 }
+/* Magnetized hover: the tile leans a few px toward the cursor and a soft
+   spotlight follows it, instead of the flat accent-border outline this
+   replaces. --tilt-x/-y and --spot-x/-y are written by HomeScreen.tsx on
+   pointer move (direct style writes, not React state, so this never
+   re-renders); global prefers-reduced-motion (base.css) clamps the
+   transition to ~0 for anyone who's asked for less motion. */
 .shop-shell .session-card {
+  --tilt-x: 0px;
+  --tilt-y: 0px;
+  position: relative;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   min-height: 0;
-  padding: 22px;
+  padding: 24px;
   border: 1px solid var(--edge);
   border-radius: 0;
   background: var(--sheet);
   box-shadow: none;
-  transition: border-color .16s ease;
+  transform: translate(var(--tilt-x), var(--tilt-y));
+  transition: transform .4s cubic-bezier(.2, .8, .2, 1), box-shadow .25s ease;
+}
+.shop-shell .session-card::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(220px circle at var(--spot-x, 50%) var(--spot-y, 50%), color-mix(in srgb, var(--accent-ink) 16%, transparent), transparent 68%);
+  opacity: 0;
+  transition: opacity .25s ease;
+  pointer-events: none;
 }
 .shop-shell .session-card:hover,
 .shop-shell .session-card:focus-within {
-  transform: none;
-  box-shadow: none;
-  border-color: var(--accent-ink);
+  box-shadow: 0 14px 32px rgba(0, 0, 0, .16);
+}
+.shop-shell .session-card:hover::after,
+.shop-shell .session-card:focus-within::after {
+  opacity: 1;
 }
 .shop-shell .session-card-head strong {
   font: 700 20px var(--sans);
   letter-spacing: -.018em;
 }
 .shop-shell .session-card-link:hover strong { color: var(--accent-ink); }
-.shop-shell .session-card-meta {
-  margin-top: 8px;
-  color: var(--muted);
-  font: 500 11px var(--mono);
-  letter-spacing: .08em;
+
+/* Quiet caption, not a competing fact — sits right under the title instead
+   of crowding the foot strip. */
+.shop-shell .session-card-updated {
+  position: relative;
+  margin-top: 4px;
+  color: var(--steel);
+  font: 500 10px var(--mono);
+  letter-spacing: .07em;
   text-transform: uppercase;
 }
-.shop-shell .session-card > p {
-  margin-top: 12px;
+
+/* Description: clamped to two lines so a long objective never pushes the
+   meta strip below out of alignment with its row-mates. The hover tip is
+   only wired up (in HomeScreen.tsx) when the text is actually cut off. */
+.shop-shell .session-card-desc {
+  position: relative;
+  margin-top: 10px;
   color: var(--muted);
   font-size: 15px;
-  line-height: 1.65;
+  line-height: 1.6;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
 }
-.shop-shell .role-pill {
-  padding: 0;
+.shop-shell .session-card-desc[data-empty="true"] { color: var(--steel); font-style: italic; }
+
+/* Meta strip: pinned to the tile's bottom edge (the card is a flex column)
+   so every tile in a row lines up regardless of description length. Just
+   two facts now — who, and how much — with real room between them. */
+.shop-shell .session-card-meta {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 16px;
+  margin-top: auto;
+  padding-top: 16px;
+  border-top: 1px solid var(--rule);
+  font: 500 10px var(--mono);
+  letter-spacing: .07em;
+  text-transform: uppercase;
+}
+.shop-shell .session-card-role { color: var(--accent-ink); font-weight: 700; }
+.shop-shell .session-card-stats { color: var(--muted); }
+
+/* ── Session actions (dot trigger + inline reveal) ──────────────────────── */
+
+.shop-shell .session-card-menu {
+  position: relative;
+  flex: none;
+  display: flex;
+  align-items: center;
+}
+.shop-shell .session-card-menu-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 8px 6px;
   border: 0;
-  border-radius: 0;
-  color: inherit;
-  font: inherit;
-  letter-spacing: inherit;
-  text-transform: inherit;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+  transition: color .16s ease;
+}
+.shop-shell .session-card-menu-trigger:hover,
+.shop-shell .session-card-menu[data-open="true"] .session-card-menu-trigger { color: var(--ink); }
+.shop-shell .session-card-menu-trigger span {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.shop-shell .session-card-menu-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 0;
+  opacity: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  transition: max-width .3s cubic-bezier(.2, .8, .2, 1), opacity .2s ease;
+}
+.shop-shell .session-card-menu[data-open="true"] .session-card-menu-actions {
+  max-width: 220px;
+  opacity: 1;
+  margin-left: 4px;
 }
 
 /* ── Forms ───────────────────────────────────────────────────────────── */
