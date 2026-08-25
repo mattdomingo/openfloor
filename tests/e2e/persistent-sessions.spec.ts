@@ -34,9 +34,17 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await expect(setupDialog).toHaveCSS("border-radius", "8px");
   await expect(setupDialog.getByLabel("GitHub repository")).toHaveCSS("border-radius", "8px");
   const connectGitHub = setupDialog.getByRole("button", { name: "Connect GitHub" });
-  await expect(connectGitHub).toHaveCSS("background-color", "rgb(27, 69, 184)");
+  await expect(connectGitHub).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+  await expect(connectGitHub).toHaveCSS("color", "rgb(26, 63, 166)");
   await expect(connectGitHub).toHaveCSS("border-radius", "4px");
-  expect(await connectGitHub.evaluate((button) => getComputedStyle(button, "::before").display)).toBe("none");
+  expect(await connectGitHub.evaluate((button) => ({
+    opacity: getComputedStyle(button, "::before").opacity,
+    width: getComputedStyle(button, "::before").width,
+    transitions: getComputedStyle(button, "::before").transitionProperty,
+  }))).toEqual({ opacity: "0", width: "0px", transitions: "width, opacity, transform" });
+  await connectGitHub.hover();
+  await expect.poll(() => connectGitHub.evaluate((button) => Number.parseFloat(getComputedStyle(button, "::before").width))).toBeGreaterThan(0);
+  await expect.poll(() => connectGitHub.evaluate((button) => getComputedStyle(button, "::before").opacity)).toBe("1");
 
   await setupDialog.getByRole("button", { name: "Continue to model keys" }).click();
   const credentialRow = setupDialog.locator(".provider-credential-row").first();
