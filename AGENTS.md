@@ -142,6 +142,7 @@ WebSocket events notify clients about presence or changed domains. D1 remains au
 - Owner-only session deletion (immediate and cascading for repository-free sessions) and a daily cron that purges repository-free sessions ended more than 30 days ago. Sessions with repository state fail closed until durable external cleanup exists. The home screen groups Active and Ended sessions.
 - HMAC-signed, reusable owner invitations with rotation and revocation.
 - Session lobby with real roster and live online status.
+- Owner-only session-creation setup at `/session/[id]?setup=1`: a resumable two-step lobby dialog covers the repository required for floor entry and optional per-user provider credentials. Normal/member visits never auto-open it; the existing `repo=required` floor gate stays a separate focused dialog.
 - Protected Agent Floor with real session title, objective, members, and presence.
 - Persistent agent records created from required user input.
 - Persistent member assignments.
@@ -222,6 +223,7 @@ Important behavior:
 - `/signout` is the production sign-out endpoint (an application route, not Cloudflare's own `/cdn-cgi/access/logout` — see "Authentication and identity" for why).
 - A join page reveals session title and owner only after authentication and only for a valid, active signed token.
 - Opening a join URL does not change membership. The user must click Join.
+- Creating a session navigates its owner to `?setup=1`. “Set up later” removes that query state; signed GitHub returns through `github=setup` resume the same repository step. This is UI workflow state only and does not weaken `isRepositoryReadyForFloor` or create session-owned credentials.
 - Invite acceptance is idempotent because the session membership key is unique.
 - Non-members opening a session or floor get a 404-style not-found response rather than session details.
 - A member who leaves is disconnected from the room's presence object.
@@ -797,6 +799,7 @@ Normal Portal cancellation is immediate. Account deletion performs immediate Str
 
 - Protected pages authenticate, upsert the user, authorize membership, and server-load initial data.
 - Product screens under `components/product/` own page-level client behavior such as WebSocket connection, invite state, and routing.
+- `SessionScreen` owns the lobby’s current repository/candidate presentation so `RepositoryCard` mutation results immediately update setup status and floor entry. `ProviderCredentials` is the shared write-only credential UI used by Settings and the owner setup dialog.
 - The Agent Floor receives the first `FloorSnapshot` from the server to avoid a loading-only shell.
 - `usePersistentFloorData` is the asynchronous data-source boundary for floor reads and writes.
 - A mutation response updates local state immediately; a newer remote floor revision triggers a refetch.
@@ -1638,6 +1641,14 @@ An owner cannot remove a member from a session today — `leaveSession` is self-
 **Rationale:** Two other mechanics were verified live before committing to this shape, alongside the Google finding above. (1) Self-subrequest: `app.opnflr.com` is a Workers Custom Domain (`wrangler.jsonc`), and Cloudflare's own docs state Custom Domains — unlike a plain zone Route — can be `fetch()`-ed from within the same zone's Worker; the loop cap is 16 hops and this needs one. (2) Cross-origin POST: a form POST to Cloudflare's `/cdn-cgi/access/callback` with a forged `Origin`/`Referer` was accepted and evaluated on its own merits (a deliberately wrong code produced `state=unauthorized`, not an origin rejection) — so no CSRF/Origin enforcement blocks a top-level navigation from `app.opnflr.com`. Together these confirmed the email/code path was buildable before any UI existed, and confirmed Google specifically was not.
 
 **Consequences:** `lib/access-login.ts` is new and is the only place that parses Cloudflare-controlled HTML/redirects; every extracted URL is independently re-validated against `normalizedTeamDomain(CF_ACCESS_TEAM_DOMAIN)` before being fetched or rendered, including on `/signin/code` where the extracted action arrives back as a client-controllable hidden form field (an unvalidated re-use here would be server-side request forgery). Nothing scraped is ever rendered as HTML — only two URL strings are read out and placed into our own markup or `fetch()` calls. `/signin` and `/signin/code` must never be added to either Access application's destinations (see "Authentication and identity" above). A Cloudflare markup change to the email form silently degrades every custom-page sign-in to the branded hosted page rather than erroring — there is no alerting on that yet. `docs/cloudflare-access-branding.md` is retitled in spirit: it now documents the fallback screen, which every Google sign-in and every extraction failure still uses, not the primary one.
+
+### 2026-08-24 — Guide new session owners through repository setup and optional personal credentials
+
+**Decision:** After `POST /api/sessions` succeeds, the home screen navigates the creator to `/session/[id]?setup=1`. The owner-only lobby opens a two-step dialog: the existing repository connection/candidate workflow first (required by `isRepositoryReadyForFloor`), then the current user’s rollout-enabled provider credentials (optional). `github=setup` resumes the repository step after the signed GitHub callback; `repo=required` continues to open only the focused floor-entry gate. Closing or finishing setup removes the query state. `RepositoryCard` remains the repository mutation owner and reports its authoritative repository/candidate results to `SessionScreen`; the shared `ProviderCredentials` component remains a client of the existing per-user write-only credential APIs.
+
+**Rationale:** New owners previously landed in a dense lobby with repository setup separated from the floor action and provider credentials available only in account settings. A resumable lobby workflow makes the real prerequisites legible without introducing session-owned keys, a second repository state machine, or a weaker definition of floor readiness. Keeping the focused floor gate distinct means an ordinary failed floor attempt cannot unexpectedly start a multistep onboarding flow.
+
+**Consequences:** `setup=1`, `github=setup`, and `repo=required` are UI-only query contracts. Setup never auto-opens for members, ended sessions, or normal return visits. “Set up later” is not persisted and does not mark anything complete; repository readiness still comes only from the existing connection/candidate records. Provider values remain encrypted, last-four-only on reads, and resolved per run as agent-owner key, then server key, then clear refusal.
 
 ### 2026-08-25 — `/signin/code`'s stylesheet is inlined, not fetched at request time
 

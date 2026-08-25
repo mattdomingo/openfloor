@@ -147,6 +147,35 @@ async function onboardedUser(providerUserId: string, firstName: string, lastName
   return { userId: row.id, headers };
 }
 
+describe("session lobby setup rendering", () => {
+  it("opens owner creation setup, while the repository gate and member visits stay focused", async () => {
+    const owner = await onboardedUser("setup-render-owner", "Setup", "Owner");
+    const created = await SELF.fetch("http://localhost/api/sessions", {
+      method: "POST",
+      headers: { ...owner.headers, "content-type": "application/json", accept: "application/json" },
+      body: JSON.stringify({ title: "Setup rendering", objective: "Prepare the floor" }),
+    });
+    expect(created.status).toBe(201);
+    const { session } = await created.json() as { session: { id: string } };
+
+    const setupHtml = await (await SELF.fetch(`http://localhost/session/${session.id}?setup=1`, { headers: owner.headers })).text();
+    expect(setupHtml).toContain("Session setup · Step");
+    expect(setupHtml).toContain("Connect the workspace");
+    expect(setupHtml).toContain("02 Model keys");
+
+    const gateHtml = await (await SELF.fetch(`http://localhost/session/${session.id}?repo=required&setup=1`, { headers: owner.headers })).text();
+    expect(gateHtml).toContain("Connect a repository to enter the agent floor");
+    expect(gateHtml).not.toContain("Session setup · Step");
+
+    const member = await onboardedUser("setup-render-member", "Setup", "Member");
+    await env.DB.prepare("INSERT INTO session_members (session_id, user_id, role, joined_at) VALUES (?, ?, 'member', ?)")
+      .bind(session.id, member.userId, Date.now()).run();
+    const memberHtml = await (await SELF.fetch(`http://localhost/session/${session.id}?setup=1`, { headers: member.headers })).text();
+    expect(memberHtml).not.toContain("Session setup · Step");
+    expect(memberHtml).toContain("Member access");
+  });
+});
+
 // Reproduces the reported bug end to end: a returning user whose second
 // login used a different method (simulated here by a different dev-identity
 // provider id) and a differently-cased but identical email must land on the
