@@ -105,7 +105,7 @@
 .screen-nav button[aria-pressed="true"] {
   background: var(--surface-raised);
   color: var(--text-primary);
-  box-shadow: 0 1px 2px rgba(46, 38, 27, 0.14);
+  box-shadow: 0 1px 2px rgba(18, 24, 31, 0.14);
 }
 
 .nav-unread-dot {
@@ -275,7 +275,7 @@
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-md);
   background: var(--surface-raised);
-  box-shadow: 0 12px 32px rgba(31, 36, 31, 0.18);
+  box-shadow: 0 12px 32px rgba(18, 24, 31, 0.18);
 }
 
 .objective-label {
