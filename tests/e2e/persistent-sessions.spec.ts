@@ -31,15 +31,20 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await expect(owner).toHaveURL(/\/session\/[0-9a-f-]+\?setup=1$/);
   const setupDialog = owner.getByRole("dialog");
   await expect(setupDialog.getByRole("heading", { name: "Connect the workspace" })).toBeVisible();
+  await expect(setupDialog).toHaveCSS("border-radius", "8px");
+  await expect(setupDialog.getByLabel("GitHub repository")).toHaveCSS("border-radius", "8px");
   const connectGitHub = setupDialog.getByRole("button", { name: "Connect GitHub" });
   await expect(connectGitHub).toHaveCSS("background-color", "rgb(27, 69, 184)");
+  await expect(connectGitHub).toHaveCSS("border-radius", "4px");
   expect(await connectGitHub.evaluate((button) => getComputedStyle(button, "::before").display)).toBe("none");
 
   await setupDialog.getByRole("button", { name: "Continue to model keys" }).click();
   const credentialRow = setupDialog.locator(".provider-credential-row").first();
   const credentialInput = credentialRow.locator("input");
   await expect(credentialRow).toHaveCSS("background-color", "rgb(211, 216, 223)");
+  await expect(credentialRow).toHaveCSS("border-radius", "4px");
   await expect(credentialInput).toHaveCSS("background-color", "rgb(220, 225, 231)");
+  await expect(credentialInput).toHaveCSS("border-radius", "4px");
 
   await owner.evaluate(() => { document.documentElement.dataset.theme = "dark"; });
   await expect(credentialRow).toHaveCSS("background-color", "rgb(41, 47, 55)");
