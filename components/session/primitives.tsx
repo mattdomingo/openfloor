@@ -84,7 +84,11 @@ export type IconName =
   | "sliders"
   | "eye"
   | "eyeOff"
-  | "grid";
+  | "grid"
+  | "pause"
+  | "play"
+  | "stop"
+  | "trash";
 
 const glyphs: Record<IconName, ReactNode> = {
   grip: (
@@ -180,6 +184,22 @@ const glyphs: Record<IconName, ReactNode> = {
       <rect x="9" y="2.5" width="4.5" height="4.5" rx="1" />
       <rect x="2.5" y="9" width="4.5" height="4.5" rx="1" />
       <rect x="9" y="9" width="4.5" height="4.5" rx="1" />
+    </>
+  ),
+  pause: (
+    <>
+      <path d="M5.5 3.5v9" />
+      <path d="M10.5 3.5v9" />
+    </>
+  ),
+  play: <path d="M4.5 3v10l8-5z" strokeLinejoin="round" fill="currentColor" stroke="none" />,
+  stop: <rect x="4" y="4" width="8" height="8" rx="1" fill="currentColor" stroke="none" />,
+  trash: (
+    <>
+      <path d="M3 5h10" />
+      <path d="M6.3 5V3.6a1 1 0 0 1 1-1h1.4a1 1 0 0 1 1 1V5" />
+      <path d="M4.3 5l.6 7.4a1 1 0 0 0 1 .9h4.2a1 1 0 0 0 1-.9L11.7 5" />
+      <path d="M6.7 7.5v3.3M9.3 7.5v3.3" />
     </>
   ),
 };

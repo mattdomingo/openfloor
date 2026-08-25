@@ -11,7 +11,7 @@ import { usePresenceSocket } from "@/components/session/usePresenceSocket";
 import { initials } from "@/lib/display-name";
 import { reducePresence } from "@/lib/presence";
 import { isRepositoryReadyForFloor } from "@/lib/repository-gate";
-import { usesClaudeRunner, type CredentialProvider, type ProviderCredentialSummary } from "@/lib/provider-credentials";
+import { AGENT_PROVIDER_LABELS, usesClaudeRunner, type CredentialProvider, type ProviderCredentialSummary } from "@/lib/provider-credentials";
 import type { AppUser, PresenceEvent, RemovedSessionMember, RepositoryCandidate, RepositoryConnection, RepositoryPreflight, SessionMember, SessionSummary } from "@/lib/session-types";
 import { AppHeader } from "./AppHeader";
 import { RepositoryCard } from "./RepositoryCard";
@@ -21,6 +21,7 @@ import type { SessionMcpServerSummary } from "@/db/mcp-servers";
 import type { SessionSkillSummary } from "@/db/skills";
 import { WaveField } from "@/app/entry-wave";
 import { ProviderCredentials } from "./ProviderCredentials";
+import { SelectMenu, type SelectMenuOption } from "@/components/session/SelectMenu";
 
 export function SessionScreen({
   user,
@@ -416,6 +417,56 @@ function SessionSetupDialog({
 }) {
   const { dismiss, dialogProps } = useDialogDismiss(onClose);
   const ready = isRepositoryReadyForFloor(repository, candidate);
+  const [credentials, setCredentials] = useState(initialCredentials);
+  const [autoAgentProvider, setAutoAgentProvider] = useState(session.autoAgentProvider);
+  const [providerBusy, setProviderBusy] = useState(false);
+  const [providerError, setProviderError] = useState<string | null>(null);
+  const connectedProviders = credentials
+    .map((credential) => credential.provider)
+    .filter((provider) => enabledProviders.includes(provider));
+  const configuredProvider = autoAgentProvider && connectedProviders.includes(autoAgentProvider) ? autoAgentProvider : null;
+  const providerState = configuredProvider
+    ? "selected"
+    : connectedProviders.length === 0
+      ? "openai_fallback"
+      : connectedProviders.length === 1
+        ? "single_connected"
+        : "selection_required";
+  const effectiveProvider = configuredProvider ?? (connectedProviders.length === 1 ? connectedProviders[0] : providerState === "openai_fallback" ? "openai" : null);
+  const providerOptions: SelectMenuOption[] = [
+    { value: "", label: "Choose provider" },
+    ...connectedProviders.map((provider) => ({ value: provider, label: AGENT_PROVIDER_LABELS[provider] })),
+  ];
+
+  async function updateAutoAgentProvider(provider: CredentialProvider | null) {
+    setProviderBusy(true);
+    setProviderError(null);
+    try {
+      const response = await fetch(`${BASE_PATH}/api/sessions/${session.id}/routing`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ autoAgentProvider: provider }),
+      });
+      const body = (await response.json().catch(() => null)) as { error?: string } | null;
+      if (!response.ok) {
+        setProviderError(body?.error ?? "Unable to save the generated-agent provider.");
+        return;
+      }
+      setAutoAgentProvider(provider);
+    } catch {
+      setProviderError("Unable to save the generated-agent provider.");
+    } finally {
+      setProviderBusy(false);
+    }
+  }
+
+  function updateCredentials(next: ProviderCredentialSummary[]) {
+    setCredentials(next);
+    if (autoAgentProvider && !next.some((credential) => credential.provider === autoAgentProvider)) {
+      setAutoAgentProvider(null);
+      void updateAutoAgentProvider(null);
+    }
+  }
 
   return (
     <dialog className="dialog session-setup-dialog" {...dialogProps} aria-labelledby="session-setup-title">
@@ -450,7 +501,26 @@ function SessionSetupDialog({
               A run uses the key connected by that agent&rsquo;s owner, then the configured server key. If neither is
               available, the run refuses clearly. Stored values are encrypted and never returned to the browser.
             </p>
-            <ProviderCredentials initialCredentials={initialCredentials} providers={enabledProviders} showAgentDefaults />
+            <ProviderCredentials initialCredentials={initialCredentials} providers={enabledProviders} showAgentDefaults onCredentialsChange={updateCredentials} />
+            <div className="setup-auto-provider" data-state={providerState}>
+              <span>
+                <strong>Generated-agent provider</strong>
+                {providerState === "openai_fallback" && <small>No personal key is connected. Generated agents use the existing OpenAI server-key fallback and refuse clearly if no server key is configured.</small>}
+                {providerState === "single_connected" && effectiveProvider && <small>{AGENT_PROVIDER_LABELS[effectiveProvider]} is selected automatically because it is the only connected, enabled provider.</small>}
+                {providerState === "selection_required" && <small>Choose which connected provider generated workers and Concierge should use.</small>}
+                {providerState === "selected" && effectiveProvider && <small>{AGENT_PROVIDER_LABELS[effectiveProvider]} is the default for generated workers and Concierge.</small>}
+              </span>
+              {connectedProviders.length > 1 && (
+                <SelectMenu
+                  value={configuredProvider ?? ""}
+                  options={providerOptions}
+                  label="Default provider for generated agents"
+                  disabled={providerBusy}
+                  onChange={(value) => void updateAutoAgentProvider((value || null) as CredentialProvider | null)}
+                />
+              )}
+            </div>
+            {providerError && <p className="form-error" role="alert">{providerError}</p>}
           </section>
         )}
       </div>
@@ -461,7 +531,7 @@ function SessionSetupDialog({
           {step === 1 ? (
             <button type="button" className="button" data-variant="primary" onClick={() => onStepChange(2)}>Continue to model keys</button>
           ) : (
-            <button type="button" className="button" data-variant="primary" onClick={dismiss}>Finish setup</button>
+            <button type="button" className="button" data-variant="primary" onClick={dismiss} disabled={providerState === "selection_required" || providerBusy}>Finish setup</button>
           )}
         </span>
       </div>

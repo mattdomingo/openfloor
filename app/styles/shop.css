@@ -1099,6 +1099,11 @@
 .session-lobby-shell .provider-credential-row input { background: var(--sheet); }
 .session-lobby-shell .provider-credential-row .form-actions { align-self: end; }
 .session-lobby-shell .provider-credential-row .form-error { grid-column: 1 / -1; }
+.session-lobby-shell .setup-auto-provider { display: flex; align-items: center; justify-content: space-between; gap: 18px; margin-top: 18px; padding: 16px 18px; border: 1px solid var(--rule); border-radius: var(--radius-sm); background: var(--shop-2); }
+.session-lobby-shell .setup-auto-provider > span { display: grid; gap: 5px; }
+.session-lobby-shell .setup-auto-provider strong { color: var(--ink); font-size: 13px; }
+.session-lobby-shell .setup-auto-provider small { max-width: 600px; color: var(--steel); font-size: 11px; line-height: 1.45; }
+.session-lobby-shell .setup-auto-provider[data-state="selection_required"] { border-color: #b5761f; }
 .session-lobby-shell .setup-dialog-foot { justify-content: space-between; }
 .session-lobby-shell .setup-dialog-nav { display: flex; gap: 10px; }
 
@@ -1124,6 +1129,7 @@
   .session-lobby-shell .setup-step-list { width: 100%; }
   .session-lobby-shell .setup-step-list li { flex: 1; }
   .session-lobby-shell .provider-credential-row form { grid-template-columns: 1fr; }
+  .session-lobby-shell .setup-auto-provider { align-items: flex-start; flex-direction: column; }
   .session-lobby-shell .setup-dialog-foot { align-items: stretch; flex-direction: column; }
   .session-lobby-shell .setup-dialog-nav { justify-content: flex-end; }
 }
