@@ -22,8 +22,6 @@ function handleCardPointerMove(event: ReactMouseEvent<HTMLDivElement>) {
   const py = (event.clientY - rect.top) / rect.height;
   card.style.setProperty("--tilt-x", `${(px - 0.5) * 2 * CARD_MAGNET_REACH}px`);
   card.style.setProperty("--tilt-y", `${(py - 0.5) * 2 * CARD_MAGNET_REACH}px`);
-  card.style.setProperty("--spot-x", `${px * 100}%`);
-  card.style.setProperty("--spot-y", `${py * 100}%`);
 }
 
 function handleCardPointerLeave(event: ReactMouseEvent<HTMLDivElement>) {
@@ -193,16 +191,21 @@ export function HomeScreen({
                 { value: "ended", label: `Ended (${endedSessions.length})` },
               ]}
             />
-            {tabSessions.length === 0 ? (
-              <div className="empty-state">
-                <strong>Nothing here</strong>
-                <p>{tab === "active" && "Sessions you archive or end will move out of this tab."}
-                  {tab === "archived" && "Archive a session from Active or Ended to tuck it out of your own view."}
-                  {tab === "ended" && "Sessions the owner ends will show up here."}</p>
-              </div>
-            ) : (
-              <SessionGrid sessions={tabSessions} archived={tab === "archived"} onDelete={setPendingDelete} onSetArchived={setArchived} limitSeats={usage.limitSeats} />
-            )}
+            {/* key={tab} remounts this on every tab switch so the CSS enter
+                animation (.tab-panel, shop.css) replays each time, active,
+                archived, and ended included. */}
+            <div className="tab-panel" key={tab}>
+              {tabSessions.length === 0 ? (
+                <div className="empty-state">
+                  <strong>Nothing here</strong>
+                  <p>{tab === "active" && "Sessions you archive or end will move out of this tab."}
+                    {tab === "archived" && "Archive a session from Active or Ended to tuck it out of your own view."}
+                    {tab === "ended" && "Sessions the owner ends will show up here."}</p>
+                </div>
+              ) : (
+                <SessionGrid sessions={tabSessions} archived={tab === "archived"} onDelete={setPendingDelete} onSetArchived={setArchived} limitSeats={usage.limitSeats} />
+              )}
+            </div>
           </>
         )}
       </section>

@@ -100,7 +100,7 @@
   text-transform: none;
 }
 .shop-shell .account-menu-panel {
-  border-radius: 0;
+  border-radius: var(--radius-md);
   border-color: var(--edge);
   background: var(--sheet);
   box-shadow: none;
@@ -256,6 +256,17 @@
   border-bottom: 1px solid var(--edge);
 }
 
+/* Content below the tabs remounts (key={tab} in HomeScreen.tsx) on every
+   switch between Active/Archived/Ended, replaying this rise-and-fade so the
+   swap reads as a change rather than a jump cut. */
+.shop-shell .tab-panel {
+  animation: shop-tab-enter .32s cubic-bezier(.2, .8, .2, 1) both;
+}
+@keyframes shop-tab-enter {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
 /* ── Session tiles ───────────────────────────────────────────────────── */
 
 .shop-shell .session-grid {
@@ -265,44 +276,31 @@
   margin: 0;
   padding: clamp(28px, 3vw, 44px) var(--gutter);
 }
-/* Magnetized hover: the tile leans a few px toward the cursor and a soft
-   spotlight follows it, instead of the flat accent-border outline this
-   replaces. --tilt-x/-y and --spot-x/-y are written by HomeScreen.tsx on
-   pointer move (direct style writes, not React state, so this never
-   re-renders); global prefers-reduced-motion (base.css) clamps the
-   transition to ~0 for anyone who's asked for less motion. */
+/* Magnetized hover: the tile leans a few px toward the cursor and lifts on
+   a soft shadow, instead of the flat accent-border outline this replaces.
+   --tilt-x/-y are written by HomeScreen.tsx on pointer move (direct style
+   writes, not React state, so this never re-renders); global
+   prefers-reduced-motion (base.css) clamps the transition to ~0 for anyone
+   who's asked for less motion. Radius matches the session's own agent
+   tiles (--radius-md) rather than the marketing site's square corners. */
 .shop-shell .session-card {
   --tilt-x: 0px;
   --tilt-y: 0px;
   position: relative;
-  overflow: hidden;
   display: flex;
   flex-direction: column;
   min-height: 0;
   padding: 24px;
   border: 1px solid var(--edge);
-  border-radius: 0;
+  border-radius: var(--radius-md);
   background: var(--sheet);
   box-shadow: none;
   transform: translate(var(--tilt-x), var(--tilt-y));
   transition: transform .4s cubic-bezier(.2, .8, .2, 1), box-shadow .25s ease;
 }
-.shop-shell .session-card::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: radial-gradient(220px circle at var(--spot-x, 50%) var(--spot-y, 50%), color-mix(in srgb, var(--accent-ink) 16%, transparent), transparent 68%);
-  opacity: 0;
-  transition: opacity .25s ease;
-  pointer-events: none;
-}
 .shop-shell .session-card:hover,
 .shop-shell .session-card:focus-within {
   box-shadow: 0 14px 32px rgba(0, 0, 0, .16);
-}
-.shop-shell .session-card:hover::after,
-.shop-shell .session-card:focus-within::after {
-  opacity: 1;
 }
 .shop-shell .session-card-head strong {
   font: 700 20px var(--sans);
@@ -414,7 +412,7 @@
 .shop-shell .create-card label em { color: var(--steel); text-transform: none; letter-spacing: normal; font-family: var(--sans); }
 .shop-shell input,
 .shop-shell textarea {
-  border-radius: 0;
+  border-radius: var(--radius-sm);
   border-color: var(--edge);
   background: var(--sheet);
   color: var(--ink);
@@ -438,7 +436,7 @@
   margin: clamp(28px, 3vw, 44px) var(--gutter) 0;
   padding: 26px 28px;
   border: 1px solid var(--edge);
-  border-radius: 0;
+  border-radius: var(--radius-md);
   background: var(--sheet);
   box-shadow: none;
   max-width: 62ch;
@@ -450,6 +448,7 @@
 .shop-shell .notice {
   border-left: 0;
   border: 1px solid var(--accent-ink);
+  border-radius: var(--radius-md);
   background: none;
   color: var(--muted);
   font: 400 12px var(--mono);
@@ -461,11 +460,12 @@
 /* ── Delete dialog ───────────────────────────────────────────────────── */
 
 .shop-shell .dialog {
-  border-radius: 0;
+  border-radius: var(--radius-md);
   border-color: var(--edge);
   background: var(--sheet);
   color: var(--ink);
   box-shadow: none;
+  overflow: hidden;
 }
 .shop-shell .dialog::backdrop { background: rgba(13, 19, 25, .55); }
 .shop-shell .dialog-head,
