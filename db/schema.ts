@@ -112,6 +112,10 @@ export const sessions = sqliteTable("sessions", {
   endedReason: text("ended_reason", { enum: ["owner", "merged"] }),
   floorRevision: integer("floor_revision").notNull().default(0),
   autoDispatch: integer("auto_dispatch", { mode: "boolean" }).notNull().default(false),
+  // Merge-conflict work is a separate queue automation from ordinary prompt
+  // dispatch. Existing and new sessions opt in by default; owners may turn it
+  // off without changing auto_dispatch.
+  autoResolveConflicts: integer("auto_resolve_conflicts", { mode: "boolean" }).notNull().default(true),
   // Display counter: seconds this session had at least one connected
   // participant. The billing ledger is usage_months; this one cascades away
   // with the session and that is fine.
@@ -577,6 +581,71 @@ export const agentRunArtifacts = sqliteTable(
     createdAt: integer("created_at").notNull(),
   },
   (table) => [uniqueIndex("idx_agent_run_artifacts_kind").on(table.runId, table.kind)],
+);
+
+// One durable case per original integration conflict. Resolver attempts keep
+// using agent_runs so they inherit the verified execution/publication path;
+// this table owns the higher-level pending/input/resolution lifecycle without
+// widening agent_runs' checked status enum (which would require a risky table
+// recreation with several inbound cascade foreign keys).
+export const mergeConflictCases = sqliteTable(
+  "merge_conflict_cases",
+  {
+    id: text("id").primaryKey(),
+    sessionId: text("session_id").notNull().references(() => sessions.id, { onDelete: "cascade" }),
+    sourceRunId: text("source_run_id").notNull().references(() => agentRuns.id),
+    latestSourceRunId: text("latest_source_run_id").notNull().references(() => agentRuns.id),
+    currentResolverRunId: text("current_resolver_run_id").references(() => agentRuns.id, { onDelete: "set null" }),
+    status: text("status", { enum: ["pending", "resolving", "awaiting_input", "resolved", "failed"] }).notNull(),
+    explanation: text("explanation"),
+    conflictPaths: text("conflict_paths").notNull().default("[]"),
+    automaticAttempts: integer("automatic_attempts").notNull().default(0),
+    resumeRequested: integer("resume_requested", { mode: "boolean" }).notNull().default(false),
+    failureReason: text("failure_reason"),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+    resolvedAt: integer("resolved_at"),
+  },
+  (table) => [
+    uniqueIndex("idx_merge_conflict_cases_source_run").on(table.sourceRunId),
+    index("idx_merge_conflict_cases_session_status").on(table.sessionId, table.status, table.updatedAt),
+    check("merge_conflict_cases_status_check", sql`${table.status} in ('pending', 'resolving', 'awaiting_input', 'resolved', 'failed')`),
+  ],
+);
+
+export const mergeConflictAttempts = sqliteTable(
+  "merge_conflict_attempts",
+  {
+    id: text("id").primaryKey(),
+    caseId: text("case_id").notNull().references(() => mergeConflictCases.id, { onDelete: "cascade" }),
+    runId: text("run_id").notNull().references(() => agentRuns.id, { onDelete: "cascade" }),
+    launchKind: text("launch_kind", { enum: ["automatic", "manual", "answer"] }).notNull(),
+    createdAt: integer("created_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("idx_merge_conflict_attempts_run").on(table.runId),
+    index("idx_merge_conflict_attempts_case").on(table.caseId, table.createdAt),
+    check("merge_conflict_attempts_launch_check", sql`${table.launchKind} in ('automatic', 'manual', 'answer')`),
+  ],
+);
+
+export const mergeConflictQuestions = sqliteTable(
+  "merge_conflict_questions",
+  {
+    id: text("id").primaryKey(),
+    caseId: text("case_id").notNull().references(() => mergeConflictCases.id, { onDelete: "cascade" }),
+    requestedByRunId: text("requested_by_run_id").notNull().references(() => agentRuns.id, { onDelete: "cascade" }),
+    position: integer("position").notNull(),
+    question: text("question").notNull(),
+    answer: text("answer"),
+    answeredBy: text("answered_by").references(() => users.id, { onDelete: "set null" }),
+    requestedAt: integer("requested_at").notNull(),
+    answeredAt: integer("answered_at"),
+  },
+  (table) => [
+    uniqueIndex("idx_merge_conflict_questions_run_position").on(table.requestedByRunId, table.position),
+    index("idx_merge_conflict_questions_case").on(table.caseId, table.requestedAt),
+  ],
 );
 
 export const routingDecisions = sqliteTable(

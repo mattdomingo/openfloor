@@ -19,6 +19,7 @@ import {
 } from "./repositories";
 import { getLatestRepositoryPreflight } from "./preflights";
 import { getAgentRuns } from "./runs";
+import { getMergeConflictCases } from "./conflicts";
 import { getActiveMembershipRole, getMembershipRole } from "./sessions";
 
 type AgentRecord = FloorAgent;
@@ -40,8 +41,8 @@ export async function getFloorSnapshot(
 }
 
 async function readFloorSnapshot(sessionId: string, userId: string, database: D1DatabaseLike): Promise<FloorSnapshot> {
-  const [session, agents, assignments, messages, queue, prompts, repository, activeCandidate, reviewCandidate, latestPreflight, runs] = await Promise.all([
-    database.prepare("SELECT floor_revision AS revision, auto_dispatch AS autoDispatch FROM sessions WHERE id = ?").bind(sessionId).first<{ revision: number; autoDispatch: number }>(),
+  const [session, agents, assignments, messages, queue, prompts, repository, activeCandidate, reviewCandidate, latestPreflight, runs, conflicts] = await Promise.all([
+    database.prepare("SELECT floor_revision AS revision, auto_dispatch AS autoDispatch, auto_resolve_conflicts AS autoResolveConflicts FROM sessions WHERE id = ?").bind(sessionId).first<{ revision: number; autoDispatch: number; autoResolveConflicts: number }>(),
     database.prepare(
       `SELECT a.id, a.name, a.role, a.task, a.owner_user_id AS ownerUserId,
               owner.display_name AS ownerName, a.created_by AS createdByUserId,
@@ -92,6 +93,7 @@ async function readFloorSnapshot(sessionId: string, userId: string, database: D1
     getLatestRepositoryReviewCandidate(sessionId, database),
     getLatestRepositoryPreflight(sessionId, database),
     getAgentRuns(sessionId, database),
+    getMergeConflictCases(sessionId, database),
   ]);
 
   const promptsByItem = new Map<string, FloorQueuePrompt[]>();
@@ -106,6 +108,7 @@ async function readFloorSnapshot(sessionId: string, userId: string, database: D1
   return {
     revision: Number(session?.revision ?? 0),
     autoDispatch: Boolean(session?.autoDispatch),
+    autoResolveConflicts: Boolean(session?.autoResolveConflicts),
     agents: agents.results,
     assignments: assignments.results.map((assignment) => ({
       ...assignment,
@@ -119,7 +122,7 @@ async function readFloorSnapshot(sessionId: string, userId: string, database: D1
     activeCandidate,
     latestPreflight,
     runs,
-    review: buildRunReview(runs, reviewCandidate, candidateReview, promptsByItem, assignments.results),
+    review: buildRunReview(runs, reviewCandidate, candidateReview, promptsByItem, assignments.results, conflicts),
   };
 }
 
@@ -157,6 +160,7 @@ function buildRunReview(
   githubReview: Awaited<ReturnType<typeof getRepositoryCandidateReviewData>> | null,
   promptsByItem: Map<string, FloorQueuePrompt[]>,
   members: Array<{ userId: string; userName: string }>,
+  conflicts: Awaited<ReturnType<typeof getMergeConflictCases>>,
 ): FloorReviewSnapshot | null {
   if (!candidate) return null;
   const candidateRuns = runs.filter((item) => item.candidateId === candidate.id && item.files.length > 0);
@@ -188,7 +192,8 @@ function buildRunReview(
     state: check.status === "passed" ? "passed" as const : check.status === "failed" || check.status === "timed_out" ? "failed" as const : "waiting" as const,
   })));
   const checks = [...(githubReview?.checks.map((check) => ({ id: check.id, name: check.name, detail: check.detail, state: check.state })) ?? []), ...localChecks];
-  const conflicted = candidateRuns.find((run) => run.status === "conflicted");
+  const activeConflictSourceIds = new Set(conflicts.filter((item) => !["resolved", "cancelled"].includes(item.status)).map((item) => item.latestSourceRunId));
+  const conflicted = candidateRuns.find((run) => run.status === "conflicted" && activeConflictSourceIds.has(run.id));
   const warnings: FloorReviewSnapshot["warnings"] = [];
   if (conflicted) warnings.push({ id: `${conflicted.id}-conflict`, title: "Integration conflict", detail: conflicted.conflictReason ?? "A run conflicts with the candidate.", severity: "conflict" });
   if (candidate.behindBase && candidate.status === "active") warnings.push({ id: `${candidate.id}-behind`, title: "Base branch advanced", detail: "Synchronize and resolve the candidate before merging.", severity: "warning" });
@@ -204,7 +209,8 @@ function buildRunReview(
     files,
     checks,
     warnings,
-    updatedAt: Math.max(candidate.updatedAt, ...candidateRuns.map((run) => run.updatedAt), 0),
+    conflicts,
+    updatedAt: Math.max(candidate.updatedAt, ...candidateRuns.map((run) => run.updatedAt), ...conflicts.map((conflict) => conflict.updatedAt), 0),
     githubChecksPassing: candidate.githubChecksPassing,
     cleanupStatus: candidate.cleanupStatus,
     branchDeletedAt: candidate.branchDeletedAt,

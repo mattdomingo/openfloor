@@ -82,6 +82,10 @@ export function usePersistentFloorData(sessionId: string, initialFloor: FloorSna
       request(`/queue/${encodeURIComponent(queueItemId)}/pause`, "PATCH", { paused }),
     deleteQueueItem: (queueItemId: string) => request(`/queue/${encodeURIComponent(queueItemId)}`, "DELETE"),
     setAutoDispatch: (autoDispatch: boolean) => request("/routing", "PATCH", { autoDispatch }),
+    setAutoResolveConflicts: (autoResolveConflicts: boolean) => request("/routing", "PATCH", { autoResolveConflicts }),
+    resolveConflict: (caseId: string) => request(`/conflicts/${encodeURIComponent(caseId)}/resolve`, "POST"),
+    answerConflict: (caseId: string, answers: Array<{ questionId: string; answer: string }>) =>
+      request(`/conflicts/${encodeURIComponent(caseId)}/answers`, "POST", { answers }),
     cancelRun: (runId: string) => request(`/runs/${encodeURIComponent(runId)}/cancel`, "POST"),
     discardRun: (runId: string) => request(`/runs/${encodeURIComponent(runId)}/discard`, "POST"),
     retryRun: (runId: string) => request(`/runs/${encodeURIComponent(runId)}/retry`, "POST"),

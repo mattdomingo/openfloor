@@ -32,6 +32,8 @@ export type GeminiSystemSettingsInput = {
   contextUrl: string;
   contextToken: string;
   mcpServerPath: string;
+  conflictInputUrl?: string;
+  conflictInputToken?: string;
 };
 
 export function buildGeminiSystemSettings(input: GeminiSystemSettingsInput): string {
@@ -52,6 +54,10 @@ export function buildGeminiSystemSettings(input: GeminiSystemSettingsInput): str
           env: {
             OPENFLOOR_CONTEXT_URL: input.contextUrl,
             OPENFLOOR_CONTEXT_TOKEN: input.contextToken,
+            ...(input.conflictInputUrl && input.conflictInputToken ? {
+              OPENFLOOR_CONFLICT_INPUT_URL: input.conflictInputUrl,
+              OPENFLOOR_CONFLICT_INPUT_TOKEN: input.conflictInputToken,
+            } : {}),
           },
         },
       },

@@ -12,6 +12,8 @@ const eventsToken = process.env.OPENFLOOR_EVENTS_TOKEN;
 const contextUrl = process.env.OPENFLOOR_CONTEXT_URL;
 const contextToken = process.env.OPENFLOOR_CONTEXT_TOKEN;
 const mcpServerPath = process.env.OPENFLOOR_MCP_SERVER_PATH;
+const conflictInputUrl = process.env.OPENFLOOR_CONFLICT_INPUT_URL;
+const conflictInputToken = process.env.OPENFLOOR_CONFLICT_INPUT_TOKEN;
 
 if (!promptPath || !resultPath || !workspace || !gatewayUrl || !gatewayToken || !model) {
   throw new Error("openfloor Claude runner configuration is incomplete");
@@ -151,7 +153,14 @@ const mcpServers = contextUrl && contextToken && mcpServerPath ? {
   openfloor: {
     command: "node",
     args: [mcpServerPath],
-    env: { OPENFLOOR_CONTEXT_URL: contextUrl, OPENFLOOR_CONTEXT_TOKEN: contextToken },
+    env: {
+      OPENFLOOR_CONTEXT_URL: contextUrl,
+      OPENFLOOR_CONTEXT_TOKEN: contextToken,
+      ...(conflictInputUrl && conflictInputToken ? {
+        OPENFLOOR_CONFLICT_INPUT_URL: conflictInputUrl,
+        OPENFLOOR_CONFLICT_INPUT_TOKEN: conflictInputToken,
+      } : {}),
+    },
   },
   ...userMcpServers,
 } : (userMcpServerNames.length > 0 ? userMcpServers : undefined);
@@ -179,6 +188,7 @@ const response = query({
     allowedTools: [
       "Bash", "Read", "Write", "Edit", "MultiEdit", "NotebookEdit", "Glob", "Grep", "TodoWrite",
       ...(mcpServers ? ["mcp__openfloor__openfloor_session_context"] : []),
+      ...(conflictInputUrl && conflictInputToken ? ["mcp__openfloor__openfloor_request_conflict_input"] : []),
       // Tools are enabled explicitly per configured server (the server-level
       // mcp__<name> spec) — never via a blanket permission mode. Which
       // servers exist at all is owner-configured; this makes their tools

@@ -100,7 +100,7 @@ Production code must not seed, fabricate, or animate agents, prompts, messages, 
 
 openfloor has three intentionally separate state classes:
 
-1. **D1-authoritative application state**: users, Stripe entitlement projections, sessions, memberships, invites, objective, agents, assignments, messages, queue items, queue prompts, ordering, and floor revision. Stripe remains authoritative for the external subscription lifecycle; D1 owns the product-facing projection.
+1. **D1-authoritative application state**: users, Stripe entitlement projections, sessions, memberships, invites, objective, routing settings, agents, assignments, messages, queue items, queue prompts, ordering, merge-conflict cases/attempts/questions, and floor revision. Stripe remains authoritative for the external subscription lifecycle; D1 owns the product-facing projection.
 2. **Durable Object-coordinated ephemeral state**: online connections and teammate prompt drafts. This state is realtime but is not D1 history.
 3. **Local UI state**: selected tabs, panel order and size, collapsed or expanded panels, queue filters, menus, dialogs, the current onboarding step and its unsaved profile/plan inputs, and the local visibility choice for teammate drafts.
 
@@ -172,7 +172,9 @@ WebSocket events notify clients about presence or changed domains. D1 remains au
 - Real run status and file/check data in Agent cards and Review. Each passing run is automatically preserved on its own verified `openfloor/<session-short>/run/<run-short>` GitHub branch; consecutive prompts retain separate branches and audit history.
 - Trusted incremental Git-bundle validation and non-force publication from a clean publisher Sandbox, followed by GitHub SHA reconciliation.
 - Owner-only safe discard using an expected-SHA lease; externally modified run branches are never deleted.
-- Serialized candidate integration inside `AgentRunWorkflow`, with a D1 candidate lease, authoritative GitHub ref reconciliation, non-force merge, one draft PR, queue completion, conflict preservation, and owner-only retry as a new run attempt.
+- Serialized candidate integration inside `AgentRunWorkflow`, with a D1 candidate lease, authoritative GitHub ref reconciliation, non-force merge, one draft PR, queue completion, and durable detection of a real GitHub integration `409`.
+- Automatic merge-conflict resolution as specialized system runs attached to the original queue item, never fabricated floor agents. `sessions.auto_resolve_conflicts` defaults on independently from ordinary `auto_dispatch`; eligible cases run ahead of new queue work while respecting capacity, quota, repository, provider, and inherited-agent gates. A resolver inherits the source agent/provider/model and agent-owner credential policy, reconstructs a genuine three-way merge from exact archives plus the retained verified bundle, runs configured checks, and publishes through the existing trusted pipeline.
+- Durable conflict input and retry workflow: the resolver may request one to three bounded questions through the run-only `openfloor_request_conflict_input` MCP tool and stop without publishing; any current member may answer the exact current set, while only the owner may manually start/retry. Two automatic attempts are allowed since the last human answer. Reload-safe Queue/Review attention UI, a floor banner, navigation badge, and opt-in per-device hidden-tab browser alerts expose cases needing people.
 - GitHub-authoritative final review snapshots with bounded PR files, check runs, commit statuses, head/base SHAs, draft state, mergeability, and merge-requirement state.
 - Owner-only **Ready for review** and expected-head **Squash merge** actions. GitHub protection and review requirements are never bypassed.
 - Verified post-merge cleanup of matching server-generated run/candidate refs using Git leases; mismatched refs are preserved and recorded as partial cleanup.
@@ -402,6 +404,7 @@ Deliberately left alone: `usage_months` rows survive (see that table's own no-FK
 - `floor_revision` is a monotonically increasing integer for persisted floor reconciliation.
 - Session creation also creates owner membership and an active invite in one D1 batch.
 - Nullable `ended_at` is the lifecycle marker. Null means live; a timestamp means ended and read-only. Writes authorize through `getActiveMembershipRole` (throws `SessionEndedError` for members of ended sessions); reads keep using `getMembershipRole` so ended sessions stay viewable. `leaveSession`, `endSession`, `deleteSession`, and non-member concealment intentionally bypass the ended guard.
+- `auto_dispatch` and `auto_resolve_conflicts` are separate owner-controlled routing settings. Both default to true, but enabling conflict resolution never authorizes ordinary prompt dispatch. Member answers explicitly authorize conflict resumption even when automatic conflict resolution is off.
 - Retention: the Worker's `scheduled()` handler (daily cron in `wrangler.jsonc`) runs `purgeExpiredSessions`, deleting repository-free sessions with `ended_at` older than `ENDED_SESSION_RETENTION_MS` (30 days), then broadcasts `members.changed` so connected tabs refetch. Never-ended sessions and sessions with any repository connection are never purged automatically. Manual deletion uses the same repository-state guard.
 - `active_seconds` is a display-only running total of seconds this session had at least one connected participant, booked by the `SessionPresence` Durable Object (see "Plan limits and metering" below). It cascades away with the session, unlike the `usage_months` billing ledger.
 
@@ -514,13 +517,24 @@ Deliberately left alone: `usage_months` rows survive (see that table's own no-FK
 - Run statuses are `provisioning`, `running`, `checking`, `ready`, `publishing`, `published`, `integrating`, `integrated`, `conflicted`, `failed`, `cancel_requested`, and `cancelled`; every listed status is now used by the Phase 6 lifecycle.
 - Each run snapshots ordered required checks. D1 stores bounded output excerpts, file metadata, and diff previews; complete bounded Codex logs, check logs, and diffs stay in private R2.
 - `agent_run_artifacts.kind` is `codex_log`, `diff`, or `prompt` (UPSERT-keyed on `(run_id, kind)`; no SQL CHECK, TS-enum only). `prompt` is the exact session brief written to the agent's workspace, persisted so members can see what a run was actually told (`components/session/AgentCard.tsx`'s second expander). `GET /api/sessions/[id]/runs/[runId]/artifacts` defaults to concatenating only `codex_log` + `diff` (unchanged from before `prompt` existed); an explicit `?kind=` returns exactly one artifact with no heading.
-- `ready` means checks passed locally. The Workflow immediately moves through `publishing`, `published`, and serialized `integrating`; success records `integrated` and completes the queue item, while a true GitHub merge conflict records `conflicted` and leaves the item blocked for owner retry.
+- `ready` means checks passed locally. The Workflow immediately moves through `publishing`, `published`, and serialized `integrating`; success records `integrated` and completes the queue item, while a true GitHub merge conflict records `conflicted` and idempotently creates or advances its durable conflict case.
 - Each new run stores a server-generated run branch, bundle key/size, local bundle commit, trusted published commit, observed remote SHA, publication time, and nullable discard audit fields. Older Phase 4 runs may have null publication fields.
 - The agent Sandbox uploads a bounded incremental bundle through an operation-scoped JWT. A separate clean publisher Sandbox reconstructs the deterministic archive baseline from the exact candidate tree, verifies one ref and one result commit, compares the recorded file set, enforces object/file limits, and performs a fixed non-force push with a repository-limited token. Git-over-HTTPS authenticates with `x-access-token` plus the installation token as the HTTP Basic password; REST-style Bearer authentication is not valid for this Git transport. Restarting a Workflow whose run is already `publishing` resumes from the stored bundle and file metadata without rerunning Codex or checks.
 - Discard reads the current remote ref and deletes with `--force-with-lease=<expected-sha>` only when the server-generated branch and recorded/reconciled SHAs still match. D1/R2 audit history remains.
-- The active candidate holds at most one `integration_run_id`. Each integrating Workflow reconciles base, candidate, and run refs from GitHub, merges the immutable run commit into the latest candidate without force, updates the expected/remote candidate SHA, and creates a draft PR only when the candidate has none. Retry against a conflict creates a new attempt and run branch from the latest candidate; it never rewrites the conflicted branch.
+- The active candidate holds at most one `integration_run_id`. Each integrating Workflow reconciles base, candidate, and run refs from GitHub, merges the immutable run commit into the latest candidate without force, updates the expected/remote candidate SHA, and creates a draft PR only when the candidate has none. Conflict resolution creates a new immutable resolver run and branch; it never rewrites any source or earlier resolver branch.
 - Workflow-file changes under `.github/workflows/` are rejected because the GitHub App has no Workflows permission.
 - `branch_deleted_at` records verified post-merge cleanup separately from owner-requested discard; both retain the run and its audit metadata.
+
+#### `merge_conflict_cases`, `merge_conflict_attempts`, and `merge_conflict_questions`
+
+- One `merge_conflict_cases` row exists per original source run (`source_run_id` unique). If a resolver result later conflicts because the candidate advanced, `latest_source_run_id` moves to that resolver instead of creating a nested case. All source and resolver runs remain durable audit records.
+- Case states are `pending`, `resolving`, `awaiting_input`, `resolved`, `failed`, and reserved `cancelled`. Normal flow is `pending` to `resolving` to `resolved`; a question request moves `resolving` to `awaiting_input`, and the first complete member answer set moves it to `pending` for an answer-authorized resume.
+- `automatic_attempts` permits two automatic launches since the last complete human answer. Failed attempts return to `pending` while budget remains, then become `failed`. Explicit resolver cancellation becomes attention-required `failed` without an automatic relaunch, so the owner's cancel action is not immediately undone. An owner-only manual start/retry sets `resume_requested`; stable provider blocks do not freeze ordinary work.
+- Each resolver remains a normal `agent_runs` row associated through `merge_conflict_attempts`, with launch kind `automatic`, `manual`, or `answer`. It inherits the latest source run's agent, pinned provider/model, and agent-owner billing policy. Queue and Review derive `purpose: "conflict_resolution"` and label it “Merge Resolver”; no `floor_agents` row is created.
+- Resolver workspace construction downloads the latest candidate archive, the source run's exact candidate archive, and that run's previously verified private-R2 Git bundle. It creates a shared synthetic base, restores the immutable source result, performs a real three-way merge into the latest candidate, persists up to 100 actual unmerged paths, and leaves genuine markers for the resolver.
+- Publication refuses any remaining unmerged index entry or conflict marker, collects the complete candidate-relative diff, runs ordered checks, then uses the existing bundle validation, non-force publication, candidate lease, GitHub reconciliation, and draft-PR integration. Partial work is discarded when input is requested.
+- `merge_conflict_questions` stores one to three ordered questions per request plus answers, responder, and timestamps. The runtime request accepts an explanation up to 4,000 characters and questions up to 500 each; member answers are required, up to 2,000 characters each, must match the exact unanswered set, and use a first-complete-submission-wins conditional update. Stale races return `409`.
+- Resolved cases remain in Review audit data but no longer emit active conflict warnings. `awaiting_input` and `failed` cases produce reload-safe attention UI.
 
 #### `floor_agents`
 
@@ -564,6 +578,8 @@ Deliberately left alone: `usage_months` rows survive (see that table's own no-FK
 `FloorSnapshot` in `lib/floor-types.ts` is the public authoritative floor response:
 
 - `revision`
+- `autoDispatch`
+- `autoResolveConflicts`
 - `agents`
 - `assignments`
 - `messages`
@@ -574,7 +590,7 @@ Deliberately left alone: `usage_months` rows survive (see that table's own no-FK
 - `runs`
 - `review`
 
-`FloorSnapshot` includes nullable `repository`, `activeCandidate`, bounded `latestPreflight`, and the latest 20 caller-visible runs. Large logs and artifacts are fetched separately. `review` is null until a real run has changed files, then is derived only from persisted run/check/file data; never populate it from UI fixtures.
+`FloorSnapshot` includes both routing settings, nullable `repository`, `activeCandidate`, bounded `latestPreflight`, and the latest 20 caller-visible runs. Runs derive `purpose` (`task` or `conflict_resolution`) and nullable `conflictCaseId`. Large logs and artifacts are fetched separately. `review` is null until real repository/run data exists, then includes typed conflict cases/questions alongside persisted run/check/file data; never populate it from UI fixtures.
 
 ### Mutation pattern
 
@@ -684,6 +700,9 @@ All paths below are shown without the production `/app` prefix.
 | `POST /api/sessions/[id]/queue` | Session member | Persist `{ prompt, agentId? }`; null target is valid. |
 | `PATCH /api/sessions/[id]/queue/order` | Session member | Persist an exact unique `{ itemIds }` order. |
 | `POST /api/sessions/[id]/queue/merge` | Session member | Merge at least two existing same-target items, preserving prompts. |
+| `PATCH /api/sessions/[id]/routing` | Owner | Update either or both of `{ autoDispatch?, autoResolveConflicts? }`; omitted settings are preserved. Conflict automation remains independent from ordinary prompt dispatch. |
+| `POST /api/sessions/[id]/conflicts/[caseId]/resolve` | Owner | Manually start or retry one same-session conflict case. Cross-session IDs are concealed; ended sessions return `409`. |
+| `POST /api/sessions/[id]/conflicts/[caseId]/answers` | Session member | Submit one required answer per exact current unanswered question. First complete submission wins; stale/mismatched races return `409`, and a valid answer explicitly authorizes resolver resumption. |
 | `GET /api/sessions/[id]/skills` | Session member | List imported Claude-skill summaries (name, description, size, updated); never content. |
 | `POST /api/sessions/[id]/skills` | Owner | Import `{ content }` as a validated `SKILL.md`; upserts by frontmatter name. `400` malformed, `409` at the 20-skill cap or on an ended session. |
 | `DELETE /api/sessions/[id]/skills/[skillId]` | Owner | Remove one imported skill; returns the updated list. |
@@ -716,6 +735,8 @@ All paths below are shown without the production `/app` prefix.
 | `POST /runtime/run/events` | Short-lived run events JWT | Ingest bounded, runner-sequenced activity events for one active run and broadcast them as `run.activity`. |
 | `GET /runtime/run/source` | Short-lived run source JWT | Proxy the exact candidate archive for one run. |
 | `GET /runtime/run/context` | Short-lived run context JWT | Re-render the same session brief the run was dispatched with, from current D1 state; called by the `openfloor_session_context` MCP tool the sandbox exposes to Codex so a long run can re-read the floor mid-run. |
+| `GET /runtime/run/conflict-source?part=base\|bundle` | Short-lived conflict-source JWT | Serve only a resolver run's bound source candidate archive or retained verified bundle after checking run/session/repository/candidate/case relationships. |
+| `POST /runtime/run/conflict-input` | Short-lived conflict-input JWT | Accept a resolver-only bounded explanation and one to three questions from `openfloor_request_conflict_input`, persist them, notify clients, and stop the workflow without publishing partial work. |
 | `POST/GET /runtime/run/bundle` | Short-lived operation JWT | Store an agent-exported bounded Git bundle and serve it only to the clean trusted publisher. |
 | `POST /runtime/openai/v1/responses` | Short-lived run OpenAI JWT | Forward one active run's Codex request, injecting the agent owner's connected OpenAI key when present, else the server credential, outside the repository process. `503` with a clear message when neither exists or the owner's key cannot be decrypted — never a silent fallback. |
 | `POST /runtime/anthropic/v1/messages` (+ `/count_tokens`) | Short-lived run Anthropic JWT | Forward one Claude run's model request with the same owner-else-server-else-`503` resolution, translating the run JWT to upstream `x-api-key` auth (shared handler: `lib/anthropic-compat-gateway.ts`). Any other path is logged and concealed so the allowlist is finalized from observed traffic. |
@@ -729,7 +750,7 @@ Response conventions:
 - `401` means no authenticated identity.
 - `400` means invalid input or a cross-session/invalid target.
 - `404` conceals nonexistent sessions, non-membership, unauthorized owner-only resources, invalid invites, and revoked invites.
-- `409` represents conflicts such as duplicate normalized agent name, stale queue order, owner leave, or any mutation on an ended session ("This session has ended."). `DELETE /api/account` returns `409 { code: "sessions_blocked", sessions }` when an owned session has live repository state (same class of conflict as `DELETE /api/sessions/[id]`'s `repository_state`/`integration_in_progress`), and writes nothing in that case.
+- `409` represents conflicts such as duplicate normalized agent name, stale queue order, stale conflict answers, owner leave, or any mutation on an ended session ("This session has ended."). `DELETE /api/account` returns `409 { code: "sessions_blocked", sessions }` when an owned session has live repository state (same class of conflict as `DELETE /api/sessions/[id]`'s `repository_state`/`integration_in_progress`), and writes nothing in that case.
 - `403` with `{ code: "quota_exhausted" }` marks the session owner's monthly session-hours quota as spent — see "Plan limits and metering" below. `acceptInvite`'s seat-cap refusal returns `403` too, but without a machine-readable `code` today.
 - Floor mutations return `{ floor }`; clients treat it as authoritative.
 
@@ -748,6 +769,8 @@ Keep server validation in `lib/validation.ts` and cover it with unit tests.
 - Message: required, trimmed, maximum 4,000.
 - Queue prompt: required, trimmed, maximum 4,000.
 - Queue order/merge ID list: unique strings, maximum 500 items; merge requires at least two.
+- Conflict input request: explanation required and at most 4,000 characters; one to three required questions, each at most 500 characters.
+- Conflict answers: one to three unique question IDs, each at most 100 characters; every answer required and at most 2,000 characters. Domain logic additionally requires the exact current unanswered set.
 - Live draft: maximum 4,000, not trimmed because it represents in-progress text.
 - Repository selection: repository ID maximum 100 characters; base branch required and maximum 255 characters.
 - Required check commands: optional; zero to eight ordered nonempty commands, trimmed, maximum 500 characters each.
@@ -816,14 +839,15 @@ Normal Portal cancellation is immediate. Account deletion performs immediate Str
 
 ### Agent Floor structure
 
-- `Workspace.tsx`: orchestration and local layout state.
-- `TopBar.tsx`: workspace/review navigation, real member presence, owner invite dialog, settings, sign-out.
+- `Workspace.tsx`: orchestration, local layout state, reload-safe conflict attention banner, exact-case Review navigation, and hidden-tab browser-notification coordination.
+- `TopBar.tsx`: workspace/review navigation and conflict-attention badge, real member presence, owner invite dialog, settings, sign-out.
 - `ObjectiveBar.tsx`: persistent member-editable objective; an owner-only nudge banner opens the same editor once public chat has outpaced the objective's last edit.
 - `BriefRail.tsx`: real members, assignments, team chat, and DMs.
 - `AgentFloor.tsx` and `AgentCard.tsx`: empty state, creation dialog, and persisted agent metadata only.
-- `PromptQueue.tsx`: real queue filtering, ordering, merging, targeting, and prompts.
+- `PromptQueue.tsx`: real queue filtering, ordering, merging, targeting, prompts, and “Merge Resolver” run labeling.
+- `QueueOrderMenu.tsx`: owner-only ordinary/conflict automation settings plus the per-device, explicit-permission browser conflict-alert control.
 - `FloorDock.tsx`: queue composer, target selection, live teammate drafts, and draft visibility controls.
-- `ReviewScreen.tsx`: consumes nullable review types and renders an honest empty state today.
+- `ReviewScreen.tsx`: consumes nullable authoritative review data; shows repository changes plus conflict source/prompts/paths/attempts/checks/questions/audit, member answer forms, and owner-only manual resolution controls. It keeps an honest empty state when no review exists.
 - `Rail.tsx`: panel chrome, movement, collapse, expansion, and resize behaviors.
 
 ### UI state that is intentionally local
@@ -836,6 +860,7 @@ The following currently reset on reload and must not be mistaken for shared data
 - Queue scope, ordering mode, merge mode, and drag state.
 - Selected chat thread and Team panel view.
 - Teammate draft visibility mode.
+- Browser conflict alerts (`openfloor:browserConflictAlerts`), which default off and remain per-device rather than session state.
 - Menus, dialogs, transient notices, and form input before submission.
 
 If product requirements call for any of these to persist or synchronize, add an explicit storage owner and document the decision.
@@ -878,6 +903,7 @@ db/
   skills.ts                  Owner-gated session skill imports and run materialization reads
   mcp-servers.ts             Owner-gated MCP server config with encrypted headers and run reads
   floor.ts                   Prepared D1 floor snapshot and mutation queries
+  conflicts.ts               Durable conflict cases, resolver attempts/questions, transitions, and review reads
   repositories.ts            Owner-gated GitHub connection and check-command persistence
   preflights.ts              Durable preflight/check state and internal Workflow transitions
   runs.ts                    Durable agent-run lifecycle, checks, files, artifacts, and execution context
@@ -887,6 +913,8 @@ lib/
   floor-types.ts             Public persisted floor types
   session-types.ts           Session, identity, presence, and typing event types
   session-context.ts         Pure session-brief renderer (no D1); shared by dispatch and live re-read
+  conflict-resolver-prompt.ts Pure specialized resolver prompt renderer
+  conflict-notifications.ts  Device-local attention event and multi-tab browser-alert claim helpers
   validation.ts              Bounded input parsing and normalization
   identity.ts                Access verification and local identity isolation
   invites.ts                 HMAC signing and constant-time verification
@@ -916,7 +944,7 @@ scripts/codex-runner.mjs     Pinned server-side Codex SDK runner inside the Sand
 scripts/claude-runner.mjs    Pinned Claude Agent SDK runner (non-root, kernel-sandboxed) in the same image
 scripts/gemini-runner.mjs    Pinned Gemini CLI runner (non-root, srt-wrapped) in the same image
 scripts/gemini-proxy-preload.mjs  Fetch preload making the Gemini CLI honor srt's proxy env on Node 22
-scripts/openfloor-mcp.mjs    Read-only stdio MCP server exposing openfloor_session_context to Codex
+scripts/openfloor-mcp.mjs    Stdio MCP server exposing read-only session context and run-scoped conflict input
 scripts/publish-bundle.mjs   Fixed trusted bundle/ref/ancestry/file/object validation and non-force publication
 tests/
   unit/                      Pure functions, validation, identity, signing, reducers
@@ -990,6 +1018,7 @@ Use for pure behavior:
 - Queue merge selection, mentions, and revision decisions.
 - Presence and typing-draft reducers.
 - Everyone/Typing/Hidden draft selection.
+- Conflict validation, state/prompt rendering, notification event selection/deduplication, and real multi-file three-way workspace construction.
 
 ### D1 integration tests
 
@@ -1008,6 +1037,7 @@ Use the Cloudflare Vitest worker pool and local migrations to test:
 - Candidate uniqueness, webhook delivery deduplication, behind-base reconciliation, and external candidate mutation detection.
 - Stripe signature rejection, event replay/order behavior, plan/status/quantity projection, paid-onboarding completion, and dynamic invite seat enforcement.
 - Preflight uniqueness, ordered state recovery, terminal failure/timeout state, gateway-token binding, and R2 log authorization.
+- Conflict default-on migration preservation, idempotent detection, priority/capacity routing, retry budgets, provider/quota handling, owner/member authorization, cross-session concealment, exact-question answer races, runtime-token binding, and ended-session refusal.
 
 ### Durable Object tests
 
@@ -1049,6 +1079,7 @@ The Playwright test uses two authenticated browser contexts and verifies the rea
 - Typing, Everyone, and Hidden draft modes behave correctly.
 - Review stays empty without fabricated repository data.
 - Signed GitHub webhook rejection/acceptance and the owner/member repository connection, candidate synchronization, passing/failing preflights, real-output viewing, retry, and reload recovery through deterministic test-only GitHub/Workflow/Sandbox adapters.
+- Default conflict automation, automatic and manual resolver states, member answers, stale-answer rejection, reload durability, browser-permission handling, one hidden-tab notification, and exact Review click-through.
 - Reload persistence, disconnect/reconnect, leave, and roster updates work.
 
 When adding a collaborative feature, prefer extending this two-context flow over testing only one browser.
@@ -1223,13 +1254,14 @@ Pushes to `main` run this exact sequence automatically via `.github/workflows/de
 - Agent names may contain spaces, while the current `@mention` helper recognizes a single word-like name. Explicit target selection is the reliable path for multiword agent names until mention parsing is redesigned.
 - Owners cannot leave because ownership transfer is deferred.
 - Review is derived from the latest active or merged candidate, its bounded GitHub PR snapshot, and retained real run attribution; complete artifacts remain outside the snapshot.
+- Browser conflict alerts require an open hidden floor tab, explicit per-device opt-in, and browser permission. Web Locks plus a localStorage receipt suppress duplicate multi-tab alerts. There is no closed-app push, email, or third-party delivery.
 - The UI contains restored visual affordances from a prototype; verify backend wiring before claiming any action is real.
 - Wrangler is pinned. A newer compatibility date may be rejected until Wrangler is upgraded deliberately.
 - This `AGENTS.md` is the comprehensive context source; keep shorter README and focused docs consistent with it.
 
 ## Roadmap guidance
 
-Repository execution Phases 1–7 are implemented. Future milestones should focus on deployment integrations, resolving the separately tracked manual-discard issue without weakening its lease, and broader agent lifecycle/product work rather than expanding GitHub permissions casually.
+Repository execution Phases 1–7 and automatic merge-conflict resolution are implemented. Future milestones should focus on deployment integrations, resolving the separately tracked manual-discard issue without weakening its lease, and broader agent lifecycle/product work rather than expanding GitHub permissions casually.
 
 An owner cannot remove a member from a session today — `leaveSession` is self-service only and refuses owners. At a 3-seat free tier, one mis-sent invite permanently consumes a third of a session's capacity with no in-product remedy. An owner-initiated remove-member action is the next plan-limits-adjacent piece of work; it needs its own decision about notifying the removed member (`disconnectPresenceUser` and WebSocket close code `4001` already exist and would cover it).
 
@@ -1453,13 +1485,13 @@ An owner cannot remove a member from a session today — `leaveSession` is self-
 
 **Consequences:** Each Workflow instance receives a distinct publisher Sandbox identity so a recovery cannot reuse a stale container image. The clean publisher and discard Sandbox receive the short-lived Git credential only through their process environments; Git clone, push, and conditional deletion all use the same HTTP Basic transport contract, while REST calls continue to use Bearer authentication. Error messages never include the header or token and distinguish an actual expected-SHA lease mismatch from authentication or transport failure. Publication retries remain idempotent because an existing run ref is accepted only at the exact trusted commit, and the Workflow reconciles the remote SHA before recording success.
 
-### 2026-08-19 — Serialize run integration into one candidate and draft PR
+### 2026-08-19 — Serialize run integration into one candidate and draft PR (manual conflict retry superseded 2026-08-25)
 
-**Decision:** After publication, `AgentRunWorkflow` acquires a conditional D1 lease on the active candidate, reconciles the current base/candidate/run refs from GitHub, and requests GitHub's non-force branch merge using the immutable run commit as the head. The first successful integration creates one draft PR from candidate to configured base; later integrations advance that same branch and PR. A GitHub merge conflict records `conflicted`, preserves both branches, and owner-only retry creates a new run attempt from the latest candidate.
+**Decision:** After publication, `AgentRunWorkflow` acquires a conditional D1 lease on the active candidate, reconciles the current base/candidate/run refs from GitHub, and requests GitHub's non-force branch merge using the immutable run commit as the head. The first successful integration creates one draft PR from candidate to configured base; later integrations advance that same branch and PR. A GitHub merge conflict records `conflicted` and preserves both branches. The original owner-only task retry was superseded by the specialized resolver workflow recorded on 2026-08-25.
 
 **Rationale:** Per-run branches isolate concurrent agent work, while a single serialized candidate gives reviewers one stable integration surface. The D1 lease prevents two Workflows from updating the expected candidate head concurrently, and GitHub remains authoritative for the actual merge result and conflict decision.
 
-**Consequences:** Candidate records persist the integration lease and PR number/node/URL/state/draft metadata. Runs persist integration base, integrated candidate SHA, conflict reason, and timestamps. Successful integration marks the queue item completed; conflict leaves it blocked. Candidate push webhooks received while the matching lease is held do not falsely mark openfloor's own merge as an external mutation. Final PR readiness, protection enforcement, squash merge, and cleanup remain Phase 7.
+**Consequences:** Candidate records persist the integration lease and PR number/node/URL/state/draft metadata. Runs persist integration base, integrated candidate SHA, conflict reason, and timestamps. Successful integration marks the queue item completed; conflict leaves it blocked while its durable resolver case proceeds. Candidate push webhooks received while the matching lease is held do not falsely mark openfloor's own merge as an external mutation. Final PR readiness, protection enforcement, squash merge, and cleanup remain Phase 7.
 
 ### 2026-08-19 — Allow concurrent runs to publish from an ancestral candidate
 
@@ -1684,6 +1716,14 @@ An owner cannot remove a member from a session today — `leaveSession` is self-
 **Rationale:** Separating identity from billing makes the required choices easier to scan without adding a draft entity or weakening the existing single onboarding mutation. Reusing the API's final multipart submission keeps profile validation, invite verification, Stripe Checkout, safe redirects, and membership acceptance at their current authoritative boundaries.
 
 **Consequences:** The current step and every unsaved field belong only to `OnboardingScreen`; no schema, API, Access, billing, or invite contract changed. The screen now shares the shop palette, wave field, Archivo type, bracket buttons, and theme resolution used by `/home` and the lobby, while onboarding-only responsive/rounded-surface rules remain scoped under `.onboarding-shell` in `app/styles/shop.css`. Step changes focus the active heading, progress exposes `aria-current="step"`, inactive panels are hidden, and narrow layouts stack profile, plan, seat, and action controls.
+
+### 2026-08-25 — Resolve real integration conflicts with specialized durable system runs
+
+**Decision:** A real GitHub `409` during serialized candidate integration creates one idempotent `merge_conflict_cases` record attached to the original queue item. Conflict work uses ordinary `agent_runs` associated through `merge_conflict_attempts`, labeled “Merge Resolver” and never represented by a fabricated floor agent. `sessions.auto_resolve_conflicts` defaults on independently from `auto_dispatch`; eligible cases take routing priority over new prompts while respecting existing caps, quota, repository readiness, provider gates, and inherited-agent availability. The resolver inherits the latest source run's agent, pinned provider/model, and agent-owner credential/billing policy. It reconstructs a genuine three-way merge from the latest candidate archive, exact source candidate archive, and retained verified R2 bundle; persists actual unmerged paths; receives the complete session brief plus source/history/answers; and publishes only through the existing checks, bundle validation, non-force branch, candidate lease, reconciliation, and draft-PR integration pipeline.
+
+**Rationale:** Conflict resolution must preserve both repository truth and session intent. Reusing verified run/publication machinery keeps GitHub write authority outside the repository process and preserves every attempt, while dedicated case state can express routing, human questions, retry budgets, and Review audit without widening the checked `agent_runs.status` enum or recreating that heavily referenced table. A true three-way workspace gives the model actual ancestry and markers instead of asking it to infer a merge from textual summaries.
+
+**Consequences:** Migration `0025_cute_moon_knight.sql` adds only `sessions.auto_resolve_conflicts` plus `merge_conflict_cases`, `merge_conflict_attempts`, and `merge_conflict_questions`; existing session rows receive the default-on setting and `agent_runs` is untouched. Case flow is `pending`/`resolving`/`resolved`, with `awaiting_input` returning to `pending` after the first complete current answer set and two automatic attempts allowed after each human response before `failed`. Any active member may answer; only the owner may toggle automation or manually start/retry. `openfloor_request_conflict_input` exists only for resolution runs through run/case-bound `conflict_input` tokens; source material uses separate `conflict_source` tokens. Input requests discard partial work before publication. Queue/Review show durable attention state, source prompts, paths, attempts, checks, questions, and responder audit; resolved conflicts stop emitting active warnings. Browser alerts are device-local, default off, require an explicit permission click, notify only an open hidden floor tab, and use Web Locks plus localStorage receipts to suppress duplicate tabs. `RUN_SANDBOX_IMAGE_VERSION` is `v4` because the image now includes the conflict-input MCP dependency (`zod@4.4.3`). No closed-app push, email, or third-party notification exists.
 
 ## How to record the next decision
 

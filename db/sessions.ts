@@ -607,21 +607,30 @@ export async function revokeInvite(
   return true;
 }
 
-export async function setSessionAutoDispatch(
+export async function setSessionRoutingSettings(
   sessionId: string,
   ownerId: string,
-  enabled: boolean,
+  input: { autoDispatch?: boolean; autoResolveConflicts?: boolean },
   database = getDb(),
 ): Promise<boolean> {
   if ((await getActiveMembershipRole(sessionId, ownerId, database)) !== "owner") return false;
-  await database
-    .prepare(
-      `UPDATE sessions SET auto_dispatch = ?, floor_revision = floor_revision + 1, updated_at = ?
-       WHERE id = ? AND ended_at IS NULL`,
-    )
-    .bind(enabled ? 1 : 0, Date.now(), sessionId)
-    .run();
-  return true;
+  const result = await database.prepare(
+    `UPDATE sessions SET
+       auto_dispatch = COALESCE(?, auto_dispatch),
+       auto_resolve_conflicts = COALESCE(?, auto_resolve_conflicts),
+       floor_revision = floor_revision + 1, updated_at = ?
+     WHERE id = ? AND ended_at IS NULL`,
+  ).bind(
+    input.autoDispatch === undefined ? null : input.autoDispatch ? 1 : 0,
+    input.autoResolveConflicts === undefined ? null : input.autoResolveConflicts ? 1 : 0,
+    Date.now(), sessionId,
+  ).run();
+  return Number(result.meta?.changes ?? 0) > 0;
+}
+
+/** Compatibility helper for callers that only change ordinary auto-dispatch. */
+export function setSessionAutoDispatch(sessionId: string, ownerId: string, enabled: boolean, database = getDb()) {
+  return setSessionRoutingSettings(sessionId, ownerId, { autoDispatch: enabled }, database);
 }
 
 export async function leaveSession(

@@ -11,6 +11,9 @@ import {
   parseQueuePromptInput,
   parseRepositoryCandidateInput,
   parseRepositoryConnectionInput,
+  parseRoutingSettingsInput,
+  parseConflictInputRequest,
+  parseConflictAnswersInput,
   parseSessionInput,
 } from "@/lib/validation";
 
@@ -163,5 +166,24 @@ describe("credential connect input validation", () => {
     expect(parseCredentialConnectInput({ apiKey: `sk-${"x".repeat(512)}` })).toBeNull();
     expect(parseCredentialConnectInput({ apiKey: "sk-abc def" })).toBeNull();
     expect(parseCredentialConnectInput({ apiKey: "sk-abc\ndef" })).toBeNull();
+  });
+});
+
+describe("merge conflict input validation", () => {
+  it("preserves omitted routing settings and requires at least one setting", () => {
+    expect(parseRoutingSettingsInput({ autoResolveConflicts: false })).toEqual({ autoResolveConflicts: false });
+    expect(parseRoutingSettingsInput({ autoDispatch: true, autoResolveConflicts: false })).toEqual({ autoDispatch: true, autoResolveConflicts: false });
+    expect(parseRoutingSettingsInput({})).toBeNull();
+    expect(parseRoutingSettingsInput({ autoResolveConflicts: "yes" })).toBeNull();
+  });
+
+  it("bounds resolver questions and exact member answers", () => {
+    expect(parseConflictInputRequest({ explanation: " Need a product choice ", questions: [" Keep old API? "] }))
+      .toEqual({ explanation: "Need a product choice", questions: ["Keep old API?"] });
+    expect(parseConflictInputRequest({ explanation: "x", questions: [] })).toBeNull();
+    expect(parseConflictInputRequest({ explanation: "x", questions: ["a", "b", "c", "d"] })).toBeNull();
+    expect(parseConflictAnswersInput({ answers: [{ questionId: "q1", answer: " Keep compatibility " }] }))
+      .toEqual({ answers: [{ questionId: "q1", answer: "Keep compatibility" }] });
+    expect(parseConflictAnswersInput({ answers: [{ questionId: "q1", answer: "a" }, { questionId: "q1", answer: "b" }] })).toBeNull();
   });
 });

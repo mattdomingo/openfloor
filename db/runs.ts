@@ -26,8 +26,12 @@ export async function getAgentRuns(sessionId: string, database = getDb()): Promi
             r.integration_base_sha AS integrationBaseSha, r.integrated_candidate_sha AS integratedCandidateSha,
             r.conflict_reason AS conflictReason, r.integration_started_at AS integrationStartedAt,
             r.integrated_at AS integratedAt,
-            r.cancel_requested_at AS cancelRequestedAt, r.updated_at AS updatedAt
+            r.cancel_requested_at AS cancelRequestedAt, r.updated_at AS updatedAt,
+            CASE WHEN mca.run_id IS NULL THEN 'task' ELSE 'conflict_resolution' END AS purpose,
+            COALESCE(mca.case_id, source_case.id) AS conflictCaseId
      FROM agent_runs r JOIN floor_agents a ON a.id = r.agent_id
+     LEFT JOIN merge_conflict_attempts mca ON mca.run_id = r.id
+     LEFT JOIN merge_conflict_cases source_case ON source_case.source_run_id = r.id
      WHERE r.session_id = ? ORDER BY r.created_at DESC, r.id DESC LIMIT 20`,
   ).bind(sessionId).all<RunRecord>();
   return Promise.all(rows.results.map(async (run) => ({
@@ -118,8 +122,13 @@ export async function getAgentRun(runId: string, database = getDb()): Promise<Ag
             r.integration_base_sha AS integrationBaseSha, r.integrated_candidate_sha AS integratedCandidateSha,
             r.conflict_reason AS conflictReason, r.integration_started_at AS integrationStartedAt,
             r.integrated_at AS integratedAt,
-            r.cancel_requested_at AS cancelRequestedAt, r.updated_at AS updatedAt
-     FROM agent_runs r JOIN floor_agents a ON a.id = r.agent_id WHERE r.id = ?`,
+            r.cancel_requested_at AS cancelRequestedAt, r.updated_at AS updatedAt,
+            CASE WHEN mca.run_id IS NULL THEN 'task' ELSE 'conflict_resolution' END AS purpose,
+            COALESCE(mca.case_id, source_case.id) AS conflictCaseId
+     FROM agent_runs r JOIN floor_agents a ON a.id = r.agent_id
+     LEFT JOIN merge_conflict_attempts mca ON mca.run_id = r.id
+     LEFT JOIN merge_conflict_cases source_case ON source_case.source_run_id = r.id
+     WHERE r.id = ?`,
   ).bind(runId).first<RunRecord>();
   if (!row) return null;
   return { ...row, attempt: Number(row.attempt), checks: await getRunChecks(runId, database), files: await getRunFiles(runId, database) };
@@ -138,12 +147,14 @@ export async function getRunExecutionContext(runId: string, database = getDb()) 
             rc.installation_id AS installationId, rc.repository_id AS repositoryId,
             rc.repository_owner AS repositoryOwner, rc.repository_name AS repositoryName,
             rc.repository_full_name AS repositoryFullName,
-            c.branch_name AS candidateBranch
+            c.branch_name AS candidateBranch,
+            mca.case_id AS conflictCaseId
      FROM agent_runs r
      JOIN sessions s ON s.id = r.session_id
      JOIN floor_agents a ON a.id = r.agent_id
      JOIN repository_candidates c ON c.id = r.candidate_id
      JOIN repository_connections rc ON rc.id = c.connection_id
+     LEFT JOIN merge_conflict_attempts mca ON mca.run_id = r.id
      WHERE r.id = ?`,
   ).bind(runId).first<{
     id: string; sessionId: string; queueItemId: string; agentId: string; candidateSha: string; attempt: number; status: AgentRunStatus;
@@ -151,6 +162,7 @@ export async function getRunExecutionContext(runId: string, database = getDb()) 
     sandboxId: string; sandboxProcessId: string | null; model: string; sessionTitle: string; objective: string | null;
     agentName: string; agentRole: string; agentTask: string; provider: CredentialProvider; installationId: string; repositoryId: string;
     repositoryOwner: string; repositoryName: string; repositoryFullName: string; candidateBranch: string;
+    conflictCaseId: string | null;
   }>();
   if (!run) return null;
   const prompts = await database.prepare(
@@ -174,15 +186,18 @@ export async function getRunGatewayContext(runId: string, database = getDb()) {
   return await database.prepare(
     `SELECT r.id, r.session_id AS sessionId, r.agent_id AS agentId,
             r.candidate_sha AS candidateSha, r.status, r.bundle_key AS bundleKey,
+            mca.case_id AS conflictCaseId,
             rc.installation_id AS installationId, rc.repository_id AS repositoryId,
             rc.repository_owner AS repositoryOwner, rc.repository_name AS repositoryName,
             rc.repository_full_name AS repositoryFullName
      FROM agent_runs r
      JOIN repository_candidates c ON c.id = r.candidate_id
      JOIN repository_connections rc ON rc.id = c.connection_id
+     LEFT JOIN merge_conflict_attempts mca ON mca.run_id = r.id
      WHERE r.id = ?`,
   ).bind(runId).first<{
     id: string; sessionId: string; agentId: string; candidateSha: string; status: AgentRunStatus; bundleKey: string | null;
+    conflictCaseId: string | null;
     installationId: string; repositoryId: string; repositoryOwner: string; repositoryName: string; repositoryFullName: string;
   }>();
 }

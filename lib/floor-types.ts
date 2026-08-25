@@ -137,8 +137,52 @@ export type AgentRun = {
   branchDeletedAt: number | null;
   cancelRequestedAt: number | null;
   updatedAt: number;
+  purpose: "task" | "conflict_resolution";
+  conflictCaseId: string | null;
   checks: AgentRunCheck[];
   files: AgentRunFile[];
+};
+
+export type MergeConflictStatus = "pending" | "resolving" | "awaiting_input" | "resolved" | "failed";
+
+export type MergeConflictQuestion = {
+  id: string;
+  question: string;
+  answer: string | null;
+  answeredByUserId: string | null;
+  answeredByName: string | null;
+  requestedAt: number;
+  answeredAt: number | null;
+};
+
+export type MergeConflictCase = {
+  id: string;
+  status: MergeConflictStatus;
+  sourceRunId: string;
+  latestSourceRunId: string;
+  currentResolverRunId: string | null;
+  queueItemId: string;
+  agentId: string;
+  agentName: string;
+  conflictReason: string;
+  explanation: string | null;
+  conflictPaths: string[];
+  automaticAttempts: number;
+  failureReason: string | null;
+  questions: MergeConflictQuestion[];
+  prompts: Array<{ id: string; authorName: string; text: string }>;
+  attempts: Array<{
+    runId: string;
+    launchKind: "automatic" | "manual" | "answer";
+    status: AgentRunStatus;
+    summary: string | null;
+    createdAt: number;
+    completedAt: number | null;
+    checks: Array<{ command: string; status: AgentRunCheck["status"] }>;
+  }>;
+  createdAt: number;
+  updatedAt: number;
+  resolvedAt: number | null;
 };
 
 export type ReviewContributor = {
@@ -164,6 +208,7 @@ export type FloorReviewSnapshot = {
   }>;
   checks: Array<{ id: string; name: string; detail: string | null; state: "passed" | "waiting" | "failed" }>;
   warnings: Array<{ id: string; title: string; detail: string; severity: "conflict" | "warning" }>;
+  conflicts: MergeConflictCase[];
   updatedAt: number;
   githubChecksPassing: boolean | null;
   cleanupStatus: "pending" | "complete" | "partial" | null;
@@ -183,6 +228,7 @@ export type FloorReviewSnapshot = {
 export type FloorSnapshot = {
   revision: number;
   autoDispatch: boolean;
+  autoResolveConflicts: boolean;
   agents: FloorAgent[];
   assignments: FloorAssignment[];
   messages: FloorMessage[];
