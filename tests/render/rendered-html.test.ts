@@ -369,10 +369,15 @@ describe("plan-selection onboarding", () => {
     const response = await SELF.fetch("http://localhost/onboarding?return_to=%2Fhome", { headers });
     expect(response.status).toBe(200);
     const html = await response.text();
+    expect(html).toContain("product-shell shop-shell onboarding-shell");
+    expect(html).toContain("Account setup progress");
+    expect(html).toContain('aria-current="step"');
+    expect(html).toContain("Create your profile");
     expect(html).toContain("Choose your plan");
     expect(html).toMatch(/\$<!-- -->30<!-- -->\/seat\/month|\$30\/seat\/month/);
     expect(html).toMatch(/\$<!-- -->50<!-- -->\/seat\/month|\$50\/seat\/month/);
     expect(html).toContain("Contact sales");
+    expect(html).toContain('href="mailto:hello@opnflr.com"');
   });
 
   it("rejects a direct signup until a plan is explicitly selected", async () => {
@@ -421,7 +426,9 @@ describe("plan-selection onboarding", () => {
     };
     const onboardingUrl = `http://localhost/onboarding?return_to=${encodeURIComponent(invitePath)}`;
     const page = await SELF.fetch(onboardingUrl, { headers });
-    expect(await page.text()).toContain("This invite includes a Free openfloor account");
+    const html = await page.text();
+    expect(html).toContain("Your invite includes Free");
+    expect(html).toContain("This invite includes a Free openfloor account");
 
     const form = new FormData();
     form.set("firstName", "Invite");
