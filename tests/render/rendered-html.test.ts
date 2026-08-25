@@ -296,7 +296,7 @@ describe("settings page", () => {
     const response = await SELF.fetch("http://localhost/settings", { headers });
     expect(response.status).toBe(200);
     const html = await response.text();
-    // The Profile tab (SegmentedControl's default) renders server-side.
+    // The Profile rail section renders server-side by default.
     expect(html).toContain("settings-user@example.com");
     expect(html).toContain("Managed by your sign-in provider");
     // "Plan & usage" only renders once selected client-side, but its data
@@ -317,6 +317,30 @@ describe("settings page", () => {
     expect(html).toContain("Contact sales");
     expect(html).not.toContain("activated manually");
     expect(html).not.toContain("buy.stripe.com");
+  });
+
+  it("returns to a member-visible settings origin and conceals other sessions", async () => {
+    const owner = await onboardedUser("settings-origin-owner", "Origin", "Owner");
+    const created = await SELF.fetch("http://localhost/api/sessions", {
+      method: "POST",
+      headers: { ...owner.headers, "content-type": "application/json", accept: "application/json" },
+      body: JSON.stringify({ title: "Origin room" }),
+    });
+    const { session } = await created.json() as { session: { id: string } };
+    const originPath = `/session/${session.id}`;
+
+    const memberPage = await SELF.fetch(`http://localhost/settings?from=${encodeURIComponent(originPath)}`, { headers: owner.headers });
+    expect(memberPage.status).toBe(200);
+    const memberHtml = await memberPage.text();
+    expect(memberHtml).toContain(`href="${originPath}"`);
+    expect(memberHtml).toContain("Origin room");
+
+    const outsider = await onboardedUser("settings-origin-outsider", "Origin", "Outsider");
+    const concealedPage = await SELF.fetch(`http://localhost/settings?from=${encodeURIComponent(originPath)}`, { headers: outsider.headers });
+    expect(concealedPage.status).toBe(200);
+    const concealedHtml = await concealedPage.text();
+    expect(concealedHtml).toContain('href="/home"');
+    expect(concealedHtml).not.toContain("Origin room");
   });
 
   it("an authenticated but not-yet-onboarded user is redirected to /onboarding", async () => {

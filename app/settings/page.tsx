@@ -3,16 +3,29 @@ import { getUsageForUser } from "@/db/sessions";
 import { listProviderCredentials } from "@/db/provider-credentials";
 import { SettingsScreen } from "@/components/product/SettingsScreen";
 import { getBillingSummary } from "@/db/billing";
+import { resolveSettingsOrigin } from "./origin";
 
 export const dynamic = "force-dynamic";
 
-export default async function SettingsPage({ searchParams }: { searchParams: Promise<{ section?: string; billing?: string }> }) {
+export default async function SettingsPage({ searchParams }: { searchParams: Promise<{ section?: string; billing?: string; from?: string }> }) {
   const user = await requireOnboardedUser("/settings");
-  const [usage, billing, credentials] = await Promise.all([
+  const query = await searchParams;
+  const [usage, billing, credentials, origin] = await Promise.all([
     getUsageForUser(user.id),
     getBillingSummary(user.id),
     listProviderCredentials(user.id),
+    resolveSettingsOrigin(query.from, user.id),
   ]);
-  const query = await searchParams;
-  return <SettingsScreen user={user} usage={usage} billing={billing} credentials={credentials} initialSection={query.section === "plan" ? "plan" : "profile"} billingNotice={query.billing ?? null} />;
+  return (
+    <SettingsScreen
+      user={user}
+      usage={usage}
+      billing={billing}
+      credentials={credentials}
+      initialSection={query.section === "plan" ? "plan" : "profile"}
+      billingNotice={query.billing ?? null}
+      backTo={origin}
+      originPath={origin.href === "/home" ? null : origin.href}
+    />
+  );
 }
