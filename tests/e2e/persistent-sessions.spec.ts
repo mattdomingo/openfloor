@@ -330,6 +330,8 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await owner.getByRole("dialog").getByRole("button", { name: "Delete session" }).click();
   await expect(owner.getByText("Release coordination")).toHaveCount(0);
 
+  // The New session tile only renders on the Active tab.
+  await owner.getByRole("button", { name: /^Active/ }).click();
   await owner.getByRole("button", { name: "New session" }).click();
   await owner.getByLabel("Session title").fill("Disposable session");
   await owner.getByRole("button", { name: "Create session" }).click();

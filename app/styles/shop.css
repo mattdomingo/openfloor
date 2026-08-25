@@ -26,6 +26,7 @@
   --accent-fill: #1B45B8;
   --btn-ink: #fff;
   --wave: 30, 38, 47;
+  --usage-tone: #0e8a76; /* the mark's teal dot — a color the Usage tab owns and nothing else does */
 
   --gutter: clamp(20px, 5vw, 68px);
   --measure: 1280px; /* narrower than the marketing site's 1680px — this is a page, not a landing */
@@ -61,6 +62,7 @@
   --accent-fill: #6EA3FF;
   --btn-ink: #0d1319;
   --wave: 190, 200, 214;
+  --usage-tone: #3fd9c0;
 }
 
 /* ── Backdrop ────────────────────────────────────────────────────────── */
@@ -132,36 +134,78 @@
   color: var(--ink);
 }
 
-/* ── Tabs row + usage toggle ────────────────────────────────────────────── */
+/* ── Tabs ────────────────────────────────────────────────────────────── */
 
-.shop-shell .tabs-row {
+.shop-shell .shop-tabs {
+  position: relative;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px var(--gutter);
+  gap: 10px 26px;
   padding: 0 var(--gutter);
   border-bottom: 1px solid var(--edge);
 }
-.shop-shell .tabs-row > .segmented { padding: 0; border-bottom: 0; }
-/* auto margin, not justify-content:space-between — the Usage toggle still
-   needs to land on the right when there's no session count to filter yet
-   and the segmented control next to it doesn't render at all. */
-.shop-shell .tabs-row > .button { margin-left: auto; }
-
-/* Grid-rows 0fr→1fr animates to an unmeasured height — no JS layout math,
-   and (unlike max-height) it settles exactly instead of overshooting.
-   Always mounted so the collapse animates too, not just the reveal. */
-.shop-shell .usage-collapse {
-  display: grid;
-  grid-template-rows: 0fr;
-  transition: grid-template-rows .3s cubic-bezier(.2, .8, .2, 1);
+.shop-shell .shop-tab {
+  position: relative;
+  z-index: 1;
+  padding: 14px 0;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font: 500 11px var(--mono);
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: color .2s ease;
 }
-.shop-shell .usage-collapse[data-open="true"] { grid-template-rows: 1fr; }
-.shop-shell .usage-collapse > div { overflow: hidden; min-height: 0; }
+.shop-shell .shop-tab[aria-pressed="true"] { color: var(--ink); }
+/* Usage owns a color none of the filter tabs use, at rest and selected. */
+.shop-shell .shop-tab[data-tone="usage"] { color: var(--usage-tone); }
+.shop-shell .shop-tab[data-tone="usage"][aria-pressed="true"] { color: var(--usage-tone); font-weight: 700; }
+
+/* The selection mark is a pair of floor brackets (the sign-in mark's own
+   glyph, viewBox 0 0 3 8) that slide to whichever tab is active, instead of
+   a bar underneath it. Position/width come from HomeScreen.tsx measuring
+   the real button (label lengths vary), written as an inline transform so
+   the slide is a compositor-only animation. */
+.shop-shell .shop-tab-indicator {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  height: 26px;
+  color: var(--accent-ink);
+  transition: transform .32s cubic-bezier(.2, .8, .2, 1), width .32s cubic-bezier(.2, .8, .2, 1);
+  pointer-events: none;
+}
+.shop-shell .shop-tab-indicator[data-tone="usage"] { color: var(--usage-tone); }
+.shop-shell .shop-tab-indicator::before,
+.shop-shell .shop-tab-indicator::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  width: 7px;
+  height: 100%;
+  background-color: currentColor;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-size: 100% 100%;
+  mask-size: 100% 100%;
+}
+.shop-shell .shop-tab-indicator::before {
+  left: 0;
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 3 8'%3E%3Cpath d='M0 0h1v7h2v1H0Z'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 3 8'%3E%3Cpath d='M0 0h1v7h2v1H0Z'/%3E%3C/svg%3E");
+}
+.shop-shell .shop-tab-indicator::after {
+  right: 0;
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 3 8'%3E%3Cpath d='M3 0h-1v7h-2v1h3Z'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 3 8'%3E%3Cpath d='M3 0h-1v7h-2v1h3Z'/%3E%3C/svg%3E");
+}
+
+.shop-shell .usage-tab-content { padding: clamp(28px, 3vw, 44px) var(--gutter); }
 .shop-shell .usage-card {
   width: 280px;
   max-width: 100%;
-  margin: 20px var(--gutter) 0;
   padding: 18px 20px;
   border: 1px solid var(--edge);
   border-radius: var(--radius-md);
@@ -348,6 +392,28 @@
 }
 .shop-shell .session-card-link:hover strong { color: var(--accent-ink); }
 
+/* The create-session tile: same box as a real session-card, but a plain
+   "+" — the tooltip (HomeScreen.tsx) is what actually says "New session". */
+.shop-shell .session-card-new {
+  align-items: center;
+  justify-content: center;
+  min-height: 168px;
+  width: 100%;
+  color: var(--muted);
+  font: inherit;
+  cursor: pointer;
+  transition: transform .4s cubic-bezier(.2, .8, .2, 1), box-shadow .25s ease, color .16s ease, border-color .16s ease;
+}
+.shop-shell .session-card-new:hover,
+.shop-shell .session-card-new:focus-visible {
+  color: var(--accent-ink);
+  border-color: var(--accent-ink);
+  box-shadow: 0 14px 32px rgba(0, 0, 0, .16);
+}
+.shop-shell .session-card-new-plus {
+  font: 300 44px/1 var(--sans);
+}
+
 /* Quiet caption, not a competing fact — sits right under the title instead
    of crowding the foot strip. */
 .shop-shell .session-card-updated {
@@ -531,10 +597,11 @@
 
 @media (max-width: 760px) {
   .shop-shell .page-heading { padding-inline: 16px; }
-  .shop-shell .tabs-row,
+  .shop-shell .shop-tabs,
   .shop-shell .session-grid,
+  .shop-shell .usage-tab-content,
   .shop-shell .empty-state { padding-inline: 16px; }
-  .shop-shell .usage-card { width: 100%; margin-inline: 16px; }
+  .shop-shell .usage-card { width: 100%; }
   .shop-shell .create-card { margin-inline: 16px; }
   .shop-shell .session-grid { grid-template-columns: 1fr; }
   .shop-shell .session-card-head { align-items: flex-start; flex-direction: column; gap: 8px; }

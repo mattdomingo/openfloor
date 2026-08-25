@@ -207,8 +207,10 @@ describe("plan-limits UI", () => {
     const response = await SELF.fetch("http://localhost/home", { headers });
     expect(response.status).toBe(200);
     const html = await response.text();
-    expect(html).toContain("Free plan");
-    expect(html).toContain("of 2h session time used this month (UTC)");
+    // Plan/quota detail now lives behind the Usage tab (HomeScreen.tsx
+    // ShopTabs) rather than in always-rendered prose — the tab's own label
+    // (remaining%, not used%) is what a plain GET can see without a click.
+    expect(html).toContain("Usage (100%)");
   });
 
   it("seeding usage_months to the cap renders the exhausted notice and the upgrade link", async () => {
@@ -247,8 +249,9 @@ describe("plan-limits UI", () => {
     const response = await SELF.fetch("http://localhost/home", { headers });
     expect(response.status).toBe(200);
     const html = await response.text();
-    expect(html).toContain("Enterprise plan");
-    expect(html).toContain("session time used this month (UTC)");
+    // Unlimited plans show the Usage tab with no percent (usageRemainingPercent
+    // is null for Infinity-hour plans) rather than a crash.
+    expect(html).toContain(">Usage<");
     expect(html).not.toContain("of undefinedh");
     expect(html).not.toContain("NaN");
   });
