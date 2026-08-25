@@ -119,51 +119,6 @@ export async function fetchAccessCodeChallenge(
 // validate CF_ACCESS_TEAM_DOMAIN the same way app/signout/route.ts already does.
 export { normalizedTeamDomain };
 
-export type StylesheetHrefOptions = {
-  // Same test-adapter convention as the two options above.
-  testHtml?: string | null;
-};
-
-// app/signin/code/route.ts hand-builds a standalone HTML document (a route
-// handler can't render JSX), so it gets none of the <link rel="stylesheet">
-// Next's own page-render pipeline injects automatically — confirmed live:
-// without this, the page loads completely unstyled. The build's CSS
-// filename is content-hashed per-deploy, so it can't be hardcoded; this asks
-// the landing page — public, unprotected, and far cheaper to fetch than
-// /signin itself, which would also re-trigger the Access login scrape —
-// what its own build actually resolved to, via the same HTMLRewriter
-// extraction the two functions above use for Cloudflare's markup, just
-// pointed at our own output. A null return (extraction failed, or the
-// origin is unreachable) degrades to unstyled HTML rather than failing the
-// sign-in flow itself.
-export async function resolveOwnStylesheetHref(
-  origin: string,
-  options: StylesheetHrefOptions = {},
-): Promise<string | null> {
-  let html: string;
-  if (options.testHtml !== undefined) {
-    if (options.testHtml === null) return null;
-    html = options.testHtml;
-  } else {
-    try {
-      const response = await fetch(`${origin}/`);
-      if (!response.ok) return null;
-      html = await response.text();
-    } catch {
-      return null;
-    }
-  }
-
-  let href: string | null = null;
-  const rewriter = new HTMLRewriter().on('link[rel="stylesheet"]', {
-    element(el) {
-      href ??= el.getAttribute("href");
-    },
-  });
-  await rewriter.transform(new Response(html)).text();
-  return href === null ? null : decodeHtmlEntities(href);
-}
-
 async function extractEmailFormAction(html: string): Promise<string | null> {
   let action: string | null = null;
   const rewriter = new HTMLRewriter().on("form.AuthFormLogin", {

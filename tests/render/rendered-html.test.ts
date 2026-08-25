@@ -416,11 +416,12 @@ describe("custom sign-in", () => {
     expect(html).toContain('action="https://openfloor-render-test.cloudflareaccess.com/cdn-cgi/access/callback"');
     expect(html).toContain('value="render-fixture-nonce"');
     expect(html).toContain("We sent a code to render-signin@example.com.");
-    // Regression: this page is a hand-built standalone document, not
-    // rendered through Next's page pipeline, so it gets no stylesheet
-    // automatically — confirmed live, the page loaded completely unstyled
-    // before this link was added.
-    expect(html).toContain('<link rel="stylesheet" href="/assets/render-fixture.css">');
+    // Regression: this page hand-builds a standalone HTML document — an
+    // earlier version resolved the app's compiled stylesheet via a
+    // same-origin self-fetch, which proved unreliable in production and
+    // shipped completely unstyled. Styling is now inlined directly.
+    expect(html).toContain("<style>");
+    expect(html).toContain(".entry-shell{");
   });
 });
 
