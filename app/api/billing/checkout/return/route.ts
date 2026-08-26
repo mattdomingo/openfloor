@@ -9,7 +9,7 @@ export async function GET(request: Request) {
   if (isApiError(user)) return user;
   const url = new URL(request.url);
   const sessionId = url.searchParams.get("session_id")?.trim();
-  const returnTo = safeAppReturnPath(url.searchParams.get("return_to")) ?? `${BASE_PATH}/settings?section=plan`;
+  const returnTo = safeAppReturnPath(url.searchParams.get("return_to")) ?? `${BASE_PATH}/home/settings?section=plan`;
   if (!sessionId || sessionId.length > 200) return Response.json({ error: "Missing Stripe Checkout session." }, { status: 400 });
   await reconcileStripeCheckout(sessionId, user.id);
   redirect(returnTo);

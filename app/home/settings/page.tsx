@@ -8,7 +8,7 @@ import { resolveSettingsOrigin } from "./origin";
 export const dynamic = "force-dynamic";
 
 export default async function SettingsPage({ searchParams }: { searchParams: Promise<{ section?: string; billing?: string; from?: string }> }) {
-  const user = await requireOnboardedUser("/settings");
+  const user = await requireOnboardedUser("/home/settings");
   const query = await searchParams;
   const [usage, billing, credentials, origin] = await Promise.all([
     getUsageForUser(user.id),

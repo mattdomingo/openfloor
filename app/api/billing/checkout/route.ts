@@ -12,10 +12,10 @@ export async function POST(request: Request) {
   if (!isPaidPlan(body?.plan) || !validPaidSeatQuantity(body.plan, body?.quantity)) {
     return Response.json({ error: "Choose a valid paid plan and seat quantity." }, { status: 400 });
   }
-  const returnTo = safeAppReturnPath(body?.returnTo) ?? `${BASE_PATH}/settings?section=plan`;
+  const returnTo = safeAppReturnPath(body?.returnTo) ?? `${BASE_PATH}/home/settings?section=plan`;
   try {
     const url = await createStripeCheckout(user, {
-      plan: body.plan, quantity: body.quantity, requestUrl: request.url, returnTo, cancelTo: "/settings?section=plan&billing=cancelled",
+      plan: body.plan, quantity: body.quantity, requestUrl: request.url, returnTo, cancelTo: "/home/settings?section=plan&billing=cancelled",
     });
     return Response.json({ url });
   } catch (error) {

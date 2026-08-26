@@ -216,7 +216,7 @@ Production is mounted under `/app` on `opnflr.com`. Local `npm run dev` is mount
 | --- | --- | --- | --- |
 | `/app` | `/` | Public | Product landing and entry into Cloudflare Access. |
 | `/app/home` | `/home` | Protected | Sessions where the current user is a member; session creation. |
-| `/app/settings` | `/settings` | Protected | Account settings: profile, plan and usage, connections, preferences, and account deletion. The account menu supplies an optional membership-checked `from` path so the header can return to the originating home/session/floor page. |
+| `/app/home/settings` | `/home/settings` | Protected | Account settings: profile, plan and usage, connections, preferences, and account deletion. The account menu supplies an optional membership-checked `from` path so the header can return to the originating home/session/floor page. Nested under `/home` (not its own top-level route) so it shares the `home*` Access destination — see "Authentication and identity". |
 | `/app/onboarding` | `/onboarding` | Protected | Two-step first-login setup: ephemeral profile details first, then explicit plan/seat selection (or locked invite Free confirmation); gates `/home`, `/join/*`, and `/session/*` until final submission. |
 | `/app/join/[token]` | `/join/[token]` | Protected | Valid invite preview followed by explicit acceptance. |
 | `/app/session/[id]` | `/session/[id]` | Protected/member-only | Session lobby, roster, invite controls, leave, and floor entry. |
@@ -229,8 +229,8 @@ Production is mounted under `/app` on `opnflr.com`. Local `npm run dev` is mount
 Important behavior:
 
 - The landing page owns no password, OAuth callback, or application login session.
-- `/onboarding`, `/home`, `/settings`, and the session lobby share the Archivo/shop-palette `shop-shell` visual system and wave field. Route-specific layout stays under `.onboarding-shell`, `.settings-shell`, or `.session-lobby-shell`; `/join` retains its established styling. `/floor` keeps its own `legacy-floor-*` layout and components, but resolves its tokens onto the same shop palette via a `.app-shell`-scoped block in `tokens.css` — see the Styling section below.
-- `/settings?from=` is local navigation state, not authority: only `/home` or a current member-visible `/session/[id]` or `/session/[id]/floor` is accepted, and every invalid, stale, or non-member origin falls back to `/home` without revealing the session.
+- `/onboarding`, `/home`, `/home/settings`, and the session lobby share the Archivo/shop-palette `shop-shell` visual system and wave field. Route-specific layout stays under `.onboarding-shell`, `.settings-shell`, or `.session-lobby-shell`; `/join` retains its established styling. `/floor` keeps its own `legacy-floor-*` layout and components, but resolves its tokens onto the same shop palette via a `.app-shell`-scoped block in `tokens.css` — see the Styling section below.
+- `/home/settings?from=` is local navigation state, not authority: only `/home` or a current member-visible `/session/[id]` or `/session/[id]/floor` is accepted, and every invalid, stale, or non-member origin falls back to `/home` without revealing the session.
 - Clicking Sign in navigates to a protected path; Cloudflare Access performs the login and returns the browser.
 - `/signout` is the production sign-out endpoint (an application route, not Cloudflare's own `/cdn-cgi/access/logout` — see "Authentication and identity" for why).
 - A join page reveals session title and owner only after authentication and only for a valid, active signed token.

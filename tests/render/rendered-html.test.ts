@@ -56,7 +56,7 @@ describe("server rendering", () => {
   });
 
   it("redirects every protected page to the public landing page", async () => {
-    for (const path of ["/home", "/settings", "/session/private-room", "/session/private-room/floor", "/join/not-a-token"]) {
+    for (const path of ["/home", "/home/settings", "/session/private-room", "/session/private-room/floor", "/join/not-a-token"]) {
       const response = await render(path);
       expect(response.status).toBeGreaterThanOrEqual(300);
       expect(response.status).toBeLessThan(400);
@@ -273,7 +273,7 @@ describe("plan-limits UI", () => {
     expect(response.status).toBe(200);
     const html = await response.text();
     expect(html).toContain("2h of monthly session time is used up");
-    expect(html).toContain('href="/settings?section=plan"');
+    expect(html).toContain('href="/home/settings?section=plan"');
     expect(html).not.toContain("buy.stripe.com");
   });
 
@@ -308,9 +308,9 @@ describe("plan-limits UI", () => {
 });
 
 describe("settings page", () => {
-  it("an onboarded user's /settings renders their profile tab and ships usage data for the plan tab", async () => {
+  it("an onboarded user's /home/settings renders their profile tab and ships usage data for the plan tab", async () => {
     const { headers } = await onboardedUser("settings-user", "Settings", "User");
-    const response = await SELF.fetch("http://localhost/settings", { headers });
+    const response = await SELF.fetch("http://localhost/home/settings", { headers });
     expect(response.status).toBe(200);
     const html = await response.text();
     // The Profile rail section renders server-side by default.
@@ -325,7 +325,7 @@ describe("settings page", () => {
 
   it("renders self-serve Pro, Max, and Enterprise billing from the Plan tab", async () => {
     const { headers } = await onboardedUser("billing-settings-user", "Billing", "User");
-    const response = await SELF.fetch("http://localhost/settings?section=plan", { headers });
+    const response = await SELF.fetch("http://localhost/home/settings?section=plan", { headers });
     expect(response.status).toBe(200);
     const html = await response.text();
     expect(html).toContain("$30/seat/month");
@@ -346,14 +346,14 @@ describe("settings page", () => {
     const { session } = await created.json() as { session: { id: string } };
     const originPath = `/session/${session.id}`;
 
-    const memberPage = await SELF.fetch(`http://localhost/settings?from=${encodeURIComponent(originPath)}`, { headers: owner.headers });
+    const memberPage = await SELF.fetch(`http://localhost/home/settings?from=${encodeURIComponent(originPath)}`, { headers: owner.headers });
     expect(memberPage.status).toBe(200);
     const memberHtml = await memberPage.text();
     expect(memberHtml).toContain(`href="${originPath}"`);
     expect(memberHtml).toContain("Origin room");
 
     const outsider = await onboardedUser("settings-origin-outsider", "Origin", "Outsider");
-    const concealedPage = await SELF.fetch(`http://localhost/settings?from=${encodeURIComponent(originPath)}`, { headers: outsider.headers });
+    const concealedPage = await SELF.fetch(`http://localhost/home/settings?from=${encodeURIComponent(originPath)}`, { headers: outsider.headers });
     expect(concealedPage.status).toBe(200);
     const concealedHtml = await concealedPage.text();
     expect(concealedHtml).toContain('href="/home"');
@@ -368,10 +368,10 @@ describe("settings page", () => {
       "x-openfloor-dev-user-email": "settings-not-onboarded@example.com",
       "x-openfloor-dev-user-name": "Not Onboarded",
     };
-    const response = await SELF.fetch("http://localhost/settings", { headers, redirect: "manual" });
+    const response = await SELF.fetch("http://localhost/home/settings", { headers, redirect: "manual" });
     expect(response.status).toBeGreaterThanOrEqual(300);
     expect(response.status).toBeLessThan(400);
-    expect(response.headers.get("location")).toContain("/onboarding?return_to=%2Fsettings");
+    expect(response.headers.get("location")).toContain("/onboarding?return_to=%2Fhome%2Fsettings");
   });
 });
 

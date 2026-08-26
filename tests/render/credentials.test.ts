@@ -207,9 +207,9 @@ describe("provider credential routes", () => {
     expect(await list.json()).toEqual({ credentials: [] });
   });
 
-  it("shows the Connections section on /settings", async () => {
+  it("shows the Connections section on /home/settings", async () => {
     const { headers } = await onboardedUser("credentials-settings", "Cred", "Settings");
-    const response = await SELF.fetch("http://localhost/settings", { headers });
+    const response = await SELF.fetch("http://localhost/home/settings", { headers });
     expect(response.status).toBe(200);
     const html = await response.text();
     expect(html).toContain("Connections");

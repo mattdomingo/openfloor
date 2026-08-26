@@ -7,7 +7,7 @@ export async function POST(request: Request) {
   const user = await requireApiUser();
   if (isApiError(user)) return user;
   const body = await request.json().catch(() => null) as { returnTo?: unknown } | null;
-  const returnTo = safeAppReturnPath(body?.returnTo) ?? `${BASE_PATH}/settings?section=plan`;
+  const returnTo = safeAppReturnPath(body?.returnTo) ?? `${BASE_PATH}/home/settings?section=plan`;
   try {
     return Response.json({ url: await createStripePortal(user, request.url, returnTo) });
   } catch (error) {
