@@ -1,5 +1,5 @@
 import { getCredentialEncryptionSecret, getTestProviderKeys } from "@/db/index";
-import { deleteProviderCredential, upsertProviderCredential } from "@/db/provider-credentials";
+import { deleteProviderCredential, setProviderCredentialLimit, upsertProviderCredential } from "@/db/provider-credentials";
 import { encryptCredential } from "@/lib/credential-crypto";
 import {
   credentialAadContext,
@@ -11,7 +11,7 @@ import {
 } from "@/lib/provider-credentials";
 import { validateProviderApiKey, validateProviderOauthSecret } from "@/lib/provider-validation";
 import { isApiError, requireApiUser } from "@/lib/server-auth";
-import { parseCredentialConnectInput } from "@/lib/validation";
+import { parseCredentialConnectInput, parseCredentialLimitInput } from "@/lib/validation";
 
 // Stored credentials are write-only from the client's perspective: PUT accepts
 // a secret and returns only the summary (fingerprint, timestamps); no endpoint
@@ -56,6 +56,26 @@ export async function PUT(request: Request, { params }: { params: Promise<{ prov
     fingerprint: credentialFingerprint(input.fingerprintValue),
     validatedAt,
   });
+  return Response.json({ credential });
+}
+
+// Sets or clears the owner's monthly spend cap for one (provider, kind)
+// credential — the only mutable field on a stored credential row besides the
+// secret itself. lib/agent-run-start.ts's checkProviderBudget reads it back.
+export async function PATCH(request: Request, { params }: { params: Promise<{ provider: string }> }) {
+  const user = await requireApiUser();
+  if (isApiError(user)) return user;
+  const provider = parseCredentialProvider((await params).provider);
+  if (!provider) return Response.json({ error: "Unknown provider" }, { status: 404 });
+  const body = await request.json().catch(() => null);
+  const input = parseCredentialLimitInput(body);
+  if (!input) return Response.json({ error: "Send { kind, monthlyLimitUsd }, a whole-dollar number or null" }, { status: 400 });
+  if (!credentialKindsForProvider(provider).includes(input.kind)) {
+    return Response.json({ error: `${providerLabel(provider)} does not accept a subscription credential.` }, { status: 400 });
+  }
+  const monthlyLimitMicroUsd = input.monthlyLimitUsd === null ? null : Math.round(input.monthlyLimitUsd * 1_000_000);
+  const credential = await setProviderCredentialLimit(user.id, provider, input.kind, monthlyLimitMicroUsd);
+  if (!credential) return Response.json({ error: "That credential is not connected." }, { status: 404 });
   return Response.json({ credential });
 }
 

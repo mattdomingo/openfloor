@@ -236,6 +236,16 @@ process.on("SIGINT", requestStop);
 let threadId = null;
 let finalResponse = null;
 let usage = null;
+// modelUsage/totalCostUsd (SDKResultSuccess) are the SDK's own recommended
+// token/cost fields — "the correct field for token/cost accounting", per its
+// doc comment — covering the main loop, Task subagents, sidechains, and
+// internal calls, unlike `usage` above which is main-loop-only. Kept
+// separate from `usage` (not merged into it) so worker/agent-run-workflow.ts
+// can price a kimi/glm run (routed through this same runner, see
+// usesClaudeRunner) from token counts instead of trusting totalCostUsd,
+// which the SDK computes at Anthropic's own prices regardless of vendor.
+let modelUsage = null;
+let totalCostUsd = null;
 let resultError = null;
 try {
   for await (const message of response) {
@@ -245,6 +255,8 @@ try {
     }
     if (message.type === "result") {
       usage = message.usage ?? usage;
+      modelUsage = message.modelUsage ?? modelUsage;
+      totalCostUsd = typeof message.total_cost_usd === "number" ? message.total_cost_usd : totalCostUsd;
       if (message.subtype === "success") {
         finalResponse = message.result ?? finalResponse;
       } else {
@@ -257,16 +269,16 @@ try {
   }
   await drainActivity();
   if (resultError) {
-    await writeFile(resultPath, JSON.stringify({ ok: false, threadId, finalResponse, usage, error: `Claude run ended: ${resultError}` }), "utf8");
+    await writeFile(resultPath, JSON.stringify({ ok: false, threadId, finalResponse, usage, modelUsage, totalCostUsd, error: `Claude run ended: ${resultError}` }), "utf8");
     process.exitCode = aborted ? 130 : 1;
   } else {
-    await writeFile(resultPath, JSON.stringify({ ok: true, threadId, finalResponse, usage }), "utf8");
+    await writeFile(resultPath, JSON.stringify({ ok: true, threadId, finalResponse, usage, modelUsage, totalCostUsd }), "utf8");
   }
 } catch (error) {
   const message = error instanceof Error ? error.message : String(error);
   emitActivity("error", firstLine(message));
   await drainActivity().catch(() => {});
-  await writeFile(resultPath, JSON.stringify({ ok: false, threadId, finalResponse, usage, error: message }), "utf8");
+  await writeFile(resultPath, JSON.stringify({ ok: false, threadId, finalResponse, usage, modelUsage, totalCostUsd, error: message }), "utf8");
   process.stderr.write(`${message}\n`);
   process.exitCode = aborted ? 130 : 1;
 }

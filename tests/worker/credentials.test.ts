@@ -360,6 +360,38 @@ describe("OpenAI gateway credential resolution", () => {
     expect(capture.authorization).toBe("Bearer sk-openai-server-key");
   });
 
+  // db/runs.ts's recordRunUsage reads agent_runs.billed_kind at run
+  // completion to attribute spend to the right (user, provider, kind)
+  // rollup — it must be written by the FIRST successful gateway call and
+  // never move mid-run (multiple model calls per run all resolve the same
+  // credential; the WHERE billed_kind IS NULL guard makes every call after
+  // the first a no-op).
+  it("records billed_kind on the run's first resolved call, and never overwrites it on later calls", async () => {
+    const { sessionId, owner, runId } = await runningRun("gw-billed-kind");
+    await connectOpenAiKey(owner.id, "sk-openai-owner-billedkind");
+    const capture = { authorization: null as string | null };
+    stubUpstream(capture);
+    await postOpenAiGateway(gatewayRequest(await signedRunToken(runId, sessionId)), gatewayParams());
+    const afterFirst = await env.DB.prepare("SELECT billed_kind AS billedKind FROM agent_runs WHERE id = ?").bind(runId).first<{ billedKind: string }>();
+    expect(afterFirst?.billedKind).toBe("api_key");
+
+    // Simulate a second model call in the same run — resolution must not
+    // touch the already-recorded kind, even if the underlying credential
+    // situation somehow changed.
+    await postOpenAiGateway(gatewayRequest(await signedRunToken(runId, sessionId)), gatewayParams());
+    const afterSecond = await env.DB.prepare("SELECT billed_kind AS billedKind FROM agent_runs WHERE id = ?").bind(runId).first<{ billedKind: string }>();
+    expect(afterSecond?.billedKind).toBe("api_key");
+  });
+
+  it("records billed_kind as server when the server-fallback key pays", async () => {
+    const { sessionId, runId } = await runningRun("gw-billed-kind-server");
+    (env as unknown as Record<string, unknown>).OPENAI_API_KEY = "sk-openai-server-key";
+    stubUpstream({ authorization: null });
+    await postOpenAiGateway(gatewayRequest(await signedRunToken(runId, sessionId)), gatewayParams());
+    const row = await env.DB.prepare("SELECT billed_kind AS billedKind FROM agent_runs WHERE id = ?").bind(runId).first<{ billedKind: string }>();
+    expect(row?.billedKind).toBe("server");
+  });
+
   it("refuses the run when neither an owner nor a server credential exists", async () => {
     const { sessionId, runId } = await runningRun("gw-none");
     const response = await postOpenAiGateway(gatewayRequest(await signedRunToken(runId, sessionId)), gatewayParams());

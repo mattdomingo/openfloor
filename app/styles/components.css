@@ -195,6 +195,14 @@ input, textarea { width: 100%; padding: 11px 12px; border: 1px solid var(--line-
 .usage-meter::-webkit-progress-value { background: var(--accent); }
 .usage-meter::-moz-progress-bar { background: var(--accent); }
 
+/* Provider budget meter (Settings → Connections): amber at 80%, red at the
+   cap — lib/agent-run-start.ts's checkProviderBudget refuses new runs at the
+   same 100% this colors. */
+.usage-meter[data-level="warn"]::-webkit-progress-value { background: var(--status-attention); }
+.usage-meter[data-level="warn"]::-moz-progress-bar { background: var(--status-attention); }
+.usage-meter[data-level="over"]::-webkit-progress-value { background: var(--status-blocked); }
+.usage-meter[data-level="over"]::-moz-progress-bar { background: var(--status-blocked); }
+
 .empty-state { margin-top: var(--space-6); padding: 64px var(--space-6); text-align: center; }
 .empty-state strong { font: 400 26px var(--font-serif); }
 .empty-state p { margin-top: var(--space-2); color: var(--text-secondary); }

@@ -8,7 +8,7 @@ import { LocalDateTime } from "@/components/LocalDateTime";
 import { HoverTip, Icon, useHoverTip } from "./primitives";
 import { SelectMenu } from "./SelectMenu";
 import type { RunActivitySource } from "./useRunActivity";
-import { ACTIVE_RUN_STATUSES, agentReplyText, isRunLive, runStatusToken } from "./data";
+import { ACTIVE_RUN_STATUSES, agentReplyText, formatAgentCost, isRunLive, runStatusToken } from "./data";
 
 const KIND_GLYPHS: Record<string, string> = {
   reasoning: "✳",
@@ -31,6 +31,7 @@ export function AgentCard({ agent, tone, latestRun, activityEvents, selected, ow
   const paused = agent.pausedAt !== null;
   const controllable = agent.kind !== "answer";
   const stateLabel = paused ? "Paused" : latestRun ? runStatusToken(latestRun).replace("_", " ") : "Created";
+  const cost = formatAgentCost(agent);
   return (
     <article className="agent-card" data-selected={selected ? "true" : "false"} data-status={paused ? "paused" : latestRun ? runStatusToken(latestRun) : "idle"} data-tone={tone} role="button" tabIndex={0} onClick={onFocus} onKeyDown={(event) => {
       if (event.target === event.currentTarget && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); onFocus(); }
@@ -55,7 +56,7 @@ export function AgentCard({ agent, tone, latestRun, activityEvents, selected, ow
           {!agent.kind && <button type="button" className="button danger-button" data-size="sm" title="Delete" aria-label={`Delete ${agent.name}`} onClick={() => onDelete(agent.id)}><Icon name="trash" size={12} /></button>}
         </div>
       )}
-      <div className="agent-foot"><span>Owned by {agent.ownerName}</span><span><LocalDateTime timestamp={agent.createdAt} /></span></div>
+      <div className="agent-foot"><span>Owned by {agent.ownerName}</span><span className="agent-cost" title={cost.title}>{cost.label}</span><span><LocalDateTime timestamp={agent.createdAt} /></span></div>
     </article>
   );
 }

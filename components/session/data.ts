@@ -1,4 +1,4 @@
-import type { AgentRun, AgentRunStatus } from "@/lib/floor-types";
+import type { AgentRun, AgentRunStatus, FloorAgent } from "@/lib/floor-types";
 
 export type PanelId = "brief" | "floor" | "queue";
 export type RailId = Exclude<PanelId, "floor">;
@@ -48,6 +48,29 @@ export function runStatusToken(run: (Pick<AgentRun, "status" | "kind"> & Partial
   if (run.rollbackStatus === "failed") return "rollback_failed";
   if (run.kind === "reply" && run.status === "ready") return "answered";
   return run.status;
+}
+
+// Lifetime cost chip for the agent tile's foot row. "estimated" gets a "~"
+// prefix (token-count pricing, not a vendor-reported figure — see
+// lib/model-pricing.ts); an oauth-billed agent additionally reads "incl. in
+// subscription" since the dollar figure is notional, not a marginal charge.
+// null covers both "no priced run yet" and "no runs at all" — same glyph
+// either way, since the tile has no use for distinguishing them.
+export function formatAgentCost(agent: Pick<FloorAgent, "costMicroUsd" | "costSource" | "billedKind">): { label: string; title: string } {
+  if (agent.costMicroUsd === null || agent.costSource === null) {
+    return { label: "—", title: "No priced runs yet" };
+  }
+  const dollars = (agent.costMicroUsd / 1_000_000).toFixed(2);
+  const estimated = agent.costSource !== "reported";
+  const amount = `${estimated ? "~" : ""}$${dollars}`;
+  const subscription = agent.billedKind === "oauth";
+  const label = subscription ? `${amount} · incl. in subscription` : amount;
+  const title = [
+    "Lifetime cost across every run this agent has made.",
+    estimated ? "Estimated from token counts at list prices, not a vendor-reported figure." : "Reported by the provider.",
+    subscription ? "Billed to a subscription — no marginal charge for this usage." : null,
+  ].filter(Boolean).join(" ");
+  return { label, title };
 }
 
 export function canRollbackRun(input: {

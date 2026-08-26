@@ -9,6 +9,7 @@ import {
   finishRunCheck,
   finishRunPublished,
   finishRunIntegrated,
+  getQueueItemAgentBudgetContext,
   getQueueItemProvider,
   getRunExecutionContext,
   insertRunActivityEvents,
@@ -45,6 +46,7 @@ import {
 import { createDraftPullRequest, createRepositoryBranch, getInstallationRepository, getRepositoryRefSha, GitHubApiError, mergeRepositoryBranch, setTestRepositoryMergeConflict } from "@/lib/github";
 import { renderConflictResolverPrompt } from "@/lib/conflict-resolver-prompt";
 import { providerLabel } from "@/lib/provider-credentials";
+import { checkProviderBudget, getAgentBudgetContext } from "@/db/provider-credentials";
 import { disabledRunProviders } from "@/lib/provider-rollout";
 import { openFloorBranchName } from "@/lib/repository-refs";
 import { notifyFloorChanged, notifyRunActivity } from "@/lib/presence-server";
@@ -83,7 +85,7 @@ type TestAgentRunData = {
 
 export type StartRunResult =
   | { ok: true; runId: string }
-  | { ok: false; kind: "disabled" | "not_ready" | "conflict" | "quota_exhausted"; message: string };
+  | { ok: false; kind: "disabled" | "not_ready" | "conflict" | "quota_exhausted" | "budget_exhausted"; message: string };
 
 // Providers whose runs cannot start right now, from the rollout gates. The
 // router passes this into runRoutingTick so gated items are SKIPPED during
@@ -136,6 +138,16 @@ export async function startQueueItemRun(sessionId: string, queueItemId: string, 
   if (quota && quota.endedAt == null && quota.seconds >= quota.limitHours * 3600) {
     return { ok: false, kind: "quota_exhausted", message: "Your plan's monthly session hours are used up." };
   }
+  // Unlike quota_exhausted (a session-wide precondition), this is scoped to
+  // one agent owner's one credential — db/routing.ts's dispatch loop MUST
+  // treat it as a per-item skip (continue to the next queue item), never the
+  // session-wide hold every other non-"conflict" failure here triggers. See
+  // the comment on that branch.
+  const budgetContext = await getQueueItemAgentBudgetContext(sessionId, queueItemId, getDb());
+  if (budgetContext) {
+    const budget = await checkProviderBudget(budgetContext.ownerUserId, budgetContext.provider, budgetContext.credentialKind, getDb());
+    if (!budget.ok) return { ok: false, kind: "budget_exhausted", message: budget.message };
+  }
   try {
     await ensureNextCandidateCycle(sessionId, userId);
     const run = await createAgentRun(sessionId, queueItemId, userId, kind);
@@ -177,6 +189,11 @@ export async function startConflictResolverRun(conflict: PendingConflict): Promi
   const quota = await getOwnerHourQuota(conflict.sessionId, getDb());
   if (quota && quota.endedAt == null && quota.seconds >= quota.limitHours * 3600) {
     return { ok: false, kind: "quota_exhausted", message: "Your plan's monthly session hours are used up." };
+  }
+  const budgetContext = await getAgentBudgetContext(conflict.agentId, getDb());
+  if (budgetContext) {
+    const budget = await checkProviderBudget(budgetContext.ownerUserId, budgetContext.provider, budgetContext.credentialKind, getDb());
+    if (!budget.ok) return { ok: false, kind: "budget_exhausted", message: budget.message };
   }
   const launchKind = conflict.resumeRequested
     ? await hasAnsweredConflictQuestions(conflict.id) ? "answer" as const : "manual" as const

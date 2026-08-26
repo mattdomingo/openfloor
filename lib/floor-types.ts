@@ -44,9 +44,18 @@ export type FloorAgent = {
   // run refusal diagnosable, so do not "fix" this back to hidden.
   credentialKind: CredentialKind | null;
   // Manual pause/stop state for a persistent agent (kind === null). Non-null
-  // blocks new router assignment/dispatch; an in-flight run finishes
-  // normally. Always null for a system-managed agent.
+  // blocks new run dispatch; an in-flight run finishes normally. Always null
+  // for a system-managed agent.
   pausedAt: number | null;
+  // Lifetime spend across every run this agent has made (db/floor.ts sums
+  // agent_runs.cost_micro_usd). Null means no priced run yet — an agent with
+  // no runs, or whose only runs used an unpriced model. "mixed" covers an
+  // agent whose model crossed the anthropic/kimi/glm reported/estimated
+  // boundary mid-life (lib/run-usage.ts). billedKind reflects the most
+  // recent run's resolved credential, not an aggregate — "who pays now."
+  costMicroUsd: number | null;
+  costSource: "reported" | "estimated" | "mixed" | null;
+  billedKind: "api_key" | "oauth" | "server" | null;
   createdAt: number;
   updatedAt: number;
 };

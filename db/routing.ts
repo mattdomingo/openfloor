@@ -455,6 +455,13 @@ export async function runRoutingTick(
       } else if (result.kind === "conflict") {
         // Duplicate wake or a manual Run raced us; the unique index already guarded this.
         continue;
+      } else if (result.kind === "budget_exhausted") {
+        // Per-owner, per-credential — like the disabledProviders check above,
+        // NOT a session-wide precondition. One agent owner's exhausted
+        // Anthropic budget must never freeze another owner's agents, or even
+        // this owner's other providers, on the same floor.
+        decisions.push({ queueItemId: item.id, agentId: item.agentId, runId: null, decision: "skipped", reason: result.message, candidates: [] });
+        continue;
       } else {
         // "not_ready" and "disabled" are session-wide preconditions; stop dispatching.
         decisions.push({ queueItemId: item.id, agentId: item.agentId, runId: null, decision: "held", reason: result.message, candidates: [] });

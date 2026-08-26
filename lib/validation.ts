@@ -45,6 +45,10 @@ export type ProfileInput = { firstName: string; lastName: string; githubHandle: 
 // for an auth bundle (never the refresh token).
 export type CredentialConnectInput = { kind: CredentialKind; secret: string; fingerprintValue: string };
 
+// null clears the limit (no cap). Whole-dollar granularity from the
+// Settings input; the route converts to micro-USD for storage.
+export type CredentialLimitInput = { kind: CredentialKind; monthlyLimitUsd: number | null };
+
 const MAX_PROFILE_NAME_LENGTH = 50;
 const MAX_GITHUB_HANDLE_LENGTH = 39;
 const MAX_API_KEY_LENGTH = 512;
@@ -337,6 +341,19 @@ export function parseCredentialConnectInput(value: unknown): CredentialConnectIn
   // The bundle is stored verbatim (encrypted) so unknown fields round-trip;
   // the fingerprint comes from the account id, never any token in the bundle.
   return { kind: "oauth", secret: authJson, fingerprintValue: accountId };
+}
+
+const MAX_MONTHLY_LIMIT_USD = 1_000_000;
+
+export function parseCredentialLimitInput(value: unknown): CredentialLimitInput | null {
+  if (!value || typeof value !== "object") return null;
+  const input = value as { kind?: unknown; monthlyLimitUsd?: unknown };
+  const kind = parseCredentialKind(input.kind);
+  if (!kind) return null;
+  if (input.monthlyLimitUsd === null) return { kind, monthlyLimitUsd: null };
+  if (typeof input.monthlyLimitUsd !== "number" || !Number.isFinite(input.monthlyLimitUsd)) return null;
+  if (input.monthlyLimitUsd < 0 || input.monthlyLimitUsd > MAX_MONTHLY_LIMIT_USD) return null;
+  return { kind, monthlyLimitUsd: input.monthlyLimitUsd };
 }
 
 function parseOpaqueToken(value: unknown): string | null {
