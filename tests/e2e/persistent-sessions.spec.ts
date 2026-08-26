@@ -345,6 +345,17 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await agentFloor.getByRole("button", { name: "Hide raw log" }).click();
   await owner.reload();
   await expect(owner.getByText("integrated", { exact: true }).first()).toBeVisible();
+
+  // An integrated prompt's card is itself a link into Review's Prompts mode
+  // for that exact contribution — no need to hunt through the file browser.
+  await inspectContractItem.locator(".queue-prompt").click();
+  await expect(owner.getByRole("heading", { name: "Review", exact: true })).toBeVisible();
+  await expect(owner.getByRole("button", { name: "Prompts", exact: true })).toHaveAttribute("aria-pressed", "true");
+  const promptContributionDetail = owner.getByLabel("Prompt contribution detail");
+  await expect(promptContributionDetail.getByText("Inspect the real session contract", { exact: true })).toBeVisible();
+  await expect(promptContributionDetail.getByText("src/agent-change.ts", { exact: true })).toBeVisible();
+  await owner.getByRole("button", { name: "Workspace" }).click();
+
   await owner.getByRole("button", { name: /Review/ }).first().click();
   await expect(owner.getByRole("heading", { name: "Review", exact: true })).toBeVisible();
   await expect(owner.getByRole("heading", { name: /openfloor\// })).toBeVisible();
@@ -518,12 +529,28 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await expect(owner.getByText("failed", { exact: true }).first()).toBeVisible();
   await expect(failingItem.getByRole("button", { name: "Resume", exact: true })).toBeVisible();
 
+  // A failed card is clickable — it expands in place to the agent's saved
+  // failure message instead of just saying "failed".
+  await expect(failingItem.getByText("A required check failed.", { exact: true })).toHaveCount(0);
+  await failingItem.locator(".queue-prompt").click();
+  await expect(failingItem.getByText("A required check failed.", { exact: true })).toBeVisible();
+  await expect(failingItem.locator(".queue-detail-checks pre")).toContainText("required check failed");
+  await failingItem.locator(".queue-chip[data-kind=\"status\"]").click();
+  await expect(failingItem.getByText("A required check failed.", { exact: true })).toHaveCount(0);
+
   await owner.getByLabel("Prompt to add to the queue").fill("Hold for cancellation");
   await owner.getByRole("button", { name: "Add to queue" }).click();
   const cancellableItem = owner.locator("li.queue-item", { hasText: "Hold for cancellation" });
   await expect(cancellableItem).toBeVisible();
   await cancellableItem.getByRole("button", { name: "Run", exact: true }).click();
   await expect(owner.getByText("running", { exact: true }).first()).toBeVisible();
+
+  // A running card is clickable too — it jumps straight to that agent in
+  // the floor's focused view, not an inline expansion.
+  await cancellableItem.locator(".queue-prompt").click();
+  await expect(agentFloor.locator(".spotlight")).toBeVisible();
+  await expect(agentFloor.locator(".spotlight").getByText("Lumen", { exact: true }).first()).toBeVisible();
+
   await owner.reload();
   await expect(owner.getByRole("button", { name: "Cancel", exact: true })).toBeVisible();
   await expect(member.getByRole("button", { name: "Cancel", exact: true })).toHaveCount(0);

@@ -1,4 +1,4 @@
-import type { AgentRun, AgentRunStatus, FloorAgent } from "@/lib/floor-types";
+import type { AgentRun, AgentRunStatus, FloorAgent, FloorQueueItem } from "@/lib/floor-types";
 
 export type PanelId = "brief" | "floor" | "queue";
 export type RailId = Exclude<PanelId, "floor">;
@@ -71,6 +71,31 @@ export function formatAgentCost(agent: Pick<FloorAgent, "costMicroUsd" | "costSo
     subscription ? "Billed to a subscription — no marginal charge for this usage." : null,
   ].filter(Boolean).join(" ");
   return { label, title };
+}
+
+// Where a click on a queue item's card/status chip should go, derived purely
+// from the item and its matched run — no fetch, so PromptQueue can compute it
+// per row during render.
+export type QueueItemDestination =
+  | { kind: "agent"; agentId: string }
+  | { kind: "review"; runId: string; status: "active" | "rolled_back" }
+  | { kind: "detail" }
+  | null;
+
+export function queueItemDestination(item: FloorQueueItem, run: AgentRun | null | undefined): QueueItemDestination {
+  // Live (including mid-rollback): jump to the agent actually doing the work.
+  // Prefer the run's own agentId — item.agentId can already have moved on for
+  // a retargeted item — falling back to item.agentId only if a run somehow
+  // carries none (shouldn't happen; agent_id is NOT NULL on agent_runs).
+  const liveAgentId = run?.agentId ?? item.agentId;
+  if (isRunLive(run) && liveAgentId) return { kind: "agent", agentId: liveAgentId };
+  // item.rollback is populated from the item's latest *integrated* task run
+  // (db/floor.ts) — the reliable "this prompt landed" signal, independent of
+  // getAgentRuns' 20-row window.
+  if (item.rollback) return { kind: "review", runId: item.rollback.runId, status: item.rollback.status === "completed" ? "rolled_back" : "active" };
+  if (run?.status === "integrated") return { kind: "review", runId: run.id, status: "active" };
+  if (run) return { kind: "detail" };
+  return null;
 }
 
 export function canRollbackRun(input: {
