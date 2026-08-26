@@ -122,6 +122,11 @@
 .settings-shell .app-back:focus-visible { color: var(--ink); gap: 11px; }
 .settings-shell .app-back span { max-width: 30ch; }
 
+/* The "N left" tail on the session-time row, in the same amber the attention
+   notices use, so the plan section flags a near-empty month without needing a
+   banner of its own. */
+.settings-shell .usage-low { color: #b5761f; font-weight: 700; }
+
 /* ── Category rows (Profile/Plan/Connections/Preferences/Danger bodies) ── */
 
 .settings-shell .settings-category-list {

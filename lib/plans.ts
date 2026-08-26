@@ -90,6 +90,21 @@ export function planLabel(plan: Plan): string {
   return PLAN_LABELS[plan];
 }
 
+/* One definition of "running low", shared by the home grid, the settings plan
+   section, the session lobby, and the floor, so those four cannot disagree
+   about when to warn. Returns the seconds still available while the account
+   is inside the warning band, and null otherwise — null covers both "plenty
+   left" and "already spent", the latter having its own louder banner and its
+   own 403s. Unlimited plans never warn. */
+export const LOW_HOURS_WARNING_RATIO = 0.8;
+
+export function lowHoursRemaining(seconds: number, limitHours: number): number | null {
+  if (!Number.isFinite(limitHours) || limitHours <= 0) return null;
+  const limitSeconds = limitHours * 3600;
+  if (seconds < limitSeconds * LOW_HOURS_WARNING_RATIO || seconds >= limitSeconds) return null;
+  return Math.max(0, Math.round(limitSeconds - seconds));
+}
+
 // The seats/hours sentence used wherever a plan's limits are spelled out in
 // full (currently just the settings Plan section) — the Infinity branches
 // match PLAN_LIMITS.enterprise.

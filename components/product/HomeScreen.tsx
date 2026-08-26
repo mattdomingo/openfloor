@@ -7,7 +7,7 @@ import { BASE_PATH } from "@/components/basePath";
 import { LocalDateTime } from "@/components/LocalDateTime";
 import { formatDuration } from "@/lib/date-format";
 import { HoverTip, useDialogDismiss, useHoverTip } from "@/components/session/primitives";
-import { planLabel, type Plan, type PlanStatus } from "@/lib/plans";
+import { lowHoursRemaining, planLabel, type Plan, type PlanStatus } from "@/lib/plans";
 import type { AppUser, SessionSummary } from "@/lib/session-types";
 import { WaveField } from "@/app/entry-wave";
 import { AppHeader } from "./AppHeader";
@@ -165,6 +165,7 @@ export function HomeScreen({
   // (and documented) behavior.
   const liveOwnedSessions = sessions.filter((session) => session.role === "owner" && session.endedAt == null).length;
   const quotaExhausted = Number.isFinite(usage.limitHours) && usage.seconds >= usage.limitHours * 3600;
+  const lowHours = lowHoursRemaining(usage.seconds, usage.limitHours);
   const usageLimitSeconds = usage.limitHours * 3600;
   const usagePercent = Number.isFinite(usage.limitHours) ? Math.min(100, Math.round((usage.seconds / usageLimitSeconds) * 100)) : null;
   // What the Usage tab shows is the inverse of usagePercent — remaining
@@ -229,6 +230,14 @@ export function HomeScreen({
                     asserts this literal href, and the settings origin resolver
                     (app/home/settings/origin.ts) already falls back to Sessions/home
                     when `from` is absent — appending it would be redundant. */}
+                <Link href="/home/settings?section=plan">Upgrade for more session hours</Link>.
+              </p>
+            )}
+            {lowHours != null && (
+              /* The same advisory tone one step earlier: nothing is blocked
+                 yet, but the ceiling is close enough to plan around. */
+              <p className="notice" data-tone="attention" role="status">
+                {`${formatDuration(lowHours)} of your ${planLabel(usage.effectivePlan)} plan's ${usage.limitHours}h of monthly session time is left. `}
                 <Link href="/home/settings?section=plan">Upgrade for more session hours</Link>.
               </p>
             )}
