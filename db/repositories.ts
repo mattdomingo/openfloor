@@ -1,9 +1,9 @@
-import type { GitHubRepositoryOption, RepositoryCandidate, RepositoryConnection, RepositoryConnectionStatus, RepositoryCheckCommand } from "@/lib/session-types";
+import type { GitHubRepositoryOption, RepositoryCandidate, RepositoryConnection, RepositoryConnectionStatus } from "@/lib/session-types";
 import type { GitHubPullRequestReview } from "@/lib/github";
 import { getDb, type D1DatabaseLike } from "./index";
 import { getActiveMembershipRole, getMembershipRole } from "./sessions";
 
-type RepositoryConnectionRecord = Omit<RepositoryConnection, "repositoryPrivate" | "checkCommands"> & {
+type RepositoryConnectionRecord = Omit<RepositoryConnection, "repositoryPrivate"> & {
   repositoryPrivate: number | boolean;
 };
 
@@ -94,18 +94,7 @@ export async function getRepositoryConnectionForMember(
     .bind(sessionId)
     .first<RepositoryConnectionRecord>();
   if (!record) return null;
-  const commands = await database
-    .prepare(
-      `SELECT id, position, command FROM repository_check_commands
-       WHERE connection_id = ? ORDER BY position`,
-    )
-    .bind(record.id)
-    .all<RepositoryCheckCommand>();
-  return {
-    ...record,
-    repositoryPrivate: Boolean(record.repositoryPrivate),
-    checkCommands: commands.results.map((command) => ({ ...command, position: Number(command.position) })),
-  };
+  return { ...record, repositoryPrivate: Boolean(record.repositoryPrivate) };
 }
 
 export async function saveRepositoryConnection(
@@ -115,7 +104,6 @@ export async function saveRepositoryConnection(
   installationId: string,
   repository: GitHubRepositoryOption,
   baseBranch: string,
-  checkCommands: string[],
   database = getDb(),
 ): Promise<RepositoryConnection | null> {
   if ((await getActiveMembershipRole(sessionId, userId, database)) !== "owner") return null;
@@ -153,13 +141,6 @@ export async function saveRepositoryConnection(
         repository.owner, repository.name, repository.fullName, repository.private ? 1 : 0,
         repository.defaultBranch, baseBranch, userId, existing?.connectedAt ?? now, now,
       ),
-    database.prepare("DELETE FROM repository_check_commands WHERE connection_id = ?").bind(connectionId),
-    ...checkCommands.map((command, position) => database
-      .prepare(
-        `INSERT INTO repository_check_commands (id, connection_id, position, command, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-      )
-      .bind(crypto.randomUUID(), connectionId, position, command, now, now)),
     database.prepare("UPDATE sessions SET floor_revision = floor_revision + 1, updated_at = ? WHERE id = ?").bind(now, sessionId),
   ];
   if (stateId) {

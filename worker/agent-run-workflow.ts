@@ -8,13 +8,11 @@ import {
   cancelRunIntegration,
   finishAgentReply,
   finishAgentRun,
-  finishRunCheck,
   finishRunPublished,
   finishRunIntegrated,
   getRunExecutionContext,
   isRunCancellationRequested,
   markRunChecking,
-  markRunCheckRunning,
   markRunRunning,
   markRunPublishing,
   markRunIntegrationConflicted,
@@ -80,7 +78,6 @@ type Params =
   | { runId: string; action?: "run" }
   | { runId: string; action: "rollback"; rollbackId: string }
   | { runId: string; action: "rollback_group"; rollbackGroupId: string };
-const COMMAND_TIMEOUT_MS = 10 * 60 * 1000;
 const MAX_LOG_BYTES = 500_000;
 const MAX_DIFF_BYTES = 2_000_000;
 const MAX_FILES = 100;
@@ -486,18 +483,15 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
         );
         if (!verified.success) throw new Error("Merge Resolver left unmerged entries or conflict markers in the workspace.");
       }
-      // A reply run answers and stops here: no file collection, no required
-      // checks (createAgentRun never inserted rows for one — context.checks
-      // is empty), no bundle export, no publish, no integrate. Its queue item
-      // completes outright (finishAgentReply), unlike a task run's "ready",
-      // which still has to publish and integrate before it's truly done.
+      // A reply run answers and stops here: no file collection, no bundle
+      // export, no publish, no integrate. Its queue item completes outright
+      // (finishAgentReply), unlike a task run's "ready", which still has to
+      // publish and integrate before it's truly done.
       //
       // markRunChecking is deliberately skipped here (unlike the task path
-      // below): it sets status = 'checking', a stage that means "required
-      // checks are running" — a reply run never runs checks, and surfacing
-      // that status made an answered question misleadingly look like it was
-      // moving through the task pipeline. Its thread id is instead recorded
-      // by finishAgentReply itself.
+      // below): it sets status = 'checking', a stage that made an answered
+      // question misleadingly look like it was moving through the task
+      // pipeline. Its thread id is instead recorded by finishAgentReply itself.
       if (context.kind === "reply") {
         const finalResponse = codexResult.finalResponse;
         finalStatus = finalResponse ? "ready" : "failed";
@@ -572,50 +566,13 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
         return collected;
       });
 
-      for (const check of context.checks) {
-        if (await isRunCancellationRequested(runId, this.env.DB)) {
-          finalStatus = "cancelled";
-          summary = "Agent run cancelled during required checks. No repository changes were published.";
-          return await this.complete(runId, finalStatus, summary);
-        }
-        const checkResult = await step.do(`run check ${check.position + 1}`, { retries: { limit: 0, delay: "1 second" }, timeout: "11 minutes" }, async () => {
-          await markRunCheckRunning(runId, check.id, this.env.DB);
-          await this.notify(runId);
-          const startedAt = Date.now();
-          try {
-            const execution = await sandbox.exec(check.command, { cwd: "/workspace/repository", timeout: COMMAND_TIMEOUT_MS });
-            const log = bounded(execution.stdout, execution.stderr, MAX_LOG_BYTES);
-            const logKey = `runs/${runId}/checks/${check.position}.log`;
-            await this.env.PREFLIGHT_LOGS.put(logKey, log, { httpMetadata: { contentType: "text/plain; charset=utf-8" } });
-            const status = execution.success ? "passed" : "failed";
-            await finishRunCheck(runId, check.id, { status, exitCode: execution.exitCode, durationMs: Date.now() - startedAt, outputExcerpt: log, logKey }, this.env.DB);
-            await this.notify(runId);
-            return { status, exitCode: execution.exitCode } as const;
-          } catch (error) {
-            const timedOut = String(error).toLowerCase().includes("timeout");
-            const log = bounded("", error instanceof Error ? error.message : "Required check failed", MAX_LOG_BYTES);
-            const logKey = `runs/${runId}/checks/${check.position}.log`;
-            await this.env.PREFLIGHT_LOGS.put(logKey, log, { httpMetadata: { contentType: "text/plain; charset=utf-8" } });
-            await finishRunCheck(runId, check.id, { status: timedOut ? "timed_out" : "failed", exitCode: null, durationMs: Date.now() - startedAt, outputExcerpt: log, logKey }, this.env.DB);
-            await this.notify(runId);
-            return { status: timedOut ? "timed_out" : "failed", exitCode: null } as const;
-          }
-        });
-        if (checkResult.status !== "passed") {
-          finalStatus = "failed";
-          summary = checkResult.status === "timed_out" ? `Required check ${check.position + 1} timed out.` : `Required check ${check.position + 1} failed.`;
-          return await this.complete(runId, finalStatus, summary);
-        }
-      }
       if (await isRunCancellationRequested(runId, this.env.DB)) {
         finalStatus = "cancelled";
-        summary = "Agent run cancelled after required checks. No repository changes were published.";
+        summary = "Agent run cancelled. No repository changes were published.";
         return await this.complete(runId, finalStatus, summary);
       }
       finalStatus = "ready";
-      summary = context.checks.length > 0
-        ? `The agent changed ${files.length} file${files.length === 1 ? "" : "s"}; all required checks passed. Preparing the verified run branch.`
-        : `The agent changed ${files.length} file${files.length === 1 ? "" : "s"}; no check commands were configured. Preparing the verified run branch.`;
+      summary = `The agent changed ${files.length} file${files.length === 1 ? "" : "s"}. Preparing the verified run branch.`;
       await this.complete(runId, finalStatus, summary);
 
       const bundle = await step.do("export run bundle", { retries: { limit: 1, delay: "5 seconds" }, timeout: "5 minutes" }, async () => {
@@ -802,13 +759,6 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
         return sha;
       };
       const rollbackSha = await step.do("prepare candidate rollback", { retries: { limit: 2, delay: "5 seconds" }, timeout: "10 minutes" }, async () => prepareRollback(rollbackSandbox));
-
-      for (const [index, command] of context.commands.entries()) {
-        await step.do(`run rollback check ${index}`, { retries: { limit: 0, delay: "1 second" }, timeout: "11 minutes" }, async () => {
-          const result = await rollbackSandbox.exec(`cd /workspace/repository && ${command}`, { timeout: COMMAND_TIMEOUT_MS });
-          if (!result.success) throw new NonRetryableError(`Required rollback check failed: ${command}`);
-        });
-      }
 
       const publisherSha = await step.do("reconstruct trusted rollback", { retries: { limit: 2, delay: "5 seconds" }, timeout: "10 minutes" }, async () => prepareRollback(rollbackPublisher));
       if (publisherSha !== rollbackSha) throw new NonRetryableError("Trusted rollback reconstruction produced a different commit");

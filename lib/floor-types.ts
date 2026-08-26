@@ -301,7 +301,6 @@ export type ReviewRollbackImpact = {
   expectedCandidateSha: string;
   targets: ReviewContribution[];
   excluded: Array<ReviewContribution & { exclusionReason: string }>;
-  requiredChecks: string[];
 };
 
 export type FloorReviewSnapshot = {

@@ -52,16 +52,6 @@ import {
   updateRepositoryPushState,
 } from "@/db/repositories";
 import { abandonSessionCandidate } from "@/lib/candidate-abandon";
-import {
-  createRepositoryPreflight,
-  finishPreflightCheck,
-  finishRepositoryPreflight,
-  getLatestRepositoryPreflightForMember,
-  getPreflightExecutionContext,
-  markPreflightCheckRunning,
-  markPreflightRunning,
-  PreflightConflictError,
-} from "@/db/preflights";
 import { createFloorAgent, createFloorMessage, createFloorQueueItem, getFloorSnapshot, setFloorQueueItemPaused, updateFloorAssignment } from "@/db/floor";
 import {
   beginRunIntegration,
@@ -72,10 +62,8 @@ import {
   finishAgentRun,
   finishRunPublished,
   finishRunIntegrated,
-  finishRunCheck,
   getRunExecutionContext,
   markRunChecking,
-  markRunCheckRunning,
   markRunRunning,
   markRunDiscarded,
   markRunPublishing,
@@ -120,10 +108,10 @@ describe("D1 session persistence", () => {
       id: "repository-backfill", nodeId: "R_backfill", owner: "acme", name: "widgets",
       fullName: "acme/widgets", private: true, defaultBranch: "main",
     };
-    await saveRepositoryConnection(first.session.id, owner.id, null, "installation-shared", repository, "main", [], env.DB);
-    await saveRepositoryConnection(second.session.id, owner.id, null, "installation-shared", { ...repository, id: "repository-backfill-two", nodeId: "R_backfill_two", name: "tools", fullName: "acme/tools" }, "main", [], env.DB);
-    await saveRepositoryConnection(inaccessible.session.id, owner.id, null, "installation-inaccessible", { ...repository, id: "repository-inaccessible", nodeId: "R_inaccessible" }, "main", [], env.DB);
-    await saveRepositoryConnection(otherRoom.session.id, other.id, null, "installation-shared", repository, "main", [], env.DB);
+    await saveRepositoryConnection(first.session.id, owner.id, null, "installation-shared", repository, "main", env.DB);
+    await saveRepositoryConnection(second.session.id, owner.id, null, "installation-shared", { ...repository, id: "repository-backfill-two", nodeId: "R_backfill_two", name: "tools", fullName: "acme/tools" }, "main", env.DB);
+    await saveRepositoryConnection(inaccessible.session.id, owner.id, null, "installation-inaccessible", { ...repository, id: "repository-inaccessible", nodeId: "R_inaccessible" }, "main", env.DB);
+    await saveRepositoryConnection(otherRoom.session.id, other.id, null, "installation-shared", repository, "main", env.DB);
     await env.DB.prepare("UPDATE repository_connections SET status = 'ready' WHERE session_id = ?").bind(second.session.id).run();
     await env.DB.prepare("UPDATE repository_connections SET status = 'inaccessible' WHERE session_id = ?").bind(inaccessible.session.id).run();
 
@@ -173,7 +161,7 @@ describe("D1 session persistence", () => {
     await saveRepositoryConnection(created.session.id, owner.id, null, "installation-account", {
       id: "repository-account", nodeId: "R_account", owner: "openfloor", name: "repo",
       fullName: "openfloor/repo", private: true, defaultBranch: "main",
-    }, "main", [], env.DB);
+    }, "main", env.DB);
     await expect(removeUserGitHubInstallation(owner.id, installation.id, env.DB)).resolves.toBe(true);
     await expect(listUserGitHubInstallations(owner.id, env.DB)).resolves.toEqual([]);
     await expect(getRepositoryConnectionForMember(created.session.id, owner.id, env.DB)).resolves.toEqual(
@@ -346,7 +334,7 @@ describe("D1 session persistence", () => {
     const saved = await saveRepositoryConnection(created.session.id, owner.id, null, "installation-delacct-repostate", {
       id: "repository-delacct-repostate", nodeId: "R_delacct_repostate", owner: "openfloor-test", name: "delacct-repostate",
       fullName: "openfloor-test/delacct-repostate", private: true, defaultBranch: "main",
-    }, "main", [], env.DB);
+    }, "main", env.DB);
     const candidateId = crypto.randomUUID();
     const branch = `openfloor/${created.session.id.slice(0, 8)}/candidate/${candidateId.slice(0, 8)}`;
     await reserveRepositoryCandidate(created.session.id, owner.id, saved!.id, candidateId, "Repo state room", "", branch, "main", "a".repeat(40), env.DB);
@@ -365,7 +353,7 @@ describe("D1 session persistence", () => {
     const saved = await saveRepositoryConnection(created.session.id, owner.id, null, "installation-delacct", {
       id: "repository-delacct", nodeId: "R_delacct", owner: "openfloor-test", name: "delacct",
       fullName: "openfloor-test/delacct", private: true, defaultBranch: "main",
-    }, "main", [], env.DB);
+    }, "main", env.DB);
     const candidateId = crypto.randomUUID();
     const branch = `openfloor/${created.session.id.slice(0, 8)}/candidate/${candidateId.slice(0, 8)}`;
     await reserveRepositoryCandidate(created.session.id, owner.id, saved!.id, candidateId, "Blocked room", "", branch, "main", "a".repeat(40), env.DB);
@@ -693,8 +681,7 @@ describe("D1 session persistence", () => {
     await expect(saveRepositoryConnection(created.session.id, owner.id, null, "ended-installation", {
       id: "ended-repository", nodeId: "R_ended", owner: "openfloor-test", name: "ended",
       fullName: "openfloor-test/ended", private: true, defaultBranch: "main",
-    }, "main", [], env.DB)).rejects.toBeInstanceOf(SessionEndedError);
-    await expect(createRepositoryPreflight(created.session.id, owner.id, env.DB)).rejects.toBeInstanceOf(SessionEndedError);
+    }, "main", env.DB)).rejects.toBeInstanceOf(SessionEndedError);
     await expect(createAgentRun(created.session.id, "missing-queue-item", owner.id, "task", env.DB)).rejects.toBeInstanceOf(SessionEndedError);
     // Outsiders keep getting concealment, not the ended error.
     await expect(updateSessionObjective(created.session.id, outsider.id, "Hidden", env.DB)).resolves.toBeNull();
@@ -743,7 +730,7 @@ describe("D1 session persistence", () => {
     const saved = await saveRepositoryConnection(created.session.id, owner.id, null, "installation-delete", {
       id: "repository-delete", nodeId: "R_delete", owner: "openfloor-test", name: "audit",
       fullName: "openfloor-test/audit", private: true, defaultBranch: "main",
-    }, "main", [], env.DB);
+    }, "main", env.DB);
     const candidateId = crypto.randomUUID();
     const branch = `openfloor/${created.session.id.slice(0, 8)}/candidate/${candidateId.slice(0, 8)}`;
     await reserveRepositoryCandidate(created.session.id, owner.id, saved!.id, candidateId, "Audit room", "", branch, "main", "a".repeat(40), env.DB);
@@ -769,7 +756,7 @@ describe("D1 session persistence", () => {
     const saved = await saveRepositoryConnection(created.session.id, owner.id, null, "installation-abandon", {
       id: "repository-abandon", nodeId: "R_abandon", owner: "openfloor-test", name: "abandon",
       fullName: "openfloor-test/abandon", private: true, defaultBranch: "main",
-    }, "main", [], env.DB);
+    }, "main", env.DB);
     const candidateId = crypto.randomUUID();
     const branch = `openfloor/${created.session.id.slice(0, 8)}/candidate/${candidateId.slice(0, 8)}`;
     await reserveRepositoryCandidate(created.session.id, owner.id, saved!.id, candidateId, "Abandon room", "", branch, "main", "a".repeat(40), env.DB);
@@ -803,7 +790,7 @@ describe("D1 session persistence", () => {
     expect(await getSessionForMember(created.session.id, owner.id, env.DB)).toBeNull();
   });
 
-  it("persists one owner-configured repository connection and ordered checks", async () => {
+  it("persists one owner-configured repository connection", async () => {
     const owner = await upsertUser(identity("repo-owner", "Owner"), env.DB);
     const member = await upsertUser(identity("repo-member", "Member"), env.DB);
     const outsider = await upsertUser(identity("repo-outsider", "Outsider"), env.DB);
@@ -833,7 +820,6 @@ describe("D1 session persistence", () => {
         defaultBranch: "main",
       },
       "main",
-      ["npm test", "npm run build"],
       env.DB,
     );
     expect(saved).toEqual(expect.objectContaining({
@@ -841,7 +827,6 @@ describe("D1 session persistence", () => {
       repositoryFullName: "openfloor-test/repository-integration",
       status: "connected",
     }));
-    expect(saved?.checkCommands.map((item) => item.command)).toEqual(["npm test", "npm run build"]);
     await expect(getRepositoryConnectionForMember(created.session.id, member.id, env.DB)).resolves.toEqual(saved);
     await expect(getRepositoryConnectionForMember(created.session.id, outsider.id, env.DB)).resolves.toBeNull();
     await expect(disconnectRepository(created.session.id, member.id, env.DB)).resolves.toBeNull();
@@ -854,7 +839,7 @@ describe("D1 session persistence", () => {
     const saved = await saveRepositoryConnection(created.session.id, owner.id, null, "installation-2", {
       id: "repository-2", nodeId: "R_two", owner: "openfloor-test", name: "candidate",
       fullName: "openfloor-test/candidate", private: true, defaultBranch: "main",
-    }, "main", [], env.DB);
+    }, "main", env.DB);
     const candidateId = crypto.randomUUID();
     const branch = `openfloor/${created.session.id.slice(0, 8)}/candidate/${candidateId.slice(0, 8)}`;
     await expect(reserveRepositoryCandidate(created.session.id, owner.id, saved!.id, candidateId, "Candidate room", "Coordinate candidate work", branch, "main", "a".repeat(40), env.DB)).resolves.toBe(true);
@@ -871,42 +856,13 @@ describe("D1 session persistence", () => {
     expect(await getRepositoryConnectionForMember(created.session.id, owner.id, env.DB)).toEqual(expect.objectContaining({ status: "externally_modified" }));
   });
 
-  it("persists recoverable preflight and ordered check state", async () => {
-    const owner = await upsertUser(identity("preflight-owner", "Owner"), env.DB);
-    const created = await createSession(owner.id, { title: "Preflight room", objective: null }, env.DB);
-    const saved = await saveRepositoryConnection(created.session.id, owner.id, null, "installation-preflight", {
-      id: "repository-preflight", nodeId: "R_preflight", owner: "openfloor-test", name: "preflight",
-      fullName: "openfloor-test/preflight", private: true, defaultBranch: "main",
-    }, "main", ["npm test", "npm run build"], env.DB);
-    const candidateId = crypto.randomUUID();
-    const branch = `openfloor/${created.session.id.slice(0, 8)}/candidate/${candidateId.slice(0, 8)}`;
-    await reserveRepositoryCandidate(created.session.id, owner.id, saved!.id, candidateId, "Preflight room", "", branch, "main", "a".repeat(40), env.DB);
-    await activateRepositoryCandidate(created.session.id, candidateId, "a".repeat(40), env.DB);
-    const preflight = await createRepositoryPreflight(created.session.id, owner.id, env.DB);
-    expect(preflight.checks.map((check) => check.command)).toEqual(["npm test", "npm run build"]);
-    await expect(createRepositoryPreflight(created.session.id, owner.id, env.DB)).rejects.toBeInstanceOf(PreflightConflictError);
-    const context = await getPreflightExecutionContext(preflight.id, env.DB);
-    await markPreflightRunning(preflight.id, env.DB);
-    await markPreflightCheckRunning(preflight.id, context!.checks[0].id, env.DB);
-    await finishPreflightCheck(preflight.id, context!.checks[0].id, {
-      status: "passed", exitCode: 0, durationMs: 12, outputExcerpt: "ok", logKey: `preflights/${preflight.id}/checks/0.log`,
-    }, env.DB);
-    await finishRepositoryPreflight(preflight.id, "passed", "All checks passed", env.DB);
-    expect(await getLatestRepositoryPreflightForMember(created.session.id, owner.id, env.DB)).toEqual(expect.objectContaining({
-      status: "passed", checks: [expect.objectContaining({ status: "passed", hasLog: true }), expect.objectContaining({ status: "pending" })],
-    }));
-    const timedOut = await createRepositoryPreflight(created.session.id, owner.id, env.DB);
-    await finishRepositoryPreflight(timedOut.id, "timed_out", "Required check timed out", env.DB);
-    expect(await getLatestRepositoryPreflightForMember(created.session.id, owner.id, env.DB)).toEqual(expect.objectContaining({ status: "timed_out" }));
-  });
-
   it("forces manually targeted Concierge code requests through a reactivated read-only reply run", async () => {
     const owner = await upsertUser(identity("concierge-safe-owner", "Concierge Owner"), env.DB);
     const created = await createSession(owner.id, { title: "Concierge safety", objective: null }, env.DB);
     const saved = await saveRepositoryConnection(created.session.id, owner.id, null, "installation-concierge", {
       id: "repository-concierge", nodeId: "R_concierge", owner: "openfloor-test", name: "concierge",
       fullName: "openfloor-test/concierge", private: true, defaultBranch: "main",
-    }, "main", ["npm test"], env.DB);
+    }, "main", env.DB);
     const candidateId = crypto.randomUUID();
     const branch = `openfloor/${created.session.id.slice(0, 8)}/candidate/${candidateId.slice(0, 8)}`;
     await reserveRepositoryCandidate(created.session.id, owner.id, saved!.id, candidateId, "Concierge safety", "", branch, "main", "a".repeat(40), env.DB);
@@ -943,7 +899,7 @@ describe("D1 session persistence", () => {
     const saved = await saveRepositoryConnection(created.session.id, owner.id, null, "installation-run", {
       id: "repository-run", nodeId: "R_run", owner: "openfloor-test", name: "run",
       fullName: "openfloor-test/run", private: true, defaultBranch: "main",
-    }, "main", ["npm test"], env.DB);
+    }, "main", env.DB);
     const candidateId = crypto.randomUUID();
     const branch = `openfloor/${created.session.id.slice(0, 8)}/candidate/${candidateId.slice(0, 8)}`;
     await reserveRepositoryCandidate(created.session.id, owner.id, saved!.id, candidateId, "Run room", "Make a focused change", branch, "main", "d".repeat(40), env.DB);
@@ -961,8 +917,6 @@ describe("D1 session persistence", () => {
     await markRunRunning(run.id, "process-1", env.DB);
     await markRunChecking(run.id, "thread-1", "Implemented", env.DB);
     await replaceRunFiles(run.id, [{ path: "src/change.ts", changeKind: "add", additions: 1, deletions: 0, summary: null, diffPreview: "+export const changed = true;" }], env.DB);
-    await markRunCheckRunning(run.id, context!.checks[0].id, env.DB);
-    await finishRunCheck(run.id, context!.checks[0].id, { status: "passed", exitCode: 0, durationMs: 5, outputExcerpt: "ok", logKey: `runs/${run.id}/checks/0.log` }, env.DB);
     await finishAgentRun(run.id, "ready", "Ready locally", env.DB);
     floor = await getFloorSnapshot(created.session.id, member.id, env.DB);
     expect(floor?.queue[0].status).toBe("blocked");
@@ -988,12 +942,9 @@ describe("D1 session persistence", () => {
 
     await env.DB.prepare("UPDATE floor_queue_items SET status = 'queued' WHERE id = ?").bind(queueItemId).run();
     const conflict = await createAgentRun(created.session.id, queueItemId, owner.id, "task", env.DB);
-    const conflictContext = await getRunExecutionContext(conflict.id, env.DB);
     await markRunRunning(conflict.id, "process-conflict", env.DB);
     await markRunChecking(conflict.id, "thread-conflict", "Conflicting change", env.DB);
     await replaceRunFiles(conflict.id, [{ path: "src/conflict.ts", changeKind: "add", additions: 1, deletions: 0, summary: null, diffPreview: "+conflict" }], env.DB);
-    await markRunCheckRunning(conflict.id, conflictContext!.checks[0].id, env.DB);
-    await finishRunCheck(conflict.id, conflictContext!.checks[0].id, { status: "passed", exitCode: 0, durationMs: 5, outputExcerpt: "ok", logKey: "conflict.log" }, env.DB);
     await finishAgentRun(conflict.id, "ready", "Ready", env.DB);
     await markRunPublishing(conflict.id, { bundleKey: "conflict.bundle", bundleSizeBytes: 20, localCommitSha: "8".repeat(40) }, env.DB);
     await finishRunPublished(conflict.id, "7".repeat(40), "7".repeat(40), env.DB);
@@ -1040,7 +991,7 @@ describe("D1 session persistence", () => {
     const saved = await saveRepositoryConnection(created.session.id, owner.id, null, "installation-integrating", {
       id: "repository-integrating", nodeId: "R_integrating", owner: "openfloor-test", name: "integrating",
       fullName: "openfloor-test/integrating", private: true, defaultBranch: "main",
-    }, "main", ["npm test"], env.DB);
+    }, "main", env.DB);
     const candidateId = crypto.randomUUID();
     const branch = `openfloor/${created.session.id.slice(0, 8)}/candidate/${candidateId.slice(0, 8)}`;
     await reserveRepositoryCandidate(created.session.id, owner.id, saved!.id, candidateId, "Integration room", "", branch, "main", "a".repeat(40), env.DB);
@@ -1052,9 +1003,6 @@ describe("D1 session persistence", () => {
     const run = await createAgentRun(created.session.id, floor!.queue[0].id, owner.id, "task", env.DB);
     await markRunRunning(run.id, "process-1", env.DB);
     await markRunChecking(run.id, "thread-1", "Implemented", env.DB);
-    const context = await getRunExecutionContext(run.id, env.DB);
-    await markRunCheckRunning(run.id, context!.checks[0].id, env.DB);
-    await finishRunCheck(run.id, context!.checks[0].id, { status: "passed", exitCode: 0, durationMs: 5, outputExcerpt: "ok", logKey: `runs/${run.id}/checks/0.log` }, env.DB);
     await finishAgentRun(run.id, "ready", "Ready locally", env.DB);
     const publishedSha = "e".repeat(40);
     await markRunPublishing(run.id, { bundleKey: `runs/${run.id}/result.bundle`, bundleSizeBytes: 100, localCommitSha: "f".repeat(40) }, env.DB);
@@ -1093,7 +1041,7 @@ describe("D1 session persistence", () => {
     const saved = await saveRepositoryConnection(created.session.id, owner.id, null, "installation-rollback", {
       id: "repository-rollback", nodeId: "R_rollback", owner: "openfloor-test", name: "rollback",
       fullName: "openfloor-test/rollback", private: true, defaultBranch: "main",
-    }, "main", ["npm test"], env.DB);
+    }, "main", env.DB);
     const candidateId = crypto.randomUUID();
     const branch = `openfloor/${created.session.id.slice(0, 8)}/candidate/${candidateId.slice(0, 8)}`;
     const initialSha = "1".repeat(40);
@@ -1104,12 +1052,9 @@ describe("D1 session persistence", () => {
     let floor = await createFloorAgent(created.session.id, owner.id, parsed, env.DB);
     floor = await createFloorQueueItem(created.session.id, engineer.id, { prompt: "Add the reversible change", agentId: floor!.agents[0].id }, env.DB);
     const run = await createAgentRun(created.session.id, floor!.queue[0].id, owner.id, "task", env.DB);
-    const context = await getRunExecutionContext(run.id, env.DB);
     await markRunRunning(run.id, "rollback-process", env.DB);
     await markRunChecking(run.id, "rollback-thread", "Implemented reversible change", env.DB);
     await replaceRunFiles(run.id, [{ path: "src/reversible.ts", changeKind: "add", additions: 1, deletions: 0, summary: null, diffPreview: "+export const reversible = true;" }], env.DB);
-    await markRunCheckRunning(run.id, context!.checks[0].id, env.DB);
-    await finishRunCheck(run.id, context!.checks[0].id, { status: "passed", exitCode: 0, durationMs: 1, outputExcerpt: "ok", logKey: "rollback-check.log" }, env.DB);
     await finishAgentRun(run.id, "ready", "Ready", env.DB);
     const publishedSha = "2".repeat(40);
     await markRunPublishing(run.id, { bundleKey: "rollback.bundle", bundleSizeBytes: 10, localCommitSha: publishedSha }, env.DB);
@@ -1167,7 +1112,7 @@ describe("D1 session persistence", () => {
     const saved = await saveRepositoryConnection(created.session.id, owner.id, null, "installation-group-rollback", {
       id: "repository-group-rollback", nodeId: "R_group_rollback", owner: "openfloor-test", name: "group-rollback",
       fullName: "openfloor-test/group-rollback", private: true, defaultBranch: "main",
-    }, "main", ["npm test"], env.DB);
+    }, "main", env.DB);
     const candidateId = crypto.randomUUID();
     const initialSha = "a".repeat(40);
     await reserveRepositoryCandidate(
@@ -1253,13 +1198,13 @@ describe("D1 session persistence", () => {
     }, env.DB);
     const context = await beginAgentRunRollbackGroup(group!.groupId, env.DB);
     expect(context.targets.map((target) => target.integratedAt)).toEqual([...context.targets.map((target) => target.integratedAt)].sort((a, b) => b - a));
-    await failAgentRunRollbackGroup(group!.groupId, "Required rollback check failed: npm test", env.DB);
+    await failAgentRunRollbackGroup(group!.groupId, "Rollback conflicts with changes integrated later in the candidate", env.DB);
     const failedChildren = await env.DB.prepare(
       `SELECT DISTINCT rb.status, rb.failure_reason AS failureReason
        FROM agent_run_rollbacks rb JOIN agent_run_rollback_group_items item ON item.rollback_id = rb.id
        WHERE item.group_id = ?`,
     ).bind(group!.groupId).all<{ status: string; failureReason: string }>();
-    expect(failedChildren.results).toEqual([{ status: "failed", failureReason: "Required rollback check failed: npm test" }]);
+    expect(failedChildren.results).toEqual([{ status: "failed", failureReason: "Rollback conflicts with changes integrated later in the candidate" }]);
 
     const retryImpact = await resolveReviewRollbackImpact(created.session.id, owner.id, "prompt", runIds[0], env.DB);
     const retry = await createAgentRunRollbackGroup(created.session.id, owner.id, {

@@ -72,7 +72,6 @@ export function RepositoryCard({
   const [branches, setBranches] = useState<string[]>([]);
   const [repositoryId, setRepositoryId] = useState(initialRepository?.repositoryId ?? "");
   const [baseBranch, setBaseBranch] = useState(initialRepository?.baseBranch ?? "");
-  const [commands, setCommands] = useState(initialRepository?.checkCommands.map((item) => item.command).join("\n") ?? "");
   const [busy, setBusy] = useState(beginSetup);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -154,7 +153,6 @@ export function RepositoryCard({
   }
 
   async function save() {
-    const checkCommands = commands.split("\n").map((command) => command.trim()).filter(Boolean);
     setBusy(true);
     setError(null);
     const method = beginSetup || repository?.status === "disconnected" || !repository ? "POST" : "PATCH";
@@ -164,7 +162,6 @@ export function RepositoryCard({
       body: JSON.stringify({
         repositoryId,
         baseBranch,
-        checkCommands,
         ...(selectedRepository && "accountInstallationId" in selectedRepository
           ? { accountInstallationId: selectedRepository.accountInstallationId }
           : {}),
@@ -183,7 +180,6 @@ export function RepositoryCard({
     }
     setRepository(body.repository);
     onStateChange?.({ repository: body.repository, candidate });
-    setCommands(body.repository.checkCommands.map((item) => item.command).join("\n"));
     setEditing(false);
     setBusy(false);
     setCandidate(body.candidate ?? candidate);
@@ -253,7 +249,6 @@ export function RepositoryCard({
   function edit() {
     setRepositoryId(repository?.repositoryId ?? "");
     setBaseBranch(repository?.baseBranch ?? "");
-    setCommands(repository?.checkCommands.map((item) => item.command).join("\n") ?? "");
     setBusy(true);
     setEditing(true);
     setNotice(null);
@@ -295,12 +290,6 @@ export function RepositoryCard({
               {repository.status === "externally_modified" && <p className="form-note">The candidate branch was modified outside openfloor.</p>}
             </div>
           )}
-          <div className="repository-checks">
-            <span>Check commands</span>
-            {repository.checkCommands.length > 0
-              ? <ol>{repository.checkCommands.map((item) => <li key={item.id}><code>{item.command}</code></li>)}</ol>
-              : <><p>Not configured</p><p className="form-note">Optional. Without them, agent changes are not verified automatically before they&apos;re marked ready.</p></>}
-          </div>
           {preflight && (
             <div className="repository-checks" aria-label="Runner verification">
               <span>Runner verification</span>
@@ -320,7 +309,7 @@ export function RepositoryCard({
                   {!candidate && repository.status === "connected" && <button className="button" data-variant="primary" onClick={() => void candidateAction("candidate")} disabled={busy}>Retry candidate setup</button>}
                   {candidate && <button className="button" data-variant="primary" onClick={() => void candidateAction("sync")} disabled={busy}>Sync repository</button>}
                   {preflightEnabled && candidate && repository.status === "ready" && (
-                    <button className="button" onClick={() => void verifyRunner()} disabled={busy || repository.checkCommands.length === 0 || Boolean(preflight && ["provisioning", "running"].includes(preflight.status))}>Verify runner</button>
+                    <button className="button" onClick={() => void verifyRunner()} disabled={busy || Boolean(preflight && ["provisioning", "running"].includes(preflight.status))}>Verify runner</button>
                   )}
                   <button className="button danger-button" onClick={disconnect} disabled={busy}>Disconnect</button>
                 </>
@@ -353,11 +342,6 @@ export function RepositoryCard({
               options={branches.map((branch) => ({ value: branch, label: branch }))}
             />
           </div>
-          <label>
-            <span>Required check commands</span>
-            <textarea aria-label="Required check commands" value={commands} onChange={(event) => setCommands(event.target.value)} rows={4} />
-            <small>Optional. One command per line, e.g. <code>npm test</code> — each runs against the agent&apos;s changes and must pass before a run is marked ready. Leave this empty if you don&apos;t want automatic verification; agents can still run without it.</small>
-          </label>
           <div className="button-row">
             <button className="button" data-variant="primary" onClick={save} disabled={busy || !selectedRepository || !baseBranch}>Save repository</button>
             {!beginSetup && repository?.status !== "disconnected" && <button className="button" onClick={() => setEditing(false)} disabled={busy}>Cancel</button>}

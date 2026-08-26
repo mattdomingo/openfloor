@@ -170,19 +170,15 @@ describe("floor input validation", () => {
     expect(parseQueuePromptInput({ prompt: "x".repeat(4001) })).toBeNull();
   });
 
-  it("normalizes repository selection and ordered check commands", () => {
+  it("normalizes repository selection", () => {
     expect(parseRepositoryConnectionInput({
       repositoryId: " 123 ",
       baseBranch: " main ",
-      checkCommands: [" npm test ", " npm run build "],
-    })).toEqual({ repositoryId: "123", accountInstallationId: null, baseBranch: "main", checkCommands: ["npm test", "npm run build"] });
-    expect(parseRepositoryConnectionInput({ repositoryId: "123", baseBranch: "main", checkCommands: [] })).toEqual({
-      repositoryId: "123", accountInstallationId: null, baseBranch: "main", checkCommands: [],
+    })).toEqual({ repositoryId: "123", accountInstallationId: null, baseBranch: "main" });
+    expect(parseRepositoryConnectionInput({ repositoryId: "123", baseBranch: "main", accountInstallationId: " install-1 " })).toEqual({
+      repositoryId: "123", accountInstallationId: "install-1", baseBranch: "main",
     });
-    expect(parseRepositoryConnectionInput({ repositoryId: "123", baseBranch: "main" })).toEqual({
-      repositoryId: "123", accountInstallationId: null, baseBranch: "main", checkCommands: [],
-    });
-    expect(parseRepositoryConnectionInput({ repositoryId: "123", baseBranch: "main", checkCommands: ["x".repeat(501)] })).toBeNull();
+    expect(parseRepositoryConnectionInput({ repositoryId: "", baseBranch: "main" })).toBeNull();
   });
 
   it("normalizes and bounds candidate metadata", () => {

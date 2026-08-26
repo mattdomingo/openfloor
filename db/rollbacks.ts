@@ -22,7 +22,6 @@ export type AgentRunRollbackContext = {
   repositoryFullName: string;
   repositoryPrivate: boolean;
   defaultBranch: string;
-  commands: string[];
 };
 
 export type AgentRunRollbackGroupContext = Omit<AgentRunRollbackContext, "id" | "runId" | "targetCommitSha"> & {
@@ -132,7 +131,7 @@ export async function beginAgentRunRollbackGroup(groupId: string, database = get
      JOIN repository_candidates c ON c.id = g.candidate_id AND c.status = 'active' AND c.merged_at IS NULL
      JOIN repository_connections rc ON rc.id = c.connection_id
      WHERE g.id = ?`,
-  ).bind(groupId).first<Omit<AgentRunRollbackGroupContext, "commands" | "targets" | "repositoryPrivate"> & {
+  ).bind(groupId).first<Omit<AgentRunRollbackGroupContext, "targets" | "repositoryPrivate"> & {
     integrationRunId: string | null; connectionStatus: string; candidateSha: string | null;
     remoteCandidateSha: string | null; repositoryPrivate: number;
   }>();
@@ -161,18 +160,11 @@ export async function beginAgentRunRollbackGroup(groupId: string, database = get
          AND status IN ('requested', 'running')`,
     ).bind(now, now, groupId),
   ]);
-  const commands = await database.prepare(
-    `SELECT command FROM repository_check_commands
-     WHERE connection_id = (SELECT connection_id FROM repository_candidates WHERE id = ?)
-     ORDER BY position`,
-  ).bind(row.candidateId).all<{ command: string }>();
-  if (commands.results.length === 0) throw new AgentRunConflictError("Configure at least one required check before rollback");
   return {
     ...row,
     repositoryPrivate: Boolean(row.repositoryPrivate),
     status: "running",
     targets: targets.results.map((target) => ({ ...target, integratedAt: Number(target.integratedAt) })),
-    commands: commands.results.map((item) => item.command),
   };
 }
 
@@ -378,7 +370,7 @@ export async function beginAgentRunRollback(rollbackId: string, database = getDb
      JOIN repository_candidates c ON c.id = rb.candidate_id AND c.status = 'active' AND c.merged_at IS NULL
      JOIN repository_connections rc ON rc.id = c.connection_id
      WHERE rb.id = ?`,
-  ).bind(rollbackId).first<Omit<AgentRunRollbackContext, "commands" | "repositoryPrivate"> & {
+  ).bind(rollbackId).first<Omit<AgentRunRollbackContext, "repositoryPrivate"> & {
     integrationRunId: string | null; connectionStatus: string; candidateSha: string | null;
     remoteCandidateSha: string | null; repositoryPrivate: number;
   }>();
@@ -394,13 +386,7 @@ export async function beginAgentRunRollback(rollbackId: string, database = getDb
     `UPDATE agent_run_rollbacks SET status = 'running', started_at = COALESCE(started_at, ?), updated_at = ?
      WHERE id = ? AND status IN ('requested', 'running')`,
   ).bind(now, now, rollbackId).run();
-  const commands = await database.prepare(
-    `SELECT command FROM repository_check_commands
-     WHERE connection_id = (SELECT connection_id FROM repository_candidates WHERE id = ?)
-     ORDER BY position`,
-  ).bind(row.candidateId).all<{ command: string }>();
-  if (commands.results.length === 0) throw new AgentRunConflictError("Configure at least one required check before rollback");
-  return { ...row, repositoryPrivate: Boolean(row.repositoryPrivate), status: "running", commands: commands.results.map((item) => item.command) };
+  return { ...row, repositoryPrivate: Boolean(row.repositoryPrivate), status: "running" };
 }
 
 export async function finishAgentRunRollback(

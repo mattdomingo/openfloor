@@ -122,17 +122,13 @@ export async function createAgentRun(sessionId: string, queueItemId: string, use
       "UPDATE floor_agents SET deprovisioned_at = NULL, updated_at = ? WHERE id = ? AND session_id = ? AND kind IN ('answer', 'worker')",
     ).bind(Date.now(), context.agentId, sessionId).run();
   }
-  const commands = await database.prepare(
-    "SELECT position, command FROM repository_check_commands WHERE connection_id = ? ORDER BY position",
-  ).bind(context.connectionId).all<{ position: number; command: string }>();
   const previous = await database.prepare("SELECT COALESCE(MAX(attempt), 0) AS attempt FROM agent_runs WHERE queue_item_id = ?")
     .bind(queueItemId).first<{ attempt: number }>();
   const attempt = Number(previous?.attempt ?? 0) + 1;
   const id = crypto.randomUUID();
   // A reply run never publishes, so it never earns a real branch — reserving
   // the placeholder name here would leave the UI pointing at a branch that
-  // doesn't exist in git. Same reasoning skips its check rows below: the
-  // workflow's reply path never runs required checks.
+  // doesn't exist in git.
   const runBranch = effectiveKind === "reply" ? null : `openfloor/${sessionId.slice(0, 8)}/run/${id.slice(0, 8)}`;
   const now = Date.now();
   try {
@@ -144,10 +140,6 @@ export async function createAgentRun(sessionId: string, queueItemId: string, use
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'provisioning', ?, ?, ?, ?, ?, ?, ?)`,
       ).bind(id, sessionId, queueItemId, context.agentId, context.candidateId, context.candidateSha, runBranch, attempt,
         resolveRunModel(context.agentProvider ?? "openai", context.agentModel), effectiveKind === "reply" ? "reply" : null, id, `run-${id}`, userId, now, now),
-      ...(effectiveKind === "reply" ? [] : commands.results.map((check) => database.prepare(
-        `INSERT INTO agent_run_checks (id, run_id, position, command, status, updated_at)
-         VALUES (?, ?, ?, ?, 'pending', ?)`,
-      ).bind(crypto.randomUUID(), id, Number(check.position), check.command, now))),
       database.prepare("UPDATE floor_queue_items SET status = 'running', updated_at = ? WHERE id = ? AND session_id = ? AND status = 'queued'")
         .bind(now, queueItemId, sessionId),
       database.prepare("UPDATE sessions SET floor_revision = floor_revision + 1, updated_at = ? WHERE id = ?").bind(now, sessionId),
@@ -346,23 +338,7 @@ export async function markRunChecking(runId: string, threadId: string | null, fi
     `UPDATE agent_runs SET status = 'checking', codex_thread_id = ?, final_response = ?, updated_at = ?
      WHERE id = ? AND status IN ('running', 'checking')`,
   ).bind(threadId, finalResponse?.slice(0, 20_000) ?? null, now, runId).run();
-  await appendRunEvent(runId, "checking", "Codex finished; required checks are running.", database);
-}
-
-export async function markRunCheckRunning(runId: string, checkId: string, database = getDb()): Promise<void> {
-  const now = Date.now();
-  await database.prepare("UPDATE agent_run_checks SET status = 'running', started_at = COALESCE(started_at, ?), updated_at = ? WHERE id = ? AND run_id = ?")
-    .bind(now, now, checkId, runId).run();
-}
-
-export async function finishRunCheck(runId: string, checkId: string, result: {
-  status: "passed" | "failed" | "timed_out"; exitCode: number | null; durationMs: number; outputExcerpt: string; logKey: string;
-}, database = getDb()): Promise<void> {
-  const now = Date.now();
-  await database.prepare(
-    `UPDATE agent_run_checks SET status = ?, exit_code = ?, duration_ms = ?, output_excerpt = ?, log_key = ?,
-            completed_at = ?, updated_at = ? WHERE id = ? AND run_id = ?`,
-  ).bind(result.status, result.exitCode, result.durationMs, result.outputExcerpt.slice(-2_000), result.logKey, now, now, checkId, runId).run();
+  await appendRunEvent(runId, "checking", "Codex finished; preparing to publish.", database);
 }
 
 export async function replaceRunFiles(runId: string, files: Array<Omit<AgentRunFile, "id">>, database = getDb()): Promise<void> {

@@ -6,7 +6,6 @@ import {
   createAgentRun,
   finishAgentReply,
   finishAgentRun,
-  finishRunCheck,
   finishRunPublished,
   finishRunIntegrated,
   getQueueItemAgentBudgetContext,
@@ -14,7 +13,6 @@ import {
   getRunExecutionContext,
   insertRunActivityEvents,
   markRunChecking,
-  markRunCheckRunning,
   markRunRunning,
   markRunPublishing,
   markRunIntegrationConflicted,
@@ -310,18 +308,8 @@ async function runTestAgent(runId: string, encoded: string, bucket: R2BucketLike
   const diffKey = `runs/${runId}/changes.diff`;
   await bucket.put(diffKey, diff);
   await recordRunArtifact(runId, "diff", diffKey, "text/x-diff", diff.length);
-  for (const check of context.checks) {
-    await markRunCheckRunning(runId, check.id);
-    const log = shouldFail ? "required check failed\n" : "required check passed\n";
-    const logKey = `runs/${runId}/checks/${check.position}.log`;
-    await bucket.put(logKey, log);
-    await finishRunCheck(runId, check.id, { status: shouldFail ? "failed" : "passed", exitCode: shouldFail ? 1 : 0, durationMs: 10, outputExcerpt: log, logKey });
-    if (shouldFail) break;
-  }
-  const readySummary = context.checks.length > 0
-    ? `Codex changed ${files.length} files; all required checks passed. Changes remain local to openfloor.`
-    : `Codex changed ${files.length} files; no check commands were configured. Changes remain local to openfloor.`;
-  await finishAgentRun(runId, shouldFail ? "failed" : "ready", shouldFail ? "A required check failed." : readySummary);
+  const readySummary = `Codex changed ${files.length} files. Changes remain local to openfloor.`;
+  await finishAgentRun(runId, shouldFail ? "failed" : "ready", shouldFail ? "The agent run failed." : readySummary);
   await holdTestRunStage(runId, data);
   return shouldFail ? "failed" : "ready";
 }

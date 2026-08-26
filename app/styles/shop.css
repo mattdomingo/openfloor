@@ -1126,8 +1126,7 @@
 .session-lobby-shell .repository-checks { color: var(--muted); }
 .session-lobby-shell .repository-summary span,
 .session-lobby-shell .repository-form label,
-.session-lobby-shell .repository-form .repository-field,
-.session-lobby-shell .repository-form small { color: var(--steel); }
+.session-lobby-shell .repository-form .repository-field { color: var(--steel); }
 .session-lobby-shell .repository-checks { padding: 14px 0; border-bottom: 1px solid var(--rule); }
 .session-lobby-shell .floor-setup-secondary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px; padding: 0 22px 22px; }
 .session-lobby-shell .floor-setup-secondary .action-card { min-width: 0; border-color: var(--edge); border-radius: var(--radius-md); background: var(--shop-2); box-shadow: none; }

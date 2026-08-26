@@ -246,14 +246,14 @@ describe("agent router tick", () => {
     await createFloorQueueItem(room.sessionId, room.owner.id, { prompt: "Backend api change", agentId: agentA }, env.DB);
     await createFloorQueueItem(room.sessionId, room.owner.id, { prompt: "Frontend ui change", agentId: agentB }, env.DB);
     const stub = startRunStub([
-      { ok: false, kind: "not_ready", message: "Configure at least one required check command before running agents." },
+      { ok: false, kind: "not_ready", message: "Synchronize a ready, unmodified candidate before running agents." },
     ]);
     const outcome = await runRoutingTick(room.sessionId, "toggle", stub.deps, env.DB);
     expect(outcome.held).toBe(true);
     expect(stub.calls).toHaveLength(1);
     const recorded = await decisions(room.sessionId);
     expect(recorded).toEqual([
-      expect.objectContaining({ decision: "held", reason: "Configure at least one required check command before running agents." }),
+      expect.objectContaining({ decision: "held", reason: "Synchronize a ready, unmodified candidate before running agents." }),
     ]);
   });
 

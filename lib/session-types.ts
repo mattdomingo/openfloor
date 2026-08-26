@@ -158,12 +158,6 @@ export type RepositoryPreflight = {
   checks: RepositoryPreflightCheck[];
 };
 
-export type RepositoryCheckCommand = {
-  id: string;
-  position: number;
-  command: string;
-};
-
 export type RepositoryConnection = {
   id: string;
   sessionId: string;
@@ -181,7 +175,6 @@ export type RepositoryConnection = {
   connectedAt: number;
   updatedAt: number;
   disconnectedAt: number | null;
-  checkCommands: RepositoryCheckCommand[];
 };
 
 export type GitHubRepositoryOption = {

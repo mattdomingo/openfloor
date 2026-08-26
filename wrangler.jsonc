@@ -79,7 +79,7 @@
 	],
 	"vars": {
 		"OPENFLOOR_RUNTIME_ORIGIN": "https://app.opnflr.com",
-		"PREFLIGHT_ENABLED": "true",
+		"PREFLIGHT_ENABLED": "false",
 		"AGENT_RUN_ENABLED": "true",
 		// Checkout rollout gate: enabled and selling. The docs/stripe-billing.md
 		// acceptance flow passed against production on test-mode keys, and the
