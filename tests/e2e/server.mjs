@@ -24,6 +24,13 @@ const githubTestData = JSON.stringify({
   }],
 });
 const wranglerConfig = "tests/e2e/wrangler.jsonc";
+const providerTestKeys = JSON.stringify({
+  anthropic: ["sk-ant-e2e-accepted"],
+  openai: ["sk-openai-e2e-accepted"],
+  kimi: ["sk-kimi-e2e-accepted"],
+  gemini: ["AIza-gemini-e2e-accepted"],
+  glm: ["zai-glm-e2e-accepted"],
+});
 const agentRunTestData = process.env.OPENFLOOR_TEST_AGENT_RUN_DATA ?? JSON.stringify({
   holdPrompts: ["Hold for cancellation", "Hold persistent for auto provisioning", "Hold generated for auto provisioning"],
   failPrompts: ["intentionally failing"],
@@ -73,6 +80,8 @@ const server = spawn("npx", [
   "STRIPE_MAX_PRICE_ID:price_test_max",
   "STRIPE_PORTAL_CONFIGURATION_ID:bpc_test",
   "STRIPE_CHECKOUT_ENABLED:true",
+  "CREDENTIAL_ENCRYPTION_KEY:e2e-test-credential-encryption-key",
+  `OPENFLOOR_TEST_PROVIDER_KEYS:${providerTestKeys}`,
   `OPENFLOOR_TEST_GITHUB_DATA:${githubTestData}`,
   "PREFLIGHT_ENABLED:true",
   "AGENT_RUN_ENABLED:true",

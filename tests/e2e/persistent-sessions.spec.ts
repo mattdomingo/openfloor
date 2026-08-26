@@ -65,6 +65,15 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await expect(credentialRow).toHaveCSS("background-color", "rgb(41, 47, 55)");
   await expect(credentialInput).toHaveCSS("background-color", "rgb(49, 55, 64)");
   await owner.emulateMedia({ colorScheme: "light" });
+
+  // The create-agent dialog only offers providers the owner has actually
+  // connected a key for (no server-key fallback), so New agent below needs
+  // this connected ahead of time. Tiles start collapsed, so open it first.
+  await credentialRow.getByRole("button", { name: "Not connected" }).click();
+  await credentialInput.fill("sk-ant-e2e-accepted");
+  await credentialRow.getByRole("button", { name: "Connect", exact: true }).click();
+  await expect(credentialRow.getByText("Connected", { exact: true })).toBeVisible();
+
   await setupDialog.getByRole("button", { name: "Back" }).click();
   await owner.getByRole("button", { name: "Set up later" }).click();
   await expect(owner).toHaveURL(/\/session\/[0-9a-f-]+$/);
