@@ -255,18 +255,25 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await owner.getByRole("button", { name: "Queue settings" }).click();
   await owner.getByRole("group", { name: "Queue settings" }).getByRole("button", { name: /^On openfloor assigns/ }).click();
   for (const prompt of ["Hold persistent for auto provisioning", "Hold generated for auto provisioning"]) {
-    await owner.getByRole("combobox", { name: "Queue target" }).click();
+    await owner.getByRole("region", { name: "Open floor" }).getByRole("combobox", { name: "Queue target" }).click();
     await owner.getByRole("option", { name: "Auto" }).click();
     await owner.getByLabel("Prompt to add to the queue").fill(prompt);
     await owner.getByRole("button", { name: "Add to queue" }).click();
+    await expect(owner.locator("li.queue-item", { hasText: prompt })).toBeVisible();
   }
   const persistentHold = owner.locator("li.queue-item", { hasText: "Hold persistent for auto provisioning" });
   const generatedHold = owner.locator("li.queue-item", { hasText: "Hold generated for auto provisioning" });
   await expect(persistentHold.getByText("running", { exact: true })).toBeVisible();
-  await expect(generatedHold.getByText("running", { exact: true })).toBeVisible();
-  await expect(agentFloor.getByRole("tab", { name: "Auto Worker, auto-generated" })).toBeVisible();
+  await expect(generatedHold.getByText("running", { exact: true })).toBeVisible({ timeout: 15_000 });
+  await expect(agentFloor.getByRole("tab", { name: "Auto Worker, auto-generated" })).toBeVisible({ timeout: 15_000 });
   await agentFloor.getByRole("tab", { name: "Auto Worker, auto-generated" }).click();
   await expect(agentFloor.getByText("Auto-generated", { exact: true })).toBeVisible();
+  await expect(agentFloor.getByRole("button", { name: "Pause", exact: true })).toBeVisible();
+  await expect(agentFloor.getByRole("button", { name: "Stop", exact: true })).toBeVisible();
+  await expect(agentFloor.getByRole("button", { name: "Delete", exact: true })).toHaveCount(0);
+  await agentFloor.getByRole("button", { name: "Pause", exact: true }).click();
+  await expect(agentFloor.getByRole("button", { name: "Resume", exact: true })).toBeVisible();
+  await agentFloor.getByRole("button", { name: "Resume", exact: true }).click();
   await agentFloor.getByRole("button", { name: "Auto agents on" }).click();
   await expect(agentFloor.getByRole("button", { name: "Auto agents off" })).toHaveAttribute("aria-pressed", "false");
   await persistentHold.getByRole("button", { name: "Cancel", exact: true }).click();
@@ -274,6 +281,35 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await expect(agentFloor.getByRole("tab", { name: "Auto Worker, auto-generated" })).toHaveCount(0);
   await expect(agentFloor.getByRole("tab", { name: "Lumen" })).toBeVisible();
   await agentFloor.getByRole("button", { name: "Auto agents off" }).click();
+  await agentFloor.getByRole("button", { name: "All agents" }).click();
+  const gridTopBeforeReply = (await agentFloor.locator(".agent-grid").boundingBox())!.y;
+  await owner.getByRole("region", { name: "Open floor" }).getByRole("combobox", { name: "Queue target" }).click();
+  await owner.getByRole("option", { name: "Lumen" }).click();
+  await owner.getByLabel("Prompt to add to the queue").fill("What does the auth module do?");
+  await owner.getByRole("button", { name: "Add to queue" }).click();
+  const answeredItem = owner.locator("li.queue-item", { hasText: "What does the auth module do?" });
+  await expect(answeredItem.getByText("answered", { exact: true })).toBeVisible();
+  await expect(answeredItem).toHaveAttribute("data-done", "true");
+  const responseIcon = agentFloor.locator(".agent-response-icon");
+  await expect(responseIcon).toBeVisible();
+  expect((await agentFloor.locator(".agent-grid").boundingBox())!.y).toBe(gridTopBeforeReply);
+  const lumenCard = agentFloor.locator(".agent-card", { hasText: "Lumen" });
+  const cardBounds = (await lumenCard.boundingBox())!;
+  const cardControls = (await lumenCard.locator(".agent-controls").boundingBox())!;
+  const ownershipFooter = (await lumenCard.locator(".agent-foot").boundingBox())!;
+  expect(cardControls.x).toBeGreaterThanOrEqual(cardBounds.x);
+  expect(cardControls.y + cardControls.height).toBeLessThanOrEqual(cardBounds.y + cardBounds.height);
+  expect(ownershipFooter.y + ownershipFooter.height).toBeLessThanOrEqual(cardBounds.y + cardBounds.height);
+  await responseIcon.hover();
+  await expect(owner.locator(".hover-tip")).toContainText(/auth/i);
+  await responseIcon.click();
+  await expect(agentFloor.locator(".spotlight-response")).toContainText(/auth/i);
+  const spotlightBounds = (await agentFloor.locator(".spotlight").boundingBox())!;
+  const spotlightControls = (await agentFloor.locator(".spotlight > .agent-controls").boundingBox())!;
+  expect(spotlightControls.x).toBeGreaterThan(spotlightBounds.x);
+  expect(spotlightControls.x + spotlightControls.width).toBeLessThan(spotlightBounds.x + spotlightBounds.width);
+  await owner.getByRole("region", { name: "Open floor" }).getByRole("combobox", { name: "Queue target" }).click();
+  await owner.getByRole("option", { name: "Auto" }).click();
   await owner.getByRole("button", { name: "Queue settings" }).click();
   await owner.getByRole("group", { name: "Queue settings" }).getByRole("button", { name: /^Off Assign and run/ }).click();
 
@@ -298,7 +334,7 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await expect(unassignedItem.getByText("Unassigned", { exact: true })).toHaveCount(0);
   await expect(unassignedItem.getByRole("button", { name: "Run", exact: true })).toBeVisible();
 
-  await owner.getByRole("combobox", { name: "Queue target" }).click();
+  await owner.getByRole("region", { name: "Open floor" }).getByRole("combobox", { name: "Queue target" }).click();
   await owner.getByRole("option", { name: "Lumen" }).click();
   await owner.getByLabel("Prompt to add to the queue").fill("Inspect the real session contract");
   await owner.getByRole("button", { name: "Add to queue" }).click();
@@ -381,7 +417,7 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await expect(owner.getByText("export const implemented = true;", { exact: true })).toBeVisible();
 
   await owner.getByRole("button", { name: "Workspace" }).click();
-  await owner.getByRole("combobox", { name: "Queue target" }).click();
+  await owner.getByRole("region", { name: "Open floor" }).getByRole("combobox", { name: "Queue target" }).click();
   await owner.getByRole("option", { name: "Lumen" }).click();
   await owner.getByLabel("Prompt to add to the queue").fill("Create a second published change");
   await owner.getByRole("button", { name: "Add to queue" }).click();
@@ -414,13 +450,13 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await expect(owner.getByText("member-change.ts", { exact: true })).toHaveCount(0);
   await owner.getByRole("button", { name: "Workspace" }).click();
 
-  await owner.getByRole("combobox", { name: "Queue target" }).click();
+  await owner.getByRole("region", { name: "Open floor" }).getByRole("combobox", { name: "Queue target" }).click();
   await owner.getByRole("option", { name: "Lumen" }).click();
   await owner.getByLabel("Prompt to add to the queue").fill("Create a deliberate integration conflict");
   await owner.getByRole("button", { name: "Add to queue" }).click();
   const conflictItem = owner.locator("li.queue-item", { hasText: "Create a deliberate integration conflict" });
   await conflictItem.getByRole("button", { name: "Run", exact: true }).click();
-  await expect(conflictItem.getByText("Merge Resolver", { exact: true })).toBeVisible();
+  await expect(conflictItem.getByText("Merge Resolver", { exact: true })).toBeVisible({ timeout: 15_000 });
   await expect(conflictItem.getByText("integrated", { exact: true })).toBeVisible();
   await expect(member.getByRole("button", { name: "Retry against latest candidate" })).toHaveCount(0);
   await expect(conflictItem.getByRole("button", { name: "Retry against latest candidate" })).toHaveCount(0);
@@ -430,7 +466,7 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await expect(owner.getByLabel("Integration warnings").getByText("No integration warnings.")).toBeVisible();
 
   await owner.getByRole("button", { name: "Workspace" }).click();
-  await owner.getByRole("combobox", { name: "Queue target" }).click();
+  await owner.getByRole("region", { name: "Open floor" }).getByRole("combobox", { name: "Queue target" }).click();
   await owner.getByRole("option", { name: "Lumen" }).click();
   await owner.getByLabel("Prompt to add to the queue").fill("Create a conflict needing a session decision");
   await owner.getByRole("button", { name: "Add to queue" }).click();
@@ -454,11 +490,15 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   const questionFloor = await floorResponse.json() as { floor: { review: { conflicts: Array<{ id: string; status: string; questions: Array<{ id: string; answer: string | null }> }> } | null } };
   const questionCase = questionFloor.floor.review?.conflicts.find((item) => item.status === "awaiting_input");
   expect(questionCase).toBeTruthy();
-  const answerFields = memberQuestionConflict.locator("textarea");
+  await expect(memberQuestionConflict.getByText(/Waiting for the session owner or an original prompt author/)).toBeVisible();
+  await expect(memberQuestionConflict.locator("textarea")).toHaveCount(0);
+  await owner.getByRole("button", { name: "Review" }).click();
+  const ownerQuestionConflict = owner.locator(".conflict-case[data-selected='true']", { hasText: "Create a conflict needing a session decision" });
+  const answerFields = ownerQuestionConflict.locator("textarea");
   await answerFields.nth(0).fill("Preserve the existing public behavior.");
   await answerFields.nth(1).fill("Do not remove the legacy path yet.");
-  await memberQuestionConflict.getByRole("button", { name: "Submit answers" }).click();
-  await expect(memberQuestionConflict.getByText("resolved", { exact: true })).toBeVisible();
+  await ownerQuestionConflict.getByRole("button", { name: "Submit answers" }).click();
+  await expect(ownerQuestionConflict.getByText("resolved", { exact: true })).toBeVisible();
   const staleAnswer = await owner.request.post(`/api/sessions/${new URL(owner.url()).pathname.split("/")[2]}/conflicts/${questionCase!.id}/answers`, {
     data: { answers: questionCase!.questions.map((question) => ({ questionId: question.id, answer: "Stale answer" })) },
   });
@@ -466,7 +506,7 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   expect(await member.evaluate(() => (window as typeof window & { __conflictAlertTest: { notifications: unknown[] } }).__conflictAlertTest.notifications.length)).toBe(1);
 
   await owner.getByRole("button", { name: "Workspace" }).click();
-  await owner.getByRole("combobox", { name: "Queue target" }).click();
+  await owner.getByRole("region", { name: "Open floor" }).getByRole("combobox", { name: "Queue target" }).click();
   await owner.getByRole("option", { name: "Lumen" }).click();
   await owner.getByLabel("Prompt to add to the queue").fill("Create a candidate movement conflict");
   await owner.getByRole("button", { name: "Add to queue" }).click();
@@ -479,7 +519,7 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await expect(movementConflict.getByText("Attempt 2 · automatic · integrated", { exact: true })).toBeVisible();
 
   await owner.getByRole("button", { name: "Workspace" }).click();
-  await owner.getByRole("combobox", { name: "Queue target" }).click();
+  await owner.getByRole("region", { name: "Open floor" }).getByRole("combobox", { name: "Queue target" }).click();
   await owner.getByRole("option", { name: "Lumen" }).click();
   await owner.getByLabel("Prompt to add to the queue").fill("Create a resolver check failure");
   await owner.getByRole("button", { name: "Add to queue" }).click();
@@ -494,7 +534,7 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await owner.getByRole("button", { name: "Workspace" }).click();
   await owner.getByRole("button", { name: "Queue settings" }).click();
   await owner.getByRole("group", { name: "Queue settings" }).getByRole("button", { name: /Manual Record conflicts/ }).click();
-  await owner.getByRole("combobox", { name: "Queue target" }).click();
+  await owner.getByRole("region", { name: "Open floor" }).getByRole("combobox", { name: "Queue target" }).click();
   await owner.getByRole("option", { name: "Lumen" }).click();
   await owner.getByLabel("Prompt to add to the queue").fill("Create a manual merge conflict");
   await owner.getByRole("button", { name: "Add to queue" }).click();
@@ -511,7 +551,7 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await expect(manualConflict.getByText("resolved", { exact: true })).toBeVisible();
 
   await owner.getByRole("button", { name: "Workspace" }).click();
-  await owner.getByRole("combobox", { name: "Queue target" }).click();
+  await owner.getByRole("region", { name: "Open floor" }).getByRole("combobox", { name: "Queue target" }).click();
   await owner.getByRole("option", { name: "Lumen" }).click();
   await owner.getByLabel("Prompt to add to the queue").fill("Create an intentionally failing change");
   await owner.getByRole("button", { name: "Add to queue" }).click();
@@ -591,6 +631,10 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await owner.getByRole("button", { name: /^Ended/ }).click();
   const retainedCard = owner.locator(".session-card", { hasText: "Release coordination" });
   await retainedCard.getByRole("button", { name: "Session actions" }).click();
+  const retainedBounds = await retainedCard.boundingBox();
+  const retainedDelete = await retainedCard.getByRole("button", { name: "Delete" }).boundingBox();
+  await owner.mouse.move(retainedDelete!.x + retainedDelete!.width / 2, retainedDelete!.y + 1);
+  expect(await retainedCard.boundingBox()).toEqual(retainedBounds);
   await retainedCard.getByRole("button", { name: "Delete" }).click();
   await owner.getByRole("dialog").getByRole("button", { name: "Delete session" }).click();
   await expect(owner.getByText("Release coordination")).toHaveCount(0);

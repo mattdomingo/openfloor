@@ -5,7 +5,7 @@ import type { AgentRun, FloorAgent, FloorAgentSettingsPatch, RunActivityEvent } 
 import { AGENT_PROVIDER_LABELS, credentialKindLabel, credentialKindsForProvider, parseCredentialKind, PROVIDER_MODELS } from "@/lib/provider-credentials";
 import { BASE_PATH } from "@/components/basePath";
 import { LocalDateTime } from "@/components/LocalDateTime";
-import { Icon } from "./primitives";
+import { HoverTip, Icon, useHoverTip } from "./primitives";
 import { SelectMenu } from "./SelectMenu";
 import type { RunActivitySource } from "./useRunActivity";
 import { ACTIVE_RUN_STATUSES, agentReplyText, isRunLive, runStatusToken } from "./data";
@@ -24,11 +24,12 @@ function glyphFor(kind: string): string {
   return KIND_GLYPHS[kind] ?? "•";
 }
 
-export function AgentCard({ agent, tone, latestRun, activityEvents, selected, onFocus, onHistory, onPause, onStop, onDelete }: { agent: FloorAgent; tone: string; latestRun: AgentRun | null; activityEvents: RunActivityEvent[]; selected: boolean; onFocus: () => void; onHistory: () => void; onPause: (agentId: string, paused: boolean) => void; onStop: (agentId: string) => void; onDelete: (agentId: string) => void }) {
+export function AgentCard({ agent, tone, latestRun, activityEvents, selected, owner, onFocus, onHistory, onPause, onStop, onDelete }: { agent: FloorAgent; tone: string; latestRun: AgentRun | null; activityEvents: RunActivityEvent[]; selected: boolean; owner: boolean; onFocus: () => void; onHistory: () => void; onPause: (agentId: string, paused: boolean) => void; onStop: (agentId: string) => void; onDelete: (agentId: string) => void }) {
   const live = isRunLive(latestRun);
   const latestEvent = live ? activityEvents[activityEvents.length - 1] ?? null : null;
   const reply = agentReplyText(latestRun);
   const paused = agent.pausedAt !== null;
+  const controllable = agent.kind !== "answer";
   const stateLabel = paused ? "Paused" : latestRun ? runStatusToken(latestRun).replace("_", " ") : "Created";
   return (
     <article className="agent-card" data-selected={selected ? "true" : "false"} data-status={paused ? "paused" : latestRun ? runStatusToken(latestRun) : "idle"} data-tone={tone} role="button" tabIndex={0} onClick={onFocus} onKeyDown={(event) => {
@@ -37,7 +38,7 @@ export function AgentCard({ agent, tone, latestRun, activityEvents, selected, on
       <div className="agent-head">
         <span className="agent-glyph" aria-hidden="true">{agent.name.slice(0, 1)}</span>
         <span className="agent-identity"><strong>{agent.name}{agent.kind && <em className="kind-tag" data-kind="auto">Auto-generated</em>}</strong><span>{agent.role}</span></span>
-        <span className="agent-head-trailing"><span className="agent-state">{stateLabel}</span><button type="button" className="button agent-chat-button" data-size="sm" onClick={(event) => { event.stopPropagation(); onHistory(); }}><Icon name="message" size={12} />Prompts</button></span>
+        <span className="agent-head-trailing"><span className="agent-state">{stateLabel}</span><button type="button" className="button agent-chat-button" data-size="sm" onClick={(event) => { event.stopPropagation(); onHistory(); }}><Icon name="message" size={12} /><span className="agent-chat-label">Prompts</span></button></span>
       </div>
       <div className="agent-task"><strong title={agent.task}>{agent.task}</strong></div>
       {latestEvent && (
@@ -46,16 +47,12 @@ export function AgentCard({ agent, tone, latestRun, activityEvents, selected, on
           <span className="agent-activity-detail">{latestEvent.detail}</span>
         </div>
       )}
-      {reply && (
-        <button type="button" className="agent-reply-bubble" aria-label={`${agent.name}'s response — open to read in full`} onClick={(event) => { event.stopPropagation(); onFocus(); }}>
-          {reply}
-        </button>
-      )}
-      {!agent.kind && (
+      {reply && <AgentResponseIcon agentName={agent.name} reply={reply} onOpen={onFocus} />}
+      {controllable && (
         <div className="agent-controls" onClick={(event) => event.stopPropagation()}>
           <button type="button" className="button" data-size="sm" title={paused ? "Resume" : "Pause"} aria-label={paused ? `Resume ${agent.name}` : `Pause ${agent.name}`} onClick={() => onPause(agent.id, !paused)}><Icon name={paused ? "play" : "pause"} size={12} /></button>
-          {live && <button type="button" className="button" data-size="sm" title="Stop" aria-label={`Stop ${agent.name}`} onClick={() => onStop(agent.id)}><Icon name="stop" size={12} /></button>}
-          <button type="button" className="button danger-button" data-size="sm" title="Delete" aria-label={`Delete ${agent.name}`} onClick={() => onDelete(agent.id)}><Icon name="trash" size={12} /></button>
+          <button type="button" className="button" data-size="sm" title={owner ? "Stop: pause future work and cancel the current run" : "Stop: pause future work; the current run will finish"} aria-label={`Stop ${agent.name}`} onClick={() => onStop(agent.id)}><Icon name="stop" size={12} /></button>
+          {!agent.kind && <button type="button" className="button danger-button" data-size="sm" title="Delete" aria-label={`Delete ${agent.name}`} onClick={() => onDelete(agent.id)}><Icon name="trash" size={12} /></button>}
         </div>
       )}
       <div className="agent-foot"><span>Owned by {agent.ownerName}</span><span><LocalDateTime timestamp={agent.createdAt} /></span></div>
@@ -63,12 +60,20 @@ export function AgentCard({ agent, tone, latestRun, activityEvents, selected, on
   );
 }
 
-export function AgentSpotlight({ agent, tone, sessionId, latestRun, activity, canRollback, busy, onRollback, onHistory, onUpdateSettings, onPause, onStop, onDelete }: { agent: FloorAgent; tone: string; sessionId: string; latestRun: AgentRun | null; activity: RunActivitySource; canRollback: boolean; busy: boolean; onRollback: (runId: string) => Promise<void>; onHistory: () => void; onUpdateSettings: (agentId: string, patch: FloorAgentSettingsPatch) => Promise<boolean>; onPause: (agentId: string, paused: boolean) => void; onStop: (agentId: string) => void; onDelete: (agentId: string) => void }) {
+function AgentResponseIcon({ agentName, reply, onOpen }: { agentName: string; reply: string; onOpen: () => void }) {
+  const tip = useHoverTip();
+  return <>
+    <button type="button" className="agent-response-icon" aria-label={`${agentName} responded: ${reply}. Open to read in full.`} onClick={(event) => { event.stopPropagation(); onOpen(); }} {...tip.handlers}><Icon name="message" size={13} /></button>
+    <HoverTip position={tip.position} wrap>{reply}</HoverTip>
+  </>;
+}
+
+export function AgentSpotlight({ agent, tone, sessionId, latestRun, activity, canRollback, busy, owner, onRollback, onHistory, onUpdateSettings, onPause, onStop, onDelete }: { agent: FloorAgent; tone: string; sessionId: string; latestRun: AgentRun | null; activity: RunActivitySource; canRollback: boolean; busy: boolean; owner: boolean; onRollback: (runId: string) => Promise<void>; onHistory: () => void; onUpdateSettings: (agentId: string, patch: FloorAgentSettingsPatch) => Promise<boolean>; onPause: (agentId: string, paused: boolean) => void; onStop: (agentId: string) => void; onDelete: (agentId: string) => void }) {
   // A reply run never runs checks, exports files, or publishes a branch —
   // that execution summary belongs only to a task run.
   const isReply = latestRun?.kind === "reply";
   const paused = agent.pausedAt !== null;
-  const live = isRunLive(latestRun);
+  const controllable = agent.kind !== "answer";
   const stateLabel = paused ? "Paused" : latestRun ? runStatusToken(latestRun).replace("_", " ") : "Created";
   return (
     <article className="spotlight" data-status={paused ? "paused" : latestRun ? runStatusToken(latestRun) : "idle"} data-tone={tone}>
@@ -77,11 +82,11 @@ export function AgentSpotlight({ agent, tone, sessionId, latestRun, activity, ca
         <div className="agent-identity"><h3>{agent.name}{agent.kind && <em className="kind-tag" data-kind="auto">Auto-generated</em>}</h3><span>{agent.role} · {AGENT_PROVIDER_LABELS[agent.provider]}{agent.model ? ` · ${agent.model}` : ""}{agent.credentialKind ? ` · ${credentialKindLabel(agent.provider, agent.credentialKind)}` : ""} · owned by {agent.ownerName}</span></div>
         <span className="agent-state">{stateLabel}</span>
       </div>
-      {!agent.kind && (
+      {controllable && (
         <div className="agent-controls">
           <button type="button" className="button" data-size="sm" onClick={() => onPause(agent.id, !paused)}><Icon name={paused ? "play" : "pause"} size={12} />{paused ? "Resume" : "Pause"}</button>
-          {live && <button type="button" className="button" data-size="sm" onClick={() => onStop(agent.id)}><Icon name="stop" size={12} />Stop</button>}
-          <button type="button" className="button danger-button" data-size="sm" onClick={() => onDelete(agent.id)}><Icon name="trash" size={12} />Delete</button>
+          <button type="button" className="button" data-size="sm" title={owner ? "Pause future work and cancel the current run" : "Pause future work; the current run will finish"} onClick={() => onStop(agent.id)}><Icon name="stop" size={12} />Stop</button>
+          {!agent.kind && <button type="button" className="button danger-button" data-size="sm" onClick={() => onDelete(agent.id)}><Icon name="trash" size={12} />Delete</button>}
         </div>
       )}
       <div className="spotlight-row"><span className="label">Task</span>{agent.kind ? <p className="agent-detail-line">{agent.task}</p> : <AgentTaskEditor key={`${agent.id}-${agent.updatedAt}`} agent={agent} onSave={(agentId, task) => onUpdateSettings(agentId, { task })} />}</div>
@@ -130,7 +135,7 @@ export function AgentSpotlight({ agent, tone, sessionId, latestRun, activity, ca
       {isReply && latestRun && (
         <div className="spotlight-row"><span className="label">Activity</span><div className="spotlight-execution"><ActivityTimeline run={latestRun} activity={activity} /><ArtifactToggle sessionId={sessionId} run={latestRun} kind="prompt" label="Session brief sent to this agent" closeLabel="Hide session brief" emptyText="The session brief becomes available once the run starts." /></div></div>
       )}
-      <div className="spotlight-foot"><span><LocalDateTime timestamp={agent.createdAt} /></span><button type="button" className="button agent-chat-button" data-size="sm" onClick={onHistory}><Icon name="message" size={12} />Prompt history</button></div>
+      <div className="spotlight-foot"><span><LocalDateTime timestamp={agent.createdAt} /></span><button type="button" className="button agent-chat-button" data-size="sm" onClick={onHistory}><Icon name="message" size={12} /><span className="agent-chat-label">Prompt history</span></button></div>
     </article>
   );
 }
