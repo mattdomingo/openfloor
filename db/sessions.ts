@@ -815,23 +815,38 @@ export async function deleteSession(
   sessionId: string,
   userId: string,
   database = getDb(),
-): Promise<"forbidden" | "missing" | "repository_state" | { blocked: "integration_in_progress"; runId: string } | { deleted: true; candidateBranchAlive: boolean }> {
+): Promise<
+  | "forbidden" | "missing"
+  | { blocked: "integration_in_progress"; runId: string }
+  // A still-live candidate no longer refuses deletion outright — the caller
+  // (app/api/sessions/[id]/route.ts) abandons it first via
+  // lib/candidate-abandon.ts's abandonSessionCandidate, choosing whether to
+  // delete the branch on GitHub or leave it orphaned, then calls this again.
+  // This shape is what lets the delete dialog present that choice instead
+  // of a dead end (ENG-83) — see AGENTS.md's repository_candidates entry.
+  | { blocked: "candidate_live"; branch: string; sha: string | null }
+  | { deleted: true; candidateBranchAlive: boolean }
+> {
   // Plain guard on purpose: deleting must work on ended sessions too.
   const role = await getMembershipRole(sessionId, userId, database);
   if (!role) return "missing";
   if (role !== "owner") return "forbidden";
   const blocking = await getBlockingIntegrationRunId(sessionId, database);
   if (blocking) return { blocked: "integration_in_progress", runId: blocking };
-  // A session results in at most one candidate branch; only an unmerged one
-  // (still creating/active) represents live work that would be lost. A
-  // merged candidate — its branch deleted or not — never blocks deletion.
+  // A session results in at most one live candidate branch at a time; only
+  // an unmerged, unabandoned one (still creating/active) represents live
+  // work the owner hasn't decided the fate of yet. A merged or abandoned
+  // candidate — its branch deleted or not — never blocks deletion.
   const liveCandidate = await database
-    .prepare("SELECT 1 AS present FROM repository_candidates WHERE session_id = ? AND status IN ('creating', 'active') AND merged_at IS NULL")
+    .prepare("SELECT branch_name AS branch, candidate_sha AS sha FROM repository_candidates WHERE session_id = ? AND status IN ('creating', 'active') AND merged_at IS NULL AND abandoned_at IS NULL")
     .bind(sessionId)
-    .first<{ present: number }>();
-  if (liveCandidate) return "repository_state";
+    .first<{ branch: string; sha: string | null }>();
+  if (liveCandidate) return { blocked: "candidate_live", branch: liveCandidate.branch, sha: liveCandidate.sha };
+  // Reported to the owner as a post-delete warning: a merged or
+  // owner-abandoned candidate whose branch was never (or not yet)
+  // verified-deleted on GitHub survives the session's D1 cascade.
   const survivingBranch = await database
-    .prepare("SELECT 1 AS present FROM repository_candidates WHERE session_id = ? AND merged_at IS NOT NULL AND branch_deleted_at IS NULL")
+    .prepare("SELECT 1 AS present FROM repository_candidates WHERE session_id = ? AND (merged_at IS NOT NULL OR abandoned_at IS NOT NULL) AND branch_deleted_at IS NULL")
     .bind(sessionId)
     .first<{ present: number }>();
   const result = await database.prepare("DELETE FROM sessions WHERE id = ?").bind(sessionId).run();

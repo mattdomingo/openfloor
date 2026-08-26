@@ -465,13 +465,23 @@ function DeleteSessionDialog({ session, onClose }: { session: SessionSummary; on
   const [error, setError] = useState<string | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
   const [blockingRunId, setBlockingRunId] = useState<string | null>(null);
+  const [candidateLive, setCandidateLive] = useState<{ branch: string; canDeleteBranch: boolean } | null>(null);
 
-  async function remove() {
+  async function remove(candidate?: "delete-branch" | "orphan") {
     setBusy(true);
     setError(null);
-    const response = await fetch(`${BASE_PATH}/api/sessions/${session.id}`, { method: "DELETE" });
+    const response = await fetch(`${BASE_PATH}/api/sessions/${session.id}`, {
+      method: "DELETE",
+      headers: candidate ? { "content-type": "application/json" } : undefined,
+      body: candidate ? JSON.stringify({ candidate }) : undefined,
+    });
     if (!response.ok) {
-      const body = (await response.json().catch(() => null)) as { error?: string; runId?: string } | null;
+      const body = (await response.json().catch(() => null)) as { error?: string; code?: string; runId?: string; branch?: string; canDeleteBranch?: boolean } | null;
+      if (body?.code === "candidate_live" && body.branch) {
+        setCandidateLive({ branch: body.branch, canDeleteBranch: Boolean(body.canDeleteBranch) });
+        setBusy(false);
+        return;
+      }
       setError(body?.error ?? "Unable to delete the session");
       setBlockingRunId(body?.runId ?? null);
       setBusy(false);
@@ -527,16 +537,27 @@ function DeleteSessionDialog({ session, onClose }: { session: SessionSummary; on
       </div>
       {error && <div className="dialog-body"><p className="form-error" role="alert">{error}</p></div>}
       {warning && <div className="dialog-body"><p role="status">Session deleted. {warning}</p></div>}
+      {candidateLive && !warning && (
+        <div className="dialog-body"><p>The candidate branch <strong>{candidateLive.branch}</strong> hasn&rsquo;t merged yet. Decide what happens to it before the session is deleted.</p></div>
+      )}
       <div className="dialog-foot">
         {warning ? (
           <button type="button" className="button" onClick={dismiss}>Close</button>
+        ) : candidateLive ? (
+          <>
+            <button type="button" className="button" data-variant="quiet" onClick={dismiss} disabled={busy}>Cancel</button>
+            <button type="button" className="button" onClick={() => void remove("orphan")} disabled={busy}>Leave branch, delete session</button>
+            {candidateLive.canDeleteBranch && (
+              <button type="button" className="button danger-button" onClick={() => void remove("delete-branch")} disabled={busy}>Delete branch &amp; session</button>
+            )}
+          </>
         ) : (
           <>
             <button type="button" className="button" data-variant="quiet" onClick={dismiss} disabled={busy}>Cancel</button>
             {blockingRunId ? (
               <button type="button" className="button danger-button" onClick={cancelAndRetry} disabled={busy}>Cancel that run &amp; delete session</button>
             ) : (
-              <button type="button" className="button danger-button" onClick={remove} disabled={busy}>Delete session</button>
+              <button type="button" className="button danger-button" onClick={() => void remove()} disabled={busy}>Delete session</button>
             )}
           </>
         )}

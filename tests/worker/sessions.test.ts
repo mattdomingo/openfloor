@@ -46,10 +46,12 @@ import {
   recordGitHubWebhookDelivery,
   reconcileCandidateReview,
   reserveRepositoryCandidate,
+  markCandidateAbandoned,
   markCandidateMerged,
   markCandidateReviewReady,
   updateRepositoryPushState,
 } from "@/db/repositories";
+import { abandonSessionCandidate } from "@/lib/candidate-abandon";
 import {
   createRepositoryPreflight,
   finishPreflightCheck,
@@ -596,7 +598,7 @@ describe("D1 session persistence", () => {
     await expect(deleteSession(created.session.id, owner.id, env.DB)).resolves.toBe("missing");
   });
 
-  it("blocks deletion while a candidate branch is still unmerged, but allows it once merged", async () => {
+  it("reports a live candidate instead of refusing outright, and allows deletion once merged", async () => {
     const owner = await upsertUser(identity("delete-repository-owner", "Owner"), env.DB);
     const created = await createSession(owner.id, { title: "Repository audit", objective: null }, env.DB);
     const saved = await saveRepositoryConnection(created.session.id, owner.id, null, "installation-delete", {
@@ -608,12 +610,56 @@ describe("D1 session persistence", () => {
     await reserveRepositoryCandidate(created.session.id, owner.id, saved!.id, candidateId, "Audit room", "", branch, "main", "a".repeat(40), env.DB);
     await activateRepositoryCandidate(created.session.id, candidateId, "a".repeat(40), env.DB);
 
-    // Unmerged: deletion refuses to discard live candidate work.
-    await expect(deleteSession(created.session.id, owner.id, env.DB)).resolves.toBe("repository_state");
+    // Unmerged: deletion no longer dead-ends — it hands back the branch so
+    // the caller (app/api/sessions/[id]/route.ts) can offer the owner a
+    // choice (ENG-83), instead of the old bare "repository_state" refusal.
+    await expect(deleteSession(created.session.id, owner.id, env.DB)).resolves.toEqual({
+      blocked: "candidate_live", branch, sha: "a".repeat(40),
+    });
     expect(await getSessionForMember(created.session.id, owner.id, env.DB)).not.toBeNull();
 
     // Merged, branch not yet deleted: deletion proceeds and flags the surviving branch.
     await markCandidateMerged(created.session.id, candidateId, owner.id, "b".repeat(40), env.DB);
+    await expect(deleteSession(created.session.id, owner.id, env.DB)).resolves.toEqual({ deleted: true, candidateBranchAlive: true });
+    expect(await getSessionForMember(created.session.id, owner.id, env.DB)).toBeNull();
+  });
+
+  it("abandons a live candidate (keeping the branch) so a fresh one can be created, and lets deletion proceed", async () => {
+    const owner = await upsertUser(identity("abandon-owner", "Owner"), env.DB);
+    const created = await createSession(owner.id, { title: "Abandon room", objective: null }, env.DB);
+    const saved = await saveRepositoryConnection(created.session.id, owner.id, null, "installation-abandon", {
+      id: "repository-abandon", nodeId: "R_abandon", owner: "openfloor-test", name: "abandon",
+      fullName: "openfloor-test/abandon", private: true, defaultBranch: "main",
+    }, "main", [], env.DB);
+    const candidateId = crypto.randomUUID();
+    const branch = `openfloor/${created.session.id.slice(0, 8)}/candidate/${candidateId.slice(0, 8)}`;
+    await reserveRepositoryCandidate(created.session.id, owner.id, saved!.id, candidateId, "Abandon room", "", branch, "main", "a".repeat(40), env.DB);
+    await activateRepositoryCandidate(created.session.id, candidateId, "a".repeat(40), env.DB);
+
+    // The integration lease refuses abandonment the same way it refuses
+    // merge/end/delete.
+    await env.DB.prepare("UPDATE repository_candidates SET integration_run_id = ? WHERE id = ?").bind("leased-run", candidateId).run();
+    await expect(abandonSessionCandidate(created.session.id, owner.id, { deleteBranch: false }, env.DB)).resolves.toEqual({ outcome: "blocked", runId: "leased-run" });
+    await env.DB.prepare("UPDATE repository_candidates SET integration_run_id = NULL WHERE id = ?").bind(candidateId).run();
+
+    // Keeping the branch touches no GitHub/Sandbox binding — only D1.
+    const result = await abandonSessionCandidate(created.session.id, owner.id, { deleteBranch: false }, env.DB);
+    expect(result).toMatchObject({ outcome: "abandoned", branch, branchDeleted: false });
+    const abandonedRow = await env.DB.prepare("SELECT abandoned_at AS abandonedAt FROM repository_candidates WHERE id = ?").bind(candidateId).first<{ abandonedAt: number | null }>();
+    expect(abandonedRow?.abandonedAt).not.toBeNull();
+
+    // The one-live-candidate index is freed: a fresh candidate can be
+    // reserved for the same session immediately.
+    const nextCandidateId = crypto.randomUUID();
+    const nextBranch = `openfloor/${created.session.id.slice(0, 8)}/candidate/${nextCandidateId.slice(0, 8)}`;
+    await expect(reserveRepositoryCandidate(created.session.id, owner.id, saved!.id, nextCandidateId, "Abandon room take two", "", nextBranch, "main", "a".repeat(40), env.DB)).resolves.toBe(true);
+
+    // Clear the second candidate too so only its abandonment state — not its
+    // liveness — is what the deletion assertion below is exercising.
+    await markCandidateAbandoned(created.session.id, nextCandidateId, env.DB);
+
+    // Deletion (choosing to orphan the abandoned branches) now proceeds and
+    // flags a surviving branch, the same warning shape as a merged one.
     await expect(deleteSession(created.session.id, owner.id, env.DB)).resolves.toEqual({ deleted: true, candidateBranchAlive: true });
     expect(await getSessionForMember(created.session.id, owner.id, env.DB)).toBeNull();
   });
@@ -889,10 +935,11 @@ describe("D1 session persistence", () => {
     expect(floor?.runs.find((item) => item.id === run.id)?.status).toBe("cancelled");
     expect(floor?.queue[0].status).toBe("cancelled");
 
-    // The candidate's lock is clear now, so ending proceeds — deleting still
-    // refuses because the candidate itself remains live and unmerged.
+    // The candidate's lock is clear now, so ending proceeds — deleting no
+    // longer refuses outright, but still reports the live, unmerged
+    // candidate back so the caller can choose its fate (ENG-83).
     await expect(endSession(created.session.id, owner.id, "owner", env.DB)).resolves.toEqual({ endedAt: expect.any(Number), reason: "owner" });
-    await expect(deleteSession(created.session.id, owner.id, env.DB)).resolves.toBe("repository_state");
+    await expect(deleteSession(created.session.id, owner.id, env.DB)).resolves.toEqual({ blocked: "candidate_live", branch, sha: "a".repeat(40) });
   });
 
   it("rolls back one integrated prompt for its engineer or agent owner while preserving run audit", async () => {
