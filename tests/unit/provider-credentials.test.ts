@@ -1,15 +1,19 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   AGENT_PROVIDER_LABELS,
+  credentialAadContext,
   credentialFingerprint,
+  credentialKindLabel,
+  credentialKindsForProvider,
   DEFAULT_PROVIDER_MODELS,
+  parseCredentialKind,
   parseCredentialProvider,
   providerLabel,
   resolveRunCredentialSource,
   resolveRunModel,
   usesClaudeRunner,
 } from "@/lib/provider-credentials";
-import { validateProviderApiKey } from "@/lib/provider-validation";
+import { validateProviderApiKey, validateProviderOauthSecret } from "@/lib/provider-validation";
 
 describe("provider parsing and labels", () => {
   it("accepts only known providers", () => {
@@ -17,6 +21,7 @@ describe("provider parsing and labels", () => {
     expect(parseCredentialProvider("openai")).toBe("openai");
     expect(parseCredentialProvider("kimi")).toBe("kimi");
     expect(parseCredentialProvider("gemini")).toBe("gemini");
+    expect(parseCredentialProvider("glm")).toBe("glm");
     expect(parseCredentialProvider("mistral")).toBeNull();
     expect(parseCredentialProvider("grok")).toBeNull();
     expect(parseCredentialProvider("")).toBeNull();
@@ -28,6 +33,7 @@ describe("provider parsing and labels", () => {
     expect(providerLabel("openai")).toBe("OpenAI");
     expect(providerLabel("kimi")).toBe("Moonshot");
     expect(providerLabel("gemini")).toBe("Google");
+    expect(providerLabel("glm")).toBe("Z.ai");
   });
 
   it("names agents per provider and routes kimi through the Claude runner", () => {
@@ -35,8 +41,10 @@ describe("provider parsing and labels", () => {
     expect(AGENT_PROVIDER_LABELS.openai).toBe("Codex");
     expect(AGENT_PROVIDER_LABELS.kimi).toBe("Kimi");
     expect(AGENT_PROVIDER_LABELS.gemini).toBe("Gemini");
+    expect(AGENT_PROVIDER_LABELS.glm).toBe("GLM");
     expect(usesClaudeRunner("anthropic")).toBe(true);
     expect(usesClaudeRunner("kimi")).toBe(true);
+    expect(usesClaudeRunner("glm")).toBe(true);
     expect(usesClaudeRunner("openai")).toBe(false);
     expect(usesClaudeRunner("gemini")).toBe(false);
   });
@@ -56,6 +64,8 @@ describe("per-provider run models", () => {
     // gemini-3.5-flash (what the pinned CLI actually sends on the wire).
     expect(resolveRunModel("kimi", null)).toBe("kimi-k3");
     expect(resolveRunModel("gemini", null)).toBe("gemini-3.5-flash");
+    // glm-5.3: the coding flagship id Z.ai's models endpoint returns.
+    expect(resolveRunModel("glm", null)).toBe("glm-5.3");
   });
 
   it("keeps the Codex default the historical AGENT_RUN_MODEL value", () => {
@@ -73,8 +83,49 @@ describe("run credential resolution order", () => {
     expect(resolveRunCredentialSource({ ownerCredentialPresent: false, serverKeyPresent: true })).toEqual({ source: "server" });
   });
 
-  it("refuses when neither exists", () => {
-    expect(resolveRunCredentialSource({ ownerCredentialPresent: false, serverKeyPresent: false })).toEqual({ source: "none" });
+  it("refuses when neither exists, saying which absence it is", () => {
+    expect(resolveRunCredentialSource({ ownerCredentialPresent: false, serverKeyPresent: false }))
+      .toEqual({ source: "none", reason: "no_credential" });
+  });
+
+  it("refuses an agent-named kind the owner lacks — never the server key", () => {
+    // The single most important resolution assertion: an agent bound to a
+    // disconnected subscription must NOT silently bill openfloor's key.
+    expect(resolveRunCredentialSource({ ownerCredentialPresent: false, serverKeyPresent: true, missingSelectedKind: true }))
+      .toEqual({ source: "none", reason: "missing_selected_kind" });
+    expect(resolveRunCredentialSource({ ownerCredentialPresent: false, serverKeyPresent: false, missingSelectedKind: true }))
+      .toEqual({ source: "none", reason: "missing_selected_kind" });
+  });
+});
+
+describe("credential kinds", () => {
+  it("allows a subscription kind only where one is actually honored", () => {
+    expect(credentialKindsForProvider("anthropic")).toEqual(["api_key", "oauth"]);
+    // openai's ChatGPT-bundle kind is withheld until §5 ships (Spike D):
+    // don't offer a connection every run of which would 503.
+    expect(credentialKindsForProvider("openai")).toEqual(["api_key"]);
+    expect(credentialKindsForProvider("kimi")).toEqual(["api_key"]);
+    expect(credentialKindsForProvider("gemini")).toEqual(["api_key"]);
+    expect(credentialKindsForProvider("glm")).toEqual(["api_key"]);
+  });
+
+  it("parses kinds strictly", () => {
+    expect(parseCredentialKind("api_key")).toBe("api_key");
+    expect(parseCredentialKind("oauth")).toBe("oauth");
+    expect(parseCredentialKind("subscription")).toBeNull();
+    expect(parseCredentialKind(undefined)).toBeNull();
+  });
+
+  it("keeps the legacy AAD shape for api_key rows and binds the kind for new ones", () => {
+    expect(credentialAadContext("user-1", "anthropic", "api_key")).toBe("user-1:anthropic");
+    expect(credentialAadContext("user-1", "anthropic", "oauth")).toBe("user-1:anthropic:oauth");
+    expect(credentialAadContext("user-1", "openai", "oauth")).toBe("user-1:openai:oauth");
+  });
+
+  it("labels kinds for Settings rows and refusal messages", () => {
+    expect(credentialKindLabel("anthropic", "api_key")).toBe("API key");
+    expect(credentialKindLabel("anthropic", "oauth")).toBe("Claude subscription");
+    expect(credentialKindLabel("openai", "oauth")).toBe("ChatGPT subscription");
   });
 });
 
@@ -103,11 +154,36 @@ describe("connect-time key validation", () => {
     });
     expect(await validateProviderApiKey("anthropic", "sk-ant-key")).toEqual({ ok: true });
     expect(await validateProviderApiKey("openai", "sk-openai-key")).toEqual({ ok: true });
+    expect(await validateProviderApiKey("glm", "zai-key")).toEqual({ ok: true });
     expect(calls[0].url).toBe("https://api.anthropic.com/v1/models");
     expect(calls[0].headers["x-api-key"]).toBe("sk-ant-key");
     expect(calls[0].headers["anthropic-version"]).toBeTruthy();
     expect(calls[1].url).toBe("https://api.openai.com/v1/models");
     expect(calls[1].headers.authorization).toBe("Bearer sk-openai-key");
+    expect(calls[2].url).toBe("https://api.z.ai/api/paas/v4/models");
+    expect(calls[2].headers.authorization).toBe("Bearer zai-key");
+  });
+
+  it("validates a setup token against GET /v1/models with a plain Bearer — anthropic only", async () => {
+    const calls: Array<{ url: string; headers: Record<string, string> }> = [];
+    vi.stubGlobal("fetch", async (url: string, init: { headers: Record<string, string> }) => {
+      calls.push({ url, headers: init.headers });
+      return new Response("{}", { status: 200 });
+    });
+    expect(await validateProviderOauthSecret("anthropic", "sk-ant-oat01-tok")).toEqual({ ok: true });
+    expect(calls[0].url).toBe("https://api.anthropic.com/v1/models");
+    expect(calls[0].headers.authorization).toBe("Bearer sk-ant-oat01-tok");
+    expect(calls[0].headers["anthropic-version"]).toBeTruthy();
+    // No beta flag is needed for validation (Spike C rerun) — none is sent.
+    expect(calls[0].headers["anthropic-beta"]).toBeUndefined();
+    // No other provider has a free oauth probe: null, and no network call —
+    // the caller stores validated_at null instead of faking a timestamp.
+    expect(await validateProviderOauthSecret("openai", "bundle-json")).toBeNull();
+    expect(await validateProviderOauthSecret("kimi", "token")).toBeNull();
+    expect(calls).toHaveLength(1);
+    // The deterministic adapter covers oauth the same way it covers keys.
+    expect(await validateProviderOauthSecret("anthropic", "sk-good", { testAcceptedKeys: { anthropic: ["sk-good"] } })).toEqual({ ok: true });
+    expect(await validateProviderOauthSecret("anthropic", "sk-bad", { testAcceptedKeys: { anthropic: ["sk-good"] } })).toEqual({ ok: false, reason: "unauthorized" });
   });
 
   it("maps provider rejection and unreachability to distinct reasons", async () => {

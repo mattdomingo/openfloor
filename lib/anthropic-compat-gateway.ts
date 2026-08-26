@@ -1,7 +1,6 @@
-import { getRunAgentOwnerCredential } from "@/db/provider-credentials";
+import { resolveRunProviderSecret } from "@/db/provider-credentials";
 import { getRunGatewayContext } from "@/db/runs";
-import { decryptCredential } from "@/lib/credential-crypto";
-import { providerLabel, resolveRunCredentialSource, type CredentialProvider } from "@/lib/provider-credentials";
+import { type CredentialKind, type CredentialProvider } from "@/lib/provider-credentials";
 import { verifyRunGatewayToken, type RunGatewayClaims } from "@/lib/runtime-token";
 import { env } from "cloudflare:workers";
 
@@ -26,8 +25,16 @@ export type AnthropicCompatGatewayConfig = {
   // read by name here because gateways cast env inline by convention
   // (cloudflare-env.d.ts deliberately doesn't declare provider keys).
   serverKeyBinding: string;
-  buildAuthHeaders: (apiKey: string) => Record<string, string>;
+  // Kind-aware since subscription credentials became first-class: the
+  // anthropic route sends x-api-key for api_key and `authorization: Bearer`
+  // for oauth; kimi/glm are api_key-only and ignore the kind.
+  buildAuthHeaders: (secret: string, kind: CredentialKind) => Record<string, string>;
   allowedPaths: ReadonlySet<string>;
+  // Beta flag MERGED into the client's anthropic-beta when the resolved
+  // credential is kind oauth (Spike C: oauth-2025-04-20 is the one required
+  // flag; extended-cache-ttl-2025-04-11 is incidental and deliberately not
+  // sent). Merged, never overwritten — the client's own flags must survive.
+  oauthBetaFlag?: string;
 };
 
 export async function handleAnthropicCompatProxy(
@@ -55,42 +62,39 @@ export async function handleAnthropicCompatProxy(
     console.warn(`${config.provider} gateway rejected path: POST /${parts.join("/")}`);
     return new Response("Not found", { status: 404 });
   }
-  // Same resolution order as the OpenAI gateway, decided by
-  // resolveRunCredentialSource: the agent owner's connected key, else the
-  // server key, else refuse — and a present-but-unreadable owner credential
-  // refuses rather than switching payer.
-  const ownerCredential = await getRunAgentOwnerCredential(claims.runId, config.provider);
-  const serverKey = bindings[config.serverKeyBinding];
-  const resolution = resolveRunCredentialSource({
-    ownerCredentialPresent: Boolean(ownerCredential),
-    serverKeyPresent: Boolean(serverKey),
+  // The shared ladder (db/provider-credentials.ts): the agent owner's
+  // connected credential of the kind the agent names, else the server key,
+  // else refuse — a present-but-unreadable owner credential and a named-but-
+  // unconnected kind both refuse rather than switching payer.
+  const resolved = await resolveRunProviderSecret(claims.runId, config.provider, {
+    serverKey: bindings[config.serverKeyBinding],
+    encryptionKey: bindings.CREDENTIAL_ENCRYPTION_KEY,
   });
-  let apiKey: string;
-  if (resolution.source === "owner") {
-    const decrypted = ownerCredential && bindings.CREDENTIAL_ENCRYPTION_KEY
-      ? await decryptCredential(ownerCredential.ciphertext, bindings.CREDENTIAL_ENCRYPTION_KEY, `${ownerCredential.ownerUserId}:${config.provider}`)
-      : null;
-    if (!decrypted) {
-      return new Response(`The agent owner's connected ${providerLabel(config.provider)} key could not be read. Reconnect it in Settings.`, { status: 503 });
-    }
-    apiKey = decrypted;
-  } else if (resolution.source === "server" && serverKey) {
-    apiKey = serverKey;
-  } else {
-    return new Response(`No ${providerLabel(config.provider)} credential is available for this run.`, { status: 503 });
-  }
+  if (!resolved.ok) return new Response(resolved.message, { status: 503 });
   const headers = new Headers();
-  for (const [name, value] of Object.entries(config.buildAuthHeaders(apiKey))) headers.set(name, value);
+  for (const [name, value] of Object.entries(config.buildAuthHeaders(resolved.secret, resolved.kind))) headers.set(name, value);
   headers.set("anthropic-version", request.headers.get("anthropic-version") ?? "2023-06-01");
   headers.set("content-type", request.headers.get("content-type") ?? "application/json");
   headers.set("accept", request.headers.get("accept") ?? "application/json");
-  const beta = request.headers.get("anthropic-beta");
-  if (beta) headers.set("anthropic-beta", beta);
+  const betaTokens = (request.headers.get("anthropic-beta") ?? "")
+    .split(",")
+    .map((token) => token.trim())
+    .filter(Boolean);
+  if (resolved.kind === "oauth" && config.oauthBetaFlag && !betaTokens.includes(config.oauthBetaFlag)) {
+    betaTokens.push(config.oauthBetaFlag);
+  }
+  if (betaTokens.length > 0) headers.set("anthropic-beta", betaTokens.join(","));
   const upstream = await fetch(`${config.upstreamBase}/${normalized}`, { method: "POST", headers, body });
   const responseHeaders = new Headers();
-  for (const name of ["content-type", "cache-control", "request-id", "anthropic-ratelimit-requests-remaining"]) {
-    const value = upstream.headers.get(name);
-    if (value) responseHeaders.set(name, value);
+  // Besides the basics, forward retry-after (the vendor's 429 signal) and
+  // the whole anthropic-ratelimit-* family — the unified-* headers carry a
+  // subscription's 5h/7d limit state, the only utilization signal a
+  // subscription-billed run gets (Spike C rerun; no retry-after was observed
+  // on 200s, but keep it for the 429 not yet seen).
+  for (const [name, value] of upstream.headers) {
+    if (["content-type", "cache-control", "request-id", "retry-after"].includes(name) || name.startsWith("anthropic-ratelimit-")) {
+      responseHeaders.set(name, value);
+    }
   }
   responseHeaders.set("x-content-type-options", "nosniff");
   return new Response(upstream.body, { status: upstream.status, headers: responseHeaders });

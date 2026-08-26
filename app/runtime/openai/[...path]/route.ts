@@ -1,7 +1,5 @@
-import { getRunAgentOwnerCredential } from "@/db/provider-credentials";
+import { resolveRunProviderSecret } from "@/db/provider-credentials";
 import { getRunGatewayContext } from "@/db/runs";
-import { decryptCredential } from "@/lib/credential-crypto";
-import { resolveRunCredentialSource } from "@/lib/provider-credentials";
 import { verifyRunGatewayToken } from "@/lib/runtime-token";
 import { env } from "cloudflare:workers";
 
@@ -25,30 +23,28 @@ export async function POST(request: Request, { params }: { params: Promise<{ pat
   const parts = (await params).path;
   const normalized = parts[0] === "v1" ? parts.slice(1) : parts;
   if (normalized.length !== 1 || normalized[0] !== "responses") return new Response("Not found", { status: 404 });
-  // Resolution order lives in resolveRunCredentialSource: the agent owner's
-  // connected key, else the server key, else refuse. A present-but-unreadable
-  // owner credential refuses rather than silently billing the server key.
-  const ownerCredential = await getRunAgentOwnerCredential(claims.runId, "openai");
-  const resolution = resolveRunCredentialSource({
-    ownerCredentialPresent: Boolean(ownerCredential),
-    serverKeyPresent: Boolean(bindings.OPENAI_API_KEY),
+  // The shared ladder (db/provider-credentials.ts): the agent owner's
+  // connected credential of the kind the agent names, else the server key,
+  // else refuse. A present-but-unreadable owner credential and a named-but-
+  // unconnected kind both refuse rather than silently billing another payer.
+  const resolved = await resolveRunProviderSecret(claims.runId, "openai", {
+    serverKey: bindings.OPENAI_API_KEY,
+    encryptionKey: bindings.CREDENTIAL_ENCRYPTION_KEY,
   });
-  let apiKey: string;
-  if (resolution.source === "owner") {
-    const decrypted = ownerCredential && bindings.CREDENTIAL_ENCRYPTION_KEY
-      ? await decryptCredential(ownerCredential.ciphertext, bindings.CREDENTIAL_ENCRYPTION_KEY, `${ownerCredential.ownerUserId}:openai`)
-      : null;
-    if (!decrypted) {
-      return new Response("The agent owner's connected OpenAI key could not be read. Reconnect it in Settings.", { status: 503 });
-    }
-    apiKey = decrypted;
-  } else if (resolution.source === "server" && bindings.OPENAI_API_KEY) {
-    apiKey = bindings.OPENAI_API_KEY;
-  } else {
-    return new Response("No OpenAI credential is available for this run.", { status: 503 });
+  if (!resolved.ok) return new Response(resolved.message, { status: 503 });
+  // A ChatGPT-subscription auth bundle cannot drive a Codex run until the
+  // brief's §5 ships (gated on Spike D, which has not run). Refuse before
+  // any header is built: sending the stored bundle — refresh token included
+  // — upstream as a bearer would be a credential leak, and a pretty-printed
+  // bundle's newlines would crash Headers.set into an opaque 500 besides.
+  if (resolved.kind === "oauth") {
+    return new Response(
+      "ChatGPT subscription credentials cannot run agents yet. Set this agent's Billing to API key, or connect an OpenAI API key in Settings.",
+      { status: 503 },
+    );
   }
   const headers = new Headers();
-  headers.set("authorization", `Bearer ${apiKey}`);
+  headers.set("authorization", `Bearer ${resolved.secret}`);
   headers.set("content-type", request.headers.get("content-type") ?? "application/json");
   headers.set("accept", request.headers.get("accept") ?? "application/json");
   const beta = request.headers.get("openai-beta");

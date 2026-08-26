@@ -21,6 +21,14 @@ Runs stream a bounded activity feed while Codex executes. The in-sandbox runner 
 
 Every dispatched agent's prompt is a unified session brief (`db/session-context.ts` + `lib/session-context.ts`): its own request, every other agent and human on the floor, already-integrated work, other runs in flight with their live file edits, the rest of the queue, blocked/failed runs, and recent public team chat — bounded to 24,000 characters, direct messages structurally excluded (the D1 read never takes a `userId`). The exact rendered prompt is persisted as an `agent_run_artifacts` row of kind `prompt` and visible via a second Agent-card expander. A long run can re-read current floor state through a read-only `openfloor_session_context` MCP tool exposed by the Sandbox (`scripts/openfloor-mcp.mjs`), backed by `GET /runtime/run/context` (a `"context"`-operation gateway token, 60-minute TTL). Pooled run sandboxes are keyed by `RUN_SANDBOX_IMAGE_VERSION` so a stale pooled container can never be claimed by a live run after a `Dockerfile.sandbox` change — bump that constant whenever the image's contents change.
 
+## Credential kinds — deliberately deferred pieces
+
+Per-user credentials are keyed `(user_id, provider, kind)` with kinds `api_key` and `oauth` (pasted Claude setup token / ChatGPT auth bundle), and each agent's `credential_kind` names which one its runs bill. Anthropic setup tokens are fully live: validated on connect and sent upstream in their native form (Bearer + merged `oauth-2025-04-20` beta flag). Deliberately not built: ChatGPT-subscription Codex runs (the standing brief's §5, gated on Spike D, which has not run — the openai `oauth` kind is withheld from Settings entirely (`credentialKindsForProvider`) until §5 ships, and the openai gateway additionally refuses oauth-kind runs with a clear `503` as defense in depth for hand-written rows, so a bundle, refresh token included, never leaves as a header); more than one row per user+provider+kind (raising the ceiling later means a nickname column and a picker, not another recreate); automatic failover between a member's own two credentials on a rate-limit response (rejected: it switches billing ledgers mid-run); showing a member their remaining subscription quota or another member's connection status (no authoritative source; not the creator's to see).
+
+## Grok (xAI) — excluded twice, now on both integration routes
+
+The Anthropic-compat route died on xAI rejecting system-role messages (2026-08-24 decision log); the Responses route died the same day on xAI rejecting the `"content": null` Codex 0.148.0 writes on replayed reasoning input items (400 "Could not decode the compaction blob" on every thread's second request — Spike B). Both blockers are upstream (xAI tolerance or a Codex serialization change); gateway body rewriting stays rejected. `parseCredentialProvider("grok")` stays pinned null.
+
 ## Deployment order
 
 1. Run `npm test`.

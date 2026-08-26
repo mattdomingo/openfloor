@@ -87,6 +87,7 @@ Optional server-side fallback keys, one per provider; without one, that provider
 npx wrangler secret put ANTHROPIC_API_KEY
 npx wrangler secret put MOONSHOT_API_KEY
 npx wrangler secret put GEMINI_API_KEY
+npx wrangler secret put ZAI_API_KEY
 ```
 
 Add an OpenAI project API key for server-side Codex execution:

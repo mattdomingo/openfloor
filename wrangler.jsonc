@@ -96,6 +96,11 @@
 		// Gemini rollout gate: enabled — the v3 image (Gemini CLI + runner),
 		// gemini gateway route, and the GEMINI_API_KEY fallback are live.
 		"GEMINI_RUN_ENABLED": "true",
+		// GLM (Z.ai) rollout gate: keep false until the deploy carrying the
+		// glm gateway route is live, a credential resolves (ZAI_API_KEY or an
+		// owner-connected key), and the per-provider acceptance runbook
+		// passes. No image bump — GLM reuses the Claude runner unchanged.
+		"GLM_RUN_ENABLED": "false",
 		// Custom sign-in page rollout gate: on per explicit ship decision
 		// 2026-08-25, ahead of the live production Access verification
 		// (real Google + real email-code sign-in, plus the upstream-
@@ -106,6 +111,7 @@
 		// Access-protected path, i.e. pre-2026-08-25 behavior) and diagnose
 		// after.
 		"ACCESS_CUSTOM_LOGIN_ENABLED": "true"
+
 	},
 	"r2_buckets": [
 		{

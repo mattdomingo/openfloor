@@ -8,6 +8,7 @@ const ACCEPTED_ANTHROPIC_KEY = "sk-ant-render-accepted";
 const ACCEPTED_OPENAI_KEY = "sk-openai-render-accepted";
 const ACCEPTED_KIMI_KEY = "sk-kimi-render-accepted";
 const ACCEPTED_GEMINI_KEY = "AIza-gemini-render-accepted";
+const ACCEPTED_GLM_KEY = "zai-glm-render-accepted";
 
 async function onboardedUser(providerUserId: string, firstName: string, lastName: string) {
   const headers = {
@@ -88,9 +89,9 @@ describe("provider credential routes", () => {
     expect(await afterDelete.json()).toEqual({ credentials: [] });
   });
 
-  it("connects and disconnects the kimi and gemini providers through the same flow", async () => {
+  it("connects and disconnects the kimi, gemini, and glm providers through the same flow", async () => {
     const { headers } = await onboardedUser("credentials-new-providers", "Cred", "Newer");
-    for (const [provider, apiKey] of [["kimi", ACCEPTED_KIMI_KEY], ["gemini", ACCEPTED_GEMINI_KEY]] as const) {
+    for (const [provider, apiKey] of [["kimi", ACCEPTED_KIMI_KEY], ["gemini", ACCEPTED_GEMINI_KEY], ["glm", ACCEPTED_GLM_KEY]] as const) {
       const connected = await SELF.fetch(`http://localhost/api/account/credentials/${provider}`, {
         method: "PUT",
         headers: jsonHeaders(headers),
@@ -112,7 +113,68 @@ describe("provider credential routes", () => {
     const removed = await SELF.fetch("http://localhost/api/account/credentials/gemini", { method: "DELETE", headers });
     expect(removed.status).toBe(204);
     const list = await SELF.fetch("http://localhost/api/account/credentials", { headers });
-    expect(((await list.json()) as { credentials: Array<{ provider: string }> }).credentials.map((entry) => entry.provider)).toEqual(["kimi"]);
+    expect(((await list.json()) as { credentials: Array<{ provider: string }> }).credentials.map((entry) => entry.provider)).toEqual(["glm", "kimi"]);
+  });
+
+  it("connects a subscription credential alongside the API key, disconnecting per kind", async () => {
+    const { headers } = await onboardedUser("credentials-subscription", "Cred", "Sub");
+    const key = await SELF.fetch("http://localhost/api/account/credentials/anthropic", {
+      method: "PUT",
+      headers: jsonHeaders(headers),
+      body: JSON.stringify({ apiKey: ACCEPTED_ANTHROPIC_KEY }),
+    });
+    expect(key.status).toBe(200);
+    // A setup token validates on connect (GET /v1/models, plain Bearer —
+    // Spike C rerun), so a good one stores a real validated_at and a bad one
+    // is a 400, exactly like an API key.
+    const rejectedSub = await SELF.fetch("http://localhost/api/account/credentials/anthropic", {
+      method: "PUT",
+      headers: jsonHeaders(headers),
+      body: JSON.stringify({ setupToken: "sk-ant-oat01-render-wrong" }),
+    });
+    expect(rejectedSub.status).toBe(400);
+    expect(((await rejectedSub.json()) as { error: string }).error).toContain("setup token");
+    const setupToken = "sk-ant-oat01-render-accepted";
+    const sub = await SELF.fetch("http://localhost/api/account/credentials/anthropic", {
+      method: "PUT",
+      headers: jsonHeaders(headers),
+      body: JSON.stringify({ setupToken }),
+    });
+    expect(sub.status).toBe(200);
+    const subText = await sub.text();
+    expect(subText).not.toContain(setupToken);
+    const { credential } = JSON.parse(subText) as { credential: { kind: string; fingerprint: string; validatedAt: number | null } };
+    expect(credential.kind).toBe("oauth");
+    expect(credential.fingerprint).toBe(setupToken.slice(-4));
+    expect(credential.validatedAt).not.toBeNull();
+    // openai's ChatGPT-bundle kind is withheld until §5 ships: the authJson
+    // shape parses, but the provider refuses the kind — no stored credential
+    // every run of which would 503.
+    const bundle = await SELF.fetch("http://localhost/api/account/credentials/openai", {
+      method: "PUT",
+      headers: jsonHeaders(headers),
+      body: JSON.stringify({ authJson: JSON.stringify({ tokens: { account_id: "acct-render-1234", access_token: "at" } }) }),
+    });
+    expect(bundle.status).toBe(400);
+    // Rows list deterministically: by provider, then kind.
+    const listed = await SELF.fetch("http://localhost/api/account/credentials", { headers });
+    expect(((await listed.json()) as { credentials: Array<{ provider: string; kind: string }> }).credentials
+      .map((entry) => `${entry.provider}:${entry.kind}`)).toEqual(["anthropic:api_key", "anthropic:oauth"]);
+    // Providers without a subscription kind refuse it.
+    const refused = await SELF.fetch("http://localhost/api/account/credentials/kimi", {
+      method: "PUT",
+      headers: jsonHeaders(headers),
+      body: JSON.stringify({ setupToken }),
+    });
+    expect(refused.status).toBe(400);
+    // Disconnect is kind-scoped: the subscription goes, the API key stays.
+    // An oauth kind on a provider that withholds it is a 404 both ways.
+    expect((await SELF.fetch("http://localhost/api/account/credentials/anthropic?kind=bogus", { method: "DELETE", headers })).status).toBe(404);
+    expect((await SELF.fetch("http://localhost/api/account/credentials/openai?kind=oauth", { method: "DELETE", headers })).status).toBe(404);
+    expect((await SELF.fetch("http://localhost/api/account/credentials/anthropic?kind=oauth", { method: "DELETE", headers })).status).toBe(204);
+    const after = await SELF.fetch("http://localhost/api/account/credentials", { headers });
+    expect(((await after.json()) as { credentials: Array<{ provider: string; kind: string }> }).credentials
+      .map((entry) => `${entry.provider}:${entry.kind}`)).toEqual(["anthropic:api_key"]);
   });
 
   it("rejects invalid keys, invalid input, and unknown providers", async () => {

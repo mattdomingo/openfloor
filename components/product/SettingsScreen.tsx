@@ -351,7 +351,7 @@ function ConnectionsSection({ initialCredentials }: { initialCredentials: Provid
       <p className="settings-category-detail">
         Connect your own API keys. A run uses the key connected by that agent&rsquo;s owner, then the configured server key;
         if neither is available, the run refuses clearly. Keys are encrypted, shown only by their last four characters,
-        and never sent back to the browser.
+        and never sent back to the browser. Subscriptions are per-user, never shared, and never used as openfloor&rsquo;s fallback.
       </p>
       <ProviderCredentials initialCredentials={initialCredentials} providers={[...CREDENTIAL_PROVIDERS]} />
     </>

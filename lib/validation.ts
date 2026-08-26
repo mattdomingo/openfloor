@@ -1,8 +1,22 @@
-import { parseCredentialProvider, type CredentialProvider } from "./provider-credentials";
+import {
+  credentialKindsForProvider,
+  parseCredentialKind,
+  parseCredentialProvider,
+  type CredentialKind,
+  type CredentialProvider,
+} from "./provider-credentials";
 
 export type SessionInput = { title: string; objective: string | null };
 export type ObjectiveInput = { objective: string | null };
-export type AgentInput = { name: string; nameKey: string; role: string; task: string; ownerUserId: string; provider: CredentialProvider };
+export type AgentInput = {
+  name: string;
+  nameKey: string;
+  role: string;
+  task: string;
+  ownerUserId: string;
+  provider: CredentialProvider;
+  credentialKind: CredentialKind | null;
+};
 export type AgentTaskInput = { task: string };
 export type AgentPauseInput = { paused: boolean };
 export type AssignmentInput = { task: string | null };
@@ -18,11 +32,16 @@ export type QueueItemTargetInput = { agentId: string };
 export type RepositoryConnectionInput = { repositoryId: string; baseBranch: string; checkCommands: string[] };
 export type RepositoryCandidateInput = { name: string; description: string };
 export type ProfileInput = { firstName: string; lastName: string; githubHandle: string | null };
-export type CredentialConnectInput = { apiKey: string };
+// Discriminated by kind: `secret` is what gets encrypted at rest, and
+// `fingerprintValue` is what the last-four fingerprint is taken from — the
+// token itself for an API key or Claude setup token, the ChatGPT account id
+// for an auth bundle (never the refresh token).
+export type CredentialConnectInput = { kind: CredentialKind; secret: string; fingerprintValue: string };
 
 const MAX_PROFILE_NAME_LENGTH = 50;
 const MAX_GITHUB_HANDLE_LENGTH = 39;
 const MAX_API_KEY_LENGTH = 512;
+const MAX_AUTH_JSON_LENGTH = 8192;
 
 export function parseSessionInput(value: unknown): SessionInput | null {
   if (!value || typeof value !== "object") return null;
@@ -60,7 +79,15 @@ export function parseAgentInput(value: unknown): AgentInput | null {
   if (!name || name.length > 24 || !role || role.length > 80 || !task || task.length > 1000 || !ownerUserId || ownerUserId.length > 100) return null;
   if (input.provider !== undefined && parseCredentialProvider(input.provider) === null) return null;
   const provider = parseCredentialProvider(input.provider) ?? "openai";
-  return { name, nameKey: normalizeAgentName(name), role, task, ownerUserId, provider };
+  // Optional billing choice, valid only among the provider's supported kinds;
+  // null/omitted means "the owner's default" (api_key when present).
+  let credentialKind: CredentialKind | null = null;
+  if (input.credentialKind !== undefined && input.credentialKind !== null) {
+    const kind = parseCredentialKind(input.credentialKind);
+    if (!kind || !credentialKindsForProvider(provider).includes(kind)) return null;
+    credentialKind = kind;
+  }
+  return { name, nameKey: normalizeAgentName(name), role, task, ownerUserId, provider, credentialKind };
 }
 
 export function parseAgentTaskInput(value: unknown): AgentTaskInput | null {
@@ -228,16 +255,51 @@ export function parseProfileInput(value: unknown): ProfileInput | null {
   return { firstName, lastName, githubHandle: githubHandle || null };
 }
 
+// Three accepted shapes, one per credential form: { apiKey } (kind api_key),
+// { setupToken } (kind oauth — the single opaque token `claude setup-token`
+// mints), and { authJson } (kind oauth — a pasted ChatGPT auth bundle, a JSON
+// object, shape-checked rather than treated as a bare token). Exactly one
+// field must be present.
 export function parseCredentialConnectInput(value: unknown): CredentialConnectInput | null {
   if (!value || typeof value !== "object") return null;
-  const input = value as { apiKey?: unknown };
-  if (typeof input.apiKey !== "string") return null;
-  const apiKey = input.apiKey.trim();
-  if (!apiKey || apiKey.length > MAX_API_KEY_LENGTH) return null;
-  // API keys are single opaque tokens; embedded whitespace or control
-  // characters mean a paste error, not a longer key format.
-  if (/[\s\p{Cc}]/u.test(apiKey)) return null;
-  return { apiKey };
+  const input = value as { apiKey?: unknown; setupToken?: unknown; authJson?: unknown };
+  const present = [input.apiKey, input.setupToken, input.authJson].filter((field) => field !== undefined);
+  if (present.length !== 1) return null;
+  if (input.apiKey !== undefined) {
+    const apiKey = parseOpaqueToken(input.apiKey);
+    return apiKey ? { kind: "api_key", secret: apiKey, fingerprintValue: apiKey } : null;
+  }
+  if (input.setupToken !== undefined) {
+    const setupToken = parseOpaqueToken(input.setupToken);
+    return setupToken ? { kind: "oauth", secret: setupToken, fingerprintValue: setupToken } : null;
+  }
+  if (typeof input.authJson !== "string") return null;
+  const authJson = input.authJson.trim();
+  if (!authJson || authJson.length > MAX_AUTH_JSON_LENGTH) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(authJson);
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+  const tokens = (parsed as { tokens?: unknown }).tokens;
+  if (!tokens || typeof tokens !== "object" || Array.isArray(tokens)) return null;
+  const { account_id: accountId, access_token: accessToken } = tokens as { account_id?: unknown; access_token?: unknown };
+  if (typeof accountId !== "string" || !accountId || typeof accessToken !== "string" || !accessToken) return null;
+  // The bundle is stored verbatim (encrypted) so unknown fields round-trip;
+  // the fingerprint comes from the account id, never any token in the bundle.
+  return { kind: "oauth", secret: authJson, fingerprintValue: accountId };
+}
+
+function parseOpaqueToken(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const token = value.trim();
+  if (!token || token.length > MAX_API_KEY_LENGTH) return null;
+  // Credentials of this shape are single opaque tokens; embedded whitespace
+  // or control characters mean a paste error, not a longer key format.
+  if (/[\s\p{Cc}]/u.test(token)) return null;
+  return token;
 }
 
 function parseIdList(value: unknown, key: string, minimum: number): { itemIds: string[] } | null {

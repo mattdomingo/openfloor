@@ -89,6 +89,7 @@ describe("floor input validation", () => {
       task: "Map APIs",
       ownerUserId: "owner",
       provider: "openai",
+      credentialKind: null,
     });
     expect(normalizeAgentName("  LUMEN   Agent ")).toBe("lumen agent");
   });
@@ -98,8 +99,26 @@ describe("floor input validation", () => {
     expect(parseAgentInput({ name: "A", role: "R", task: "T", ownerUserId: "o", provider: "openai" })?.provider).toBe("openai");
     expect(parseAgentInput({ name: "A", role: "R", task: "T", ownerUserId: "o", provider: "kimi" })?.provider).toBe("kimi");
     expect(parseAgentInput({ name: "A", role: "R", task: "T", ownerUserId: "o", provider: "gemini" })?.provider).toBe("gemini");
+    expect(parseAgentInput({ name: "A", role: "R", task: "T", ownerUserId: "o", provider: "glm" })?.provider).toBe("glm");
     expect(parseAgentInput({ name: "A", role: "R", task: "T", ownerUserId: "o", provider: "mistral" })).toBeNull();
     expect(parseAgentInput({ name: "A", role: "R", task: "T", ownerUserId: "o", provider: 7 })).toBeNull();
+  });
+
+  it("accepts a credential kind only among the provider's supported kinds", () => {
+    const base = { name: "A", role: "R", task: "T", ownerUserId: "o" };
+    expect(parseAgentInput({ ...base, provider: "anthropic", credentialKind: "oauth" })?.credentialKind).toBe("oauth");
+    expect(parseAgentInput({ ...base, provider: "openai", credentialKind: "api_key" })?.credentialKind).toBe("api_key");
+    // openai's oauth kind is withheld until §5 ships.
+    expect(parseAgentInput({ ...base, provider: "openai", credentialKind: "oauth" })).toBeNull();
+    // Omitted and explicit null both mean "the owner's default".
+    expect(parseAgentInput({ ...base, provider: "anthropic" })?.credentialKind).toBeNull();
+    expect(parseAgentInput({ ...base, provider: "anthropic", credentialKind: null })?.credentialKind).toBeNull();
+    // A kind the provider does not support, and garbage, are 400s.
+    expect(parseAgentInput({ ...base, provider: "kimi", credentialKind: "oauth" })).toBeNull();
+    expect(parseAgentInput({ ...base, provider: "gemini", credentialKind: "oauth" })).toBeNull();
+    expect(parseAgentInput({ ...base, provider: "glm", credentialKind: "oauth" })).toBeNull();
+    expect(parseAgentInput({ ...base, provider: "anthropic", credentialKind: "subscription" })).toBeNull();
+    expect(parseAgentInput({ ...base, provider: "anthropic", credentialKind: 7 })).toBeNull();
   });
 
   it("validates assignments, messages, prompts, and ordering", () => {
@@ -154,11 +173,39 @@ describe("objective input validation", () => {
 });
 
 describe("credential connect input validation", () => {
-  it("trims and accepts a single opaque token", () => {
-    expect(parseCredentialConnectInput({ apiKey: "  sk-ant-api03-abcd  " })).toEqual({ apiKey: "sk-ant-api03-abcd" });
+  it("trims and accepts a single opaque token as an api_key", () => {
+    expect(parseCredentialConnectInput({ apiKey: "  sk-ant-api03-abcd  " })).toEqual({
+      kind: "api_key",
+      secret: "sk-ant-api03-abcd",
+      fingerprintValue: "sk-ant-api03-abcd",
+    });
   });
 
-  it("rejects missing, empty, oversized, and multi-token values", () => {
+  it("accepts a setup token as an oauth credential under the same token rules", () => {
+    expect(parseCredentialConnectInput({ setupToken: "  sk-ant-oat01-token  " })).toEqual({
+      kind: "oauth",
+      secret: "sk-ant-oat01-token",
+      fingerprintValue: "sk-ant-oat01-token",
+    });
+    expect(parseCredentialConnectInput({ setupToken: "two tokens" })).toBeNull();
+    expect(parseCredentialConnectInput({ setupToken: `sk-${"x".repeat(512)}` })).toBeNull();
+  });
+
+  it("accepts an auth bundle as oauth, shape-checked and fingerprinted by account id", () => {
+    const bundle = JSON.stringify({ tokens: { account_id: "acct-1234", access_token: "at", refresh_token: "rt" }, last_refresh: "now" });
+    expect(parseCredentialConnectInput({ authJson: bundle })).toEqual({
+      kind: "oauth",
+      secret: bundle,
+      fingerprintValue: "acct-1234",
+    });
+    expect(parseCredentialConnectInput({ authJson: "not json" })).toBeNull();
+    expect(parseCredentialConnectInput({ authJson: "[1,2]" })).toBeNull();
+    expect(parseCredentialConnectInput({ authJson: JSON.stringify({ tokens: {} }) })).toBeNull();
+    expect(parseCredentialConnectInput({ authJson: JSON.stringify({ tokens: { account_id: "a" } }) })).toBeNull();
+    expect(parseCredentialConnectInput({ authJson: `{"tokens":{"account_id":"a","access_token":"${"x".repeat(8192)}"}}` })).toBeNull();
+  });
+
+  it("rejects missing, empty, oversized, multi-token, and ambiguous values", () => {
     expect(parseCredentialConnectInput(null)).toBeNull();
     expect(parseCredentialConnectInput({})).toBeNull();
     expect(parseCredentialConnectInput({ apiKey: 42 })).toBeNull();
@@ -166,6 +213,9 @@ describe("credential connect input validation", () => {
     expect(parseCredentialConnectInput({ apiKey: `sk-${"x".repeat(512)}` })).toBeNull();
     expect(parseCredentialConnectInput({ apiKey: "sk-abc def" })).toBeNull();
     expect(parseCredentialConnectInput({ apiKey: "sk-abc\ndef" })).toBeNull();
+    // Exactly one field: two shapes at once is a caller bug, not a choice.
+    expect(parseCredentialConnectInput({ apiKey: "sk-a", setupToken: "sk-b" })).toBeNull();
+    expect(parseCredentialConnectInput({ apiKey: "sk-a", authJson: "{}" })).toBeNull();
   });
 });
 

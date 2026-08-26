@@ -2,15 +2,53 @@
 // this module is shared by client components and unit tests (same rule as
 // lib/plans.ts). Persistence lives in db/provider-credentials.ts.
 
-// Grok (xAI) is deliberately absent: its Anthropic-compat endpoint rejects
-// the system-role messages the Claude Code CLI sends (Spike B, 2026-08-24 —
-// see the AGENTS.md decision log), so no runner can serve it today.
-export const CREDENTIAL_PROVIDERS = ["anthropic", "openai", "kimi", "gemini"] as const;
+// Grok (xAI) is deliberately absent — twice over: its Anthropic-compat
+// endpoint rejects the CLI's system-role messages, and its Responses API
+// rejects the "content": null Codex writes on replayed reasoning items
+// (both 2026-08-24 — see the AGENTS.md decision log), so no runner can
+// serve it today.
+export const CREDENTIAL_PROVIDERS = ["anthropic", "openai", "kimi", "gemini", "glm"] as const;
 export type CredentialProvider = (typeof CREDENTIAL_PROVIDERS)[number];
 
-// ponytail: "api_key" is the only kind until Anthropic approves third-party
-// OAuth for openfloor; a future kind:"oauth" reuses the same row identity.
-export type CredentialKind = "api_key";
+// A subscription credential (Claude setup token, ChatGPT auth bundle) is
+// stored under the same (user_id, provider) identity as an API key; `kind`
+// says how to use it. The row key is (user_id, provider, kind), so a user can
+// hold both for one provider and each agent names which one pays.
+export const CREDENTIAL_KINDS = ["api_key", "oauth"] as const;
+export type CredentialKind = (typeof CREDENTIAL_KINDS)[number];
+
+export function parseCredentialKind(value: unknown): CredentialKind | null {
+  return CREDENTIAL_KINDS.includes(value as CredentialKind) ? (value as CredentialKind) : null;
+}
+
+// Which kinds a provider accepts. Enforced at the credentials PUT route AND at
+// gateway resolution, so a hand-written row can never get a Claude
+// subscription token sent to another vendor. Server fallback credentials are
+// always api_key by construction (plain string bindings) — openfloor never
+// operates one person's subscription seat on behalf of others.
+// openai's oauth kind (a ChatGPT auth bundle) is deliberately WITHHELD until
+// the brief's §5 ships (gated on Spike D): the parse shape and the dormant
+// Settings form remain §5-ready, but offering a connection no run can honor
+// would only manufacture 503s. The openai gateway keeps its own oauth-kind
+// refusal as defense in depth for hand-written rows.
+export function credentialKindsForProvider(provider: CredentialProvider): readonly CredentialKind[] {
+  return provider === "anthropic" ? CREDENTIAL_KINDS : ["api_key"];
+}
+
+// "API key" / "Claude subscription" / "ChatGPT subscription" — used by
+// Settings rows and gateway refusal messages.
+export function credentialKindLabel(provider: CredentialProvider, kind: CredentialKind): string {
+  if (kind === "api_key") return "API key";
+  return provider === "anthropic" ? "Claude subscription" : provider === "openai" ? "ChatGPT subscription" : "subscription";
+}
+
+// AAD context for lib/credential-crypto.ts. api_key keeps the bare legacy
+// "<userId>:<provider>" shape so every existing row stays decryptable without
+// a reconnect; new kinds bind the kind too, because with two rows per
+// user+provider the bare form no longer identifies a row.
+export function credentialAadContext(userId: string, provider: CredentialProvider, kind: CredentialKind): string {
+  return kind === "api_key" ? `${userId}:${provider}` : `${userId}:${provider}:${kind}`;
+}
 
 export type ProviderCredentialSummary = {
   provider: CredentialProvider;
@@ -31,6 +69,7 @@ const PROVIDER_LABELS: Record<CredentialProvider, string> = {
   openai: "OpenAI",
   kimi: "Moonshot",
   gemini: "Google",
+  glm: "Z.ai",
 };
 
 export function providerLabel(provider: CredentialProvider): string {
@@ -44,13 +83,14 @@ export const AGENT_PROVIDER_LABELS: Record<CredentialProvider, string> = {
   openai: "Codex",
   kimi: "Kimi",
   gemini: "Gemini",
+  glm: "GLM",
 };
 
 // Providers whose runs execute through scripts/claude-runner.mjs against an
 // Anthropic-Messages-compatible gateway route — the single predicate every
 // workflow branch keys on. Gemini has its own runner; openai is Codex.
 export function usesClaudeRunner(provider: CredentialProvider): boolean {
-  return provider === "anthropic" || provider === "kimi";
+  return provider === "anthropic" || provider === "kimi" || provider === "glm";
 }
 
 // Stored and shown instead of the key itself; routes never return the key.
@@ -65,11 +105,14 @@ export function credentialFingerprint(apiKey: string): string {
 // "kimi-k3[1m]" alias is NOT an API id (404, verified in Spike A).
 // gemini: "gemini-3.5-flash" — the id the pinned CLI actually sends; it
 // rewrites newer flash ids (e.g. gemini-3.7-flash) to this one (Spike C).
+// glm: "glm-5.3" — the coding flagship id Z.ai's /api/paas/v4/models
+// endpoint returns (Spike A, 2026-08-24); marketing names are not API ids.
 export const DEFAULT_PROVIDER_MODELS: Record<CredentialProvider, string> = {
   openai: "gpt-5.6-terra",
   anthropic: "claude-opus-5",
   kimi: "kimi-k3",
   gemini: "gemini-3.5-flash",
+  glm: "glm-5.3",
 };
 
 export function resolveRunModel(provider: CredentialProvider, agentModel: string | null): string {
@@ -77,7 +120,10 @@ export function resolveRunModel(provider: CredentialProvider, agentModel: string
   return model || DEFAULT_PROVIDER_MODELS[provider];
 }
 
-export type RunCredentialResolution = { source: "owner" } | { source: "server" } | { source: "none" };
+export type RunCredentialResolution =
+  | { source: "owner" }
+  | { source: "server" }
+  | { source: "none"; reason: "no_credential" | "missing_selected_kind" };
 
 // Per-run resolution order: the agent owner's connected credential for the
 // run's provider, else the server-configured key, else refuse the run. The
@@ -86,12 +132,18 @@ export type RunCredentialResolution = { source: "owner" } | { source: "server" }
 // runs bill. Plan quota (session hours) still bills the session owner —
 // deliberately separate ledgers. Never falls back from a present-but-failing
 // owner credential to the server key — a broken key must surface as a run
-// failure, not silently switch payer.
+// failure, not silently switch payer. When the agent names a credential kind
+// the owner has not connected, the run refuses even if a server key exists:
+// billing a payer the agent did not name is the same failure in a different
+// costume, and the distinguishable reason lets the gateway say which
+// connection is missing instead of the generic refusal.
 export function resolveRunCredentialSource(input: {
   ownerCredentialPresent: boolean;
   serverKeyPresent: boolean;
+  missingSelectedKind?: boolean;
 }): RunCredentialResolution {
+  if (input.missingSelectedKind) return { source: "none", reason: "missing_selected_kind" };
   if (input.ownerCredentialPresent) return { source: "owner" };
   if (input.serverKeyPresent) return { source: "server" };
-  return { source: "none" };
+  return { source: "none", reason: "no_credential" };
 }

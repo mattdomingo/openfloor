@@ -1,4 +1,4 @@
-import type { CredentialProvider } from "./provider-credentials";
+import type { CredentialKind, CredentialProvider } from "./provider-credentials";
 import type { RepositoryCandidate, RepositoryConnection, RepositoryPreflight } from "./session-types";
 
 export type FloorDomain = "agents" | "assignments" | "messages" | "queue" | "repository" | "runs" | "review";
@@ -273,4 +273,8 @@ export type CreateFloorAgentInput = {
   // Omitted means "openai" (the historical behavior); the dialog offers a
   // choice whenever more than one provider's rollout flag is enabled.
   provider?: CredentialProvider;
+  // Which of the owner's credential kinds pays for this agent's runs.
+  // Omitted/null means "the owner's default"; the dialog offers the choice
+  // only for providers that accept more than one kind.
+  credentialKind?: CredentialKind | null;
 };
