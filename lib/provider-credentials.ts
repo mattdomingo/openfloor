@@ -98,22 +98,52 @@ export function credentialFingerprint(apiKey: string): string {
   return apiKey.slice(-4);
 }
 
-// Per-provider default models, replacing the old single AGENT_RUN_MODEL
-// constant. A floor agent's nullable `model` column overrides its provider's
-// default; today no API accepts a model, so every run uses these.
+// Per-provider closed model allowlists; the FIRST entry is the provider's
+// default (the old DEFAULT_PROVIDER_MODELS values, unchanged). A floor
+// agent's nullable `model` column picks one; parseAgentInput and the
+// settings PATCH validate against this set so an unknown id is a 400 at
+// input time, never a vendor 404 mid-run. Ids were banked from each
+// vendor's models endpoint (docs/glm-grok-subscription-provider-prompt.md,
+// Step 0, 2026-08-24/25) — prefer an undated alias wherever one resolves,
+// because a dated snapshot 404s when it retires.
+//
+// Two accepted limits, stated rather than engineered around: the list goes
+// stale (a new model is a one-line edit here, not a broken run — do NOT
+// fetch /v1/models at dialog render), and it is per provider, not per
+// credential (a plan that lacks a model surfaces as the vendor's own error
+// at run start; openfloor has no source for plan entitlements).
+//
+// anthropic: never append a date suffix — the undated aliases resolve and
+//   outlive snapshot retirement. claude-haiku-4-5 is the only 200K-context
+//   entry (the rest are 1M); claude-fable-5 is unavailable under zero data
+//   retention, so a ZDR-configured org gets a 400 instead of a run.
+//   claude-mythos-5 is invitation-only and deliberately excluded.
 // kimi: bare "kimi-k3" — Moonshot's /v1/models id; the Claude-Code-doc
-// "kimi-k3[1m]" alias is NOT an API id (404, verified in Spike A).
-// gemini: "gemini-3.5-flash" — the id the pinned CLI actually sends; it
-// rewrites newer flash ids (e.g. gemini-3.7-flash) to this one (Spike C).
-// glm: "glm-5.3" — the coding flagship id Z.ai's /api/paas/v4/models
-// endpoint returns (Spike A, 2026-08-24); marketing names are not API ids.
-export const DEFAULT_PROVIDER_MODELS: Record<CredentialProvider, string> = {
-  openai: "gpt-5.6-terra",
-  anthropic: "claude-opus-5",
-  kimi: "kimi-k3",
-  gemini: "gemini-3.5-flash",
-  glm: "glm-5.3",
+//   "kimi-k3[1m]" alias is NOT an API id (404, verified in Spike A).
+// gemini: curated to ids that actually reach the wire — the pinned CLI
+//   rewrites some newer ids through its own resolution table
+//   (gemini-3.7-flash → gemini-3.5-flash at pin 0.56.0), and the DB model
+//   column must record what runs, so those rewritten ids are excluded.
+// glm: ids Z.ai's /api/paas/v4/models endpoint returns (Spike A,
+//   2026-08-24); marketing names are not API ids.
+// openai: the models-endpoint read stayed blocked on a key at the banking
+//   pass; until one exists this stays the single known-good default —
+//   gpt-5.6 variants must not be guessed.
+export const PROVIDER_MODELS: Record<CredentialProvider, readonly string[]> = {
+  openai: ["gpt-5.6-terra"],
+  anthropic: ["claude-opus-5", "claude-fable-5", "claude-opus-4-8", "claude-sonnet-5", "claude-haiku-4-5"],
+  kimi: ["kimi-k3", "kimi-k2.7-code", "kimi-k2.7-code-highspeed", "kimi-k2.6"],
+  gemini: ["gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite"],
+  glm: ["glm-5.3", "glm-5.2", "glm-5.1", "glm-5-turbo", "glm-5", "glm-4.7", "glm-4.6", "glm-4.5-air", "glm-4.5"],
 };
+
+// Derived alias (first allowlist entry), kept so existing importers don't
+// churn — but there is deliberately only ONE editable list above; a unit
+// test pins PROVIDER_MODELS[p][0] === DEFAULT_PROVIDER_MODELS[p] so the two
+// names can never drift apart.
+export const DEFAULT_PROVIDER_MODELS = Object.fromEntries(
+  CREDENTIAL_PROVIDERS.map((provider) => [provider, PROVIDER_MODELS[provider][0]]),
+) as Record<CredentialProvider, string>;
 
 export function resolveRunModel(provider: CredentialProvider, agentModel: string | null): string {
   const model = agentModel?.trim();

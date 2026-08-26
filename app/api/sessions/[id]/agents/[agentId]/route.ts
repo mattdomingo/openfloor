@@ -1,17 +1,21 @@
-import { deleteFloorAgent, updateFloorAgentTask } from "@/db/floor";
+import { deleteFloorAgent, updateFloorAgentSettings } from "@/db/floor";
 import { floorMutationResponse, mutationErrorResponse, readJson } from "@/lib/floor-api";
 import { pokeSessionRouter } from "@/lib/router-server";
 import { isApiError, requireApiUser } from "@/lib/server-auth";
-import { parseAgentTaskInput } from "@/lib/validation";
+import { parseAgentSettingsInput } from "@/lib/validation";
 
+// Field edits ({ task?, model?, credentialKind? }) on the agent resource the
+// same members already PATCH — deliberately not /model or /billing
+// sub-routes: pause and stop are separate routes because they are separate
+// verbs with different authorization; these are field edits.
 export async function PATCH(request: Request, { params }: { params: Promise<{ id: string; agentId: string }> }) {
   const user = await requireApiUser();
   if (isApiError(user)) return user;
-  const input = parseAgentTaskInput(await readJson(request));
-  if (!input) return Response.json({ error: "Description is required and must be under 1,000 characters" }, { status: 400 });
+  const input = parseAgentSettingsInput(await readJson(request));
+  if (!input) return Response.json({ error: "Provide a task under 1,000 characters, a model, or a billing credential to change" }, { status: 400 });
   const { id, agentId } = await params;
   try {
-    const floor = await updateFloorAgentTask(id, user.id, agentId, input);
+    const floor = await updateFloorAgentSettings(id, user.id, agentId, input);
     return floor
       ? floorMutationResponse(id, floor, ["agents"])
       : Response.json({ error: "Session not found" }, { status: 404 });

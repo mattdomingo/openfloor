@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   normalizeAgentName,
   parseAgentInput,
+  parseAgentSettingsInput,
   parseAssignmentInput,
   parseCredentialConnectInput,
   parseMessageInput,
@@ -90,6 +91,7 @@ describe("floor input validation", () => {
       ownerUserId: "owner",
       provider: "openai",
       credentialKind: null,
+      model: null,
     });
     expect(normalizeAgentName("  LUMEN   Agent ")).toBe("lumen agent");
   });
@@ -119,6 +121,39 @@ describe("floor input validation", () => {
     expect(parseAgentInput({ ...base, provider: "glm", credentialKind: "oauth" })).toBeNull();
     expect(parseAgentInput({ ...base, provider: "anthropic", credentialKind: "subscription" })).toBeNull();
     expect(parseAgentInput({ ...base, provider: "anthropic", credentialKind: 7 })).toBeNull();
+  });
+
+  it("accepts a model only from the provider's closed allowlist", () => {
+    const base = { name: "A", role: "R", task: "T", ownerUserId: "o" };
+    expect(parseAgentInput({ ...base, provider: "anthropic", model: "claude-sonnet-5" })?.model).toBe("claude-sonnet-5");
+    // The right id under the wrong provider is a 400, never a vendor 404 mid-run.
+    expect(parseAgentInput({ ...base, provider: "kimi", model: "claude-opus-5" })).toBeNull();
+    expect(parseAgentInput({ ...base, provider: "anthropic", model: "claude-opus-5-20260101" })).toBeNull();
+    expect(parseAgentInput({ ...base, provider: "anthropic", model: 7 })).toBeNull();
+    // Omitted and explicit null both mean "the provider's default".
+    expect(parseAgentInput({ ...base })?.model).toBeNull();
+    expect(parseAgentInput({ ...base, model: null })?.model).toBeNull();
+  });
+
+  it("parses partial agent-settings patches, keeping absent distinct from explicit null", () => {
+    // A task-only body is the old parseAgentTaskInput contract, unchanged.
+    expect(parseAgentSettingsInput({ task: " Refine the API " })).toEqual({ task: "Refine the API" });
+    expect(parseAgentSettingsInput({ task: "" })).toBeNull();
+    expect(parseAgentSettingsInput({ task: "x".repeat(1001) })).toBeNull();
+    // Explicit null means "reset to the default" and must survive parsing as
+    // a PRESENT key — otherwise Billing could never return to Owner's default.
+    const kindReset = parseAgentSettingsInput({ credentialKind: null });
+    expect(kindReset).toEqual({ credentialKind: null });
+    expect(kindReset && "credentialKind" in kindReset).toBe(true);
+    const kindOmitted = parseAgentSettingsInput({ model: "claude-sonnet-5" });
+    expect(kindOmitted && "credentialKind" in kindOmitted).toBe(false);
+    expect(parseAgentSettingsInput({ model: null })).toEqual({ model: null });
+    expect(parseAgentSettingsInput({ credentialKind: "oauth", model: null, task: "T" })).toEqual({ credentialKind: "oauth", model: null, task: "T" });
+    // An empty patch and garbage values are 400s.
+    expect(parseAgentSettingsInput({})).toBeNull();
+    expect(parseAgentSettingsInput({ credentialKind: "subscription" })).toBeNull();
+    expect(parseAgentSettingsInput({ model: 7 })).toBeNull();
+    expect(parseAgentSettingsInput(null)).toBeNull();
   });
 
   it("validates assignments, messages, prompts, and ordering", () => {

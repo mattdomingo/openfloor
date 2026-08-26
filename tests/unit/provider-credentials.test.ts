@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   AGENT_PROVIDER_LABELS,
+  CREDENTIAL_PROVIDERS,
   credentialAadContext,
   credentialFingerprint,
   credentialKindLabel,
@@ -8,6 +9,7 @@ import {
   DEFAULT_PROVIDER_MODELS,
   parseCredentialKind,
   parseCredentialProvider,
+  PROVIDER_MODELS,
   providerLabel,
   resolveRunCredentialSource,
   resolveRunModel,
@@ -70,6 +72,15 @@ describe("per-provider run models", () => {
 
   it("keeps the Codex default the historical AGENT_RUN_MODEL value", () => {
     expect(DEFAULT_PROVIDER_MODELS.openai).toBe("gpt-5.6-terra");
+  });
+
+  // Anti-drift: DEFAULT_PROVIDER_MODELS is a derived alias of the allowlist's
+  // first entry; two independently editable lists must never exist.
+  it("pins every provider's default to its allowlist's first entry", () => {
+    for (const provider of CREDENTIAL_PROVIDERS) {
+      expect(PROVIDER_MODELS[provider].length).toBeGreaterThan(0);
+      expect(PROVIDER_MODELS[provider][0]).toBe(DEFAULT_PROVIDER_MODELS[provider]);
+    }
   });
 });
 

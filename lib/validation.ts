@@ -2,6 +2,7 @@ import {
   credentialKindsForProvider,
   parseCredentialKind,
   parseCredentialProvider,
+  PROVIDER_MODELS,
   type CredentialKind,
   type CredentialProvider,
 } from "./provider-credentials";
@@ -16,8 +17,13 @@ export type AgentInput = {
   ownerUserId: string;
   provider: CredentialProvider;
   credentialKind: CredentialKind | null;
+  model: string | null;
 };
-export type AgentTaskInput = { task: string };
+// Partial settings patch for an existing persistent agent. `model` and
+// `credentialKind` distinguish ABSENT (leave the field alone) from explicit
+// null (reset to the default) — collapsing the two would make the Billing
+// control unable to return to "Owner's default".
+export type AgentSettingsInput = { task?: string; model?: string | null; credentialKind?: CredentialKind | null };
 export type AgentPauseInput = { paused: boolean };
 export type AssignmentInput = { task: string | null };
 export type MessageInput = { text: string; recipientUserId: string | null };
@@ -87,16 +93,43 @@ export function parseAgentInput(value: unknown): AgentInput | null {
     if (!kind || !credentialKindsForProvider(provider).includes(kind)) return null;
     credentialKind = kind;
   }
-  return { name, nameKey: normalizeAgentName(name), role, task, ownerUserId, provider, credentialKind };
+  // Optional model, valid only among the provider's closed allowlist so an
+  // unknown id 400s here instead of 404ing at the vendor mid-run;
+  // omitted/null means "the provider's default".
+  let model: string | null = null;
+  if (input.model !== undefined && input.model !== null) {
+    if (typeof input.model !== "string" || !PROVIDER_MODELS[provider].includes(input.model)) return null;
+    model = input.model;
+  }
+  return { name, nameKey: normalizeAgentName(name), role, task, ownerUserId, provider, credentialKind, model };
 }
 
-export function parseAgentTaskInput(value: unknown): AgentTaskInput | null {
+// Generalizes the old parseAgentTaskInput: at least one key must be present,
+// and the task rules are unchanged (trimmed, non-empty, ≤1000 — a
+// generalization, not a relaxation). `model` and `credentialKind` are only
+// shape-checked here; both are validated against the agent's STORED provider
+// in db/floor.ts — the body carries no provider, and trusting a
+// client-supplied one would let a caller set claude-opus-5 on a Kimi agent.
+export function parseAgentSettingsInput(value: unknown): AgentSettingsInput | null {
   if (!value || typeof value !== "object") return null;
-  const taskValue = (value as Record<string, unknown>).task;
-  if (typeof taskValue !== "string") return null;
-  const task = taskValue.trim();
-  if (!task || task.length > 1000) return null;
-  return { task };
+  const input = value as Record<string, unknown>;
+  const patch: AgentSettingsInput = {};
+  if (input.task !== undefined) {
+    if (typeof input.task !== "string") return null;
+    const task = input.task.trim();
+    if (!task || task.length > 1000) return null;
+    patch.task = task;
+  }
+  if (input.model !== undefined) {
+    if (input.model !== null && typeof input.model !== "string") return null;
+    patch.model = input.model;
+  }
+  if (input.credentialKind !== undefined) {
+    if (input.credentialKind !== null && parseCredentialKind(input.credentialKind) === null) return null;
+    patch.credentialKind = input.credentialKind === null ? null : parseCredentialKind(input.credentialKind);
+  }
+  if (patch.task === undefined && patch.model === undefined && patch.credentialKind === undefined) return null;
+  return patch;
 }
 
 export function parseAssignmentInput(value: unknown): AssignmentInput | null {

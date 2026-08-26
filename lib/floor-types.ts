@@ -32,9 +32,17 @@ export type FloorAgent = {
   kind: FloorAgentKind;
   // Which agent provider runs for this agent execute on, and an optional
   // model override (null = the provider's default). The create-agent dialog
-  // writes the selected provider; model selection is a later milestone.
+  // writes both, the model from PROVIDER_MODELS' closed per-provider list.
   provider: CredentialProvider;
   model: string | null;
+  // Which of the owner's credential kinds this agent's runs bill (null = the
+  // owner's default). Member-visible on purpose: this is the agent's own
+  // stored choice, made in a dialog every member can open — NOT the owner's
+  // connection state, which stays private (the rule that forbids revealing
+  // which kinds an owner has connected is about their account, not the
+  // agent). Showing it is what makes the "connect it or change the agent"
+  // run refusal diagnosable, so do not "fix" this back to hidden.
+  credentialKind: CredentialKind | null;
   // Manual pause/stop state for a persistent agent (kind === null). Non-null
   // blocks new router assignment/dispatch; an in-flight run finishes
   // normally. Always null for a system-managed agent.
@@ -286,5 +294,18 @@ export type CreateFloorAgentInput = {
   // Which of the owner's credential kinds pays for this agent's runs.
   // Omitted/null means "the owner's default"; the dialog offers the choice
   // only for providers that accept more than one kind.
+  credentialKind?: CredentialKind | null;
+  // Omitted/null means "the provider's default"; must be one of
+  // PROVIDER_MODELS[provider], enforced server-side in parseAgentInput.
+  model?: string | null;
+};
+
+// Partial edit of an existing persistent agent (PATCH .../agents/[agentId]).
+// Omitted = leave alone; explicit null = reset to the default. model and
+// credentialKind are validated server-side against the agent's STORED
+// provider, never a client-supplied one.
+export type FloorAgentSettingsPatch = {
+  task?: string;
+  model?: string | null;
   credentialKind?: CredentialKind | null;
 };
