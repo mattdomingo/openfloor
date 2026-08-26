@@ -854,7 +854,13 @@ export async function deleteSession(
   return { deleted: true, candidateBranchAlive: Boolean(survivingBranch) };
 }
 
-export type DeleteAccountBlockedSession = { id: string; title: string; reason: "repository_state" | "integration_in_progress" };
+// Repository state (a live candidate) no longer blocks account deletion —
+// app/api/account/route.ts abandons any live candidates first, the same way
+// session deletion does (see deleteSession's "candidate_live" shape above).
+// An in-progress GitHub integration still blocks: a Workflow is actively
+// pushing under a D1 lease, and deleting its rows mid-flight would strand a
+// real push. See the 2026-08-26 decision-log entry.
+export type DeleteAccountBlockedSession = { id: string; title: string; reason: "integration_in_progress" };
 
 export async function getAccountDeletionBlockers(
   userId: string,
@@ -871,17 +877,30 @@ export async function getAccountDeletionBlockers(
   const blocked: DeleteAccountBlockedSession[] = [];
   for (const session of owned.results) {
     const blocking = await getBlockingIntegrationRunId(session.id, database);
-    if (blocking) {
-      blocked.push({ id: session.id, title: session.title, reason: "integration_in_progress" });
-      continue;
-    }
-    const liveCandidate = await database
-      .prepare("SELECT 1 AS present FROM repository_candidates WHERE session_id = ? AND status IN ('creating', 'active') AND merged_at IS NULL")
-      .bind(session.id)
-      .first<{ present: number }>();
-    if (liveCandidate) blocked.push({ id: session.id, title: session.title, reason: "repository_state" });
+    if (blocking) blocked.push({ id: session.id, title: session.title, reason: "integration_in_progress" });
   }
   return { ownedSessionIds: owned.results.map((session) => session.id), blocked };
+}
+
+export type OwnedSessionLiveCandidate = { sessionId: string; branch: string; sha: string | null };
+
+// The branches app/api/account/route.ts must abandon (and optionally try to
+// delete on GitHub) before deleteAccount's D1 batch cascades their
+// repository_candidates rows away along with the sessions that own them.
+export async function listOwnedSessionsWithLiveCandidate(
+  userId: string,
+  database = getDb(),
+): Promise<OwnedSessionLiveCandidate[]> {
+  const result = await database
+    .prepare(
+      `SELECT c.session_id AS sessionId, c.branch_name AS branch, c.candidate_sha AS sha
+       FROM repository_candidates c
+       JOIN session_members sm ON sm.session_id = c.session_id AND sm.user_id = ? AND sm.role = 'owner'
+       WHERE c.status IN ('creating', 'active') AND c.merged_at IS NULL AND c.abandoned_at IS NULL`,
+    )
+    .bind(userId)
+    .all<OwnedSessionLiveCandidate>();
+  return result.results;
 }
 
 /* Account deletion cannot be a hard `DELETE FROM users`: ~12 columns

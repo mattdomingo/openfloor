@@ -244,7 +244,26 @@ describe("D1 session persistence", () => {
     expect(resurrected.onboardedAt).toBeNull();
   });
 
-  it("deleteAccount refuses and writes nothing when an owned session has live repository state", async () => {
+  it("deleteAccount no longer blocks on repository state — a live, unabandoned candidate cascades away with its session", async () => {
+    const owner = await upsertUser(identity("delacct-repostate", "Repo State Owner"), env.DB);
+    const created = await createSession(owner.id, { title: "Repo state room", objective: null }, env.DB);
+    const saved = await saveRepositoryConnection(created.session.id, owner.id, null, "installation-delacct-repostate", {
+      id: "repository-delacct-repostate", nodeId: "R_delacct_repostate", owner: "openfloor-test", name: "delacct-repostate",
+      fullName: "openfloor-test/delacct-repostate", private: true, defaultBranch: "main",
+    }, "main", [], env.DB);
+    const candidateId = crypto.randomUUID();
+    const branch = `openfloor/${created.session.id.slice(0, 8)}/candidate/${candidateId.slice(0, 8)}`;
+    await reserveRepositoryCandidate(created.session.id, owner.id, saved!.id, candidateId, "Repo state room", "", branch, "main", "a".repeat(40), env.DB);
+    await activateRepositoryCandidate(created.session.id, candidateId, "a".repeat(40), env.DB);
+
+    await expect(deleteAccount(owner.id, env.DB)).resolves.toEqual({ deleted: true });
+
+    expect(await getSessionForMember(created.session.id, owner.id, env.DB)).toBeNull();
+    const candidateRow = await env.DB.prepare("SELECT 1 AS present FROM repository_candidates WHERE id = ?").bind(candidateId).first();
+    expect(candidateRow).toBeNull();
+  });
+
+  it("deleteAccount still refuses and writes nothing while an owned session's candidate is mid-integration", async () => {
     const owner = await upsertUser(identity("delacct-blocked", "Blocked Owner"), env.DB);
     const created = await createSession(owner.id, { title: "Blocked room", objective: null }, env.DB);
     const saved = await saveRepositoryConnection(created.session.id, owner.id, null, "installation-delacct", {
@@ -255,11 +274,10 @@ describe("D1 session persistence", () => {
     const branch = `openfloor/${created.session.id.slice(0, 8)}/candidate/${candidateId.slice(0, 8)}`;
     await reserveRepositoryCandidate(created.session.id, owner.id, saved!.id, candidateId, "Blocked room", "", branch, "main", "a".repeat(40), env.DB);
     await activateRepositoryCandidate(created.session.id, candidateId, "a".repeat(40), env.DB);
+    await env.DB.prepare("UPDATE repository_candidates SET integration_run_id = ? WHERE id = ?").bind(crypto.randomUUID(), candidateId).run();
 
-    await expect(deleteAccount(owner.id, env.DB)).resolves.toEqual({
-      blocked: "sessions",
-      sessions: [{ id: created.session.id, title: "Blocked room", reason: "repository_state" }],
-    });
+    const result = await deleteAccount(owner.id, env.DB);
+    expect(result).toMatchObject({ blocked: "sessions", sessions: [{ id: created.session.id, title: "Blocked room", reason: "integration_in_progress" }] });
 
     // Nothing was written: the session and the owner's account both remain.
     expect(await getSessionForMember(created.session.id, owner.id, env.DB)).not.toBeNull();

@@ -24,7 +24,7 @@ import { ProviderCredentials } from "./ProviderCredentials";
 type SettingsSection = "profile" | "plan" | "connections" | "preferences" | "danger";
 type Usage = { plan: Plan; planStatus: PlanStatus; effectivePlan: Plan; seconds: number; limitHours: number; limitSeats: number };
 type Billing = { customerId: string | null; subscriptionId: string | null; plan: PaidPlan | null; quantity: number | null; stripeStatus: string | null; currentPeriodEnd: number | null; cancelAtPeriodEnd: boolean };
-type BlockedSession = { id: string; title: string; reason: "repository_state" | "integration_in_progress" };
+type BlockedSession = { id: string; title: string; reason: "integration_in_progress" };
 
 const SETTINGS_SECTIONS: { value: SettingsSection; label: string }[] = [
   { value: "profile", label: "Profile" },
@@ -394,9 +394,11 @@ function DangerZoneSection() {
 function DeleteAccountDialog({ onClose }: { onClose: () => void }) {
   const { dismiss, dialogProps } = useDialogDismiss(onClose);
   const [confirmText, setConfirmText] = useState("");
+  const [deleteBranches, setDeleteBranches] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [blockedSessions, setBlockedSessions] = useState<BlockedSession[] | null>(null);
+  const [orphanedBranches, setOrphanedBranches] = useState<string[] | null>(null);
   const ready = confirmText.trim() === "DELETE";
 
   async function remove() {
@@ -407,12 +409,18 @@ function DeleteAccountDialog({ onClose }: { onClose: () => void }) {
     const response = await fetch(`${BASE_PATH}/api/account`, {
       method: "DELETE",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ confirm: "DELETE" }),
+      body: JSON.stringify({ confirm: "DELETE", deleteBranches }),
     });
     if (!response.ok) {
       const body = (await response.json().catch(() => null)) as { error?: string; sessions?: BlockedSession[] } | null;
       setError(body?.error ?? "Unable to delete your account.");
       setBlockedSessions(body?.sessions ?? null);
+      setBusy(false);
+      return;
+    }
+    const body = (await response.json().catch(() => null)) as { orphanedBranches?: string[] } | null;
+    if (body?.orphanedBranches && body.orphanedBranches.length > 0) {
+      setOrphanedBranches(body.orphanedBranches);
       setBusy(false);
       return;
     }
@@ -433,28 +441,43 @@ function DeleteAccountDialog({ onClose }: { onClose: () => void }) {
       </div>
       <div className="dialog-body">
         {error && <p className="form-error" role="alert">{error}</p>}
-        {blockedSessions && blockedSessions.length > 0 ? (
+        {orphanedBranches ? (
+          <>
+            <p>Your account was deleted. These candidate branches are still on GitHub — nothing else references them:</p>
+            <ul className="settings-category-list">
+              {orphanedBranches.map((branch) => <li key={branch} className="settings-category-row"><span className="settings-category-name">{branch}</span></li>)}
+            </ul>
+          </>
+        ) : blockedSessions && blockedSessions.length > 0 ? (
           <ul className="settings-category-list">
             {blockedSessions.map((session) => (
               <li key={session.id} className="settings-category-row">
                 <span className="settings-category-name">{session.title}</span>
-                <span className="settings-category-detail">
-                  {session.reason === "integration_in_progress"
-                    ? "This session's candidate branch is still being updated."
-                    : "This session's candidate branch hasn't merged yet — merge or abandon it first."}
-                </span>
+                <span className="settings-category-detail">This session&rsquo;s candidate branch is still being updated.</span>
                 <Link className="button" data-variant="quiet" data-size="sm" href={`/session/${session.id}`}>Open</Link>
               </li>
             ))}
           </ul>
         ) : (
-          <label className="field"><span className="label">Type DELETE to confirm</span><input value={confirmText} onChange={(event) => setConfirmText(event.target.value)} autoFocus /></label>
+          <>
+            <label className="field"><span className="label">Type DELETE to confirm</span><input value={confirmText} onChange={(event) => setConfirmText(event.target.value)} autoFocus /></label>
+            <label className="settings-category-row">
+              <input type="checkbox" checked={deleteBranches} onChange={(event) => setDeleteBranches(event.target.checked)} />
+              <span className="settings-category-detail">Also delete any unmerged openfloor candidate branches on GitHub, where possible</span>
+            </label>
+          </>
         )}
       </div>
       <div className="dialog-foot">
-        <button type="button" className="button" data-variant="quiet" onClick={dismiss} disabled={busy}>Cancel</button>
-        {!(blockedSessions && blockedSessions.length > 0) && (
-          <button type="button" className="button danger-button" onClick={remove} disabled={!ready || busy}>{busy ? "Deleting…" : "Delete account"}</button>
+        {orphanedBranches ? (
+          <button type="button" className="button" onClick={() => window.location.assign(`${BASE_PATH}/signout`)}>Close</button>
+        ) : (
+          <>
+            <button type="button" className="button" data-variant="quiet" onClick={dismiss} disabled={busy}>Cancel</button>
+            {!(blockedSessions && blockedSessions.length > 0) && (
+              <button type="button" className="button danger-button" onClick={remove} disabled={!ready || busy}>{busy ? "Deleting…" : "Delete account"}</button>
+            )}
+          </>
         )}
       </div>
     </dialog>
