@@ -4,7 +4,7 @@ import { useState, type DragEvent } from "react";
 import type { AgentRun, FloorAgent, FloorQueueItem } from "@/lib/floor-types";
 import { LocalDateTime } from "@/components/LocalDateTime";
 import type { QueueOrderMode, QueueScope } from "./data";
-import { runStatusToken } from "./data";
+import { canRollbackRun, runStatusToken } from "./data";
 import { AgentTargetMenu } from "./AgentTargetMenu";
 import { Icon, SegmentedControl } from "./primitives";
 import { Panel, type PanelChrome } from "./Rail";
@@ -12,7 +12,7 @@ import { QueueOrderMenu } from "./QueueOrderMenu";
 
 const scopeOptions: { value: QueueScope; label: string }[] = [{ value: "mine", label: "You" }, { value: "team", label: "Team" }];
 
-export function PromptQueue({ chrome, items, runs, agents, owner, runEnabled, busy, autoDispatch, onAutoDispatch, autoResolveConflicts, onAutoResolveConflicts, browserConflictAlerts, onBrowserConflictAlerts, onRun, onCancel, onDiscard, onRetry, onEditPrompt, onPause, onDelete, onSetAgent, currentUserId, scope, onScope, orderMode, onOrderMode, draggedItemId, onItemDragStart, onItemDragEnd, onItemDrop, onFocusAgent }: {
+export function PromptQueue({ chrome, items, runs, agents, owner, runEnabled, busy, autoDispatch, onAutoDispatch, autoResolveConflicts, onAutoResolveConflicts, browserConflictAlerts, onBrowserConflictAlerts, onRun, onCancel, onDiscard, onRollback, onRetry, onEditPrompt, onPause, onDelete, onSetAgent, currentUserId, scope, onScope, orderMode, onOrderMode, draggedItemId, onItemDragStart, onItemDragEnd, onItemDrop, onFocusAgent }: {
   chrome: PanelChrome;
   items: FloorQueueItem[];
   runs: AgentRun[];
@@ -29,6 +29,7 @@ export function PromptQueue({ chrome, items, runs, agents, owner, runEnabled, bu
   onRun: (queueItemId: string) => Promise<void>;
   onCancel: (runId: string) => Promise<void>;
   onDiscard: (runId: string) => Promise<void>;
+  onRollback: (runId: string) => Promise<void>;
   onRetry: (runId: string) => Promise<void>;
   onEditPrompt: (queueItemId: string, promptId: string, text: string) => Promise<boolean>;
   onPause: (queueItemId: string, paused: boolean) => Promise<void>;
@@ -53,8 +54,8 @@ export function PromptQueue({ chrome, items, runs, agents, owner, runEnabled, bu
   const manual = orderMode === "manual" && canReorder;
   const scoped = scope === "mine" ? items.filter((item) => item.prompts.some((prompt) => prompt.authorUserId === currentUserId)) : items;
   const isDone = (item: FloorQueueItem) => {
-    const status = runs.find((candidate) => candidate.queueItemId === item.id)?.status;
-    return status === "integrated" || item.status === "cancelled";
+    const run = runs.find((candidate) => candidate.queueItemId === item.id);
+    return runStatusToken(run) === "integrated" || runStatusToken(run) === "rolled_back" || item.status === "cancelled";
   };
   const visible = [...scoped].sort((a, b) => Number(isDone(a)) - Number(isDone(b)));
 
@@ -85,7 +86,14 @@ export function PromptQueue({ chrome, items, runs, agents, owner, runEnabled, bu
       // runs while auto-dispatch is off — without this, a prompt submitted
       // with target "Auto" in that state has no path to a Run button at all.
       const retargetable = manageable && item.status === "queued" && !item.agentId && agents.length > 0;
-      return <li key={item.id} className="queue-item" data-done={(statusValue === "integrated" || statusValue === "cancelled") ? "true" : undefined} data-attention={statusValue === "failed" ? "true" : undefined} data-manual={manual ? "true" : undefined} data-dragging={draggedItemId === item.id ? "true" : undefined} data-drop-target={dragOverId === item.id ? "true" : undefined} draggable={manual}
+      const rollbackAllowed = canRollbackRun({
+        run,
+        item,
+        agent: agents.find((agent) => agent.id === run?.agentId),
+        currentUserId,
+        sessionOwner: owner,
+      });
+      return <li key={item.id} className="queue-item" data-done={(statusValue === "integrated" || statusValue === "rolled_back" || statusValue === "cancelled") ? "true" : undefined} data-attention={(statusValue === "failed" || statusValue === "rollback_failed") ? "true" : undefined} data-manual={manual ? "true" : undefined} data-dragging={draggedItemId === item.id ? "true" : undefined} data-drop-target={dragOverId === item.id ? "true" : undefined} draggable={manual}
         onDragStart={manual ? () => onItemDragStart(item.id) : undefined}
         onDragEnd={manual ? () => { setDragOverId(null); onItemDragEnd(); } : undefined}
         onDragOver={manual ? (event) => { event.preventDefault(); if (draggedItemId && draggedItemId !== item.id) setDragOverId(item.id); } : undefined}
@@ -102,7 +110,7 @@ export function PromptQueue({ chrome, items, runs, agents, owner, runEnabled, bu
           {item.prompts.length > 1 ? <ul className="queue-prompt queue-prompt-stack" data-expanded={open ? "true" : "false"}>{item.prompts.map((prompt) => <li key={prompt.id}><strong>{prompt.authorName}</strong> · {prompt.text}</li>)}</ul> : <p className="queue-prompt" data-expanded={open ? "true" : "false"}>{first?.text}</p>}
           {long && <button type="button" className="queue-expand" aria-expanded={open} onClick={() => setExpanded((current) => ({ ...current, [item.id]: !open }))}>{open ? "Show less" : "Show more"}</button>}
         </>}
-        <div className="queue-run-row">{run?.purpose === "conflict_resolution" && <span className="queue-chip" data-kind="agent-auto">Merge Resolver</span>}<span className="queue-chip" data-kind="status" data-status={statusValue}>{statusValue.replace("_", " ")}</span>{run?.runBranch && <code className="queue-run-branch">{run.runBranch}</code>}{owner && runEnabled && item.status === "queued" && item.agentId && <button type="button" className="button" data-size="sm" disabled={busy} onClick={() => void onRun(item.id)}>Run</button>}{owner && cancellable && run.status !== "cancel_requested" && <button type="button" className="button danger-button" data-size="sm" disabled={busy} onClick={() => void onCancel(run.id)}>Cancel</button>}{owner && run?.status === "published" && !run.discardedAt && <button type="button" className="button danger-button" data-size="sm" disabled={busy} onClick={() => void onDiscard(run.id)}>Discard candidate</button>}{owner && run?.status === "conflicted" && !run.conflictCaseId && <button type="button" className="button" data-size="sm" disabled={busy} onClick={() => void onRetry(run.id)}>Retry against latest candidate</button>}{!editing && editable && <button type="button" className="button" data-size="sm" disabled={busy} onClick={() => { setEditingId(item.id); setDraftText(first?.text ?? ""); }}>Edit</button>}{pausable && <button type="button" className="button" data-size="sm" disabled={busy} onClick={() => void onPause(item.id, true)}>Pause</button>}{resumable && <button type="button" className="button" data-size="sm" disabled={busy} onClick={() => void onPause(item.id, false)}>Resume</button>}{deletable && <button type="button" className="button danger-button" data-size="sm" disabled={busy} onClick={() => void onDelete(item.id)}>Delete</button>}</div>
+        <div className="queue-run-row">{run?.purpose === "conflict_resolution" && <span className="queue-chip" data-kind="agent-auto">Merge Resolver</span>}<span className="queue-chip" data-kind="status" data-status={statusValue} title={run?.rollbackFailureReason ?? undefined}>{statusValue.replace("_", " ")}</span>{run?.runBranch && <code className="queue-run-branch">{run.runBranch}</code>}{owner && runEnabled && item.status === "queued" && item.agentId && <button type="button" className="button" data-size="sm" disabled={busy} onClick={() => void onRun(item.id)}>Run</button>}{owner && cancellable && run.status !== "cancel_requested" && <button type="button" className="button danger-button" data-size="sm" disabled={busy} onClick={() => void onCancel(run.id)}>Cancel</button>}{owner && run?.status === "published" && !run.discardedAt && <button type="button" className="button danger-button" data-size="sm" disabled={busy} onClick={() => void onDiscard(run.id)}>Discard candidate</button>}{rollbackAllowed && run && <button type="button" className="button danger-button" data-size="sm" disabled={busy} onClick={() => void onRollback(run.id)}>{run.rollbackStatus === "failed" ? "Retry rollback" : "Rollback changes"}</button>}{owner && run?.status === "conflicted" && !run.conflictCaseId && <button type="button" className="button" data-size="sm" disabled={busy} onClick={() => void onRetry(run.id)}>Retry against latest candidate</button>}{!editing && editable && <button type="button" className="button" data-size="sm" disabled={busy} onClick={() => { setEditingId(item.id); setDraftText(first?.text ?? ""); }}>Edit</button>}{pausable && <button type="button" className="button" data-size="sm" disabled={busy} onClick={() => void onPause(item.id, true)}>Pause</button>}{resumable && <button type="button" className="button" data-size="sm" disabled={busy} onClick={() => void onPause(item.id, false)}>Resume</button>}{deletable && <button type="button" className="button danger-button" data-size="sm" disabled={busy} onClick={() => void onDelete(item.id)}>Delete</button>}</div>
       </li>;
     })}</ul>}
   </Panel>;

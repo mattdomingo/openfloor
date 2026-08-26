@@ -20,7 +20,7 @@ export async function DELETE(_request: Request, { params }: { params: Promise<{ 
     return Response.json({ error: "The candidate branch hasn't merged yet" }, { status: 409 });
   }
   if (context.integrationRunId) {
-    return Response.json({ error: "A run is still integrating into this candidate", runId: context.integrationRunId }, { status: 409 });
+    return Response.json({ error: "The candidate is still being updated", runId: context.integrationRunId }, { status: 409 });
   }
   if (context.branchDeletedAt) {
     const floor = await getFloorSnapshot(sessionId, user.id);

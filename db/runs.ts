@@ -28,10 +28,19 @@ export async function getAgentRuns(sessionId: string, database = getDb()): Promi
             r.integrated_at AS integratedAt,
             r.cancel_requested_at AS cancelRequestedAt, r.updated_at AS updatedAt,
             CASE WHEN mca.run_id IS NULL THEN 'task' ELSE 'conflict_resolution' END AS purpose,
-            COALESCE(mca.case_id, source_case.id) AS conflictCaseId
+            COALESCE(mca.case_id, source_case.id) AS conflictCaseId,
+            rb.id AS rollbackId, rb.status AS rollbackStatus,
+            rb.expected_candidate_sha AS rollbackExpectedCandidateSha,
+            rb.rollback_commit_sha AS rollbackCommitSha,
+            rb.failure_reason AS rollbackFailureReason, rb.created_by AS rollbackBy,
+            rb.created_at AS rollbackRequestedAt, rb.completed_at AS rollbackCompletedAt
      FROM agent_runs r JOIN floor_agents a ON a.id = r.agent_id
      LEFT JOIN merge_conflict_attempts mca ON mca.run_id = r.id
      LEFT JOIN merge_conflict_cases source_case ON source_case.source_run_id = r.id
+     LEFT JOIN agent_run_rollbacks rb ON rb.id = (
+       SELECT latest.id FROM agent_run_rollbacks latest
+       WHERE latest.run_id = r.id ORDER BY latest.created_at DESC, latest.id DESC LIMIT 1
+     )
      WHERE r.session_id = ? ORDER BY r.created_at DESC, r.id DESC LIMIT 20`,
   ).bind(sessionId).all<RunRecord>();
   return Promise.all(rows.results.map(async (run) => ({
@@ -135,10 +144,19 @@ export async function getAgentRun(runId: string, database = getDb()): Promise<Ag
             r.integrated_at AS integratedAt,
             r.cancel_requested_at AS cancelRequestedAt, r.updated_at AS updatedAt,
             CASE WHEN mca.run_id IS NULL THEN 'task' ELSE 'conflict_resolution' END AS purpose,
-            COALESCE(mca.case_id, source_case.id) AS conflictCaseId
+            COALESCE(mca.case_id, source_case.id) AS conflictCaseId,
+            rb.id AS rollbackId, rb.status AS rollbackStatus,
+            rb.expected_candidate_sha AS rollbackExpectedCandidateSha,
+            rb.rollback_commit_sha AS rollbackCommitSha,
+            rb.failure_reason AS rollbackFailureReason, rb.created_by AS rollbackBy,
+            rb.created_at AS rollbackRequestedAt, rb.completed_at AS rollbackCompletedAt
      FROM agent_runs r JOIN floor_agents a ON a.id = r.agent_id
      LEFT JOIN merge_conflict_attempts mca ON mca.run_id = r.id
      LEFT JOIN merge_conflict_cases source_case ON source_case.source_run_id = r.id
+     LEFT JOIN agent_run_rollbacks rb ON rb.id = (
+       SELECT latest.id FROM agent_run_rollbacks latest
+       WHERE latest.run_id = r.id ORDER BY latest.created_at DESC, latest.id DESC LIMIT 1
+     )
      WHERE r.id = ?`,
   ).bind(runId).first<RunRecord>();
   if (!row) return null;
@@ -664,7 +682,7 @@ export async function countRunnerActivityEvents(runId: string, database = getDb(
   return Number(row?.count ?? 0);
 }
 
-async function appendRunEvent(runId: string, kind: string, detail: string, database: D1DatabaseLike): Promise<void> {
+export async function appendRunEvent(runId: string, kind: string, detail: string, database: D1DatabaseLike): Promise<void> {
   await database.prepare(
     `INSERT INTO agent_run_events (id, run_id, sequence, kind, detail, created_at)
      SELECT ?, ?, COALESCE(MAX(sequence), 0) + 1, ?, ?, ? FROM agent_run_events WHERE run_id = ?`,

@@ -35,6 +35,7 @@ type RunRow = {
   status: string;
   summary: string | null;
   conflictReason: string | null;
+  rollbackStatus: string | null;
 };
 
 export async function getSessionContext(
@@ -64,7 +65,8 @@ export async function getSessionContext(
     ).bind(sessionId).all<SessionContextAssignment>(),
     database.prepare(
       `SELECT r.id, r.queue_item_id AS queueItemId, a.name AS agentName, r.status, r.summary,
-              r.conflict_reason AS conflictReason
+              r.conflict_reason AS conflictReason,
+              (SELECT rb.status FROM agent_run_rollbacks rb WHERE rb.run_id = r.id ORDER BY rb.created_at DESC, rb.id DESC LIMIT 1) AS rollbackStatus
        FROM agent_runs r JOIN floor_agents a ON a.id = r.agent_id
        WHERE r.session_id = ? ORDER BY r.created_at DESC LIMIT ?`,
     ).bind(sessionId, RUN_LIMIT).all<RunRow>(),
@@ -134,7 +136,7 @@ export async function getSessionContext(
       files: filesByRun.get(run.id) ?? [],
       recentEdits: editsByRun.get(run.id) ?? [],
     };
-    if (run.status === "integrated") integratedRuns.push(rendered);
+    if (run.status === "integrated" && run.rollbackStatus !== "completed") integratedRuns.push(rendered);
     else if (IN_FLIGHT_STATUSES.has(run.status)) inFlightRuns.push(rendered);
     else if (BLOCKED_STATUSES.has(run.status)) blockedRuns.push(rendered);
   }

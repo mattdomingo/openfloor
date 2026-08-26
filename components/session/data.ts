@@ -25,8 +25,8 @@ export const ACTIVE_RUN_STATUSES = new Set<AgentRunStatus>([
   "provisioning", "running", "checking", "publishing", "integrating", "cancel_requested",
 ]);
 
-export function isRunLive(run: Pick<AgentRun, "status"> | null | undefined): boolean {
-  return Boolean(run && ACTIVE_RUN_STATUSES.has(run.status));
+export function isRunLive(run: (Pick<AgentRun, "status"> & Partial<Pick<AgentRun, "rollbackStatus">>) | null | undefined): boolean {
+  return Boolean(run && (ACTIVE_RUN_STATUSES.has(run.status) || run.rollbackStatus === "requested" || run.rollbackStatus === "running"));
 }
 
 // Every finished run — reply or task — records finalResponse; this is the
@@ -41,8 +41,25 @@ export function agentReplyText(run: Pick<AgentRun, "status" | "finalResponse"> |
 // answered its prompt, so the UI reads that as "answered" rather than the
 // raw status, which otherwise misleadingly reused task-pipeline vocabulary
 // for a run that never ran checks or published anything.
-export function runStatusToken(run: Pick<AgentRun, "status" | "kind"> | null | undefined): string {
+export function runStatusToken(run: (Pick<AgentRun, "status" | "kind"> & Partial<Pick<AgentRun, "rollbackStatus">>) | null | undefined): string {
   if (!run) return "idle";
+  if (run.rollbackStatus === "requested" || run.rollbackStatus === "running") return "rolling_back";
+  if (run.rollbackStatus === "completed") return "rolled_back";
+  if (run.rollbackStatus === "failed") return "rollback_failed";
   if (run.kind === "reply" && run.status === "ready") return "answered";
   return run.status;
+}
+
+export function canRollbackRun(input: {
+  run: AgentRun | null | undefined;
+  item: import("@/lib/floor-types").FloorQueueItem | null | undefined;
+  agent: import("@/lib/floor-types").FloorAgent | null | undefined;
+  currentUserId: string;
+  sessionOwner: boolean;
+}): boolean {
+  const { run, item, agent, currentUserId, sessionOwner } = input;
+  if (!run || !item || !agent || run.status !== "integrated" || run.kind === "reply") return false;
+  if (run.rollbackStatus && run.rollbackStatus !== "failed") return false;
+  const authoredEveryPrompt = item.prompts.length > 0 && item.prompts.every((prompt) => prompt.authorUserId === currentUserId);
+  return sessionOwner || agent.ownerUserId === currentUserId || authoredEveryPrompt;
 }
