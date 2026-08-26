@@ -81,11 +81,11 @@
 		"OPENFLOOR_RUNTIME_ORIGIN": "https://app.opnflr.com",
 		"PREFLIGHT_ENABLED": "true",
 		"AGENT_RUN_ENABLED": "true",
-		// Checkout rollout gate. Prices, Portal config, webhook, secrets, and
-		// migration 0024 are live; the docs/stripe-billing.md acceptance flow
-		// runs against production on test-mode Stripe keys, so the Worker's
-		// STRIPE_* secrets are test-mode until that passes. Swap them for live
-		// keys before real traffic.
+		// Checkout rollout gate: enabled and selling. The docs/stripe-billing.md
+		// acceptance flow passed against production on test-mode keys, and the
+		// Worker's five STRIPE_* secrets have since been swapped to live mode —
+		// prices, Portal configuration, and webhook endpoint are all live-mode
+		// objects, distinct from the test-mode set they replaced.
 		"STRIPE_CHECKOUT_ENABLED": "true",
 		// Claude-runner rollout gate: enabled now that the Agent SDK image,
 		// anthropic gateway, and a resolvable Anthropic credential are live.
