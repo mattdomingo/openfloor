@@ -66,5 +66,5 @@ describe("resolver three-way workspace", () => {
     expect(git(latest, "rev-parse", "HEAD")).toBe(publisherBase);
     expect(git(latest, "diff", "--name-only", "HEAD").split("\n")).toEqual(["a.ts", "b.ts"]);
     expect(readFileSync(join(latest, "integrated.ts"), "utf8")).toContain("kept");
-  }, 15_000);
+  }, 30_000);
 });

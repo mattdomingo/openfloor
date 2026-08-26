@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   AGENT_PROVIDER_LABELS,
+  connectedKindsForProvider,
+  connectedProviders,
   CREDENTIAL_PROVIDERS,
   credentialAadContext,
   credentialFingerprint,
@@ -14,8 +16,10 @@ import {
   resolveRunCredentialSource,
   resolveRunModel,
   usesClaudeRunner,
+  type ProviderCredentialSummary,
 } from "@/lib/provider-credentials";
 import { validateProviderApiKey, validateProviderOauthSecret } from "@/lib/provider-validation";
+import { MODEL_PRICING } from "@/lib/model-pricing";
 
 describe("provider parsing and labels", () => {
   it("accepts only known providers", () => {
@@ -82,6 +86,18 @@ describe("per-provider run models", () => {
       expect(PROVIDER_MODELS[provider][0]).toBe(DEFAULT_PROVIDER_MODELS[provider]);
     }
   });
+
+  // Anti-drift: every model a run can actually select must be priceable
+  // (lib/model-pricing.ts), or the cost tile silently shows "—" for it
+  // forever. A model added to PROVIDER_MODELS without a matching price entry
+  // is caught here, not in production.
+  it("prices every model in the allowlist", () => {
+    for (const provider of CREDENTIAL_PROVIDERS) {
+      for (const model of PROVIDER_MODELS[provider]) {
+        expect(MODEL_PRICING[model], `${provider} model "${model}" has no MODEL_PRICING entry`).toBeDefined();
+      }
+    }
+  });
 });
 
 describe("run credential resolution order", () => {
@@ -112,11 +128,13 @@ describe("run credential resolution order", () => {
 describe("credential kinds", () => {
   it("allows a subscription kind only where one is actually honored", () => {
     expect(credentialKindsForProvider("anthropic")).toEqual(["api_key", "oauth"]);
+    // A Kimi Code plan key connects as kimi's oauth kind (2026-08-26
+    // decision-log entry — vendor-documented surface, user-validated).
+    expect(credentialKindsForProvider("kimi")).toEqual(["api_key", "oauth"]);
     // openai's ChatGPT-bundle kind went live when Spike D passed (2026-08-26):
     // the gateway substitutes the bundle's access token toward
     // chatgpt.com/backend-api/codex, so the container holds no credential.
     expect(credentialKindsForProvider("openai")).toEqual(["api_key", "oauth"]);
-    expect(credentialKindsForProvider("kimi")).toEqual(["api_key"]);
     expect(credentialKindsForProvider("gemini")).toEqual(["api_key"]);
     expect(credentialKindsForProvider("glm")).toEqual(["api_key"]);
   });
@@ -132,12 +150,59 @@ describe("credential kinds", () => {
     expect(credentialAadContext("user-1", "anthropic", "api_key")).toBe("user-1:anthropic");
     expect(credentialAadContext("user-1", "anthropic", "oauth")).toBe("user-1:anthropic:oauth");
     expect(credentialAadContext("user-1", "openai", "oauth")).toBe("user-1:openai:oauth");
+    // The kinded AAD covers the new kimi plan rows while an api_key kimi row
+    // keeps the bare legacy form — nobody reconnects.
+    expect(credentialAadContext("user-1", "kimi", "api_key")).toBe("user-1:kimi");
+    expect(credentialAadContext("user-1", "kimi", "oauth")).toBe("user-1:kimi:oauth");
   });
 
   it("labels kinds for Settings rows and refusal messages", () => {
     expect(credentialKindLabel("anthropic", "api_key")).toBe("API key");
     expect(credentialKindLabel("anthropic", "oauth")).toBe("Claude subscription");
     expect(credentialKindLabel("openai", "oauth")).toBe("ChatGPT subscription");
+    // The vendor's own product name — what the member's invoice says.
+    expect(credentialKindLabel("kimi", "oauth")).toBe("Kimi Code subscription");
+  });
+});
+
+function credential(provider: ProviderCredentialSummary["provider"], kind: ProviderCredentialSummary["kind"]): ProviderCredentialSummary {
+  return { provider, kind, fingerprint: "abcd", validatedAt: null, createdAt: 0, updatedAt: 0, monthSpendMicroUsd: 0, monthlyLimitMicroUsd: null };
+}
+
+describe("connected providers/kinds for the create-agent dialog", () => {
+  it("dedupes a provider holding both api_key and oauth rows into one option", () => {
+    const credentials = [credential("anthropic", "api_key"), credential("anthropic", "oauth")];
+    expect(connectedProviders(credentials, CREDENTIAL_PROVIDERS)).toEqual(["anthropic"]);
+  });
+
+  it("excludes providers disabled by rollout even if a key is connected", () => {
+    const credentials = [credential("anthropic", "api_key"), credential("gemini", "api_key")];
+    expect(connectedProviders(credentials, ["gemini"])).toEqual(["gemini"]);
+  });
+
+  it("returns nothing when no credentials are connected", () => {
+    expect(connectedProviders([], CREDENTIAL_PROVIDERS)).toEqual([]);
+  });
+
+  it("intersects connected kinds with the kinds a provider actually accepts", () => {
+    const credentials = [credential("anthropic", "api_key"), credential("anthropic", "oauth")];
+    expect(connectedKindsForProvider(credentials, "anthropic")).toEqual(["api_key", "oauth"]);
+    expect(connectedKindsForProvider([credential("anthropic", "api_key")], "anthropic")).toEqual(["api_key"]);
+  });
+
+  it("never returns a kind the provider does not accept, even from a hand-written row", () => {
+    // This used openai until its ChatGPT-bundle kind became real on
+    // 2026-08-26; gemini stays api_key-only, so it is the honest example of a
+    // provider whose hand-written oauth row must never surface.
+    const credentials = [credential("gemini", "api_key"), credential("gemini", "oauth")];
+    expect(connectedKindsForProvider(credentials, "gemini")).toEqual(["api_key"]);
+    // openai now accepts both, so a real pair does surface for it.
+    expect(connectedKindsForProvider([credential("openai", "api_key"), credential("openai", "oauth")], "openai"))
+      .toEqual(["api_key", "oauth"]);
+  });
+
+  it("returns nothing for a provider with no connected rows", () => {
+    expect(connectedKindsForProvider([credential("openai", "api_key")], "anthropic")).toEqual([]);
   });
 });
 
@@ -190,6 +255,10 @@ describe("connect-time key validation", () => {
     expect(calls[0].headers["anthropic-beta"]).toBeUndefined();
     // No other provider has a free oauth probe: null, and no network call —
     // the caller stores validated_at null instead of faking a timestamp.
+    // kimi stays null deliberately: the plan base's models endpoint is
+    // unverified with a live plan key (the waitlist blocked a spike
+    // purchase, 2026-08-26 decision-log entry), and a wrong probe would
+    // block every connect; "Connected — not yet verified" is honest.
     expect(await validateProviderOauthSecret("openai", "bundle-json")).toBeNull();
     expect(await validateProviderOauthSecret("kimi", "token")).toBeNull();
     expect(calls).toHaveLength(1);

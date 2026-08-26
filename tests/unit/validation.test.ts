@@ -115,8 +115,9 @@ describe("floor input validation", () => {
     // Omitted and explicit null both mean "the owner's default".
     expect(parseAgentInput({ ...base, provider: "anthropic" })?.credentialKind).toBeNull();
     expect(parseAgentInput({ ...base, provider: "anthropic", credentialKind: null })?.credentialKind).toBeNull();
+    // A Kimi Code plan key is a real kimi kind (2026-08-26 decision-log entry).
+    expect(parseAgentInput({ ...base, provider: "kimi", credentialKind: "oauth" })?.credentialKind).toBe("oauth");
     // A kind the provider does not support, and garbage, are 400s.
-    expect(parseAgentInput({ ...base, provider: "kimi", credentialKind: "oauth" })).toBeNull();
     expect(parseAgentInput({ ...base, provider: "gemini", credentialKind: "oauth" })).toBeNull();
     expect(parseAgentInput({ ...base, provider: "glm", credentialKind: "oauth" })).toBeNull();
     expect(parseAgentInput({ ...base, provider: "anthropic", credentialKind: "subscription" })).toBeNull();
@@ -174,12 +175,12 @@ describe("floor input validation", () => {
       repositoryId: " 123 ",
       baseBranch: " main ",
       checkCommands: [" npm test ", " npm run build "],
-    })).toEqual({ repositoryId: "123", baseBranch: "main", checkCommands: ["npm test", "npm run build"] });
+    })).toEqual({ repositoryId: "123", accountInstallationId: null, baseBranch: "main", checkCommands: ["npm test", "npm run build"] });
     expect(parseRepositoryConnectionInput({ repositoryId: "123", baseBranch: "main", checkCommands: [] })).toEqual({
-      repositoryId: "123", baseBranch: "main", checkCommands: [],
+      repositoryId: "123", accountInstallationId: null, baseBranch: "main", checkCommands: [],
     });
     expect(parseRepositoryConnectionInput({ repositoryId: "123", baseBranch: "main" })).toEqual({
-      repositoryId: "123", baseBranch: "main", checkCommands: [],
+      repositoryId: "123", accountInstallationId: null, baseBranch: "main", checkCommands: [],
     });
     expect(parseRepositoryConnectionInput({ repositoryId: "123", baseBranch: "main", checkCommands: ["x".repeat(501)] })).toBeNull();
   });

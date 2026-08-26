@@ -21,15 +21,18 @@ test("a direct user keeps profile state across steps and completes Free onboardi
   await expect.poll(() => page.locator(".field-grid").evaluate((element) => getComputedStyle(element).gridTemplateColumns.split(" ").length)).toBe(1);
 
   await page.getByRole("button", { name: "Continue", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Choose your plan" })).toBeFocused();
+  await expect(page.getByRole("heading", { name: "Connect GitHub" })).toBeFocused();
   await page.getByRole("button", { name: "Back" }).click();
   await expect(page.getByLabel("First name")).toHaveValue("Ada");
   await expect(page.getByLabel("Last name")).toHaveValue("Lovelace");
   await expect(page.getByLabel("GitHub handle")).toHaveValue("ada-lovelace");
 
   await page.getByRole("button", { name: "Continue", exact: true }).click();
+  await page.getByRole("button", { name: "Connect GitHub" }).click();
+  await expect(page.getByText("GitHub access connected.")).toBeVisible();
+  await page.getByRole("button", { name: "Continue", exact: true }).click();
   await page.getByRole("button", { name: /^Free/ }).click();
-  await expect.poll(() => page.locator(".onboarding-plan-actions").evaluate((element) => getComputedStyle(element).flexDirection)).toBe("column-reverse");
+  await expect.poll(() => page.locator(".onboarding-plan-actions:visible").evaluate((element) => getComputedStyle(element).flexDirection)).toBe("column-reverse");
   await page.getByRole("button", { name: "Finish setup" }).click();
   await expect(page).toHaveURL(/\/home$/);
 
@@ -41,6 +44,8 @@ test("paid plan selection exposes seat controls bounded by its catalog", async (
   const page = await context.newPage();
 
   await page.goto("/onboarding");
+  await page.getByRole("button", { name: "Continue", exact: true }).click();
+  await page.getByRole("button", { name: "Connect GitHub" }).click();
   await page.getByRole("button", { name: "Continue", exact: true }).click();
   await page.getByRole("button", { name: /^Pro/ }).click();
   await expect(page.getByText("Seats per session: 3")).toBeVisible();
@@ -56,7 +61,16 @@ test("paid plan selection exposes seat controls bounded by its catalog", async (
 
 test("a valid invite locks onboarding to Free and still requires explicit membership", async ({ browser }) => {
   const ownerContext = await authenticatedContext(browser, "onboarding-invite-owner", "onboarding-invite-owner@example.com", "Invite", "Owner");
-  const created = await ownerContext.request.post("/api/sessions", { data: { title: "Onboarding invite room" } });
+  const repositories = await (await ownerContext.request.get("/api/account/github/repositories")).json() as {
+    repositories: Array<{ id: string; accountInstallationId: string }>;
+  };
+  const created = await ownerContext.request.post("/api/sessions", {
+    data: {
+      title: "Onboarding invite room",
+      repositoryId: repositories.repositories[0].id,
+      accountInstallationId: repositories.repositories[0].accountInstallationId,
+    },
+  });
   expect(created.ok()).toBe(true);
   const payload = await created.json() as { inviteUrl: string };
   const invitePath = new URL(payload.inviteUrl).pathname;
@@ -65,6 +79,8 @@ test("a valid invite locks onboarding to Free and still requires explicit member
   const invitee = await inviteeContext.newPage();
   await invitee.goto(invitePath);
   await expect(invitee).toHaveURL(/\/onboarding\?return_to=/);
+  await invitee.getByRole("button", { name: "Continue", exact: true }).click();
+  await invitee.getByRole("button", { name: "Connect GitHub" }).click();
   await invitee.getByRole("button", { name: "Continue", exact: true }).click();
   await expect(invitee.getByRole("heading", { name: "Your invite includes Free" })).toBeFocused();
   await expect(invitee.getByText("This invite includes a Free openfloor account.")).toBeVisible();

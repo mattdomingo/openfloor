@@ -138,14 +138,15 @@ async function openAiKindAgentRun(
   return insertRunRow(sessionId, agent.id, ownerUserId, "running");
 }
 
-/** Agent with an explicit billing kind (provider anthropic) plus a running run. */
+/** Agent with an explicit billing kind plus a running run. */
 async function kindAgentRun(
   sessionId: string,
   ownerUserId: string,
   name: string,
   credentialKind: "api_key" | "oauth" | null,
+  provider: "anthropic" | "kimi" = "anthropic",
 ): Promise<string> {
-  const input = parseAgentInput({ name, role: "Engineer", task: "Work", ownerUserId, provider: "anthropic", credentialKind });
+  const input = parseAgentInput({ name, role: "Engineer", task: "Work", ownerUserId, provider, credentialKind });
   if (!input) throw new Error("Invalid test agent");
   const floor = await createFloorAgent(sessionId, ownerUserId, input, env.DB);
   const agent = floor?.agents.find((candidate) => candidate.name === name);
@@ -397,6 +398,38 @@ describe("OpenAI gateway credential resolution", () => {
     const response = await postOpenAiGateway(gatewayRequest(await signedRunToken(runId, sessionId)), gatewayParams());
     expect(response.status).toBe(200);
     expect(capture.authorization).toBe("Bearer sk-openai-server-key");
+  });
+
+  // db/runs.ts's recordRunUsage reads agent_runs.billed_kind at run
+  // completion to attribute spend to the right (user, provider, kind)
+  // rollup — it must be written by the FIRST successful gateway call and
+  // never move mid-run (multiple model calls per run all resolve the same
+  // credential; the WHERE billed_kind IS NULL guard makes every call after
+  // the first a no-op).
+  it("records billed_kind on the run's first resolved call, and never overwrites it on later calls", async () => {
+    const { sessionId, owner, runId } = await runningRun("gw-billed-kind");
+    await connectOpenAiKey(owner.id, "sk-openai-owner-billedkind");
+    const capture = { authorization: null as string | null };
+    stubUpstream(capture);
+    await postOpenAiGateway(gatewayRequest(await signedRunToken(runId, sessionId)), gatewayParams());
+    const afterFirst = await env.DB.prepare("SELECT billed_kind AS billedKind FROM agent_runs WHERE id = ?").bind(runId).first<{ billedKind: string }>();
+    expect(afterFirst?.billedKind).toBe("api_key");
+
+    // Simulate a second model call in the same run — resolution must not
+    // touch the already-recorded kind, even if the underlying credential
+    // situation somehow changed.
+    await postOpenAiGateway(gatewayRequest(await signedRunToken(runId, sessionId)), gatewayParams());
+    const afterSecond = await env.DB.prepare("SELECT billed_kind AS billedKind FROM agent_runs WHERE id = ?").bind(runId).first<{ billedKind: string }>();
+    expect(afterSecond?.billedKind).toBe("api_key");
+  });
+
+  it("records billed_kind as server when the server-fallback key pays", async () => {
+    const { sessionId, runId } = await runningRun("gw-billed-kind-server");
+    (env as unknown as Record<string, unknown>).OPENAI_API_KEY = "sk-openai-server-key";
+    stubUpstream({ authorization: null });
+    await postOpenAiGateway(gatewayRequest(await signedRunToken(runId, sessionId)), gatewayParams());
+    const row = await env.DB.prepare("SELECT billed_kind AS billedKind FROM agent_runs WHERE id = ?").bind(runId).first<{ billedKind: string }>();
+    expect(row?.billedKind).toBe("server");
   });
 
   it("refuses the run when neither an owner nor a server credential exists", async () => {
@@ -798,6 +831,55 @@ describe("OpenAI gateway credential resolution", () => {
     delete (env as unknown as Record<string, unknown>).ANTHROPIC_API_KEY;
   });
 
+  it("routes each kimi credential kind to its own upstream, in its documented auth form", async () => {
+    const { sessionId, owner } = await room("kimi-kind-gateway");
+    await connectKey(owner.id, "kimi", "sk-kimi-payg-aaaa");
+    await connectKey(owner.id, "kimi", "sk-kimi-plan-bbbb", "oauth");
+    const apiKeyRun = await kindAgentRun(sessionId, owner.id, "PaygAgent", "api_key", "kimi");
+    const oauthRun = await kindAgentRun(sessionId, owner.id, "PlanAgent", "oauth", "kimi");
+    const captured: Array<{ url: string; apiKey: string | null; bearer: string | null }> = [];
+    vi.stubGlobal("fetch", async (url: string, init: { headers: Headers }) => {
+      captured.push({ url, apiKey: init.headers.get("x-api-key"), bearer: init.headers.get("authorization") });
+      return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+    });
+    async function callGateway(runId: string) {
+      const token = await signRunGatewayToken(
+        { runId, sessionId, repositoryId: "repo", candidateSha: "sha-run", operation: "kimi" },
+        GATEWAY_SECRET,
+      );
+      return postKimiGateway(
+        new Request("https://app.opnflr.com/runtime/kimi/v1/messages", {
+          method: "POST",
+          headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+          body: JSON.stringify({ model: "kimi-k3" }),
+        }),
+        { params: Promise.resolve({ path: ["v1", "messages"] }) },
+      );
+    }
+    expect((await callGateway(apiKeyRun)).status).toBe(200);
+    expect((await callGateway(oauthRun)).status).toBe(200);
+    // The URL assertion encodes the vendor-documented split (2026-08-26
+    // decision-log entry): a PAYG key stays on Moonshot's Anthropic-compat
+    // surface as a Bearer, while a Kimi Code plan key goes to the plan's own
+    // host in the x-api-key form (what the vendor's ANTHROPIC_API_KEY guide
+    // produces) — and neither request carries the other credential's form.
+    expect(captured[0]).toEqual({ url: "https://api.moonshot.ai/anthropic/v1/messages", bearer: "Bearer sk-kimi-payg-aaaa", apiKey: null });
+    expect(captured[1]).toEqual({ url: "https://api.kimi.com/coding/v1/messages", apiKey: "sk-kimi-plan-bbbb", bearer: null });
+    // Disconnect the plan: the plan-bound agent refuses with the actionable
+    // message — never the api_key row, never the server key — while the
+    // api_key agent keeps running.
+    await deleteProviderCredential(owner.id, "kimi", "oauth", env.DB);
+    (env as unknown as Record<string, unknown>).MOONSHOT_API_KEY = "sk-kimi-server-key";
+    const before = captured.length;
+    const refused = await callGateway(oauthRun);
+    expect(refused.status).toBe(503);
+    expect(await refused.text()).toContain("This agent is set to use your Moonshot subscription, which is not connected");
+    expect(captured.length).toBe(before);
+    expect((await callGateway(apiKeyRun)).status).toBe(200);
+    expect(captured[before]).toEqual({ url: "https://api.moonshot.ai/anthropic/v1/messages", bearer: "Bearer sk-kimi-payg-aaaa", apiKey: null });
+    delete (env as unknown as Record<string, unknown>).MOONSHOT_API_KEY;
+  });
+
   it("forwards retry-after and the anthropic-ratelimit-* family to the run", async () => {
     const { sessionId, owner, runId } = await runningRun("ratelimit");
     await connectKey(owner.id, "anthropic", "sk-ant-owner-rlkey");
@@ -838,25 +920,26 @@ describe("OpenAI gateway credential resolution", () => {
 
   it("refuses an oauth credential on a provider that does not allow the kind", async () => {
     const { sessionId, owner } = await room("kind-forbidden");
-    // A hand-written oauth row for kimi (the PUT route would refuse this) —
-    // the gateway must not send it to Moonshot, and must not silently switch
-    // to the server key either.
-    await connectKey(owner.id, "kimi", "sk-kimi-oat01-evil", "oauth");
-    const input = parseAgentInput({ name: "Rogue", role: "R", task: "T", ownerUserId: owner.id, provider: "kimi" });
+    // A hand-written oauth row for glm (the PUT route would refuse this) —
+    // the gateway must not send it to Z.ai, and must not silently switch
+    // to the server key either. (This test used kimi until its plan kind
+    // became real on 2026-08-26; glm remains api_key-only.)
+    await connectKey(owner.id, "glm", "sk-glm-oat01-evil", "oauth");
+    const input = parseAgentInput({ name: "Rogue", role: "R", task: "T", ownerUserId: owner.id, provider: "glm" });
     if (!input) throw new Error("Invalid test agent");
     const floor = await createFloorAgent(sessionId, owner.id, { ...input, credentialKind: "oauth" }, env.DB);
     const agent = floor?.agents.find((candidate) => candidate.name === "Rogue");
     if (!agent) throw new Error("Agent was not created");
     const runId = await insertRunRow(sessionId, agent.id, owner.id, "running");
-    (env as unknown as Record<string, unknown>).MOONSHOT_API_KEY = "sk-kimi-server-key";
+    (env as unknown as Record<string, unknown>).ZAI_API_KEY = "sk-glm-server-key";
     const fetchSpy = vi.fn();
     vi.stubGlobal("fetch", fetchSpy);
     const token = await signRunGatewayToken(
-      { runId, sessionId, repositoryId: "repo", candidateSha: "sha-run", operation: "kimi" },
+      { runId, sessionId, repositoryId: "repo", candidateSha: "sha-run", operation: "glm" },
       GATEWAY_SECRET,
     );
-    const refused = await postKimiGateway(
-      new Request("https://opnflr.com/app/runtime/kimi/v1/messages", {
+    const refused = await postGlmGateway(
+      new Request("https://opnflr.com/app/runtime/glm/v1/messages", {
         method: "POST",
         headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
         body: "{}",
@@ -864,9 +947,9 @@ describe("OpenAI gateway credential resolution", () => {
       { params: Promise.resolve({ path: ["v1", "messages"] }) },
     );
     expect(refused.status).toBe(503);
-    expect(await refused.text()).toContain("No Moonshot credential");
+    expect(await refused.text()).toContain("No Z.ai credential");
     expect(fetchSpy).not.toHaveBeenCalled();
-    delete (env as unknown as Record<string, unknown>).MOONSHOT_API_KEY;
+    delete (env as unknown as Record<string, unknown>).ZAI_API_KEY;
   });
 
   it("sends only the access token of an openai oauth bundle, to the ChatGPT upstream", async () => {

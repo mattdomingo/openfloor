@@ -46,10 +46,12 @@ import {
   recordGitHubWebhookDelivery,
   reconcileCandidateReview,
   reserveRepositoryCandidate,
+  markCandidateAbandoned,
   markCandidateMerged,
   markCandidateReviewReady,
   updateRepositoryPushState,
 } from "@/db/repositories";
+import { abandonSessionCandidate } from "@/lib/candidate-abandon";
 import {
   createRepositoryPreflight,
   finishPreflightCheck,
@@ -83,14 +85,102 @@ import {
   requestAgentRunCancellation,
 } from "@/db/runs";
 import { parseAgentInput } from "@/lib/validation";
-import { beginAgentRunRollback, createAgentRunRollback, failAgentRunRollback, finishAgentRunRollback } from "@/db/rollbacks";
+import {
+  beginAgentRunRollback,
+  beginAgentRunRollbackGroup,
+  createAgentRunRollback,
+  createAgentRunRollbackGroup,
+  failAgentRunRollback,
+  failAgentRunRollbackGroup,
+  finishAgentRunRollback,
+  finishAgentRunRollbackGroup,
+} from "@/db/rollbacks";
 import { getSessionContext } from "@/db/session-context";
+import {
+  consumeGitHubAccountConnectionState,
+  createGitHubAccountConnectionState,
+  listUserGitHubInstallations,
+  removeUserGitHubInstallation,
+} from "@/db/github-installations";
+import { getReviewContribution, listReviewContributions, resolveReviewRollbackImpact } from "@/db/review-contributions";
 
 function identity(id: string, name: string) {
   return { providerUserId: `chatgpt-${id}`, email: `${id}@example.com`, displayName: name, fullName: name };
 }
 
 describe("D1 session persistence", () => {
+  it("migration 0032 backfills deduplicated active account GitHub installations", async () => {
+    const owner = await upsertUser(identity("github-backfill-owner", "Backfill Owner"), env.DB);
+    const other = await upsertUser(identity("github-backfill-other", "Other Owner"), env.DB);
+    const first = await createSession(owner.id, { title: "First backfill room", objective: null }, env.DB);
+    const second = await createSession(owner.id, { title: "Second backfill room", objective: null }, env.DB);
+    const inaccessible = await createSession(owner.id, { title: "Inaccessible room", objective: null }, env.DB);
+    const otherRoom = await createSession(other.id, { title: "Other backfill room", objective: null }, env.DB);
+    const repository = {
+      id: "repository-backfill", nodeId: "R_backfill", owner: "acme", name: "widgets",
+      fullName: "acme/widgets", private: true, defaultBranch: "main",
+    };
+    await saveRepositoryConnection(first.session.id, owner.id, null, "installation-shared", repository, "main", [], env.DB);
+    await saveRepositoryConnection(second.session.id, owner.id, null, "installation-shared", { ...repository, id: "repository-backfill-two", nodeId: "R_backfill_two", name: "tools", fullName: "acme/tools" }, "main", [], env.DB);
+    await saveRepositoryConnection(inaccessible.session.id, owner.id, null, "installation-inaccessible", { ...repository, id: "repository-inaccessible", nodeId: "R_inaccessible" }, "main", [], env.DB);
+    await saveRepositoryConnection(otherRoom.session.id, other.id, null, "installation-shared", repository, "main", [], env.DB);
+    await env.DB.prepare("UPDATE repository_connections SET status = 'ready' WHERE session_id = ?").bind(second.session.id).run();
+    await env.DB.prepare("UPDATE repository_connections SET status = 'inaccessible' WHERE session_id = ?").bind(inaccessible.session.id).run();
+
+    await env.DB.prepare("DROP TABLE github_account_connection_states").run();
+    await env.DB.prepare("DROP TABLE user_github_installations").run();
+    const queries = JSON.parse(env.ACCOUNT_GITHUB_MIGRATION_QUERIES) as string[];
+    await env.DB.batch(queries.map((query) => env.DB.prepare(query)));
+
+    expect(await listUserGitHubInstallations(owner.id, env.DB)).toEqual([
+      expect.objectContaining({ accountLogin: "acme", status: "active" }),
+    ]);
+    expect(await listUserGitHubInstallations(other.id, env.DB)).toEqual([
+      expect.objectContaining({ accountLogin: "acme", status: "active" }),
+    ]);
+    const backfilled = await env.DB.prepare(
+      "SELECT user_id AS userId, installation_id AS installationId FROM user_github_installations ORDER BY user_id",
+    ).all<{ userId: string; installationId: string }>();
+    expect(backfilled.results).toEqual([
+      { userId: other.id, installationId: "installation-shared" },
+      { userId: owner.id, installationId: "installation-shared" },
+    ].sort((a, b) => a.userId.localeCompare(b.userId)));
+  });
+
+  it("binds single-use account GitHub state to user and removal preserves existing session access", async () => {
+    const owner = await upsertUser(identity("account-github-owner", "GitHub Owner"), env.DB);
+    const outsider = await upsertUser(identity("account-github-outsider", "GitHub Outsider"), env.DB);
+    const expiredStateId = await createGitHubAccountConnectionState(owner.id, "onboarding", "/home", env.DB);
+    await env.DB.prepare("UPDATE github_account_connection_states SET expires_at = ? WHERE id = ?")
+      .bind(Date.now() - 1, expiredStateId).run();
+    await expect(consumeGitHubAccountConnectionState(
+      expiredStateId, owner.id, "installation-expired", { login: "expired", type: "Organization" }, env.DB,
+    )).resolves.toBeNull();
+    const stateId = await createGitHubAccountConnectionState(owner.id, "onboarding", "/home", env.DB);
+    await expect(consumeGitHubAccountConnectionState(
+      stateId, outsider.id, "installation-account", { login: "openfloor", type: "Organization" }, env.DB,
+    )).resolves.toBeNull();
+    await expect(consumeGitHubAccountConnectionState(
+      stateId, owner.id, "installation-account", { login: "openfloor", type: "Organization" }, env.DB,
+    )).resolves.toEqual({ purpose: "onboarding", returnTo: "/home" });
+    await expect(consumeGitHubAccountConnectionState(
+      stateId, owner.id, "installation-account", { login: "openfloor", type: "Organization" }, env.DB,
+    )).resolves.toBeNull();
+    const [installation] = await listUserGitHubInstallations(owner.id, env.DB);
+    expect(installation).toEqual(expect.objectContaining({ accountLogin: "openfloor", status: "active" }));
+
+    const created = await createSession(owner.id, { title: "Preserved repository", objective: null }, env.DB);
+    await saveRepositoryConnection(created.session.id, owner.id, null, "installation-account", {
+      id: "repository-account", nodeId: "R_account", owner: "openfloor", name: "repo",
+      fullName: "openfloor/repo", private: true, defaultBranch: "main",
+    }, "main", [], env.DB);
+    await expect(removeUserGitHubInstallation(owner.id, installation.id, env.DB)).resolves.toBe(true);
+    await expect(listUserGitHubInstallations(owner.id, env.DB)).resolves.toEqual([]);
+    await expect(getRepositoryConnectionForMember(created.session.id, owner.id, env.DB)).resolves.toEqual(
+      expect.objectContaining({ installationId: "installation-account", status: "connected" }),
+    );
+  });
+
   it("backfills existing sessions off while preserving and safely deactivating legacy Concierge rows", async () => {
     const owner = await upsertUser(identity("auto-migration-owner", "Migration Owner"), env.DB);
     const existing = await createSession(owner.id, { title: "Existing auto room", objective: null }, env.DB);
@@ -234,6 +324,14 @@ describe("D1 session persistence", () => {
       .bind(deleted.id, currentMonth()).first<{ seconds: number }>();
     expect(usageRow).toEqual({ seconds: 120 });
 
+    // The departing email's hash survives on the tombstone so a future
+    // resignup with the same address can be recognized (see the
+    // free-allowance test below) — never the plaintext email itself.
+    const tombstone = await env.DB.prepare("SELECT prior_email_hash AS hash, email AS email FROM users WHERE id = ?")
+      .bind(deleted.id).first<{ hash: string | null; email: string }>();
+    expect(tombstone?.hash).toMatch(/^[0-9a-f]{64}$/);
+    expect(tombstone?.email).not.toContain("delacct-self@example.com");
+
     // The same Access identity signing in again creates a brand-new row,
     // not a resurrection of the tombstoned one.
     const resurrected = await upsertUser(identity("delacct-self", "Self Again"), env.DB);
@@ -242,7 +340,26 @@ describe("D1 session persistence", () => {
     expect(resurrected.onboardedAt).toBeNull();
   });
 
-  it("deleteAccount refuses and writes nothing when an owned session has live repository state", async () => {
+  it("deleteAccount no longer blocks on repository state — a live, unabandoned candidate cascades away with its session", async () => {
+    const owner = await upsertUser(identity("delacct-repostate", "Repo State Owner"), env.DB);
+    const created = await createSession(owner.id, { title: "Repo state room", objective: null }, env.DB);
+    const saved = await saveRepositoryConnection(created.session.id, owner.id, null, "installation-delacct-repostate", {
+      id: "repository-delacct-repostate", nodeId: "R_delacct_repostate", owner: "openfloor-test", name: "delacct-repostate",
+      fullName: "openfloor-test/delacct-repostate", private: true, defaultBranch: "main",
+    }, "main", [], env.DB);
+    const candidateId = crypto.randomUUID();
+    const branch = `openfloor/${created.session.id.slice(0, 8)}/candidate/${candidateId.slice(0, 8)}`;
+    await reserveRepositoryCandidate(created.session.id, owner.id, saved!.id, candidateId, "Repo state room", "", branch, "main", "a".repeat(40), env.DB);
+    await activateRepositoryCandidate(created.session.id, candidateId, "a".repeat(40), env.DB);
+
+    await expect(deleteAccount(owner.id, env.DB)).resolves.toEqual({ deleted: true });
+
+    expect(await getSessionForMember(created.session.id, owner.id, env.DB)).toBeNull();
+    const candidateRow = await env.DB.prepare("SELECT 1 AS present FROM repository_candidates WHERE id = ?").bind(candidateId).first();
+    expect(candidateRow).toBeNull();
+  });
+
+  it("deleteAccount still refuses and writes nothing while an owned session's candidate is mid-integration", async () => {
     const owner = await upsertUser(identity("delacct-blocked", "Blocked Owner"), env.DB);
     const created = await createSession(owner.id, { title: "Blocked room", objective: null }, env.DB);
     const saved = await saveRepositoryConnection(created.session.id, owner.id, null, "installation-delacct", {
@@ -253,16 +370,40 @@ describe("D1 session persistence", () => {
     const branch = `openfloor/${created.session.id.slice(0, 8)}/candidate/${candidateId.slice(0, 8)}`;
     await reserveRepositoryCandidate(created.session.id, owner.id, saved!.id, candidateId, "Blocked room", "", branch, "main", "a".repeat(40), env.DB);
     await activateRepositoryCandidate(created.session.id, candidateId, "a".repeat(40), env.DB);
+    await env.DB.prepare("UPDATE repository_candidates SET integration_run_id = ? WHERE id = ?").bind(crypto.randomUUID(), candidateId).run();
 
-    await expect(deleteAccount(owner.id, env.DB)).resolves.toEqual({
-      blocked: "sessions",
-      sessions: [{ id: created.session.id, title: "Blocked room", reason: "repository_state" }],
-    });
+    const result = await deleteAccount(owner.id, env.DB);
+    expect(result).toMatchObject({ blocked: "sessions", sessions: [{ id: created.session.id, title: "Blocked room", reason: "integration_in_progress" }] });
 
     // Nothing was written: the session and the owner's account both remain.
     expect(await getSessionForMember(created.session.id, owner.id, env.DB)).not.toBeNull();
     const stillThere = await env.DB.prepare("SELECT deleted_at AS deletedAt FROM users WHERE id = ?").bind(owner.id).first<{ deletedAt: number | null }>();
     expect(stillThere?.deletedAt).toBeNull();
+  });
+
+  it("a deleted account's email loses its free plan hour allowance on resignup, until it pays", async () => {
+    const first = await upsertUser(identity("free-allowance-reuse", "First"), env.DB);
+    expect((await getUsageForUser(first.id, env.DB)).limitHours).toBe(2);
+
+    await expect(deleteAccount(first.id, env.DB)).resolves.toEqual({ deleted: true });
+
+    const second = await upsertUser(identity("free-allowance-reuse", "Second"), env.DB);
+    expect(second.id).not.toBe(first.id);
+    expect((await getUsageForUser(second.id, env.DB)).limitHours).toBe(0);
+
+    // A paid, active plan is unaffected by the flag.
+    await env.DB.prepare("UPDATE users SET plan = 'pro', plan_status = 'active' WHERE id = ?").bind(second.id).run();
+    expect((await getUsageForUser(second.id, env.DB)).limitHours).toBe(30);
+
+    // A different address was never touched.
+    const unrelated = await upsertUser(identity("free-allowance-untouched", "Unrelated"), env.DB);
+    expect((await getUsageForUser(unrelated.id, env.DB)).limitHours).toBe(2);
+
+    // The @opnflr.com unlimited-testing override still wins regardless.
+    const internal = await upsertUser({ providerUserId: "chatgpt-internal", email: "someone@opnflr.com", displayName: "Internal", fullName: "Internal" }, env.DB);
+    await expect(deleteAccount(internal.id, env.DB)).resolves.toEqual({ deleted: true });
+    const internalAgain = await upsertUser({ providerUserId: "chatgpt-internal", email: "someone@opnflr.com", displayName: "Internal", fullName: "Internal" }, env.DB);
+    expect((await getUsageForUser(internalAgain.id, env.DB)).limitHours).toBe(Infinity);
   });
 
   it("creates and lists only the current user's sessions", async () => {
@@ -596,7 +737,7 @@ describe("D1 session persistence", () => {
     await expect(deleteSession(created.session.id, owner.id, env.DB)).resolves.toBe("missing");
   });
 
-  it("blocks deletion while a candidate branch is still unmerged, but allows it once merged", async () => {
+  it("reports a live candidate instead of refusing outright, and allows deletion once merged", async () => {
     const owner = await upsertUser(identity("delete-repository-owner", "Owner"), env.DB);
     const created = await createSession(owner.id, { title: "Repository audit", objective: null }, env.DB);
     const saved = await saveRepositoryConnection(created.session.id, owner.id, null, "installation-delete", {
@@ -608,12 +749,56 @@ describe("D1 session persistence", () => {
     await reserveRepositoryCandidate(created.session.id, owner.id, saved!.id, candidateId, "Audit room", "", branch, "main", "a".repeat(40), env.DB);
     await activateRepositoryCandidate(created.session.id, candidateId, "a".repeat(40), env.DB);
 
-    // Unmerged: deletion refuses to discard live candidate work.
-    await expect(deleteSession(created.session.id, owner.id, env.DB)).resolves.toBe("repository_state");
+    // Unmerged: deletion no longer dead-ends — it hands back the branch so
+    // the caller (app/api/sessions/[id]/route.ts) can offer the owner a
+    // choice (ENG-83), instead of the old bare "repository_state" refusal.
+    await expect(deleteSession(created.session.id, owner.id, env.DB)).resolves.toEqual({
+      blocked: "candidate_live", branch, sha: "a".repeat(40),
+    });
     expect(await getSessionForMember(created.session.id, owner.id, env.DB)).not.toBeNull();
 
     // Merged, branch not yet deleted: deletion proceeds and flags the surviving branch.
     await markCandidateMerged(created.session.id, candidateId, owner.id, "b".repeat(40), env.DB);
+    await expect(deleteSession(created.session.id, owner.id, env.DB)).resolves.toEqual({ deleted: true, candidateBranchAlive: true });
+    expect(await getSessionForMember(created.session.id, owner.id, env.DB)).toBeNull();
+  });
+
+  it("abandons a live candidate (keeping the branch) so a fresh one can be created, and lets deletion proceed", async () => {
+    const owner = await upsertUser(identity("abandon-owner", "Owner"), env.DB);
+    const created = await createSession(owner.id, { title: "Abandon room", objective: null }, env.DB);
+    const saved = await saveRepositoryConnection(created.session.id, owner.id, null, "installation-abandon", {
+      id: "repository-abandon", nodeId: "R_abandon", owner: "openfloor-test", name: "abandon",
+      fullName: "openfloor-test/abandon", private: true, defaultBranch: "main",
+    }, "main", [], env.DB);
+    const candidateId = crypto.randomUUID();
+    const branch = `openfloor/${created.session.id.slice(0, 8)}/candidate/${candidateId.slice(0, 8)}`;
+    await reserveRepositoryCandidate(created.session.id, owner.id, saved!.id, candidateId, "Abandon room", "", branch, "main", "a".repeat(40), env.DB);
+    await activateRepositoryCandidate(created.session.id, candidateId, "a".repeat(40), env.DB);
+
+    // The integration lease refuses abandonment the same way it refuses
+    // merge/end/delete.
+    await env.DB.prepare("UPDATE repository_candidates SET integration_run_id = ? WHERE id = ?").bind("leased-run", candidateId).run();
+    await expect(abandonSessionCandidate(created.session.id, owner.id, { deleteBranch: false }, env.DB)).resolves.toEqual({ outcome: "blocked", runId: "leased-run" });
+    await env.DB.prepare("UPDATE repository_candidates SET integration_run_id = NULL WHERE id = ?").bind(candidateId).run();
+
+    // Keeping the branch touches no GitHub/Sandbox binding — only D1.
+    const result = await abandonSessionCandidate(created.session.id, owner.id, { deleteBranch: false }, env.DB);
+    expect(result).toMatchObject({ outcome: "abandoned", branch, branchDeleted: false });
+    const abandonedRow = await env.DB.prepare("SELECT abandoned_at AS abandonedAt FROM repository_candidates WHERE id = ?").bind(candidateId).first<{ abandonedAt: number | null }>();
+    expect(abandonedRow?.abandonedAt).not.toBeNull();
+
+    // The one-live-candidate index is freed: a fresh candidate can be
+    // reserved for the same session immediately.
+    const nextCandidateId = crypto.randomUUID();
+    const nextBranch = `openfloor/${created.session.id.slice(0, 8)}/candidate/${nextCandidateId.slice(0, 8)}`;
+    await expect(reserveRepositoryCandidate(created.session.id, owner.id, saved!.id, nextCandidateId, "Abandon room take two", "", nextBranch, "main", "a".repeat(40), env.DB)).resolves.toBe(true);
+
+    // Clear the second candidate too so only its abandonment state — not its
+    // liveness — is what the deletion assertion below is exercising.
+    await markCandidateAbandoned(created.session.id, nextCandidateId, env.DB);
+
+    // Deletion (choosing to orphan the abandoned branches) now proceeds and
+    // flags a surviving branch, the same warning shape as a merged one.
     await expect(deleteSession(created.session.id, owner.id, env.DB)).resolves.toEqual({ deleted: true, candidateBranchAlive: true });
     expect(await getSessionForMember(created.session.id, owner.id, env.DB)).toBeNull();
   });
@@ -889,10 +1074,11 @@ describe("D1 session persistence", () => {
     expect(floor?.runs.find((item) => item.id === run.id)?.status).toBe("cancelled");
     expect(floor?.queue[0].status).toBe("cancelled");
 
-    // The candidate's lock is clear now, so ending proceeds — deleting still
-    // refuses because the candidate itself remains live and unmerged.
+    // The candidate's lock is clear now, so ending proceeds — deleting no
+    // longer refuses outright, but still reports the live, unmerged
+    // candidate back so the caller can choose its fate (ENG-83).
     await expect(endSession(created.session.id, owner.id, "owner", env.DB)).resolves.toEqual({ endedAt: expect.any(Number), reason: "owner" });
-    await expect(deleteSession(created.session.id, owner.id, env.DB)).resolves.toBe("repository_state");
+    await expect(deleteSession(created.session.id, owner.id, env.DB)).resolves.toEqual({ blocked: "candidate_live", branch, sha: "a".repeat(40) });
   });
 
   it("rolls back one integrated prompt for its engineer or agent owner while preserving run audit", async () => {
@@ -967,6 +1153,138 @@ describe("D1 session persistence", () => {
     expect(after?.review?.files).toEqual([]);
     expect((await getSessionContext(created.session.id, undefined, env.DB))?.integratedRuns).toEqual([]);
     await expect(createAgentRunRollback(created.session.id, run.id, owner.id, env.DB)).rejects.toThrow("already rolled back");
+  });
+
+  it("paginates candidate contributions and atomically rolls back owner-selected groups", async () => {
+    const owner = await upsertUser(identity("group-rollback-owner", "Group Owner"), env.DB);
+    const engineer = await upsertUser(identity("group-rollback-engineer", "Engineer One"), env.DB);
+    const collaborator = await upsertUser(identity("group-rollback-collaborator", "Engineer Two"), env.DB);
+    const outsider = await upsertUser(identity("group-rollback-outsider", "Outside Member"), env.DB);
+    const created = await createSession(owner.id, { title: "Atomic rollback room", objective: "Review every contribution" }, env.DB);
+    await acceptInvite(created.inviteId, engineer.id, env.DB);
+    await acceptInvite(created.inviteId, collaborator.id, env.DB);
+    await acceptInvite(created.inviteId, outsider.id, env.DB);
+    const saved = await saveRepositoryConnection(created.session.id, owner.id, null, "installation-group-rollback", {
+      id: "repository-group-rollback", nodeId: "R_group_rollback", owner: "openfloor-test", name: "group-rollback",
+      fullName: "openfloor-test/group-rollback", private: true, defaultBranch: "main",
+    }, "main", ["npm test"], env.DB);
+    const candidateId = crypto.randomUUID();
+    const initialSha = "a".repeat(40);
+    await reserveRepositoryCandidate(
+      created.session.id,
+      owner.id,
+      saved!.id,
+      candidateId,
+      "Atomic rollback room",
+      "",
+      `openfloor/${created.session.id.slice(0, 8)}/candidate/${candidateId.slice(0, 8)}`,
+      "main",
+      initialSha,
+      env.DB,
+    );
+    await activateRepositoryCandidate(created.session.id, candidateId, initialSha, env.DB);
+    const parsed = parseAgentInput({ name: "Group Builder", role: "Engineer", task: "Implement grouped prompts", ownerUserId: owner.id });
+    if (!parsed) throw new Error("Invalid group rollback agent fixture");
+    let floor = await createFloorAgent(created.session.id, owner.id, parsed, env.DB);
+    const agentId = floor!.agents[0].id;
+    const runIds: string[] = [];
+    const baseTime = Date.now() - 100_000;
+    for (let index = 0; index < 22; index += 1) {
+      floor = await createFloorQueueItem(created.session.id, engineer.id, { prompt: `Contribution ${index}`, agentId }, env.DB);
+      const queueItem = floor!.queue.find((item) => item.prompts.some((prompt) => prompt.text === `Contribution ${index}`));
+      if (!queueItem) throw new Error("Missing group rollback queue fixture");
+      if (index === 5) {
+        await env.DB.prepare(
+          `INSERT INTO floor_queue_prompts (id, queue_item_id, author_user_id, text, created_at)
+           VALUES (?, ?, ?, ?, ?)`,
+        ).bind(crypto.randomUUID(), queueItem.id, collaborator.id, "Shared contribution", baseTime + index).run();
+      }
+      const run = await createAgentRun(created.session.id, queueItem.id, owner.id, "task", env.DB);
+      const integratedSha = index.toString(16).padStart(40, "0");
+      await env.DB.batch([
+        env.DB.prepare(
+          `UPDATE agent_runs SET status = 'integrated', integrated_candidate_sha = ?, integrated_at = ?, completed_at = ?, updated_at = ? WHERE id = ?`,
+        ).bind(integratedSha, baseTime + index, baseTime + index, baseTime + index, run.id),
+        env.DB.prepare("UPDATE floor_queue_items SET status = 'completed', updated_at = ? WHERE id = ?")
+          .bind(baseTime + index, queueItem.id),
+        env.DB.prepare(
+          `INSERT INTO agent_run_files (id, run_id, path, change_kind, additions, deletions, summary, diff_preview, created_at)
+           VALUES (?, ?, ?, 'update', 1, 0, ?, ?, ?)`,
+        ).bind(crypto.randomUUID(), run.id, `src/contribution-${index}.ts`, `Contribution ${index}`, `+export const contribution${index} = true;`, baseTime + index),
+      ]);
+      runIds.push(run.id);
+    }
+
+    const firstPage = await listReviewContributions(created.session.id, engineer.id, { status: "active", limit: 20 }, env.DB);
+    expect(firstPage?.items).toHaveLength(20);
+    expect(firstPage?.nextCursor).not.toBeNull();
+    const secondPage = await listReviewContributions(created.session.id, engineer.id, { status: "active", limit: 20, cursor: firstPage!.nextCursor }, env.DB);
+    expect(secondPage?.items).toHaveLength(2);
+    expect(new Set([...firstPage!.items, ...secondPage!.items].map((item) => item.runId)).size).toBe(22);
+    expect(await listReviewContributions(created.session.id, "not-a-member", { status: "active" }, env.DB)).toBeNull();
+    expect(await getReviewContribution(created.session.id, runIds[0], "not-a-member", env.DB)).toBeNull();
+
+    const engineerImpact = await resolveReviewRollbackImpact(created.session.id, owner.id, "engineer", engineer.id, env.DB);
+    expect(engineerImpact?.targets).toHaveLength(21);
+    expect(engineerImpact?.excluded).toEqual([
+      expect.objectContaining({ runId: runIds[5], exclusionReason: "Merged with prompts from another engineer" }),
+    ]);
+    await expect(resolveReviewRollbackImpact(created.session.id, engineer.id, "engineer", engineer.id, env.DB)).resolves.toBeNull();
+    await expect(resolveReviewRollbackImpact(created.session.id, outsider.id, "prompt", runIds[5], env.DB)).resolves.toBeNull();
+    expect((await resolveReviewRollbackImpact(created.session.id, owner.id, "agent", agentId, env.DB))?.targets).toHaveLength(22);
+    await expect(createAgentRunRollbackGroup(created.session.id, owner.id, {
+      scope: "engineer",
+      subjectId: engineer.id,
+      expectedCandidateSha: "b".repeat(40),
+      expectedRunIds: engineerImpact!.targets.map((target) => target.runId),
+    }, env.DB)).rejects.toThrow("contributions changed");
+    await expect(createAgentRunRollbackGroup(created.session.id, owner.id, {
+      scope: "engineer",
+      subjectId: engineer.id,
+      expectedCandidateSha: engineerImpact!.expectedCandidateSha,
+      expectedRunIds: engineerImpact!.targets.slice(1).map((target) => target.runId),
+    }, env.DB)).rejects.toThrow("contributions changed");
+
+    const group = await createAgentRunRollbackGroup(created.session.id, owner.id, {
+      scope: "engineer",
+      subjectId: engineer.id,
+      expectedCandidateSha: engineerImpact!.expectedCandidateSha,
+      expectedRunIds: engineerImpact!.targets.map((target) => target.runId),
+    }, env.DB);
+    const context = await beginAgentRunRollbackGroup(group!.groupId, env.DB);
+    expect(context.targets.map((target) => target.integratedAt)).toEqual([...context.targets.map((target) => target.integratedAt)].sort((a, b) => b - a));
+    await failAgentRunRollbackGroup(group!.groupId, "Required rollback check failed: npm test", env.DB);
+    const failedChildren = await env.DB.prepare(
+      `SELECT DISTINCT rb.status, rb.failure_reason AS failureReason
+       FROM agent_run_rollbacks rb JOIN agent_run_rollback_group_items item ON item.rollback_id = rb.id
+       WHERE item.group_id = ?`,
+    ).bind(group!.groupId).all<{ status: string; failureReason: string }>();
+    expect(failedChildren.results).toEqual([{ status: "failed", failureReason: "Required rollback check failed: npm test" }]);
+
+    const retryImpact = await resolveReviewRollbackImpact(created.session.id, owner.id, "prompt", runIds[0], env.DB);
+    const retry = await createAgentRunRollbackGroup(created.session.id, owner.id, {
+      scope: "prompt",
+      subjectId: runIds[0],
+      expectedCandidateSha: retryImpact!.expectedCandidateSha,
+      expectedRunIds: [runIds[0]],
+    }, env.DB);
+    await beginAgentRunRollbackGroup(retry!.groupId, env.DB);
+    const rollbackSha = "f".repeat(40);
+    await finishAgentRunRollbackGroup(retry!.groupId, rollbackSha, env.DB);
+    const completed = await env.DB.prepare(
+      `SELECT g.status AS groupStatus, rb.status AS childStatus, g.rollback_commit_sha AS groupSha, rb.rollback_commit_sha AS childSha
+       FROM agent_run_rollback_groups g JOIN agent_run_rollback_group_items item ON item.group_id = g.id
+       JOIN agent_run_rollbacks rb ON rb.id = item.rollback_id WHERE g.id = ?`,
+    ).bind(retry!.groupId).first<{ groupStatus: string; childStatus: string; groupSha: string; childSha: string }>();
+    expect(completed).toEqual({ groupStatus: "completed", childStatus: "completed", groupSha: rollbackSha, childSha: rollbackSha });
+    const preservedAttempts = await env.DB.prepare("SELECT status FROM agent_run_rollbacks WHERE run_id = ? ORDER BY created_at, id")
+      .bind(runIds[0]).all<{ status: string }>();
+    expect(preservedAttempts.results.map((attempt) => attempt.status).sort()).toEqual(["completed", "failed"]);
+    expect((await listReviewContributions(created.session.id, owner.id, { status: "active", limit: 100 }, env.DB))?.items).toHaveLength(21);
+    expect((await listReviewContributions(created.session.id, owner.id, { status: "rolled_back" }, env.DB))?.items)
+      .toEqual([expect.objectContaining({ runId: runIds[0], rollbackStatus: "completed" })]);
+    expect((await getFloorSnapshot(created.session.id, owner.id, env.DB))?.queue.find((item) => item.rollback?.runId === runIds[0])?.rollback)
+      .toEqual(expect.objectContaining({ status: "completed", canStart: false }));
   });
 });
 
@@ -1060,6 +1378,16 @@ describe("plan limits", () => {
     await expect(hourQuotaExhausted(user.id, env.DB)).resolves.toBe(true);
     await env.DB.prepare("UPDATE users SET plan_status = 'past_due' WHERE id = ?").bind(user.id).run();
     await expect(hourQuotaExhausted(user.id, env.DB)).resolves.toBe(true);
+
+    // A free_allowance_used_at flag (set only by upsertUser recognizing a
+    // deleted account's prior_email_hash) drops the free limit itself to 0h
+    // — exhausted even with zero seconds booked. Reactivating a paid plan
+    // still lifts it regardless.
+    await env.DB.prepare("UPDATE users SET plan_status = 'inactive', free_allowance_used_at = ? WHERE id = ?").bind(Date.now(), user.id).run();
+    await env.DB.prepare("DELETE FROM usage_months WHERE owner_user_id = ?").bind(user.id).run();
+    await expect(hourQuotaExhausted(user.id, env.DB)).resolves.toBe(true);
+    await env.DB.prepare("UPDATE users SET plan_status = 'active' WHERE id = ?").bind(user.id).run();
+    await expect(hourQuotaExhausted(user.id, env.DB)).resolves.toBe(false);
   });
 
   it("upsertUser does not reset plan or plan_status on re-login", async () => {

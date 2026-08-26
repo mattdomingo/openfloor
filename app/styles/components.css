@@ -154,7 +154,13 @@ input, textarea { width: 100%; padding: 11px 12px; border: 1px solid var(--line-
 .select-menu-trigger:hover, .select-menu-trigger[aria-expanded="true"] { border-color: var(--line-strong); }
 .select-menu-trigger:disabled { opacity: 0.55; cursor: default; }
 .select-menu-trigger > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.select-menu-list { position: absolute; z-index: 30; top: calc(100% + var(--space-1)); left: 0; min-width: max(100%, 170px); max-height: 240px; overflow-y: auto; margin: 0; padding: var(--space-1); list-style: none; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--surface-raised); box-shadow: var(--elevation-2); animation: popover-rise var(--dur-float) var(--ease-out); transform-origin: top left; }
+/* text-transform/letter-spacing reset: this list is a DOM descendant of
+   whatever <label> wraps the trigger, and a fixed-position popover doesn't
+   opt out of that ancestor's typography the way the trigger <button> does
+   for free (browsers reset text-transform on form controls, not on <ul>) —
+   without this it silently picks up a caption's small-caps styling (see
+   .create-card label in shop.css) despite rendering nowhere near it. */
+.select-menu-list { position: absolute; z-index: 30; top: calc(100% + var(--space-1)); left: 0; min-width: max(100%, 170px); max-height: 240px; overflow-y: auto; margin: 0; padding: var(--space-1); list-style: none; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--surface-raised); box-shadow: var(--elevation-2); animation: popover-rise var(--dur-float) var(--ease-out); transform-origin: top left; text-transform: none; letter-spacing: normal; }
 .select-menu[data-align="up"] .select-menu-list { top: auto; bottom: calc(100% + var(--space-1)); transform-origin: bottom left; }
 /* The component measures the trigger and inlines fixed viewport coordinates
    (overriding the absolute fallback above) so the list escapes overflow
@@ -194,6 +200,14 @@ input, textarea { width: 100%; padding: 11px 12px; border: 1px solid var(--line-
 .usage-meter::-webkit-progress-bar { background: var(--surface-sunken); }
 .usage-meter::-webkit-progress-value { background: var(--accent); }
 .usage-meter::-moz-progress-bar { background: var(--accent); }
+
+/* Provider budget meter (Settings → Connections): amber at 80%, red at the
+   cap — lib/agent-run-start.ts's checkProviderBudget refuses new runs at the
+   same 100% this colors. */
+.usage-meter[data-level="warn"]::-webkit-progress-value { background: var(--status-attention); }
+.usage-meter[data-level="warn"]::-moz-progress-bar { background: var(--status-attention); }
+.usage-meter[data-level="over"]::-webkit-progress-value { background: var(--status-blocked); }
+.usage-meter[data-level="over"]::-moz-progress-bar { background: var(--status-blocked); }
 
 .empty-state { margin-top: var(--space-6); padding: 64px var(--space-6); text-align: center; }
 .empty-state strong { font: 400 26px var(--font-serif); }
@@ -337,7 +351,7 @@ input, textarea { width: 100%; padding: 11px 12px; border: 1px solid var(--line-
    shop-settle is defined in shop.css (app/styles/shop.css, "Page entrance")
    but @keyframes aren't shell-scoped, so it's reusable here even though
    .join-shell deliberately sits outside the .shop-shell identity. */
-.join-card { width: min(540px, 100%); padding: clamp(28px, 6vw, 54px); text-align: center; animation: shop-settle .4s var(--ease-out) both; }
+.join-card { width: min(540px, 100%); padding: clamp(28px, 6vw, 54px); text-align: center; animation: shop-settle .4s var(--ease-out) backwards; }
 /* Every other shop-palette page title (app/styles/shop.css: .page-heading h1,
    .lobby-hero h1) is Archivo bold, not the old serif — .join-card sat outside
    that redesign and kept inheriting layout.css's shared serif rule. Matches

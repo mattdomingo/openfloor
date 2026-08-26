@@ -1,5 +1,6 @@
 import { getGitHubAppConfig } from "@/db";
-import { getPendingGitHubInstallation, getRepositoryConnectionForMember } from "@/db/repositories";
+import { listAccountGitHubRepositories, resolveAccountGitHubRepository } from "@/db/github-installations";
+import { getRepositoryConnectionForMember } from "@/db/repositories";
 import { getMembershipRole } from "@/db/sessions";
 import { GitHubApiError, listInstallationRepositories, listRepositoryBranches } from "@/lib/github";
 import { isApiError, requireApiUser } from "@/lib/server-auth";
@@ -11,20 +12,28 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
   if ((await getMembershipRole(sessionId, user.id)) !== "owner") {
     return Response.json({ error: "Session not found" }, { status: 404 });
   }
-  const pending = await getPendingGitHubInstallation(sessionId, user.id);
   const existing = await getRepositoryConnectionForMember(sessionId, user.id);
-  const installationId = pending?.installationId ?? (existing && !["disconnected", "revoked", "inaccessible"].includes(existing.status) ? existing.installationId : null);
-  if (!installationId) return Response.json({ error: "GitHub setup is not available" }, { status: 409 });
+  const existingUsable = existing && !["disconnected", "revoked", "inaccessible"].includes(existing.status);
   try {
     const config = getGitHubAppConfig();
-    const allRepositories = await listInstallationRepositories(config, installationId);
-    const repositories = pending
-      ? allRepositories
-      : allRepositories.filter((repository) => repository.id === existing?.repositoryId);
+    const repositories = existingUsable
+      ? (await listInstallationRepositories(config, existing.installationId)).filter((repository) => repository.id === existing.repositoryId)
+      : await listAccountGitHubRepositories(user.id, config);
     const repositoryId = new URL(request.url).searchParams.get("repositoryId");
     if (!repositoryId) return Response.json({ repositories, branches: [] });
     const repository = repositories.find((item) => item.id === repositoryId);
-    if (!repository) return Response.json({ error: "Repository is not available to this installation" }, { status: 400 });
+    if (!repository) return Response.json({ error: "Repository is not available to your GitHub account" }, { status: 400 });
+    const installationId = existingUsable
+      ? existing.installationId
+      : (await resolveAccountGitHubRepository(
+          user.id,
+          "accountInstallationId" in repository && typeof repository.accountInstallationId === "string"
+            ? repository.accountInstallationId
+            : "",
+          repository.id,
+          config,
+        ))?.installationId;
+    if (!installationId) return Response.json({ error: "Repository is not available to your GitHub account" }, { status: 400 });
     const branches = await listRepositoryBranches(config, installationId, repository);
     return Response.json({ repositories, branches });
   } catch (error) {

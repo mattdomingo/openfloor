@@ -8,6 +8,7 @@ import {
 } from "@/lib/chatgpt-auth";
 import {
   credentialAadContext,
+  credentialKindLabel,
   credentialKindsForProvider,
   providerLabel,
   resolveRunCredentialSource,
@@ -23,20 +24,52 @@ type CredentialRow = {
   validatedAt: number | null;
   createdAt: number;
   updatedAt: number;
+  monthlyLimitMicroUsd: number | null;
+  monthSpendMicroUsd: number;
 };
 
+// Joined to provider_spend_months for the current UTC month so every
+// Settings row carries its own spend meter without a second round trip per
+// row. c.kind never equals 'server' (that kind only appears on the
+// server-fallback rollup, which has no matching credential row to join to),
+// so this LEFT JOIN never double-counts across kinds.
 const SUMMARY_COLUMNS =
-  "provider, kind, fingerprint, validated_at AS validatedAt, created_at AS createdAt, updated_at AS updatedAt";
+  `c.provider, c.kind, c.fingerprint, c.validated_at AS validatedAt, c.created_at AS createdAt, c.updated_at AS updatedAt,
+   c.monthly_limit_micro_usd AS monthlyLimitMicroUsd, COALESCE(spend.micro_usd, 0) AS monthSpendMicroUsd`;
+const SUMMARY_JOIN =
+  `LEFT JOIN provider_spend_months spend
+     ON spend.user_id = c.user_id AND spend.provider = c.provider AND spend.kind = c.kind AND spend.month = ?`;
+
+function currentUtcMonth(): string {
+  return new Date().toISOString().slice(0, 7);
+}
 
 export async function listProviderCredentials(
   userId: string,
   database: D1DatabaseLike = getDb(),
 ): Promise<ProviderCredentialSummary[]> {
   const rows = await database
-    .prepare(`SELECT ${SUMMARY_COLUMNS} FROM user_provider_credentials WHERE user_id = ? ORDER BY provider, kind`)
-    .bind(userId)
+    .prepare(`SELECT ${SUMMARY_COLUMNS} FROM user_provider_credentials c ${SUMMARY_JOIN} WHERE c.user_id = ? ORDER BY c.provider, c.kind`)
+    .bind(currentUtcMonth(), userId)
     .all<CredentialRow>();
   return rows.results;
+}
+
+export async function setProviderCredentialLimit(
+  userId: string,
+  provider: CredentialProvider,
+  kind: CredentialKind,
+  monthlyLimitMicroUsd: number | null,
+  database: D1DatabaseLike = getDb(),
+): Promise<ProviderCredentialSummary | null> {
+  await database.prepare(
+    "UPDATE user_provider_credentials SET monthly_limit_micro_usd = ?, updated_at = ? WHERE user_id = ? AND provider = ? AND kind = ?",
+  ).bind(monthlyLimitMicroUsd, Date.now(), userId, provider, kind).run();
+  const row = await database
+    .prepare(`SELECT ${SUMMARY_COLUMNS} FROM user_provider_credentials c ${SUMMARY_JOIN} WHERE c.user_id = ? AND c.provider = ? AND c.kind = ?`)
+    .bind(currentUtcMonth(), userId, provider, kind)
+    .first<CredentialRow>();
+  return row ?? null;
 }
 
 export type AutoAgentProviderResolution = {
@@ -99,8 +132,8 @@ export async function upsertProviderCredential(
     .bind(userId, provider, record.kind, record.ciphertext, record.fingerprint, record.validatedAt, now, now)
     .run();
   const row = await database
-    .prepare(`SELECT ${SUMMARY_COLUMNS} FROM user_provider_credentials WHERE user_id = ? AND provider = ? AND kind = ?`)
-    .bind(userId, provider, record.kind)
+    .prepare(`SELECT ${SUMMARY_COLUMNS} FROM user_provider_credentials c ${SUMMARY_JOIN} WHERE c.user_id = ? AND c.provider = ? AND c.kind = ?`)
+    .bind(currentUtcMonth(), userId, provider, record.kind)
     .first<CredentialRow>();
   if (!row) throw new Error("Credential upsert did not persist.");
   return row;
@@ -204,6 +237,7 @@ export async function resolveRunProviderSecret(
     if (!decrypted) {
       return { ok: false, message: `The agent owner's connected ${providerLabel(provider)} credential could not be read. Reconnect it in Settings.` };
     }
+    await recordBilledKind(runId, owner.kind, database);
     return {
       ok: true,
       source: "owner",
@@ -214,6 +248,7 @@ export async function resolveRunProviderSecret(
     };
   }
   if (resolution.source === "server" && options.serverKey) {
+    await recordBilledKind(runId, "server", database);
     return { ok: true, source: "server", kind: "api_key", secret: options.serverKey };
   }
   if (resolution.source === "none" && resolution.reason === "missing_selected_kind" && owner?.requestedKind) {
@@ -283,4 +318,62 @@ export async function ensureFreshChatGptBundle(
     credentialAadContext(resolved.ownerUserId, "openai", "oauth"),
   );
   return (winner && parseChatGptBundle(winner)) || bundle;
+}
+
+// One write per run, not one per model request: every gateway route
+// (anthropic-compat, openai, gemini) calls resolveRunProviderSecret on every
+// model call a run makes, but which credential paid never changes mid-run —
+// the WHERE guard makes every call after the first a no-op. db/runs.ts's
+// recordRunUsage reads this column at run completion to attribute spend to
+// the right (user, provider, kind) rollup bucket.
+async function recordBilledKind(runId: string, kind: CredentialKind | "server", database: D1DatabaseLike): Promise<void> {
+  await database.prepare("UPDATE agent_runs SET billed_kind = ? WHERE id = ? AND billed_kind IS NULL")
+    .bind(kind, runId).run();
+}
+
+// Same (ownerUserId, provider, credentialKind) shape as
+// db/runs.ts's getQueueItemAgentBudgetContext — the conflict resolver path
+// has an agentId directly (PendingConflict) rather than a queue item.
+export async function getAgentBudgetContext(
+  agentId: string,
+  database: D1DatabaseLike = getDb(),
+): Promise<{ ownerUserId: string; provider: CredentialProvider; credentialKind: CredentialKind | null } | null> {
+  const row = await database.prepare(
+    "SELECT owner_user_id AS ownerUserId, provider, credential_kind AS credentialKind FROM floor_agents WHERE id = ?",
+  ).bind(agentId).first<{ ownerUserId: string; provider: CredentialProvider; credentialKind: CredentialKind | null }>();
+  return row ?? null;
+}
+
+export type ProviderBudgetStatus = { ok: true } | { ok: false; message: string };
+
+// Pre-run gate (lib/agent-run-start.ts): is the credential this run would
+// bill already over its owner-set monthly cap? Mirrors
+// getRunAgentOwnerCredential's kind-resolution ORDER BY (prefer api_key when
+// the agent names no specific kind) so the row checked here is the same one
+// resolveRunProviderSecret would actually charge. A server-key-fallback run
+// is never limited: it only reaches "server" when the owner has no usable
+// credential row at all, so this lookup naturally finds nothing to check.
+export async function checkProviderBudget(
+  ownerUserId: string,
+  provider: CredentialProvider,
+  requestedKind: CredentialKind | null,
+  database: D1DatabaseLike = getDb(),
+): Promise<ProviderBudgetStatus> {
+  const credential = await database.prepare(
+    `SELECT kind, monthly_limit_micro_usd AS limitMicroUsd FROM user_provider_credentials
+     WHERE user_id = ? AND provider = ? AND (? IS NULL OR kind = ?)
+     ORDER BY CASE WHEN kind = 'api_key' THEN 0 ELSE 1 END LIMIT 1`,
+  ).bind(ownerUserId, provider, requestedKind, requestedKind).first<{ kind: CredentialKind; limitMicroUsd: number | null }>();
+  if (!credential || credential.limitMicroUsd == null) return { ok: true };
+  const month = new Date().toISOString().slice(0, 7);
+  const spend = await database.prepare(
+    "SELECT micro_usd AS microUsd FROM provider_spend_months WHERE user_id = ? AND provider = ? AND kind = ? AND month = ?",
+  ).bind(ownerUserId, provider, credential.kind, month).first<{ microUsd: number }>();
+  if ((spend?.microUsd ?? 0) >= credential.limitMicroUsd) {
+    return {
+      ok: false,
+      message: `This agent's owner has reached their monthly ${providerLabel(provider)} ${credentialKindLabel(provider, credential.kind)} budget.`,
+    };
+  }
+  return { ok: true };
 }
