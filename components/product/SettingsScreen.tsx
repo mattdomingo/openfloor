@@ -5,7 +5,7 @@ import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
 import { BASE_PATH } from "@/components/basePath";
 import { DoNotDisturbToggle } from "@/components/DoNotDisturbToggle";
-import { Avatar, useDialogDismiss } from "@/components/session/primitives";
+import { Avatar, Spinner, useDialogDismiss } from "@/components/session/primitives";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { ACCEPTED_AVATAR_TYPE_LIST, ACCEPTED_AVATAR_TYPES, MAX_AVATAR_BYTES } from "@/lib/avatar-constraints";
 import { formatDuration } from "@/lib/date-format";
@@ -213,7 +213,7 @@ function ProfileSection({ user, onSaved }: { user: AppUser; onSaved: (user: AppU
 
         {error && <p className="form-error" role="alert">{error}</p>}
         {saved && !error && <p className="notice" role="status">Saved.</p>}
-        <div className="form-actions"><button className="button" data-variant="primary" disabled={!ready || submitting}>{submitting ? "Saving…" : "Save changes"}</button></div>
+        <div className="form-actions"><button className="button" data-variant="primary" disabled={!ready || submitting}>{submitting ? <><Spinner />Saving…</> : "Save changes"}</button></div>
       </form>
 
       <ul className="settings-category-list">
@@ -454,7 +454,7 @@ function DeleteAccountDialog({ onClose }: { onClose: () => void }) {
       <div className="dialog-foot">
         <button type="button" className="button" data-variant="quiet" onClick={dismiss} disabled={busy}>Cancel</button>
         {!(blockedSessions && blockedSessions.length > 0) && (
-          <button type="button" className="button danger-button" onClick={remove} disabled={!ready || busy}>{busy ? "Deleting…" : "Delete account"}</button>
+          <button type="button" className="button danger-button" onClick={remove} disabled={!ready || busy}>{busy ? <><Spinner />Deleting…</> : "Delete account"}</button>
         )}
       </div>
     </dialog>

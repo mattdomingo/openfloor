@@ -49,6 +49,27 @@ input, textarea { width: 100%; padding: 11px 12px; border: 1px solid var(--line-
 .session-card-foot .button[data-size="sm"] { min-height: 26px; padding: 2px 10px; font-size: var(--text-xs); }
 
 /* The house select: trigger + styled listbox instead of the OS widget. */
+/* A ring with one side open, drawn in currentColor so it inherits whatever
+   button it sits in rather than needing a variant per tone. */
+.spinner {
+  flex: none;
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  opacity: .7;
+  animation: spinner-rotate .7s linear infinite;
+}
+@keyframes spinner-rotate { to { transform: rotate(360deg); } }
+/* base.css clamps every animation to one .01ms pass for reduced motion, which
+   for a progress indicator means a frozen ring that reads as broken. Reduce it
+   instead of removing it: same spin, slow enough not to draw the eye. */
+@media (prefers-reduced-motion: reduce) {
+  .spinner { animation-duration: 2.4s !important; animation-iteration-count: infinite !important; }
+}
+
 .select-menu { position: relative; min-width: 0; }
 .select-menu-trigger { display: inline-flex; align-items: center; gap: var(--space-2); max-width: 100%; padding: 6px var(--space-3); border: 1px solid var(--line-soft); border-radius: var(--radius-sm); background: var(--surface-raised); color: var(--text-primary); font: inherit; font-size: var(--text-sm); cursor: pointer; }
 .select-menu-trigger:hover, .select-menu-trigger[aria-expanded="true"] { border-color: var(--line-strong); }

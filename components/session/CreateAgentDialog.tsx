@@ -12,7 +12,7 @@ import {
   type CredentialKind,
   type CredentialProvider,
 } from "@/lib/provider-credentials";
-import { Icon, useDialogDismiss } from "./primitives";
+import { Icon, Spinner, useDialogDismiss } from "./primitives";
 import { SelectMenu } from "./SelectMenu";
 
 export function CreateAgentDialog({
@@ -132,7 +132,7 @@ export function CreateAgentDialog({
         </div>
         <div className="dialog-foot">
           <button type="button" className="button" data-variant="quiet" onClick={dismiss}>Cancel</button>
-          <button type="submit" className="button" data-variant="primary" disabled={!ready || submitting}>{submitting ? "Creating…" : "Create agent"}</button>
+          <button type="submit" className="button" data-variant="primary" disabled={!ready || submitting}>{submitting ? <><Spinner />Creating…</> : "Create agent"}</button>
         </div>
       </form>
     </dialog>
