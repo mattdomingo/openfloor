@@ -100,6 +100,13 @@ input, textarea { width: 100%; padding: 11px 12px; border: 1px solid var(--line-
    ancestors; data-flip mirrors the computed direction for the animation. */
 .select-menu-list[data-flip="true"] { transform-origin: bottom left; }
 .select-menu-list li { display: grid; gap: 2px; padding: 7px var(--space-3); border-radius: var(--radius-sm); font-size: var(--text-sm); cursor: pointer; white-space: nowrap; }
+/* Searchable variant: the popover keeps the .select-menu-list chrome (so every
+   shell skin still applies) but scrolling moves to the option list, leaving the
+   filter box pinned above it. */
+.select-menu-panel { display: grid; gap: var(--space-1); max-height: none; overflow: visible; }
+.select-menu-panel .select-menu-options { display: grid; max-height: 240px; overflow-y: auto; margin: 0; padding: 0; list-style: none; }
+.select-menu-search { padding: 6px var(--space-2); border: 1px solid var(--line-soft); border-radius: var(--radius-sm); background: var(--surface-panel); color: var(--text-primary); font: inherit; font-size: var(--text-sm); }
+.select-menu-empty { padding: 7px var(--space-3); color: var(--text-tertiary); font-size: var(--text-sm); }
 .select-menu-list li small { color: var(--text-tertiary); }
 .select-menu-list li[data-active="true"] { background: var(--surface-sunken); }
 .select-menu-list li[data-selected="true"] { background: var(--accent-soft); color: var(--accent); }
