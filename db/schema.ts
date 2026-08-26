@@ -42,6 +42,17 @@ export const users = sqliteTable(
     // upsertUser lookups exclude it so the next sign-in with the same
     // identity creates a fresh row instead of resurrecting this one.
     deletedAt: integer("deleted_at"),
+    // HMAC-SHA256(INVITE_SIGNING_SECRET, "openfloor:free-allowance:v1:" +
+    // normalizeEmail(email)) of the address this row held before
+    // deleteAccount scrubbed it — see lib/account-email-hash.ts. Never the
+    // plaintext email. Set only by deleteAccount, on the tombstone row.
+    priorEmailHash: text("prior_email_hash"),
+    // Set only by upsertUser's INSERT branch, when the new row's email
+    // matches a priorEmailHash on some tombstone: this address already
+    // spent its free-plan hour allowance (usage_months resets per user id,
+    // so a fresh row would otherwise get a fresh 2h/month for free). See
+    // planHourLimit() in lib/plans.ts.
+    freeAllowanceUsedAt: integer("free_allowance_used_at"),
   },
   (table) => [
     uniqueIndex("idx_users_chatgpt_user_id").on(table.providerUserId),
@@ -51,6 +62,8 @@ export const users = sqliteTable(
     // this being unique and normalizeEmail (lib/identity.ts) keeping every
     // stored value lowercase and trimmed.
     uniqueIndex("idx_users_email").on(table.email),
+    // Non-unique: the same address can be deleted more than once over time.
+    index("idx_users_prior_email_hash").on(table.priorEmailHash),
     check("users_plan_check", sql`${table.plan} in ('pro', 'max', 'enterprise')`),
     check("users_plan_status_check", sql`${table.planStatus} in ('inactive', 'active', 'past_due', 'canceled')`),
   ],
@@ -401,6 +414,11 @@ export const repositoryCandidates = sqliteTable(
     cleanupStatus: text("cleanup_status", { enum: ["pending", "complete", "partial"] }),
     cleanupCompletedAt: integer("cleanup_completed_at"),
     branchDeletedAt: integer("branch_deleted_at"),
+    // Derived read-layer status, same convention as mergedAt -> "merged":
+    // never a stored `status` value (the CHECK below only allows
+    // creating/active/creation_failed). Owner-initiated abandonment of a
+    // still-live candidate — see lib/candidate-abandon.ts.
+    abandonedAt: integer("abandoned_at"),
     status: text("status", { enum: ["creating", "active", "creation_failed"] }).notNull(),
     createdBy: text("created_by").notNull().references(() => users.id),
     createdAt: integer("created_at").notNull(),
@@ -411,7 +429,7 @@ export const repositoryCandidates = sqliteTable(
     index("idx_repository_candidates_session_created").on(table.sessionId, table.createdAt),
     uniqueIndex("idx_repository_candidates_one_live")
       .on(table.sessionId)
-      .where(sql`${table.status} in ('creating', 'active') and ${table.mergedAt} is null`),
+      .where(sql`${table.status} in ('creating', 'active') and ${table.mergedAt} is null and ${table.abandonedAt} is null`),
     uniqueIndex("idx_repository_candidates_branch").on(table.connectionId, table.branchName),
     check("repository_candidates_status_check", sql`${table.status} in ('creating', 'active', 'creation_failed')`),
   ],
