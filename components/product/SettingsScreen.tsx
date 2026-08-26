@@ -12,7 +12,7 @@ import { ACCEPTED_AVATAR_TYPES, MAX_AVATAR_BYTES } from "@/lib/avatar-constraint
 import { formatDuration } from "@/lib/date-format";
 import { LocalDateTime } from "@/components/LocalDateTime";
 import { initialsFromParts } from "@/lib/display-name";
-import { PAID_PLAN_CATALOG, planLabel, planLimitsSummary, type PaidPlan, type Plan, type PlanStatus } from "@/lib/plans";
+import { lowHoursRemaining, PAID_PLAN_CATALOG, planLabel, planLimitsSummary, type PaidPlan, type Plan, type PlanStatus } from "@/lib/plans";
 import {
   CREDENTIAL_PROVIDERS,
   type ProviderCredentialSummary,
@@ -250,6 +250,7 @@ function ProfileSection({ user, onSaved }: { user: AppUser; onSaved: (user: AppU
 
 function PlanSection({ usage, billing, billingNotice, originPath }: { usage: Usage; billing: Billing; billingNotice: string | null; originPath: string | null }) {
   const limitSeconds = usage.limitHours * 3600;
+  const lowHours = lowHoursRemaining(usage.seconds, usage.limitHours);
   const limitedHours = Number.isFinite(usage.limitHours);
   const limitedSeats = Number.isFinite(usage.limitSeats);
   const [selectedPlan, setSelectedPlan] = useState<PaidPlan>(billing.plan ?? "pro");
@@ -322,6 +323,7 @@ function PlanSection({ usage, billing, billingNotice, originPath }: { usage: Usa
           {limitedHours
             ? `${formatDuration(usage.seconds)} of ${usage.limitHours}h used this month (UTC)`
             : `${formatDuration(usage.seconds)} used this month (UTC) · unlimited`}
+          {lowHours != null && <strong className="usage-low">{` · ${formatDuration(lowHours)} left`}</strong>}
         </span>
       </li>
 

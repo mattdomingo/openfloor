@@ -949,7 +949,7 @@ export async function authorizePresence(
    callers should fail closed on null, not treat it as "ungated". */
 export async function getOwnerHourQuota(
   sessionId: string,
-  database: D1DatabaseLike,
+  database = getDb(),
 ): Promise<{ ownerId: string; plan: Plan; seconds: number; endedAt: number | null } | null> {
   const row = await database
     .prepare(
