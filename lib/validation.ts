@@ -8,6 +8,7 @@ import {
 } from "./provider-credentials";
 
 export type SessionInput = { title: string; objective: string | null };
+export type SessionCreateInput = SessionInput & { accountInstallationId: string; repositoryId: string };
 export type ObjectiveInput = { objective: string | null };
 export type AgentInput = {
   name: string;
@@ -35,7 +36,7 @@ export type QueueOrderInput = { itemIds: string[] };
 export type QueuePromptTextInput = { text: string };
 export type QueueItemPauseInput = { paused: boolean };
 export type QueueItemTargetInput = { agentId: string };
-export type RepositoryConnectionInput = { repositoryId: string; baseBranch: string; checkCommands: string[] };
+export type RepositoryConnectionInput = { repositoryId: string; accountInstallationId: string | null; baseBranch: string; checkCommands: string[] };
 export type RepositoryCandidateInput = { name: string; description: string };
 export type ProfileInput = { firstName: string; lastName: string; githubHandle: string | null };
 // Discriminated by kind: `secret` is what gets encrypted at rest, and
@@ -59,6 +60,17 @@ export function parseSessionInput(value: unknown): SessionInput | null {
   const objective = typeof input.objective === "string" ? input.objective.trim() : "";
   if (objective.length > 2000) return null;
   return { title, objective: objective || null };
+}
+
+export function parseSessionCreateInput(value: unknown): SessionCreateInput | null {
+  const session = parseSessionInput(value);
+  if (!session || !value || typeof value !== "object") return null;
+  const input = value as Record<string, unknown>;
+  if (typeof input.accountInstallationId !== "string" || typeof input.repositoryId !== "string") return null;
+  const accountInstallationId = input.accountInstallationId.trim();
+  const repositoryId = input.repositoryId.trim();
+  if (!accountInstallationId || accountInstallationId.length > 100 || !repositoryId || repositoryId.length > 100) return null;
+  return { ...session, accountInstallationId, repositoryId };
 }
 
 export function parseObjectiveInput(value: unknown): ObjectiveInput | null {
@@ -251,14 +263,16 @@ export function parseRepositoryConnectionInput(value: unknown): RepositoryConnec
   if (typeof input.repositoryId !== "string" || typeof input.baseBranch !== "string") return null;
   if (input.checkCommands !== undefined && !Array.isArray(input.checkCommands)) return null;
   const repositoryId = input.repositoryId.trim();
+  if (input.accountInstallationId !== undefined && input.accountInstallationId !== null && typeof input.accountInstallationId !== "string") return null;
+  const accountInstallationId = typeof input.accountInstallationId === "string" ? input.accountInstallationId.trim() : null;
   const baseBranch = input.baseBranch.trim();
-  if (!repositoryId || repositoryId.length > 100 || !baseBranch || baseBranch.length > 255) return null;
+  if (!repositoryId || repositoryId.length > 100 || (accountInstallationId !== null && (!accountInstallationId || accountInstallationId.length > 100)) || !baseBranch || baseBranch.length > 255) return null;
   const rawCommands = input.checkCommands ?? [];
   if (!Array.isArray(rawCommands) || rawCommands.length > 8) return null;
   if (rawCommands.some((command) => typeof command !== "string")) return null;
   const checkCommands = rawCommands.map((command) => (command as string).trim());
   if (checkCommands.some((command) => !command || command.length > 500)) return null;
-  return { repositoryId, baseBranch, checkCommands };
+  return { repositoryId, accountInstallationId, baseBranch, checkCommands };
 }
 
 export function parseRepositoryCandidateInput(value: unknown): RepositoryCandidateInput | null {

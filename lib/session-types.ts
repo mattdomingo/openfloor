@@ -192,3 +192,16 @@ export type GitHubRepositoryOption = {
   private: boolean;
   defaultBranch: string;
 };
+
+export type UserGitHubInstallationSummary = {
+  id: string;
+  accountLogin: string;
+  accountType: string;
+  status: "active" | "revoked";
+  connectedAt: number;
+  updatedAt: number;
+};
+
+export type AccountGitHubRepositoryOption = GitHubRepositoryOption & {
+  accountInstallationId: string;
+};
