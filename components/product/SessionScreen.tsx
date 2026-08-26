@@ -11,7 +11,7 @@ import { usePresenceSocket } from "@/components/session/usePresenceSocket";
 import { initials } from "@/lib/display-name";
 import { reducePresence } from "@/lib/presence";
 import { isRepositoryReadyForFloor } from "@/lib/repository-gate";
-import { AGENT_PROVIDER_LABELS, usesClaudeRunner, type CredentialProvider, type ProviderCredentialSummary } from "@/lib/provider-credentials";
+import { AGENT_PROVIDER_LABELS, connectedProviders, usesClaudeRunner, type CredentialProvider, type ProviderCredentialSummary } from "@/lib/provider-credentials";
 import type { AppUser, PresenceEvent, RemovedSessionMember, RepositoryCandidate, RepositoryConnection, RepositoryPreflight, SessionMember, SessionSummary } from "@/lib/session-types";
 import { AppHeader } from "./AppHeader";
 import { RepositoryCard } from "./RepositoryCard";
@@ -431,25 +431,24 @@ function SessionSetupDialog({
   const [autoAgentProvider, setAutoAgentProvider] = useState(session.autoAgentProvider);
   const [providerBusy, setProviderBusy] = useState(false);
   const [providerError, setProviderError] = useState<string | null>(null);
-  // Deduped: since credential kinds became first-class a provider can hold
-  // two rows (api_key + oauth) — one provider, one option, or the length
+  // connectedProviders() dedupes across credential kinds (a provider can hold
+  // both api_key and oauth rows) — one provider, one option, or the length
   // checks below misread a fully-connected provider as "selection required"
   // and the dropdown shows the same provider twice (the client twin of
   // resolveAutoAgentProvider's SELECT DISTINCT).
-  const connectedProviders = [...new Set(credentials.map((credential) => credential.provider))]
-    .filter((provider) => enabledProviders.includes(provider));
-  const configuredProvider = autoAgentProvider && connectedProviders.includes(autoAgentProvider) ? autoAgentProvider : null;
+  const connectedProviderList = connectedProviders(credentials, enabledProviders);
+  const configuredProvider = autoAgentProvider && connectedProviderList.includes(autoAgentProvider) ? autoAgentProvider : null;
   const providerState = configuredProvider
     ? "selected"
-    : connectedProviders.length === 0
+    : connectedProviderList.length === 0
       ? "openai_fallback"
-      : connectedProviders.length === 1
+      : connectedProviderList.length === 1
         ? "single_connected"
         : "selection_required";
-  const effectiveProvider = configuredProvider ?? (connectedProviders.length === 1 ? connectedProviders[0] : providerState === "openai_fallback" ? "openai" : null);
+  const effectiveProvider = configuredProvider ?? (connectedProviderList.length === 1 ? connectedProviderList[0] : providerState === "openai_fallback" ? "openai" : null);
   const providerOptions: SelectMenuOption[] = [
     { value: "", label: "Choose provider" },
-    ...connectedProviders.map((provider) => ({ value: provider, label: AGENT_PROVIDER_LABELS[provider] })),
+    ...connectedProviderList.map((provider) => ({ value: provider, label: AGENT_PROVIDER_LABELS[provider] })),
   ];
 
   async function updateAutoAgentProvider(provider: CredentialProvider | null) {
@@ -524,7 +523,7 @@ function SessionSetupDialog({
                 {providerState === "selection_required" && <small>Choose which connected provider generated workers and Concierge should use.</small>}
                 {providerState === "selected" && effectiveProvider && <small>{AGENT_PROVIDER_LABELS[effectiveProvider]} is the default for generated workers and Concierge.</small>}
               </span>
-              {connectedProviders.length > 1 && (
+              {connectedProviderList.length > 1 && (
                 <SelectMenu
                   value={configuredProvider ?? ""}
                   options={providerOptions}
