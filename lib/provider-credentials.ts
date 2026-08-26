@@ -2,11 +2,14 @@
 // this module is shared by client components and unit tests (same rule as
 // lib/plans.ts). Persistence lives in db/provider-credentials.ts.
 
-// Grok (xAI) is deliberately absent — twice over: its Anthropic-compat
-// endpoint rejects the CLI's system-role messages, and its Responses API
-// rejects the "content": null Codex writes on replayed reasoning items
-// (both 2026-08-24 — see the AGENTS.md decision log), so no runner can
-// serve it today.
+// Grok (xAI) is deliberately absent — three routes closed: its Anthropic-compat
+// endpoint rejects the CLI's system-role messages (2026-08-24, reconfirmed
+// 2026-08-26), its Responses API rejects the "content": null Codex writes on
+// replayed reasoning items (2026-08-24, reconfirmed at codex-sdk 0.149.1 on
+// 2026-08-26, where effort "none" is also vendor-rejected), and the chat wire
+// is hard-refused by the pinned Codex binary itself (`wire_api = "chat"` is
+// no longer supported — verified 2026-08-26). See the AGENTS.md decision log
+// before proposing route four.
 export const CREDENTIAL_PROVIDERS = ["anthropic", "openai", "kimi", "gemini", "glm"] as const;
 export type CredentialProvider = (typeof CREDENTIAL_PROVIDERS)[number];
 
