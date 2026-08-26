@@ -201,6 +201,26 @@ describe("agent router tick", () => {
     expect(recorded.find((decision) => decision.queueItemId === idleItemId)?.decision).toBe("dispatched");
   });
 
+  it("does not dispatch an item that was assigned before its agent was paused", async () => {
+    const room = await routingRoom("paused-dispatch");
+    const agentId = await addAgent(room.sessionId, room.owner.id, "Paused", "Backend", "auth work");
+    const floor = await createFloorQueueItem(room.sessionId, room.owner.id, { prompt: "Already targeted", agentId }, env.DB);
+    const itemId = floor!.queue[0].id;
+    await env.DB.prepare("UPDATE floor_agents SET paused_at = ? WHERE id = ?").bind(Date.now(), agentId).run();
+
+    const stub = startRunStub();
+    const outcome = await runRoutingTick(room.sessionId, "alarm", stub.deps, env.DB);
+    expect(stub.calls).toHaveLength(0);
+    const item = await queueItem(itemId);
+    expect(item?.status).toBe("queued");
+    const recorded = await decisions(room.sessionId);
+    expect(recorded.find((decision) => decision.queueItemId === itemId)).toEqual(
+      expect.objectContaining({ decision: "skipped", reason: "Agent is paused or no longer on the floor" }),
+    );
+    // acted stays false: pausing produced no queue/run change this tick.
+    expect(outcome.acted).toBe(false);
+  });
+
   it("holds with a budget reason when the session run cap is reached", async () => {
     const room = await routingRoom("capacity");
     for (let index = 0; index < SESSION_RUN_CAP; index += 1) {
