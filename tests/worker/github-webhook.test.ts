@@ -63,6 +63,55 @@ describe("GitHub webhook reconciliation", () => {
     const afterReplay = await env.DB.prepare("SELECT floor_revision AS revision FROM sessions WHERE id = ?").bind(created.session.id).first<{ revision: number }>();
     expect(afterReplay?.revision).toBe(revision?.revision);
   });
+
+  it("ends the session when the candidate branch merges on GitHub, but not when another branch merges", async () => {
+    const owner = await upsertUser({
+      providerUserId: "webhook-merge-owner", email: "webhook-merge@example.com", displayName: "Webhook Merge Owner", fullName: "Webhook Merge Owner",
+    }, env.DB);
+    const created = await createSession(owner.id, { title: "Merge webhook room", objective: null }, env.DB);
+    const connection = await saveRepositoryConnection(created.session.id, owner.id, null, "installation-merge-webhook", {
+      id: "repository-merge-webhook", nodeId: "R_merge_webhook", owner: "openfloor", name: "merge-test",
+      fullName: "openfloor/merge-test", private: true, defaultBranch: "main",
+    }, "main", env.DB);
+    const candidateId = crypto.randomUUID();
+    const branch = `openfloor/${created.session.id.slice(0, 8)}/candidate/${candidateId.slice(0, 8)}`;
+    await reserveRepositoryCandidate(created.session.id, owner.id, connection!.id, candidateId, "Merge webhook room", "", branch, "main", "a".repeat(40), env.DB);
+    await activateRepositoryCandidate(created.session.id, candidateId, "a".repeat(40), env.DB);
+
+    const otherBranchBody = JSON.stringify({
+      installation: { id: "installation-merge-webhook" }, repository: { id: "repository-merge-webhook" },
+      pull_request: {
+        number: 1, node_id: "PR_other", html_url: "https://github.com/openfloor/merge-test/pull/1",
+        state: "closed", draft: false, merged: true, merge_commit_sha: "b".repeat(40), head: { ref: "some-other-branch" },
+      },
+    });
+    const otherBranchResponse = await receiveGitHubWebhook(webhookRequest(otherBranchBody, "delivery-merge-other", await sign(otherBranchBody), "pull_request"));
+    expect(otherBranchResponse.status).toBe(202);
+    const stillLive = await env.DB.prepare("SELECT ended_at AS endedAt FROM sessions WHERE id = ?").bind(created.session.id).first<{ endedAt: number | null }>();
+    expect(stillLive?.endedAt).toBeNull();
+
+    const mergeBody = JSON.stringify({
+      installation: { id: "installation-merge-webhook" }, repository: { id: "repository-merge-webhook" },
+      pull_request: {
+        number: 2, node_id: "PR_candidate", html_url: "https://github.com/openfloor/merge-test/pull/2",
+        state: "closed", draft: false, merged: true, merge_commit_sha: "c".repeat(40), head: { ref: branch },
+      },
+    });
+    const signature = await sign(mergeBody);
+    const mergeResponse = await receiveGitHubWebhook(webhookRequest(mergeBody, "delivery-merge-candidate", signature, "pull_request"));
+    expect(mergeResponse.status).toBe(202);
+    const ended = await env.DB.prepare("SELECT ended_at AS endedAt, ended_reason AS endedReason FROM sessions WHERE id = ?").bind(created.session.id).first<{ endedAt: number | null; endedReason: string | null }>();
+    expect(ended?.endedAt).not.toBeNull();
+    expect(ended?.endedReason).toBe("merged");
+    const candidateRow = await env.DB.prepare("SELECT merged_at AS mergedAt, pull_request_merged AS pullRequestMerged FROM repository_candidates WHERE id = ?").bind(candidateId).first<{ mergedAt: number | null; pullRequestMerged: number }>();
+    expect(candidateRow?.mergedAt).not.toBeNull();
+    expect(candidateRow?.pullRequestMerged).toBe(1);
+
+    const duplicate = await receiveGitHubWebhook(webhookRequest(mergeBody, "delivery-merge-candidate", signature, "pull_request"));
+    expect(await duplicate.json()).toEqual(expect.objectContaining({ duplicate: true }));
+    const afterReplay = await env.DB.prepare("SELECT ended_at AS endedAt FROM sessions WHERE id = ?").bind(created.session.id).first<{ endedAt: number | null }>();
+    expect(afterReplay?.endedAt).toBe(ended?.endedAt);
+  });
 });
 
 function webhookRequest(body: string, delivery: string, signature: string, event = "push"): Request {

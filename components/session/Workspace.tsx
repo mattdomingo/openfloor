@@ -1,7 +1,6 @@
 "use client";
 
 import { CSSProperties, PointerEvent as ReactPointerEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { LocalDateTime } from "@/components/LocalDateTime";
 import type { CredentialProvider, ProviderCredentialSummary } from "@/lib/provider-credentials";
 import type { AppUser, SessionMember, SessionSummary, TypingDraft } from "@/lib/session-types";
 import type { CreateFloorAgentInput } from "@/lib/floor-types";
@@ -286,11 +285,6 @@ export function Workspace({ user, session, members, floorData, activity, reposit
 
   return <main className="app-shell" data-screen={screen}>
     <TopBar screen={screen} onScreen={setScreen} onNotice={setNotice} session={session} user={user} members={members} unreadTeamCount={unreadTeamCount} reviewAttentionCount={attentionConflicts.length} presenceConnected={presenceConnected} staleMessageCount={countMessagesSinceObjective(messages, session.objectiveUpdatedAt)} onSaveObjective={onSaveObjective} repository={repository} branch={activeCandidate?.branchName ?? repository?.baseBranch ?? null} />
-    {session.endedAt != null && (
-      /* Banner only: the server-side write guard is the enforcement, so a
-         stale control just surfaces its 409 through the dock status line. */
-      <p className="notice" data-tone="attention" role="status">This session ended <LocalDateTime timestamp={session.endedAt} mode="date" />{session.endedReason === "merged" ? " because the candidate branch was merged" : ""}. The floor is read-only.</p>
-    )}
     {quotaExhausted && session.endedAt == null && <QuotaNotice sessionId={session.id} role={session.role} />}
     {!quotaExhausted && session.endedAt == null && lowHoursRemaining != null && (
       <QuotaNotice sessionId={session.id} role={session.role} remainingSeconds={lowHoursRemaining} />

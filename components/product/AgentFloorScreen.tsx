@@ -86,7 +86,10 @@ export function AgentFloorScreen({
       setSession((current) => event.updatedAt >= current.updatedAt ? { ...current, objective: event.objective, updatedAt: event.updatedAt } : current);
     }
     if (event.type === "session.ended") {
-      setSession((current) => ({ ...current, endedAt: event.endedAt, endedReason: event.reason }));
+      // Ended sessions are lobby-only — bounce out of the floor rather than
+      // going read-only in place; the lobby's ended panel explains why.
+      router.replace(`/session/${session.id}`);
+      return;
     }
     if (event.type === "session.locked") {
       setSession((current) => ({ ...current, lockedAt: event.lockedAt }));
@@ -97,7 +100,7 @@ export function AgentFloorScreen({
     // screen re-requests them lazily the next time it needs one.
     if (event.type === "floor.changed" && event.domains.includes("repository")) resetRepositoryTree();
     if (shouldRefreshFloor(revisionRef.current, event)) void refreshFloor();
-  }, [catchUpActivity, ingestActivity, refreshFloor, refreshMembers, resetRepositoryTree]);
+  }, [catchUpActivity, ingestActivity, refreshFloor, refreshMembers, resetRepositoryTree, router, session.id]);
 
   const handleLive = useCallback((send: (update: TypingUpdate) => void) => {
     if (latestTypingUpdateRef.current.text) send(latestTypingUpdateRef.current);
