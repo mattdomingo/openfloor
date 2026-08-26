@@ -6,13 +6,18 @@
 // the SDK's own total_cost_usd instead (costSource: "reported") and never
 // touches this table.
 //
-// PLACEHOLDER FIGURES: these model ids (claude-opus-5, gpt-5.6-terra, etc.)
-// postdate this file's authoring; the prices below are estimates ordered by
-// each vendor's own established tier ratios (haiku << sonnet < opus,
-// flash-lite << flash < pro, etc.), NOT confirmed against a current price
-// list. Verify against each vendor's published pricing before this feature
-// ships to production, the same way lib/provider-credentials.ts:129-131
-// flags the openai model id as unverified pending a spike.
+// Verified 2026-08-26 against each vendor's own published pricing (Anthropic
+// platform.claude.com/docs/en/about-claude/pricing; OpenAI
+// developers.openai.com/api/docs/pricing, short-context tier; Moonshot
+// platform.kimi.ai/docs/pricing/<model>, cache-miss input; Google
+// ai.google.dev/gemini-api/docs/pricing, ≤200k tier where tiered; Z.ai
+// docs.z.ai/guides/overview/pricing). `cacheWritePerMTok` uses each vendor's
+// 5-minute/default cache-write rate where one is published (Anthropic);
+// providers with no separate write charge reuse `inputPerMTok`. GLM's cache
+// reads are a time-limited free promotion (`docs.z.ai`) captured here as 0 —
+// re-verify before it lapses. Re-verify the whole table on any provider
+// price-list change or new model id, the same way
+// lib/provider-credentials.ts:129-131 flags the openai model id.
 //
 // All figures are USD per 1,000,000 tokens.
 export type ModelPrice = {
@@ -27,40 +32,40 @@ export type ModelPrice = {
 
 export const MODEL_PRICING: Record<string, ModelPrice> = {
   // anthropic
-  "claude-opus-5": { inputPerMTok: 15, outputPerMTok: 75, cacheReadPerMTok: 1.5, cacheWritePerMTok: 18.75 },
-  "claude-fable-5": { inputPerMTok: 15, outputPerMTok: 75, cacheReadPerMTok: 1.5, cacheWritePerMTok: 18.75 },
-  "claude-opus-4-8": { inputPerMTok: 15, outputPerMTok: 75, cacheReadPerMTok: 1.5, cacheWritePerMTok: 18.75 },
-  "claude-sonnet-5": { inputPerMTok: 3, outputPerMTok: 15, cacheReadPerMTok: 0.3, cacheWritePerMTok: 3.75 },
-  "claude-haiku-4-5": { inputPerMTok: 0.8, outputPerMTok: 4, cacheReadPerMTok: 0.08, cacheWritePerMTok: 1 },
+  "claude-opus-5": { inputPerMTok: 5, outputPerMTok: 25, cacheReadPerMTok: 0.5, cacheWritePerMTok: 6.25 },
+  "claude-fable-5": { inputPerMTok: 10, outputPerMTok: 50, cacheReadPerMTok: 1, cacheWritePerMTok: 12.5 },
+  "claude-opus-4-8": { inputPerMTok: 5, outputPerMTok: 25, cacheReadPerMTok: 0.5, cacheWritePerMTok: 6.25 },
+  "claude-sonnet-5": { inputPerMTok: 2, outputPerMTok: 10, cacheReadPerMTok: 0.2, cacheWritePerMTok: 2.5 },
+  "claude-haiku-4-5": { inputPerMTok: 1, outputPerMTok: 5, cacheReadPerMTok: 0.1, cacheWritePerMTok: 1.25 },
 
   // openai (via codex-runner.mjs — always estimated, Codex reports tokens only)
-  "gpt-5.6-terra": { inputPerMTok: 5, outputPerMTok: 20, cacheReadPerMTok: 0.5, cacheWritePerMTok: 5 },
+  "gpt-5.6-terra": { inputPerMTok: 2, outputPerMTok: 12, cacheReadPerMTok: 0.2, cacheWritePerMTok: 2 },
 
   // kimi (Moonshot; rides the Anthropic-Messages-compatible gateway, but
   // must never be priced with claude-opus-5-style "reported" cost — see
   // lib/run-usage.ts)
-  "kimi-k3": { inputPerMTok: 2, outputPerMTok: 10, cacheReadPerMTok: 0.2, cacheWritePerMTok: 2 },
-  "kimi-k2.7-code": { inputPerMTok: 2.5, outputPerMTok: 12, cacheReadPerMTok: 0.25, cacheWritePerMTok: 2.5 },
-  "kimi-k2.7-code-highspeed": { inputPerMTok: 3.5, outputPerMTok: 16, cacheReadPerMTok: 0.35, cacheWritePerMTok: 3.5 },
-  "kimi-k2.6": { inputPerMTok: 1.5, outputPerMTok: 8, cacheReadPerMTok: 0.15, cacheWritePerMTok: 1.5 },
+  "kimi-k3": { inputPerMTok: 3, outputPerMTok: 15, cacheReadPerMTok: 0.3, cacheWritePerMTok: 3 },
+  "kimi-k2.7-code": { inputPerMTok: 0.95, outputPerMTok: 4, cacheReadPerMTok: 0.19, cacheWritePerMTok: 0.95 },
+  "kimi-k2.7-code-highspeed": { inputPerMTok: 1.9, outputPerMTok: 8, cacheReadPerMTok: 0.38, cacheWritePerMTok: 1.9 },
+  "kimi-k2.6": { inputPerMTok: 0.95, outputPerMTok: 4, cacheReadPerMTok: 0.16, cacheWritePerMTok: 0.95 },
 
   // gemini
-  "gemini-3.5-flash": { inputPerMTok: 0.5, outputPerMTok: 2.5, cacheReadPerMTok: 0.125, cacheWritePerMTok: 0.5 },
-  "gemini-3.5-flash-lite": { inputPerMTok: 0.15, outputPerMTok: 0.6, cacheReadPerMTok: 0.0375, cacheWritePerMTok: 0.15 },
-  "gemini-2.5-pro": { inputPerMTok: 2.5, outputPerMTok: 15, cacheReadPerMTok: 0.625, cacheWritePerMTok: 2.5 },
-  "gemini-2.5-flash": { inputPerMTok: 0.3, outputPerMTok: 2.5, cacheReadPerMTok: 0.075, cacheWritePerMTok: 0.3 },
-  "gemini-2.5-flash-lite": { inputPerMTok: 0.1, outputPerMTok: 0.4, cacheReadPerMTok: 0.025, cacheWritePerMTok: 0.1 },
+  "gemini-3.5-flash": { inputPerMTok: 1.5, outputPerMTok: 9, cacheReadPerMTok: 0.15, cacheWritePerMTok: 1.5 },
+  "gemini-3.5-flash-lite": { inputPerMTok: 0.3, outputPerMTok: 2.5, cacheReadPerMTok: 0.03, cacheWritePerMTok: 0.3 },
+  "gemini-2.5-pro": { inputPerMTok: 1.25, outputPerMTok: 10, cacheReadPerMTok: 0.125, cacheWritePerMTok: 1.25 },
+  "gemini-2.5-flash": { inputPerMTok: 0.3, outputPerMTok: 2.5, cacheReadPerMTok: 0.03, cacheWritePerMTok: 0.3 },
+  "gemini-2.5-flash-lite": { inputPerMTok: 0.1, outputPerMTok: 0.4, cacheReadPerMTok: 0.01, cacheWritePerMTok: 0.1 },
 
   // glm (Z.ai; also rides the Anthropic-compat gateway — always estimated)
-  "glm-5.3": { inputPerMTok: 2.5, outputPerMTok: 10, cacheReadPerMTok: 0.25, cacheWritePerMTok: 2.5 },
-  "glm-5.2": { inputPerMTok: 2.5, outputPerMTok: 10, cacheReadPerMTok: 0.25, cacheWritePerMTok: 2.5 },
-  "glm-5.1": { inputPerMTok: 2, outputPerMTok: 8, cacheReadPerMTok: 0.2, cacheWritePerMTok: 2 },
-  "glm-5-turbo": { inputPerMTok: 1, outputPerMTok: 4, cacheReadPerMTok: 0.1, cacheWritePerMTok: 1 },
-  "glm-5": { inputPerMTok: 2, outputPerMTok: 8, cacheReadPerMTok: 0.2, cacheWritePerMTok: 2 },
-  "glm-4.7": { inputPerMTok: 1.5, outputPerMTok: 6, cacheReadPerMTok: 0.15, cacheWritePerMTok: 1.5 },
-  "glm-4.6": { inputPerMTok: 1.2, outputPerMTok: 5, cacheReadPerMTok: 0.12, cacheWritePerMTok: 1.2 },
-  "glm-4.5-air": { inputPerMTok: 0.4, outputPerMTok: 1.6, cacheReadPerMTok: 0.04, cacheWritePerMTok: 0.4 },
-  "glm-4.5": { inputPerMTok: 0.8, outputPerMTok: 3.2, cacheReadPerMTok: 0.08, cacheWritePerMTok: 0.8 },
+  "glm-5.3": { inputPerMTok: 1.4, outputPerMTok: 4.4, cacheReadPerMTok: 0, cacheWritePerMTok: 1.4 },
+  "glm-5.2": { inputPerMTok: 1.4, outputPerMTok: 4.4, cacheReadPerMTok: 0, cacheWritePerMTok: 1.4 },
+  "glm-5.1": { inputPerMTok: 1.4, outputPerMTok: 4.4, cacheReadPerMTok: 0, cacheWritePerMTok: 1.4 },
+  "glm-5-turbo": { inputPerMTok: 1.2, outputPerMTok: 4, cacheReadPerMTok: 0, cacheWritePerMTok: 1.2 },
+  "glm-5": { inputPerMTok: 1, outputPerMTok: 3.2, cacheReadPerMTok: 0, cacheWritePerMTok: 1 },
+  "glm-4.7": { inputPerMTok: 0.6, outputPerMTok: 2.2, cacheReadPerMTok: 0, cacheWritePerMTok: 0.6 },
+  "glm-4.6": { inputPerMTok: 0.6, outputPerMTok: 2.2, cacheReadPerMTok: 0, cacheWritePerMTok: 0.6 },
+  "glm-4.5-air": { inputPerMTok: 0.2, outputPerMTok: 1.1, cacheReadPerMTok: 0, cacheWritePerMTok: 0.2 },
+  "glm-4.5": { inputPerMTok: 0.6, outputPerMTok: 2.2, cacheReadPerMTok: 0, cacheWritePerMTok: 0.6 },
 };
 
 export type EstimatedUsage = {
