@@ -15,7 +15,31 @@ import type { RepositorySource } from "./useRepositoryTree";
 
 type PendingAction = { type: "merge"; deleteCandidateBranch: boolean } | { type: "deleteBranch" } | { type: "abandon"; deleteBranch: boolean };
 type Selection = { kind: "changed"; id: string } | { kind: "repo"; path: string };
+type Browse = "changed" | "all" | "prompts";
+type InspectorTab = "status" | "chat" | "contributors";
+type GateState = "ok" | "blocked" | "pending" | "waiting";
 const DISCONNECTED_STATUSES = new Set(["disconnected", "revoked", "inaccessible"]);
+
+/* Drives the merge-gate strip: the same signals `canMerge` already checks,
+   restated as one glanceable row instead of a single tooltip on the disabled
+   Squash-merge button. Purely presentational — no new data. */
+function mergeGateItems(review: FloorReviewSnapshot): Array<{ label: string; state: GateState }> {
+  const pr = review.pullRequest;
+  const openConflicts = review.conflicts.some((conflict) => conflict.status !== "resolved");
+  return [
+    { label: "Ready for review", state: review.status === "ready" ? "ok" : review.status === "draft" ? "waiting" : "blocked" },
+    { label: "Mergeable", state: pr?.mergeable == null ? "waiting" : pr.mergeable && pr.mergeableState === "clean" ? "ok" : "blocked" },
+    { label: "Checks passing", state: review.githubChecksPassing == null ? "waiting" : review.githubChecksPassing ? "ok" : "blocked" },
+    { label: "No conflicts", state: openConflicts ? "blocked" : "ok" },
+    { label: "Not mid-integration", state: review.integrationRunId ? "pending" : "ok" },
+  ];
+}
+
+function MergeGateRow({ review }: { review: FloorReviewSnapshot }) {
+  return <div className="review-gate" role="status" aria-label="Merge readiness">
+    {mergeGateItems(review).map((item) => <span key={item.label} className="review-gate-item" data-state={item.state}><i aria-hidden="true">{item.state === "ok" ? "✓" : item.state === "blocked" ? "✗" : "…"}</i>{item.label}</span>)}
+  </div>;
+}
 
 export function ReviewScreen({ sessionId, revision, review, repository, repositoryTree, selectedConflictCaseId, promptRequest, owner, busy, blockingRunId, onRequestRollback, onReady, onMerge, onDeleteBranch, onAbandon, onCancelRun, onResolveConflict, onAnswerConflict, teamChat, onSendTeamMessage, participants, currentUserId }: {
   sessionId: string;
@@ -46,9 +70,9 @@ export function ReviewScreen({ sessionId, revision, review, repository, reposito
   // "workspace" (see the screen === "review" ? ... conditional there), so
   // these seed straight from an incoming promptRequest rather than only
   // reacting to it after mount.
-  const [mode, setMode] = useState<"files" | "prompts">(promptRequest ? "prompts" : "files");
+  const [browseOverride, setBrowseOverride] = useState<Browse | null>(promptRequest ? "prompts" : null);
+  const [rightTabOverride, setRightTabOverride] = useState<InspectorTab | null>(null);
   const [selection, setSelection] = useState<Selection | null>(null);
-  const [tabOverride, setTabOverride] = useState<"changed" | "all" | null>(null);
   const [contributionStatus, setContributionStatus] = useState<"active" | "rolled_back">(promptRequest?.status ?? "active");
   const [engineerFilter, setEngineerFilter] = useState<string | null>(null);
   const [agentFilter, setAgentFilter] = useState<string | null>(null);
@@ -68,7 +92,7 @@ export function ReviewScreen({ sessionId, revision, review, repository, reposito
   if (promptRequest !== handledPromptRequest) {
     setHandledPromptRequest(promptRequest);
     if (promptRequest) {
-      setMode("prompts");
+      setBrowseOverride("prompts");
       setContributionStatus(promptRequest.status);
       setSelectedPromptRunId(promptRequest.runId);
     }
@@ -76,7 +100,17 @@ export function ReviewScreen({ sessionId, revision, review, repository, reposito
 
   const hasChangedFiles = Boolean(review && review.files.length > 0);
   const effectiveSelectedConflictCaseId = selectedConflictCaseId ?? review?.conflicts.find((conflict) => conflict.status === "awaiting_input" || conflict.status === "failed" || conflict.status === "pending")?.id ?? null;
-  const activeTab: "changed" | "all" = tabOverride ?? (hasChangedFiles ? "changed" : "all");
+  // One "Browse" control replaces the old independent Changed/All and
+  // Files/Prompts toggles. Prompts is only ever reached by an explicit click
+  // (via this override, or the "View prompt changes" shortcut below) — it's
+  // never a default, same as the old `mode` state.
+  const browse: Browse = browseOverride ?? (hasChangedFiles ? "changed" : "all");
+  const activeTab: "changed" | "all" = browse === "prompts" ? (hasChangedFiles ? "changed" : "all") : browse;
+  // The Contributors tab only exists while browsing Prompts; if it's active
+  // and Browse switches away, this falls back to Status on its own — no
+  // effect needed, same self-healing idiom as `selected` below.
+  const availableRightTabs: InspectorTab[] = browse === "prompts" ? ["status", "chat", "contributors"] : ["status", "chat"];
+  const rightTab: InspectorTab = rightTabOverride && availableRightTabs.includes(rightTabOverride) ? rightTabOverride : "status";
   const fileTree = useMemo(() => repositoryTree.tree ? buildFileTree(repositoryTree.tree.entries) : [], [repositoryTree.tree]);
 
   // Fires once per candidate head: the hook's own idempotency guard (and the
@@ -103,21 +137,21 @@ export function ReviewScreen({ sessionId, revision, review, repository, reposito
   const fileContributions = useReviewContributions(sessionId, revision, {
     status: "active",
     path: selectedChangedFile?.path,
-    enabled: mode === "files" && Boolean(selectedChangedFile),
+    enabled: browse !== "prompts" && Boolean(selectedChangedFile),
   });
   const promptContributions = useReviewContributions(sessionId, revision, {
     status: contributionStatus,
     engineerId: engineerFilter,
     agentId: agentFilter,
-    enabled: mode === "prompts" && Boolean(review),
+    enabled: browse === "prompts" && Boolean(review),
   });
   const effectivePromptRunId = selectedPromptRunId && promptContributions.items.some((item) => item.runId === selectedPromptRunId)
     ? selectedPromptRunId
     : promptContributions.items[0]?.runId ?? null;
-  const promptDetail = useReviewContributionDetail(sessionId, revision, mode === "prompts" ? effectivePromptRunId : null);
+  const promptDetail = useReviewContributionDetail(sessionId, revision, browse === "prompts" ? effectivePromptRunId : null);
 
   function selectChanged(id: string) {
-    setTabOverride("changed");
+    setBrowseOverride("changed");
     setSelection({ kind: "changed", id });
   }
 
@@ -174,23 +208,28 @@ export function ReviewScreen({ sessionId, revision, review, repository, reposito
 
   const teamChatPane = <section className="review-pane review-team-chat" aria-label="Team chat"><div className="review-pane-head"><h3>Team chat</h3><span>{teamChat.filter((message) => message.recipientUserId === null).length}</span></div><TeamChat messages={teamChat} onSend={onSendTeamMessage} participants={participants} currentUserId={currentUserId} /></section>;
 
+  // Shared by the no-review branches' plain Changed/All pane below and the
+  // full-review left rail's 3-way Browse control — the list content itself
+  // doesn't depend on how many options the toggle above it offers.
+  const fileBrowseBody = activeTab === "changed" && review ? (
+    review.files.length === 0 ? <p className="review-empty">No changed files.</p> : <ul className="review-file-list">{review.files.map((file) => <li key={file.id}><button type="button" className="review-file" data-selected={selectedChangedFile?.id === file.id ? "true" : "false"} onClick={() => selectChanged(file.id)}><span className="file-copy" title={file.path}><strong>{file.path.split("/").pop()}</strong><span>{file.path}</span><FileAttribution contributors={file.contributors} /></span><span className="diff-stat"><i className="add">+{file.additions}</i><i className="del">−{file.deletions}</i></span></button></li>)}</ul>
+  ) : (
+    repositoryTree.treeState === "loading" || repositoryTree.treeState === "idle" ? <p className="review-empty">Loading repository files…</p>
+      : repositoryTree.treeState === "error" ? <p className="review-empty">The repository tree could not be loaded.</p>
+      : fileTree.length === 0 ? <p className="review-empty">This repository has no files.</p>
+      : <div className="review-tree" role="tree" aria-label="Repository files">
+          <RepositoryTreeBranch nodes={fileTree} depth={0} expandedDirs={expandedDirs} onToggleDir={toggleDir} selectedPath={selectedRepoPath} onSelectFile={selectRepoPath} />
+          {repositoryTree.tree?.truncated && <p className="review-empty">Showing a partial file list — this repository is very large.</p>}
+        </div>
+  );
+
   const filesPane = <aside className="review-pane" aria-label="Repository files">
-    {review ? <div className="review-pane-head"><SegmentedControl label="Files view" value={activeTab} onChange={setTabOverride} options={[{ value: "changed", label: `Changed (${review.files.length})` }, { value: "all", label: "All files" }]} /></div> : <div className="review-pane-head"><h3>All files</h3></div>}
-    {activeTab === "changed" && review ? (
-      review.files.length === 0 ? <p className="review-empty">No changed files.</p> : <ul className="review-file-list">{review.files.map((file) => <li key={file.id}><button type="button" className="review-file" data-selected={selectedChangedFile?.id === file.id ? "true" : "false"} onClick={() => selectChanged(file.id)}><span className="file-copy" title={file.path}><strong>{file.path.split("/").pop()}</strong><span>{file.path}</span><FileAttribution contributors={file.contributors} /></span><span className="diff-stat"><i className="add">+{file.additions}</i><i className="del">−{file.deletions}</i></span></button></li>)}</ul>
-    ) : (
-      repositoryTree.treeState === "loading" || repositoryTree.treeState === "idle" ? <p className="review-empty">Loading repository files…</p>
-        : repositoryTree.treeState === "error" ? <p className="review-empty">The repository tree could not be loaded.</p>
-        : fileTree.length === 0 ? <p className="review-empty">This repository has no files.</p>
-        : <div className="review-tree" role="tree" aria-label="Repository files">
-            <RepositoryTreeBranch nodes={fileTree} depth={0} expandedDirs={expandedDirs} onToggleDir={toggleDir} selectedPath={selectedRepoPath} onSelectFile={selectRepoPath} />
-            {repositoryTree.tree?.truncated && <p className="review-empty">Showing a partial file list — this repository is very large.</p>}
-          </div>
-    )}
+    {review ? <div className="review-pane-head"><SegmentedControl label="Files view" value={activeTab} onChange={setBrowseOverride} options={[{ value: "changed", label: `Changed (${review.files.length})` }, { value: "all", label: "All files" }]} /></div> : <div className="review-pane-head"><h3>All files</h3></div>}
+    {fileBrowseBody}
   </aside>;
 
   const centerPane = selectedChangedFile ? (
-    <section className="review-pane review-diff" aria-label="Diff preview"><div className="review-pane-head"><h3>{selectedChangedFile.path}</h3><FileAttribution contributors={selectedChangedFile.contributors} expanded /></div><ContributionCards source={fileContributions} onOpen={(runId) => { setSelectedPromptRunId(runId); setContributionStatus("active"); setMode("prompts"); }} onRollback={(runId) => onRequestRollback({ scope: "prompt", subjectId: runId })} />{selectedChangedFile.summary && <Markdown className="review-summary">{selectedChangedFile.summary}</Markdown>}{selectedChangedFile.diff.length > 0 ? <pre className="review-code" aria-label={`Diff preview for ${selectedChangedFile.path}`}>{selectedChangedFile.diff.map((line, index) => <span key={`${index}-${line.text}`} className="review-line" data-type={line.type}><i>{line.type === "add" ? "+" : line.type === "remove" ? "−" : " "}</i><code>{line.text}</code></span>)}</pre> : <p className="review-empty">No diff preview available.</p>}</section>
+    <section className="review-pane review-diff" aria-label="Diff preview"><div className="review-pane-head"><h3>{selectedChangedFile.path}</h3><FileAttribution contributors={selectedChangedFile.contributors} expanded /></div><ContributionCards source={fileContributions} onOpen={(runId) => { setSelectedPromptRunId(runId); setContributionStatus("active"); setBrowseOverride("prompts"); }} onRollback={(runId) => onRequestRollback({ scope: "prompt", subjectId: runId })} />{selectedChangedFile.summary && <Markdown className="review-summary">{selectedChangedFile.summary}</Markdown>}{selectedChangedFile.diff.length > 0 ? <pre className="review-code" aria-label={`Diff preview for ${selectedChangedFile.path}`}>{selectedChangedFile.diff.map((line, index) => <span key={`${index}-${line.text}`} className="review-line" data-type={line.type}><i>{line.type === "add" ? "+" : line.type === "remove" ? "−" : " "}</i><code>{line.text}</code></span>)}</pre> : <p className="review-empty">No diff preview available.</p>}</section>
   ) : selectedRepoPath ? (
     <section className="review-pane review-diff review-file-pane" aria-label="File preview"><div className="review-pane-head"><h3>{selectedRepoPath}</h3></div>{
       selectedRepoFileState === "idle" || selectedRepoFileState === "loading" ? <p className="review-empty">Loading file…</p>
@@ -218,24 +257,60 @@ export function ReviewScreen({ sessionId, revision, review, repository, reposito
   const canMerge = review.status === "ready" && review.pullRequest?.state === "open" && review.pullRequest.mergeable === true && review.pullRequest.mergeableState === "clean" && review.githubChecksPassing === true && !review.integrationRunId;
   const isMerged = review.status === "merged";
   const isAbandoned = review.status === "abandoned";
+
+  // Browsing prompts swaps the left rail's list and the center pane for
+  // prompt-attribution equivalents; the right rail (Status/Chat, plus
+  // Contributors while browsing prompts) stays mounted either way — the bug
+  // this fixes is that switching to Prompts used to replace the whole grid,
+  // taking conflicts/checks/chat with it.
+  const leftPane = <aside className="review-pane" aria-label={browse === "prompts" ? "Prompt groups" : "Repository files"}>
+    <div className="review-pane-head"><SegmentedControl label="Browse" value={browse} onChange={setBrowseOverride} options={[{ value: "changed", label: `Changed (${review.files.length})` }, { value: "all", label: "All files" }, { value: "prompts", label: "Prompts" }]} /></div>
+    {browse === "prompts" ? <>
+      <div className="review-pane-head"><SegmentedControl label="Prompt status" value={contributionStatus} onChange={setContributionStatus} options={[{ value: "active", label: "Active" }, { value: "rolled_back", label: "History" }]} /></div>
+      {(engineerFilter || agentFilter) && <div className="review-filter-summary"><span>Filtered contributions</span><button type="button" className="button" data-size="sm" onClick={() => { setEngineerFilter(null); setAgentFilter(null); }}>Clear</button></div>}
+      {promptContributions.loading && promptContributions.items.length === 0 ? <p className="review-empty">Loading prompts…</p>
+        : promptContributions.error ? <p className="review-empty" role="alert">{promptContributions.error}</p>
+        : promptContributions.items.length === 0 ? <p className="review-empty">{contributionStatus === "active" ? "No active prompt changes match these filters." : "No rolled-back prompt groups match these filters."}</p>
+        : <ul className="review-prompt-list">{promptContributions.items.map((contribution) => <li key={contribution.runId}><button type="button" className="review-prompt-item" data-selected={effectivePromptRunId === contribution.runId ? "true" : "false"} onClick={() => setSelectedPromptRunId(contribution.runId)}><strong>{contribution.prompts.length === 1 ? contribution.prompts[0].authorName : `${contribution.prompts.length} merged prompts`}</strong><span className="review-prompt-preview">{contributionPreview(contribution)}</span><small>{contribution.agentName} · {contribution.files.length} file{contribution.files.length === 1 ? "" : "s"} · {contributionLabel(contribution)}</small></button></li>)}</ul>}
+      {promptContributions.nextCursor && <div className="review-load-more"><button type="button" className="button" disabled={promptContributions.loading} onClick={() => void promptContributions.loadMore()}>{promptContributions.loading ? "Loading…" : "Load more"}</button></div>}
+    </> : fileBrowseBody}
+  </aside>;
+
+  const mainCenterPane = browse === "prompts"
+    ? <PromptContributionDetail detail={promptDetail} status={contributionStatus} onRollback={onRequestRollback} />
+    : centerPane;
+
+  const inspectorTabs: Array<{ value: InspectorTab; label: string }> = [
+    { value: "status", label: "Status" },
+    { value: "chat", label: "Chat" },
+    ...(browse === "prompts" ? [{ value: "contributors" as InspectorTab, label: "Contributors" }] : []),
+  ];
+
+  const rightPane = <div className="review-pane review-inspector" aria-label="Review panel">
+    <div className="review-pane-head"><SegmentedControl label="Panel" value={rightTab} onChange={setRightTabOverride} options={inspectorTabs} /></div>
+    <div className="review-inspector-body" data-tab={rightTab}>
+      {rightTab === "status" && <>
+        <ConflictCases conflicts={review.conflicts} selectedCaseId={effectiveSelectedConflictCaseId} owner={owner} currentUserId={currentUserId} busy={busy} onResolve={onResolveConflict} onAnswer={onAnswerConflict} />
+        <section aria-label="Integration warnings"><div className="review-pane-head"><h3>Integration</h3><span>{review.warnings.length}</span></div>{review.warnings.length === 0 ? <p className="review-empty">No integration warnings.</p> : <ul className="review-warning-list">{review.warnings.map((warning) => <li key={warning.id} data-severity={warning.severity}><strong>{warning.title}</strong><p>{warning.detail}</p></li>)}</ul>}</section>
+        <section aria-label="Checks"><div className="review-pane-head"><h3>Checks</h3><span>{review.checks.length}</span></div>{review.checks.length === 0 ? <p className="review-empty">No checks reported by GitHub or openfloor.</p> : <ul className="review-check-list">{review.checks.map((check) => <li key={check.id}><span className="check-mark" aria-label={check.state}>{check.state === "passed" ? "✓" : check.state === "failed" ? "!" : "…"}</span><div><strong>{check.name}</strong>{check.detail && <span>{check.detail}</span>}</div></li>)}</ul>}</section>
+        {(isMerged || isAbandoned) && <section aria-label="Branch cleanup"><div className="review-pane-head"><h3>Branch cleanup</h3><span>{review.cleanupStatus ?? "pending"}</span></div><p className="review-empty">{isAbandoned && !review.cleanupStatus ? "This candidate was abandoned without attempting to delete its branch." : review.cleanupStatus === "complete" ? "Recorded candidate and run branches were deleted after exact-SHA verification." : "Any branch that did not match its recorded SHA was preserved."}</p>{owner && !review.branchDeletedAt && <div className="review-actions"><button type="button" className="button danger-button" disabled={busy || retrying} onClick={() => isMerged ? setDeleteConfirmOpen(true) : void runAbandon(true)}>Delete candidate branch</button></div>}</section>}
+      </>}
+      {rightTab === "chat" && <div className="review-inspector-chat" aria-label="Team chat"><div className="review-pane-head"><h3>Team chat</h3><span>{teamChat.filter((message) => message.recipientUserId === null).length}</span></div><TeamChat messages={teamChat} onSend={onSendTeamMessage} participants={participants} currentUserId={currentUserId} /></div>}
+      {rightTab === "contributors" && <>
+        <ContributorList title="Engineers" facets={promptContributions.engineers} selectedId={engineerFilter} owner={owner && contributionStatus === "active"} scope="engineer" onFilter={setEngineerFilter} onRollback={onRequestRollback} />
+        <ContributorList title="Agents" facets={promptContributions.agents} selectedId={agentFilter} owner={owner && contributionStatus === "active"} scope="agent" onFilter={setAgentFilter} onRollback={onRequestRollback} />
+      </>}
+    </div>
+  </div>;
+
   return <section className="review-screen" aria-label="Review candidate">
-    <header className="review-hero"><div className="review-hero-copy"><div className="review-title-row"><h2 className="review-title">Review</h2><SegmentedControl label="Review mode" value={mode} onChange={setMode} options={[{ value: "files", label: "Files" }, { value: "prompts", label: "Prompts" }]} /></div><div className="review-branch-summary"><span className="label">Candidate branch</span><h3><Icon name="branch" size={16} />{review.branch}</h3><p>{review.pullRequest ? <a href={review.pullRequest.url} target="_blank" rel="noreferrer">{review.pullRequest.draft ? "Draft " : ""}PR #{review.pullRequest.number} · {review.pullRequest.merged ? "merged" : review.pullRequest.state}</a> : "Waiting for the candidate pull request."}</p></div></div><div className="review-hero-facts"><div><span className="label">Commit</span><strong className="value" title={review.commitSha ?? undefined}>{commitLabel}</strong></div><div><span className="label">Base</span><strong className="value">{review.baseBranch}</strong></div><div><span className="label">Diff</span><strong><span className="add">+{additions}</span> <span className="del">−{deletions}</span></strong></div><div><span className="label">Status</span><strong>{review.status}</strong></div><div><span className="label">Mergeability</span><strong>{review.pullRequest?.mergeable == null ? "unknown" : review.pullRequest.mergeable ? review.pullRequest.mergeableState ?? "mergeable" : "blocked"}</strong></div><div><span className="label">GitHub checks</span><strong>{review.githubChecksPassing == null ? "not synchronized" : review.githubChecksPassing ? "passing" : "blocked"}</strong></div></div>{owner && !isMerged && !isAbandoned && <div className="review-actions">{review.pullRequest && <button type="button" className="button" disabled={busy} onClick={() => void onReady()}>{review.status === "draft" ? "Ready for review" : "Refresh GitHub status"}</button>}{review.pullRequest && <button type="button" className="button primary-button" disabled={busy || !canMerge} title={canMerge ? "Squash merge through GitHub" : review.integrationRunId ? "The candidate is still being updated" : "The PR must be ready, mergeable, and passing checks"} onClick={() => setMergeConfirmOpen(true)}>Squash merge</button>}<button type="button" className="button danger-button" disabled={busy} title={review.integrationRunId ? "The candidate is still being updated" : "Retire this candidate without merging"} onClick={() => setAbandonConfirmOpen(true)}>Abandon candidate</button></div>}</header>
-    {mode === "files" ? <div className="review-grid">{filesPane}{centerPane}
-      <aside className="review-side"><ConflictCases conflicts={review.conflicts} selectedCaseId={effectiveSelectedConflictCaseId} owner={owner} currentUserId={currentUserId} busy={busy} onResolve={onResolveConflict} onAnswer={onAnswerConflict} /><section className="review-pane" aria-label="Integration warnings"><div className="review-pane-head"><h3>Integration</h3><span>{review.warnings.length}</span></div>{review.warnings.length === 0 ? <p className="review-empty">No integration warnings.</p> : <ul className="review-warning-list">{review.warnings.map((warning) => <li key={warning.id} data-severity={warning.severity}><strong>{warning.title}</strong><p>{warning.detail}</p></li>)}</ul>}</section><section className="review-pane" aria-label="Checks"><div className="review-pane-head"><h3>Checks</h3><span>{review.checks.length}</span></div>{review.checks.length === 0 ? <p className="review-empty">No checks reported by GitHub or openfloor.</p> : <ul className="review-check-list">{review.checks.map((check) => <li key={check.id}><span className="check-mark" aria-label={check.state}>{check.state === "passed" ? "✓" : check.state === "failed" ? "!" : "…"}</span><div><strong>{check.name}</strong>{check.detail && <span>{check.detail}</span>}</div></li>)}</ul>}</section>{(isMerged || isAbandoned) && <section className="review-pane" aria-label="Branch cleanup"><div className="review-pane-head"><h3>Branch cleanup</h3><span>{review.cleanupStatus ?? "pending"}</span></div><p className="review-empty">{isAbandoned && !review.cleanupStatus ? "This candidate was abandoned without attempting to delete its branch." : review.cleanupStatus === "complete" ? "Recorded candidate and run branches were deleted after exact-SHA verification." : "Any branch that did not match its recorded SHA was preserved."}</p>{owner && !review.branchDeletedAt && <div className="review-actions"><button type="button" className="button danger-button" disabled={busy || retrying} onClick={() => isMerged ? setDeleteConfirmOpen(true) : void runAbandon(true)}>Delete candidate branch</button></div>}</section>}{teamChatPane}</aside>
-    </div> : <PromptReview
-      source={promptContributions}
-      detail={promptDetail}
-      status={contributionStatus}
-      selectedRunId={effectivePromptRunId}
-      engineerFilter={engineerFilter}
-      agentFilter={agentFilter}
-      owner={owner}
-      onStatus={setContributionStatus}
-      onSelect={setSelectedPromptRunId}
-      onEngineerFilter={setEngineerFilter}
-      onAgentFilter={setAgentFilter}
-      onRollback={onRequestRollback}
-    />}
+    <header className="review-hero">
+      <div className="review-hero-copy"><h2 className="review-title">Review</h2><div className="review-branch-summary"><span className="label">Candidate branch</span><h3><Icon name="branch" size={16} />{review.branch}</h3><p>{review.pullRequest ? <a href={review.pullRequest.url} target="_blank" rel="noreferrer">{review.pullRequest.draft ? "Draft " : ""}PR #{review.pullRequest.number} · {review.pullRequest.merged ? "merged" : review.pullRequest.state}</a> : "Waiting for the candidate pull request."}</p></div></div>
+      <div className="review-hero-facts"><div><span className="label">Commit</span><strong className="value" title={review.commitSha ?? undefined}>{commitLabel}</strong></div><div><span className="label">Base</span><strong className="value">{review.baseBranch}</strong></div><div><span className="label">Diff</span><strong><span className="add">+{additions}</span> <span className="del">−{deletions}</span></strong></div><div><span className="label">Status</span><strong>{review.status}</strong></div><div><span className="label">Mergeability</span><strong>{review.pullRequest?.mergeable == null ? "unknown" : review.pullRequest.mergeable ? review.pullRequest.mergeableState ?? "mergeable" : "blocked"}</strong></div><div><span className="label">GitHub checks</span><strong>{review.githubChecksPassing == null ? "not synchronized" : review.githubChecksPassing ? "passing" : "blocked"}</strong></div></div>
+      {owner && !isMerged && !isAbandoned && <div className="review-actions">{review.pullRequest && <button type="button" className="button" disabled={busy} onClick={() => void onReady()}>{review.status === "draft" ? "Ready for review" : "Refresh GitHub status"}</button>}{review.pullRequest && <button type="button" className="button primary-button" disabled={busy || !canMerge} title={canMerge ? "Squash merge through GitHub" : "See the merge gate below"} onClick={() => setMergeConfirmOpen(true)}>Squash merge</button>}<button type="button" className="button danger-button" disabled={busy} title={review.integrationRunId ? "The candidate is still being updated" : "Retire this candidate without merging"} onClick={() => setAbandonConfirmOpen(true)}>Abandon candidate</button></div>}
+      {!isMerged && !isAbandoned && review.pullRequest && <MergeGateRow review={review} />}
+    </header>
+    <div className="review-grid">{leftPane}{mainCenterPane}<aside className="review-side">{rightPane}</aside></div>
     {mergeConfirmOpen && <MergeConfirmDialog busy={busy} onClose={() => setMergeConfirmOpen(false)} onConfirm={runMerge} />}
     {deleteConfirmOpen && <DeleteBranchConfirmDialog branch={review.branch} busy={busy} onClose={() => setDeleteConfirmOpen(false)} onConfirm={runDeleteBranch} />}
     {abandonConfirmOpen && <AbandonConfirmDialog branch={review.branch} busy={busy} onClose={() => setAbandonConfirmOpen(false)} onConfirm={runAbandon} />}
@@ -278,35 +353,6 @@ function ContributionCards({ source, onOpen, onRollback }: {
   </div>;
 }
 
-function PromptReview({ source, detail, status, selectedRunId, engineerFilter, agentFilter, owner, onStatus, onSelect, onEngineerFilter, onAgentFilter, onRollback }: {
-  source: ContributionSource;
-  detail: ContributionDetailSource;
-  status: "active" | "rolled_back";
-  selectedRunId: string | null;
-  engineerFilter: string | null;
-  agentFilter: string | null;
-  owner: boolean;
-  onStatus: (status: "active" | "rolled_back") => void;
-  onSelect: (runId: string) => void;
-  onEngineerFilter: (id: string | null) => void;
-  onAgentFilter: (id: string | null) => void;
-  onRollback: (intent: RollbackIntent) => void;
-}) {
-  return <div className="review-grid review-prompt-grid">
-    <aside className="review-pane" aria-label="Prompt groups">
-      <div className="review-pane-head"><SegmentedControl label="Prompt status" value={status} onChange={onStatus} options={[{ value: "active", label: "Active" }, { value: "rolled_back", label: "History" }]} /></div>
-      {(engineerFilter || agentFilter) && <div className="review-filter-summary"><span>Filtered contributions</span><button type="button" className="button" data-size="sm" onClick={() => { onEngineerFilter(null); onAgentFilter(null); }}>Clear</button></div>}
-      {source.loading && source.items.length === 0 ? <p className="review-empty">Loading prompts…</p>
-        : source.error ? <p className="review-empty" role="alert">{source.error}</p>
-        : source.items.length === 0 ? <p className="review-empty">{status === "active" ? "No active prompt changes match these filters." : "No rolled-back prompt groups match these filters."}</p>
-        : <ul className="review-prompt-list">{source.items.map((contribution) => <li key={contribution.runId}><button type="button" className="review-prompt-item" data-selected={selectedRunId === contribution.runId ? "true" : "false"} onClick={() => onSelect(contribution.runId)}><strong>{contribution.prompts.length === 1 ? contribution.prompts[0].authorName : `${contribution.prompts.length} merged prompts`}</strong><span className="review-prompt-preview">{contributionPreview(contribution)}</span><small>{contribution.agentName} · {contribution.files.length} file{contribution.files.length === 1 ? "" : "s"} · {contributionLabel(contribution)}</small></button></li>)}</ul>}
-      {source.nextCursor && <div className="review-load-more"><button type="button" className="button" disabled={source.loading} onClick={() => void source.loadMore()}>{source.loading ? "Loading…" : "Load more"}</button></div>}
-    </aside>
-    <PromptContributionDetail detail={detail} status={status} onRollback={onRollback} />
-    <ContributorPanel source={source} status={status} owner={owner} engineerFilter={engineerFilter} agentFilter={agentFilter} onEngineerFilter={onEngineerFilter} onAgentFilter={onAgentFilter} onRollback={onRollback} />
-  </div>;
-}
-
 function PromptContributionDetail({ detail, status, onRollback }: {
   detail: ContributionDetailSource;
   status: "active" | "rolled_back";
@@ -324,22 +370,6 @@ function PromptContributionDetail({ detail, status, onRollback }: {
       <div className="review-historical-files"><span className="label">Original historical diff</span>{contribution.files.length === 0 ? <p className="review-empty">No historical diff was recorded.</p> : contribution.files.map((file) => <details key={file.id} open className="review-historical-file"><summary><code>{file.path}</code><span className="diff-stat"><i className="add">+{file.additions}</i><i className="del">−{file.deletions}</i></span></summary>{file.summary && <p className="review-summary">{file.summary}</p>}{file.diff && file.diff.length > 0 ? <pre className="review-code" aria-label={`Historical diff for ${file.path}`}>{file.diff.map((line, index) => <span key={`${index}-${line.text}`} className="review-line" data-type={line.type}><i>{line.type === "add" ? "+" : line.type === "remove" ? "−" : " "}</i><code>{line.text}</code></span>)}</pre> : <p className="review-empty">No diff preview available.</p>}</details>)}</div>
     </div>
   </section>;
-}
-
-function ContributorPanel({ source, status, owner, engineerFilter, agentFilter, onEngineerFilter, onAgentFilter, onRollback }: {
-  source: ContributionSource;
-  status: "active" | "rolled_back";
-  owner: boolean;
-  engineerFilter: string | null;
-  agentFilter: string | null;
-  onEngineerFilter: (id: string | null) => void;
-  onAgentFilter: (id: string | null) => void;
-  onRollback: (intent: RollbackIntent) => void;
-}) {
-  return <aside className="review-side review-contributors" aria-label="Contributors">
-    <ContributorList title="Engineers" facets={source.engineers} selectedId={engineerFilter} owner={owner && status === "active"} scope="engineer" onFilter={onEngineerFilter} onRollback={onRollback} />
-    <ContributorList title="Agents" facets={source.agents} selectedId={agentFilter} owner={owner && status === "active"} scope="agent" onFilter={onAgentFilter} onRollback={onRollback} />
-  </aside>;
 }
 
 function ContributorList({ title, facets, selectedId, owner, scope, onFilter, onRollback }: {
@@ -365,7 +395,7 @@ function ConflictCases({ conflicts, selectedCaseId, owner, currentUserId, busy, 
 }) {
   if (conflicts.length === 0) return null;
   const ordered = [...conflicts].sort((a, b) => Number(b.id === selectedCaseId) - Number(a.id === selectedCaseId) || b.updatedAt - a.updatedAt);
-  return <section className="review-pane conflict-cases" aria-label="Merge conflicts"><div className="review-pane-head"><h3>Merge conflicts</h3><span>{conflicts.length}</span></div><ul className="conflict-case-list">{ordered.map((conflict) => <ConflictCaseCard key={conflict.id} conflict={conflict} selected={conflict.id === selectedCaseId} owner={owner} canAnswer={owner || conflict.prompts.some((prompt) => prompt.authorUserId === currentUserId)} busy={busy} onResolve={onResolve} onAnswer={onAnswer} />)}</ul></section>;
+  return <section className="conflict-cases" aria-label="Merge conflicts"><div className="review-pane-head"><h3>Merge conflicts</h3><span>{conflicts.length}</span></div><ul className="conflict-case-list">{ordered.map((conflict) => <ConflictCaseCard key={conflict.id} conflict={conflict} selected={conflict.id === selectedCaseId} owner={owner} canAnswer={owner || conflict.prompts.some((prompt) => prompt.authorUserId === currentUserId)} busy={busy} onResolve={onResolve} onAnswer={onAnswer} />)}</ul></section>;
 }
 
 function ConflictCaseCard({ conflict, selected, owner, canAnswer, busy, onResolve, onAnswer }: {
