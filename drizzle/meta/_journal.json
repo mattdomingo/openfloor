@@ -225,6 +225,13 @@
       "when": 1787713886084,
       "tag": "0031_misty_justice",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "6",
+      "when": 1787759697974,
+      "tag": "0032_vengeful_master_chief",
+      "breakpoints": true
     }
   ]
 }

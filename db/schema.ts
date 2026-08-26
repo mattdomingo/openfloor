@@ -148,6 +148,29 @@ export const usageMonths = sqliteTable(
   (table) => [primaryKey({ columns: [table.ownerUserId, table.month] })],
 );
 
+// Monthly spend rollup per (user, provider, credential kind), accumulated at
+// run completion (db/runs.ts's recordRunUsage) so the per-run dispatch gate
+// (lib/agent-run-start.ts) is a single indexed point-read instead of a scan
+// over agent_runs. No FK on userId, deliberately — same reasoning as
+// usage_months.ownerUserId above: an audit/spend ledger must not block or
+// cascade on a future user deletion. kind = 'server' records runs that fell
+// through to openfloor's own fallback key (db/provider-credentials.ts) — it
+// gets a row for visibility but is never limited, since no user credential
+// backs it.
+export const providerSpendMonths = sqliteTable(
+  "provider_spend_months",
+  {
+    userId: text("user_id").notNull(),
+    provider: text("provider", { enum: ["anthropic", "openai", "kimi", "gemini", "glm"] }).notNull(),
+    kind: text("kind", { enum: ["api_key", "oauth", "server"] }).notNull(),
+    month: text("month").notNull(), // "YYYY-MM", UTC
+    microUsd: integer("micro_usd").notNull().default(0),
+    inputTokens: integer("input_tokens").notNull().default(0),
+    outputTokens: integer("output_tokens").notNull().default(0),
+  },
+  (table) => [primaryKey({ columns: [table.userId, table.provider, table.kind, table.month] })],
+);
+
 export const sessionMembers = sqliteTable(
   "session_members",
   {
@@ -557,6 +580,25 @@ export const agentRuns = sqliteTable(
     discardedBy: text("discarded_by").references(() => users.id),
     branchDeletedAt: integer("branch_deleted_at"),
     cancelRequestedAt: integer("cancel_requested_at"),
+    // Token/cost capture (see lib/run-usage.ts). All nullable: null means a
+    // pre-feature run, or a provider whose result carried no usage at all.
+    // Integer micro-USD (millionths of a dollar), never a float — a SUM
+    // across many runs must not accumulate floating-point error.
+    inputTokens: integer("input_tokens"),
+    outputTokens: integer("output_tokens"),
+    cacheReadTokens: integer("cache_read_tokens"),
+    cacheWriteTokens: integer("cache_write_tokens"),
+    costMicroUsd: integer("cost_micro_usd"),
+    // Open enum, TS-only, no SQL CHECK — same convention as `kind` above and
+    // floor_agents.provider (a CHECK here would force a table recreate that
+    // cascade-deletes this table's four dependent children). "reported" only
+    // for a genuine Anthropic-billed run; kimi/glm traffic rides the same SDK
+    // but must never be marked "reported" — see lib/run-usage.ts.
+    costSource: text("cost_source", { enum: ["reported", "estimated"] }),
+    // Which credential actually paid (db/provider-credentials.ts's resolution
+    // ladder): "server" means openfloor's own fallback key paid, not the
+    // agent owner. Same open-enum convention as costSource.
+    billedKind: text("billed_kind", { enum: ["api_key", "oauth", "server"] }),
     updatedAt: integer("updated_at").notNull(),
   },
   (table) => [
@@ -859,6 +901,12 @@ export const userProviderCredentials = sqliteTable(
     ciphertext: text("ciphertext").notNull(),
     fingerprint: text("fingerprint").notNull(),
     validatedAt: integer("validated_at"),
+    // Owner-set monthly spend cap for this credential, in micro-USD. Null
+    // means no limit. Checked against provider_spend_months' current-UTC-
+    // month row by lib/agent-run-start.ts; enforcement warns at 80% and
+    // refuses new runs at 100% (thresholds are code constants, not columns —
+    // not worth a migration until a second one is needed).
+    monthlyLimitMicroUsd: integer("monthly_limit_micro_usd"),
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
   },
