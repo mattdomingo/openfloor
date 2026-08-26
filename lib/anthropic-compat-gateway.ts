@@ -27,7 +27,9 @@ export type AnthropicCompatGatewayConfig = {
   serverKeyBinding: string;
   // Kind-aware since subscription credentials became first-class: the
   // anthropic route sends x-api-key for api_key and `authorization: Bearer`
-  // for oauth; kimi/glm are api_key-only and ignore the kind.
+  // for oauth; kimi sends the reverse (Bearer for api_key, x-api-key for a
+  // plan key — each vendor's documented form); glm is api_key-only and
+  // ignores the kind.
   buildAuthHeaders: (secret: string, kind: CredentialKind) => Record<string, string>;
   allowedPaths: ReadonlySet<string>;
   // Beta flag MERGED into the client's anthropic-beta when the resolved
@@ -35,6 +37,11 @@ export type AnthropicCompatGatewayConfig = {
   // flag; extended-cache-ttl-2025-04-11 is incidental and deliberately not
   // sent). Merged, never overwritten — the client's own flags must survive.
   oauthBetaFlag?: string;
+  // Upstream prefix used INSTEAD of upstreamBase when the resolved credential
+  // is kind oauth — a vendor whose subscription seat is served from a
+  // different host/path than its pay-as-you-go keys (Kimi Code's
+  // api.kimi.com/coding vs Moonshot's api.moonshot.ai/anthropic).
+  oauthUpstreamBase?: string;
 };
 
 export async function handleAnthropicCompatProxy(
@@ -84,7 +91,8 @@ export async function handleAnthropicCompatProxy(
     betaTokens.push(config.oauthBetaFlag);
   }
   if (betaTokens.length > 0) headers.set("anthropic-beta", betaTokens.join(","));
-  const upstream = await fetch(`${config.upstreamBase}/${normalized}`, { method: "POST", headers, body });
+  const upstreamBase = resolved.kind === "oauth" && config.oauthUpstreamBase ? config.oauthUpstreamBase : config.upstreamBase;
+  const upstream = await fetch(`${upstreamBase}/${normalized}`, { method: "POST", headers, body });
   const responseHeaders = new Headers();
   // Besides the basics, forward retry-after (the vendor's 429 signal) and
   // the whole anthropic-ratelimit-* family — the unified-* headers carry a

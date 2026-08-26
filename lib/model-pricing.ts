@@ -48,6 +48,15 @@ export const MODEL_PRICING: Record<string, ModelPrice> = {
   "kimi-k2.7-code": { inputPerMTok: 0.95, outputPerMTok: 4, cacheReadPerMTok: 0.19, cacheWritePerMTok: 0.95 },
   "kimi-k2.7-code-highspeed": { inputPerMTok: 1.9, outputPerMTok: 8, cacheReadPerMTok: 0.38, cacheWritePerMTok: 1.9 },
   "kimi-k2.6": { inputPerMTok: 0.95, outputPerMTok: 4, cacheReadPerMTok: 0.16, cacheWritePerMTok: 0.95 },
+  // Kimi Code plan-surface ids (2026-08-26 decision-log entry). A plan seat
+  // is flat-fee — no per-token invoice exists — so these meter the
+  // list-equivalent value of the underlying model's published PAYG rate
+  // (kimi-for-coding = K2.7 Code, k3-256k = K3), the same convention an
+  // anthropic subscription run already follows via the SDK's list-priced
+  // "reported" cost.
+  "kimi-for-coding": { inputPerMTok: 0.95, outputPerMTok: 4, cacheReadPerMTok: 0.19, cacheWritePerMTok: 0.95 },
+  "kimi-for-coding-highspeed": { inputPerMTok: 1.9, outputPerMTok: 8, cacheReadPerMTok: 0.38, cacheWritePerMTok: 1.9 },
+  "k3-256k": { inputPerMTok: 3, outputPerMTok: 15, cacheReadPerMTok: 0.3, cacheWritePerMTok: 3 },
 
   // gemini
   "gemini-3.5-flash": { inputPerMTok: 1.5, outputPerMTok: 9, cacheReadPerMTok: 0.15, cacheWritePerMTok: 1.5 },
