@@ -1,6 +1,6 @@
 # Production GitHub App rollout
 
-openfloor requires each account to install the GitHub App during onboarding, supports multiple personal or organization installations per account, keeps one real candidate branch per session, and runs Codex plus required checks in Cloudflare Sandbox. It stores installation authority only, never a GitHub OAuth or user token. Every passing result is retained on a separate verified run branch, then serialized into the candidate and its single draft pull request. The owner can mark that PR ready and request an exact-head squash merge after GitHub reports clean mergeability and passing checks. During acceptance, install the App only on a real disposable repository.
+openfloor requires each account to install the GitHub App during onboarding, supports multiple personal or organization installations per account, keeps one real candidate branch per session, and runs Codex in Cloudflare Sandbox. It stores installation authority only, never a GitHub OAuth or user token. Every passing result is retained on a separate verified run branch, then serialized into the candidate and its single draft pull request. The owner can mark that PR ready and request an exact-head squash merge after GitHub reports clean mergeability and passing checks. During acceptance, install the App only on a real disposable repository.
 
 ## Production host and Cloudflare Access
 
@@ -129,4 +129,4 @@ Phase 7 reconciles the PR head/base, bounded GitHub diff, checks/statuses, draft
 
 Known follow-up: production discard remains unresolved after the Phase 5 transport-authentication correction. Do not weaken its expected-SHA lease; verify Phase 6 independently and return to discard in its separate ticket.
 
-Required check commands are optional while connecting a repository. A later runner or integration action must refuse to execute until the owner configures at least one command.
+Check commands are removed this release (redesign planned for next release). No runner or integration action gates on them.

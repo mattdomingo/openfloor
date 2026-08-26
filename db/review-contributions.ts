@@ -279,10 +279,6 @@ export async function resolveReviewRollbackImpact(
     : scope === "agent"
       ? targets[0].agentName
       : targets.flatMap((target) => target.prompts).find((prompt) => prompt.authorUserId === subjectId)?.authorName ?? "Engineer";
-  const checks = await database.prepare(
-    "SELECT command FROM repository_check_commands WHERE connection_id = ? ORDER BY position",
-  ).bind(candidate.connectionId).all<{ command: string }>();
-  if (checks.results.length === 0) throw new AgentRunConflictError("Configure at least one required check before rollback");
   return {
     scope,
     subjectId,
@@ -290,6 +286,5 @@ export async function resolveReviewRollbackImpact(
     expectedCandidateSha: candidate.candidateSha,
     targets,
     excluded,
-    requiredChecks: checks.results.map((check) => check.command),
   };
 }

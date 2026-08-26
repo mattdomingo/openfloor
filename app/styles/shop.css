@@ -1109,8 +1109,7 @@
 .session-lobby-shell .repository-checks { color: var(--muted); }
 .session-lobby-shell .repository-summary span,
 .session-lobby-shell .repository-form label,
-.session-lobby-shell .repository-form .repository-field,
-.session-lobby-shell .repository-form small { color: var(--steel); }
+.session-lobby-shell .repository-form .repository-field { color: var(--steel); }
 .session-lobby-shell .repository-checks { padding: 14px 0; border-bottom: 1px solid var(--rule); }
 .session-lobby-shell .select-menu-trigger,
 .session-lobby-shell .select-menu-list { border-color: var(--edge); border-radius: var(--radius-sm); background: var(--shop-2); color: var(--ink); box-shadow: none; }

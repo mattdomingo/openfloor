@@ -263,9 +263,6 @@ input, textarea { width: 100%; padding: 11px 12px; border: 1px solid var(--line-
 .queue-run-branch { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-tertiary); font-size: .68rem; }
 .repository-form { display: grid; gap: var(--space-4); margin-top: var(--space-4); }
 .repository-form label, .repository-form .repository-field { display: grid; gap: var(--space-2); color: var(--text-secondary); font-size: var(--text-sm); }
-.repository-form textarea { width: 100%; border: 1px solid var(--line-soft); border-radius: var(--radius-sm); background: var(--surface-raised); color: var(--text-primary); padding: 10px 12px; }
-.repository-form textarea { resize: vertical; font-family: var(--font-mono); font-size: var(--text-xs); line-height: 1.5; }
-.repository-form small { color: var(--text-tertiary); line-height: 1.45; }
 .invite-empty { margin-bottom: var(--space-3); padding: var(--space-4); border: 1px dashed var(--line-strong); color: var(--text-tertiary); text-align: center; }
 .notice { padding: var(--space-3) var(--space-4); border-left: 3px solid var(--status-running); background: var(--status-running-soft); color: var(--text-secondary); font-size: var(--text-sm); line-height: 1.45; }
 .notice[data-tone="attention"] { border-left-color: var(--status-attention); background: var(--status-attention-soft); }

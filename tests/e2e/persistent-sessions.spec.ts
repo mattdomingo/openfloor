@@ -55,38 +55,15 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await expect(owner.locator("li", { hasText: "Member E." }).getByText("Online", { exact: true })).toBeVisible();
   await expect(member.locator("li", { hasText: "Owner E." }).getByText("Online", { exact: true })).toBeVisible();
 
-  await expect(owner.getByText("Not configured", { exact: true })).toBeVisible();
   await member.reload();
   await expect(member.getByText("openfloor-test/repository-integration")).toBeVisible();
-  await expect(member.getByText("Not configured", { exact: true })).toBeVisible();
   await expect(member.getByRole("button", { name: "Configure" })).toHaveCount(0);
   await expect(member.getByRole("button", { name: "Disconnect" })).toHaveCount(0);
-
-  await owner.getByRole("button", { name: "Configure" }).click();
-  await owner.getByLabel("Required check commands").fill("npm test\nnpm run build");
-  await owner.getByRole("button", { name: "Save repository" }).click();
-  await expect(owner.getByText("npm test", { exact: true })).toBeVisible();
 
   await owner.reload();
   await expect(owner.getByRole("button", { name: "Sync repository" })).toBeVisible();
   await owner.getByRole("button", { name: "Sync repository" }).click();
   await expect(owner.getByLabel("GitHub repository").getByText("Ready", { exact: true })).toBeVisible();
-  await owner.getByRole("button", { name: "Verify runner" }).click();
-  await expect(owner.getByLabel("Runner verification").getByText("passed", { exact: true }).first()).toBeVisible();
-  await owner.getByRole("button", { name: "Open command output" }).click();
-  await expect(owner.getByText("preflight check passed", { exact: false })).toBeVisible();
-  await owner.reload();
-  await expect(owner.getByLabel("Runner verification").getByText("passed", { exact: true }).first()).toBeVisible();
-  await owner.getByRole("button", { name: "Configure" }).click();
-  await owner.getByLabel("Required check commands").fill("false");
-  await owner.getByRole("button", { name: "Save repository" }).click();
-  await owner.getByRole("button", { name: "Verify runner" }).click();
-  await expect(owner.getByLabel("Runner verification").getByText("failed", { exact: true }).first()).toBeVisible();
-  await owner.getByRole("button", { name: "Configure" }).click();
-  await owner.getByLabel("Required check commands").fill("npm test");
-  await owner.getByRole("button", { name: "Save repository" }).click();
-  await owner.getByRole("button", { name: "Verify runner" }).click();
-  await expect(owner.getByLabel("Runner verification").getByText("passed", { exact: true }).first()).toBeVisible();
   await member.reload();
   await expect(member.getByText(/openfloor\/[0-9a-f]{8}\/candidate\/release-coordination-[0-9a-f]{8}/)).toBeVisible();
   await expect(member.getByRole("button", { name: "Sync repository" })).toHaveCount(0);
@@ -353,7 +330,6 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await expect(commitFact.locator("strong")).toHaveAttribute("title", /^[0-9a-f]{40}$/);
   await expect(owner.getByText("agent-change.ts", { exact: true })).toBeVisible();
   await expect(owner.getByText("export const implemented = true;", { exact: true })).toBeVisible();
-  await expect(owner.getByText("npm test", { exact: true })).toBeVisible();
   await expect(owner.getByRole("link", { name: /Draft PR #1/ })).toHaveAttribute("href", /\/pull\/1$/);
 
   // The changed file is still reachable through the repository browser, and
@@ -394,7 +370,6 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await memberRollbackItem.getByRole("button", { name: "Remove changes" }).click();
   const rollbackImpact = member.getByRole("dialog", { name: "Remove these prompt changes?" });
   await expect(rollbackImpact.getByText("Create a member rollback change", { exact: true })).toBeVisible();
-  await expect(rollbackImpact.getByText("npm test", { exact: true })).toBeVisible();
   await rollbackImpact.getByRole("button", { name: "Remove changes" }).click();
   await expect(memberRollbackItem.getByText("rolled back", { exact: true })).toBeVisible();
   await expect(ownerRollbackItem.getByText("rolled back", { exact: true })).toBeVisible();

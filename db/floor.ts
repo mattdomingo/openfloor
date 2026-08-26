@@ -255,13 +255,7 @@ function buildRunReview(
     summary: file.summary,
     diff: diffLines(file.diffPreview),
   }));
-  const localChecks = reviewRuns.flatMap((run) => run.checks.map((check) => ({
-    id: `${run.id}:${check.id}`,
-    name: check.command,
-    detail: `${run.agentName} · ${check.outputExcerpt ?? run.status}`,
-    state: check.status === "passed" ? "passed" as const : check.status === "failed" || check.status === "timed_out" ? "failed" as const : "waiting" as const,
-  })));
-  const checks = [...(githubReview?.checks.map((check) => ({ id: check.id, name: check.name, detail: check.detail, state: check.state })) ?? []), ...localChecks];
+  const checks = githubReview?.checks.map((check) => ({ id: check.id, name: check.name, detail: check.detail, state: check.state })) ?? [];
   const activeConflictSourceIds = new Set(conflicts.filter((item) => !["resolved", "cancelled"].includes(item.status)).map((item) => item.latestSourceRunId));
   const conflicted = candidateRuns.find((run) => run.status === "conflicted" && activeConflictSourceIds.has(run.id));
   const warnings: FloorReviewSnapshot["warnings"] = [];

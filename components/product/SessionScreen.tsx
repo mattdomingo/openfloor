@@ -388,9 +388,6 @@ function RepositoryGateDialog({ role, repository, candidate, onClose, onGoToSetu
             <span>Candidate branch ready</span>
           </li>
         </ol>
-        <p className="form-note">
-          Check commands are optional. If you configure them, agent changes must pass those commands before a run is marked ready; without them, changes still run but aren&apos;t verified automatically.
-        </p>
         {role !== "owner" && <p className="form-note">Only the session owner can finish repository setup. Ask them to complete it from this page.</p>}
       </div>
       <div className="dialog-foot">

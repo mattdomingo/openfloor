@@ -27,29 +27,20 @@ Do this alone, ahead of time:
    needs to be functionally empty (no app code, no UI, no tests) but it
    **cannot have zero commits** — openfloor connects a repo by branching
    from a verified base SHA, and a repo with zero commits has no branch to
-   branch from. Seed it with just enough to make that possible and to give
-   the very first agent run a required check it can actually pass:
-   - `package.json` with one script: `"test": "node --test"` (Node's
-     built-in test runner — zero dependencies to install, and it exits `0`
-     cleanly when no test files exist yet, so the check is real and green
-     from commit one).
-   - Nothing else. No source files, no UI, no README beyond the default.
+   branch from. Seed it with just enough to satisfy that:
+   - A `README.md` and nothing else. No source files, no UI, no tests.
    - This keeps the repo honestly empty in spirit — no scaffolding, no
      feature code — while satisfying the platform's real constraint that a
      base branch must exist.
 2. **Create the session** and set its **objective** (you can also do this
    live in §2 — it's fast either way).
 3. **Connect the repository** as the owner: Session → Repository → Connect,
-   install the GitHub App, pick the repo and base branch (e.g. `main`), and
-   configure exactly one **required check command**: `npm test`. Confirm a
-   candidate branch gets created.
-4. **Run Verify/preflight once** so you know the sandbox and the check are
-   healthy before you're on stage — this should pass instantly since the
-   repo has no tests yet.
-5. **Send the Guest a session invite** ahead of time so they can join the
+   install the GitHub App, pick the repo and base branch (e.g. `main`).
+   Confirm a candidate branch gets created.
+4. **Send the Guest a session invite** ahead of time so they can join the
    moment you go live, rather than fumbling through Cloudflare Access login
    on stage.
-6. Have two windows/screens visible if possible — Host's browser and
+5. Have two windows/screens visible if possible — Host's browser and
    Guest's browser side by side — so the audience can see presence and
    live sync happening between two real people, not one person in two tabs.
 
@@ -320,11 +311,6 @@ explicitly rather than hoping for the best:
   expander) rather than standing in silence. Codex runs commonly take
   several minutes; say so up front so the audience isn't wondering if
   something's broken.
-- **A required check fails:** don't debug live. Narrate it as the point —
-  "checks caught something, that's exactly why nothing merges without
-  passing" — then either let the owner retry the run as a new attempt on
-  stage if there's time, or move on and mention it'll be retried after the
-  demo.
 - **Running short on time before Run 2 finishes:** it's fine to end the
   live portion at Backend Agent's integrated PR (end of §5) and describe
   the rest ("UI Agent and Test Agent would build on this the same way")

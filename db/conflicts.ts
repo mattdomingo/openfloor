@@ -167,7 +167,7 @@ export async function createConflictResolverRun(
     `SELECT mc.session_id AS sessionId, mc.status, mc.resume_requested AS resumeRequested,
             mc.automatic_attempts AS automaticAttempts, s.auto_resolve_conflicts AS autoResolve,
             source.queue_item_id AS queueItemId, source.agent_id AS agentId, source.model,
-            rc.id AS connectionId, rc.status AS connectionStatus,
+            rc.status AS connectionStatus,
             c.id AS candidateId, c.candidate_sha AS candidateSha, c.remote_candidate_sha AS remoteCandidateSha,
             owner.user_id AS ownerId
      FROM merge_conflict_cases mc
@@ -179,7 +179,7 @@ export async function createConflictResolverRun(
      WHERE mc.id = ? AND mc.current_resolver_run_id IS NULL AND mc.status IN ('pending', 'failed')`,
   ).bind(caseId).first<{
     sessionId: string; status: string; resumeRequested: number; automaticAttempts: number; autoResolve: number;
-    queueItemId: string; agentId: string; model: string; connectionId: string; connectionStatus: string;
+    queueItemId: string; agentId: string; model: string; connectionStatus: string;
     candidateId: string; candidateSha: string; remoteCandidateSha: string; ownerId: string;
   }>();
   if (!context || context.connectionStatus !== "ready" || context.candidateSha !== context.remoteCandidateSha) return null;
@@ -191,8 +191,6 @@ export async function createConflictResolverRun(
   const runId = crypto.randomUUID();
   const now = Date.now();
   const runBranch = `openfloor/${context.sessionId.slice(0, 8)}/run/${runId.slice(0, 8)}`;
-  const commands = await database.prepare("SELECT position, command FROM repository_check_commands WHERE connection_id = ? ORDER BY position")
-    .bind(context.connectionId).all<{ position: number; command: string }>();
   try {
     await database.batch([
       database.prepare(
@@ -207,10 +205,6 @@ export async function createConflictResolverRun(
         `INSERT INTO merge_conflict_attempts (id, case_id, run_id, launch_kind, created_at)
          SELECT ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM agent_runs WHERE id = ?)`,
       ).bind(crypto.randomUUID(), caseId, runId, launchKind, now, runId),
-      ...commands.results.map((check) => database.prepare(
-        `INSERT INTO agent_run_checks (id, run_id, position, command, status, updated_at)
-         SELECT ?, ?, ?, ?, 'pending', ? WHERE EXISTS (SELECT 1 FROM agent_runs WHERE id = ?)`,
-      ).bind(crypto.randomUUID(), runId, Number(check.position), check.command, now, runId)),
       database.prepare(
         `UPDATE merge_conflict_cases SET current_resolver_run_id = ?, status = 'resolving', resume_requested = 0,
                 automatic_attempts = automatic_attempts + ?, failure_reason = NULL, updated_at = ?

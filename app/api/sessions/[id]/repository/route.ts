@@ -77,7 +77,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     return Response.json({ error: "Reconnect from an active GitHub installation in Account Settings" }, { status: 409 });
   }
   const input = await readInput(request);
-  if (!input) return Response.json({ error: "Select a valid repository and base branch, with no more than eight valid check commands" }, { status: 400 });
+  if (!input) return Response.json({ error: "Select a valid repository and base branch" }, { status: 400 });
   if (input.repositoryId !== existing.repositoryId) return Response.json({ error: "Disconnect before selecting another repository" }, { status: 409 });
   const candidate = await getActiveRepositoryCandidateForMember(sessionId, user.id);
   if (candidate && input.baseBranch !== candidate.baseBranch) {
@@ -124,7 +124,7 @@ async function configureFromGitHub(
   }
   const branches = await listRepositoryBranches(config, installationId, repository);
   if (!branches.includes(input.baseBranch)) return Response.json({ error: "Base branch is not available in this repository" }, { status: 400 });
-  const saved = await saveRepositoryConnection(sessionId, userId, null, installationId, repository, input.baseBranch, input.checkCommands);
+  const saved = await saveRepositoryConnection(sessionId, userId, null, installationId, repository, input.baseBranch);
   if (!saved) return Response.json({ error: "Session not found" }, { status: 404 });
   await notifyFloorChanged(sessionId, await getRepositoryFloorRevision(sessionId), ["repository", "review"]);
 

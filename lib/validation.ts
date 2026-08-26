@@ -36,7 +36,7 @@ export type QueueOrderInput = { itemIds: string[] };
 export type QueuePromptTextInput = { text: string };
 export type QueueItemPauseInput = { paused: boolean };
 export type QueueItemTargetInput = { agentId: string };
-export type RepositoryConnectionInput = { repositoryId: string; accountInstallationId: string | null; baseBranch: string; checkCommands: string[] };
+export type RepositoryConnectionInput = { repositoryId: string; accountInstallationId: string | null; baseBranch: string };
 export type RepositoryCandidateInput = { name: string; description: string };
 export type ProfileInput = { firstName: string; lastName: string; githubHandle: string | null };
 // Discriminated by kind: `secret` is what gets encrypted at rest, and
@@ -265,18 +265,12 @@ export function parseRepositoryConnectionInput(value: unknown): RepositoryConnec
   if (!value || typeof value !== "object") return null;
   const input = value as Record<string, unknown>;
   if (typeof input.repositoryId !== "string" || typeof input.baseBranch !== "string") return null;
-  if (input.checkCommands !== undefined && !Array.isArray(input.checkCommands)) return null;
   const repositoryId = input.repositoryId.trim();
   if (input.accountInstallationId !== undefined && input.accountInstallationId !== null && typeof input.accountInstallationId !== "string") return null;
   const accountInstallationId = typeof input.accountInstallationId === "string" ? input.accountInstallationId.trim() : null;
   const baseBranch = input.baseBranch.trim();
   if (!repositoryId || repositoryId.length > 100 || (accountInstallationId !== null && (!accountInstallationId || accountInstallationId.length > 100)) || !baseBranch || baseBranch.length > 255) return null;
-  const rawCommands = input.checkCommands ?? [];
-  if (!Array.isArray(rawCommands) || rawCommands.length > 8) return null;
-  if (rawCommands.some((command) => typeof command !== "string")) return null;
-  const checkCommands = rawCommands.map((command) => (command as string).trim());
-  if (checkCommands.some((command) => !command || command.length > 500)) return null;
-  return { repositoryId, accountInstallationId, baseBranch, checkCommands };
+  return { repositoryId, accountInstallationId, baseBranch };
 }
 
 export function parseRepositoryCandidateInput(value: unknown): RepositoryCandidateInput | null {
