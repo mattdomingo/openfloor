@@ -9,8 +9,9 @@ import type {
   FloorSnapshot,
   ReviewContributor,
 } from "@/lib/floor-types";
-import type { AgentInput, AgentTaskInput, AssignmentInput, MessageInput, QueuePromptInput } from "@/lib/validation";
+import type { AgentInput, AgentSettingsInput, AssignmentInput, MessageInput, QueuePromptInput } from "@/lib/validation";
 import { normalizeAgentName } from "@/lib/validation";
+import { credentialKindsForProvider, PROVIDER_MODELS, type CredentialProvider } from "@/lib/provider-credentials";
 import { getDb, type D1DatabaseLike } from "./index";
 import {
   getActiveRepositoryCandidate,
@@ -384,20 +385,64 @@ export async function deprovisionIdleGeneratedAgents(
   return changed || Number(retired.meta?.changes ?? 0) > 0;
 }
 
-export async function updateFloorAgentTask(
+/**
+ * Field edits on a persistent agent — task, model, and billing credential
+ * kind — one route, one function, SET clause built from the keys present.
+ * Generalizes the old updateFloorAgentTask; every guard it had stays:
+ * membership, kind IS NULL, deprovisioned_at IS NULL, session-not-ended,
+ * bumpFloorRevision, and the changes === 0 re-check distinguishing "not a
+ * member" from "not an editable agent".
+ *
+ * model/credentialKind validate against the agent's STORED provider read
+ * here, never a client-supplied one. No lock is needed for that read:
+ * provider is immutable for persistent agents — the only UPDATE touching it
+ * (the generated-agent reuse path) is unreachable behind this function's
+ * kind IS NULL guard.
+ *
+ * A credentialKind change is refused (409) while the agent has a real
+ * in-flight run: the gateway resolves the billing credential live on EVERY
+ * proxied request, so applying it mid-run would silently switch whose
+ * credential the run's next request bills — the exact thing the
+ * never-silently-switch-payer invariant forbids. A model change needs no
+ * such guard, and must not grow one for symmetry: the model was frozen into
+ * agent_runs.model at run creation, so editing it can never disturb an
+ * in-flight run.
+ */
+export async function updateFloorAgentSettings(
   sessionId: string,
   userId: string,
   agentId: string,
-  input: AgentTaskInput,
+  patch: AgentSettingsInput,
   database = getDb(),
 ): Promise<FloorSnapshot | null> {
   if (!(await getActiveMembershipRole(sessionId, userId, database))) return null;
+  const agent = await database.prepare(
+    "SELECT provider FROM floor_agents WHERE id = ? AND session_id = ? AND kind IS NULL AND deprovisioned_at IS NULL",
+  ).bind(agentId, sessionId).first<{ provider: CredentialProvider }>();
+  if (!agent) throw new FloorTargetError("Only active, persistent agents can be edited.");
+  if (patch.model !== undefined && patch.model !== null && !PROVIDER_MODELS[agent.provider].includes(patch.model)) {
+    throw new FloorTargetError("That model is not available for this agent's provider.");
+  }
+  if (patch.credentialKind !== undefined && patch.credentialKind !== null && !credentialKindsForProvider(agent.provider).includes(patch.credentialKind)) {
+    throw new FloorTargetError("That billing option is not available for this agent's provider.");
+  }
+  if (patch.credentialKind !== undefined) {
+    const activeRun = await database.prepare(
+      `SELECT 1 AS present FROM agent_runs WHERE session_id = ? AND agent_id = ? AND status IN ${AGENT_ACTIVE_RUN_STATUSES}`,
+    ).bind(sessionId, agentId).first<{ present: number }>();
+    if (activeRun) throw new FloorConflictError("This agent has a run in flight — stop it or wait for it to finish before changing its billing.");
+  }
   const now = Date.now();
+  const sets: string[] = [];
+  const binds: unknown[] = [];
+  if (patch.task !== undefined) { sets.push("task = ?"); binds.push(patch.task); }
+  if (patch.model !== undefined) { sets.push("model = ?"); binds.push(patch.model); }
+  if (patch.credentialKind !== undefined) { sets.push("credential_kind = ?"); binds.push(patch.credentialKind); }
   const result = await database.prepare(
-    `UPDATE floor_agents SET task = ?, updated_at = ?
+    `UPDATE floor_agents SET ${sets.join(", ")}, updated_at = ?
      WHERE id = ? AND session_id = ? AND kind IS NULL AND deprovisioned_at IS NULL
        AND EXISTS (SELECT 1 FROM sessions WHERE id = ? AND ended_at IS NULL)`,
-  ).bind(input.task, now, agentId, sessionId, sessionId).run();
+  ).bind(...binds, now, agentId, sessionId, sessionId).run();
   if (Number(result.meta?.changes ?? 0) === 0) {
     if (!(await getActiveMembershipRole(sessionId, userId, database))) return null;
     throw new FloorTargetError("Only active, persistent agents can be edited.");
@@ -420,7 +465,7 @@ const AGENT_ACTIVE_RUN_STATUSES = "('provisioning', 'running', 'checking', 'canc
  * it only blocks the router from assigning/dispatching new work to this
  * agent (db/routing.ts filters `paused_at IS NULL`). System-managed
  * (kind IS NOT NULL) agents are router-controlled and excluded here, same
- * as updateFloorAgentTask above.
+ * as updateFloorAgentSettings above.
  */
 export async function pauseFloorAgent(
   sessionId: string,

@@ -16,6 +16,7 @@ import {
   resumeAllFloorAgents,
   stopAllFloorAgents,
   stopFloorAgent,
+  updateFloorAgentSettings,
   updateFloorAssignment,
 } from "@/db/floor";
 import { acceptInvite, createSession, endSession, SessionEndedError, upsertUser } from "@/db/sessions";
@@ -108,6 +109,59 @@ describe("D1 persistent floor", () => {
     const agent = floor?.agents.find((candidate) => candidate.name === "Sub");
     expect(agent?.credentialKind).toBe("oauth");
     expect(agent?.model).toBe("claude-sonnet-5");
+  });
+
+  it("edits task, model, and billing on a persistent agent against its stored provider", async () => {
+    const room = await floorRoom("agent-settings");
+    const input = parseAgentInput({ name: "Edit", role: "Engineer", task: "Work", ownerUserId: room.owner.id, provider: "anthropic" });
+    if (!input) throw new Error("Invalid test agent");
+    const floor = await createFloorAgent(room.sessionId, room.owner.id, input, env.DB);
+    const agentId = floor!.agents[0].id;
+    let updated = await updateFloorAgentSettings(room.sessionId, room.member.id, agentId, { model: "claude-sonnet-5" }, env.DB);
+    expect(updated?.agents[0].model).toBe("claude-sonnet-5");
+    // The old task-only contract survives the generalization.
+    updated = await updateFloorAgentSettings(room.sessionId, room.member.id, agentId, { task: "New task" }, env.DB);
+    expect(updated?.agents[0].task).toBe("New task");
+    expect(updated?.agents[0].model).toBe("claude-sonnet-5");
+    // Explicit null resets to the provider default.
+    updated = await updateFloorAgentSettings(room.sessionId, room.member.id, agentId, { model: null }, env.DB);
+    expect(updated?.agents[0].model).toBeNull();
+    // A model outside the STORED provider's allowlist is refused — no
+    // provider crossed the wire, so a caller cannot pick which list applies.
+    await expect(updateFloorAgentSettings(room.sessionId, room.owner.id, agentId, { model: "kimi-k3" }, env.DB)).rejects.toBeInstanceOf(FloorTargetError);
+    // Same rule for a billing kind the stored provider does not accept.
+    const kimiInput = parseAgentInput({ name: "KimiEdit", role: "Engineer", task: "Work", ownerUserId: room.owner.id, provider: "kimi" });
+    if (!kimiInput) throw new Error("Invalid test agent");
+    const kimiFloor = await createFloorAgent(room.sessionId, room.owner.id, kimiInput, env.DB);
+    const kimiAgentId = kimiFloor!.agents.find((agent) => agent.name === "KimiEdit")!.id;
+    await expect(updateFloorAgentSettings(room.sessionId, room.owner.id, kimiAgentId, { credentialKind: "oauth" }, env.DB)).rejects.toBeInstanceOf(FloorTargetError);
+    // Outsider concealment and the system-managed refusal both hold.
+    await expect(updateFloorAgentSettings(room.sessionId, room.outsider.id, agentId, { model: null }, env.DB)).resolves.toBeNull();
+    const answer = await ensureAnswerAgent(room.sessionId, room.owner.id, "openai", env.DB);
+    await expect(updateFloorAgentSettings(room.sessionId, room.owner.id, answer.id, { model: null }, env.DB)).rejects.toBeInstanceOf(FloorTargetError);
+  });
+
+  it("refuses a billing change while the agent has a run in flight, then accepts it", async () => {
+    const room = await floorRoom("billing-edit");
+    const input = parseAgentInput({ name: "Bill", role: "Engineer", task: "Work", ownerUserId: room.owner.id, provider: "anthropic" });
+    if (!input) throw new Error("Invalid test agent");
+    let floor = await createFloorAgent(room.sessionId, room.owner.id, input, env.DB);
+    const agentId = floor!.agents[0].id;
+    floor = await createFloorQueueItem(room.sessionId, room.owner.id, { prompt: "Work", agentId }, env.DB);
+    const itemId = floor!.queue[0].id;
+    const runId = await insertRun(room.sessionId, agentId, room.owner.id, itemId, "running");
+    // The gateway resolves credential_kind live on every proxied request, so
+    // an in-flight run would bill the new payer mid-run — refuse instead.
+    await expect(updateFloorAgentSettings(room.sessionId, room.owner.id, agentId, { credentialKind: "oauth" }, env.DB)).rejects.toBeInstanceOf(FloorConflictError);
+    // A model edit during the same run is fine: the run's model was frozen
+    // into agent_runs.model at creation and cannot be disturbed.
+    const during = await updateFloorAgentSettings(room.sessionId, room.owner.id, agentId, { model: "claude-sonnet-5" }, env.DB);
+    expect(during?.agents[0].model).toBe("claude-sonnet-5");
+    await env.DB.prepare("UPDATE agent_runs SET status = 'ready' WHERE id = ?").bind(runId).run();
+    const after = await updateFloorAgentSettings(room.sessionId, room.owner.id, agentId, { credentialKind: "oauth" }, env.DB);
+    expect(after?.agents[0].credentialKind).toBe("oauth");
+    const reset = await updateFloorAgentSettings(room.sessionId, room.owner.id, agentId, { credentialKind: null }, env.DB);
+    expect(reset?.agents[0].credentialKind).toBeNull();
   });
 
   it("persists unassigned and targeted prompts and ordering", async () => {

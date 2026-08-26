@@ -1,11 +1,12 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import type { AgentRun, FloorAgent, RunActivityEvent } from "@/lib/floor-types";
-import { AGENT_PROVIDER_LABELS, credentialKindLabel } from "@/lib/provider-credentials";
+import type { AgentRun, FloorAgent, FloorAgentSettingsPatch, RunActivityEvent } from "@/lib/floor-types";
+import { AGENT_PROVIDER_LABELS, credentialKindLabel, credentialKindsForProvider, parseCredentialKind, PROVIDER_MODELS } from "@/lib/provider-credentials";
 import { BASE_PATH } from "@/components/basePath";
 import { LocalDateTime } from "@/components/LocalDateTime";
 import { Icon } from "./primitives";
+import { SelectMenu } from "./SelectMenu";
 import type { RunActivitySource } from "./useRunActivity";
 import { ACTIVE_RUN_STATUSES, agentReplyText, isRunLive, runStatusToken } from "./data";
 
@@ -62,7 +63,7 @@ export function AgentCard({ agent, tone, latestRun, activityEvents, selected, on
   );
 }
 
-export function AgentSpotlight({ agent, tone, sessionId, latestRun, activity, onHistory, onUpdateTask, onPause, onStop, onDelete }: { agent: FloorAgent; tone: string; sessionId: string; latestRun: AgentRun | null; activity: RunActivitySource; onHistory: () => void; onUpdateTask: (agentId: string, task: string) => Promise<boolean>; onPause: (agentId: string, paused: boolean) => void; onStop: (agentId: string) => void; onDelete: (agentId: string) => void }) {
+export function AgentSpotlight({ agent, tone, sessionId, latestRun, activity, onHistory, onUpdateSettings, onPause, onStop, onDelete }: { agent: FloorAgent; tone: string; sessionId: string; latestRun: AgentRun | null; activity: RunActivitySource; onHistory: () => void; onUpdateSettings: (agentId: string, patch: FloorAgentSettingsPatch) => Promise<boolean>; onPause: (agentId: string, paused: boolean) => void; onStop: (agentId: string) => void; onDelete: (agentId: string) => void }) {
   // A reply run never runs checks, exports files, or publishes a branch —
   // that execution summary belongs only to a task run.
   const isReply = latestRun?.kind === "reply";
@@ -83,7 +84,43 @@ export function AgentSpotlight({ agent, tone, sessionId, latestRun, activity, on
           <button type="button" className="button danger-button" data-size="sm" onClick={() => onDelete(agent.id)}><Icon name="trash" size={12} />Delete</button>
         </div>
       )}
-      <div className="spotlight-row"><span className="label">Task</span>{agent.kind ? <p className="agent-detail-line">{agent.task}</p> : <AgentTaskEditor key={`${agent.id}-${agent.updatedAt}`} agent={agent} onSave={onUpdateTask} />}</div>
+      <div className="spotlight-row"><span className="label">Task</span>{agent.kind ? <p className="agent-detail-line">{agent.task}</p> : <AgentTaskEditor key={`${agent.id}-${agent.updatedAt}`} agent={agent} onSave={(agentId, task) => onUpdateSettings(agentId, { task })} />}</div>
+      {/* Same gate as the task editor: system-managed agents render read-only
+          detail only. Both selects apply on change — the pattern this
+          component already uses; no Apply-button form for two selects. */}
+      {!agent.kind && (
+        <div className="spotlight-row"><span className="label">Model</span>
+          <SelectMenu
+            label={`Model for ${agent.name}`}
+            value={agent.model ?? "default"}
+            onChange={(value) => {
+              const model = value === "default" ? null : value;
+              if (model !== agent.model) void onUpdateSettings(agent.id, { model });
+            }}
+            options={[
+              { value: "default", label: "Provider default" },
+              ...PROVIDER_MODELS[agent.provider].map((id) => ({ value: id, label: id })),
+            ]}
+          />
+        </div>
+      )}
+      {!agent.kind && credentialKindsForProvider(agent.provider).length > 1 && (
+        <div className="spotlight-row"><span className="label">Billing</span>
+          <SelectMenu
+            label={`Billing for ${agent.name}`}
+            value={agent.credentialKind ?? "default"}
+            onChange={(value) => {
+              const kind = parseCredentialKind(value);
+              if (kind !== agent.credentialKind) void onUpdateSettings(agent.id, { credentialKind: kind });
+            }}
+            options={[
+              { value: "default", label: "Owner's default" },
+              { value: "oauth", label: "Subscription" },
+              { value: "api_key", label: "API key" },
+            ]}
+          />
+        </div>
+      )}
       {latestRun?.finalResponse && (
         <div className="spotlight-row"><span className="label">Response</span><div className="spotlight-response">{latestRun.finalResponse}</div></div>
       )}

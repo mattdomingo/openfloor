@@ -289,3 +289,13 @@ export type CreateFloorAgentInput = {
   // PROVIDER_MODELS[provider], enforced server-side in parseAgentInput.
   model?: string | null;
 };
+
+// Partial edit of an existing persistent agent (PATCH .../agents/[agentId]).
+// Omitted = leave alone; explicit null = reset to the default. model and
+// credentialKind are validated server-side against the agent's STORED
+// provider, never a client-supplied one.
+export type FloorAgentSettingsPatch = {
+  task?: string;
+  model?: string | null;
+  credentialKind?: CredentialKind | null;
+};

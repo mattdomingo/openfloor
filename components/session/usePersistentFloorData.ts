@@ -82,7 +82,8 @@ export function usePersistentFloorData(sessionId: string, initialFloor: FloorSna
     clearError: () => setError(null),
     refresh,
     createAgent: (input: CreateFloorAgentInput) => request("/agents", "POST", input),
-    updateAgentTask: (agentId: string, task: string) => request(`/agents/${encodeURIComponent(agentId)}`, "PATCH", { task }),
+    updateAgentSettings: (agentId: string, patch: import("@/lib/floor-types").FloorAgentSettingsPatch) =>
+      request(`/agents/${encodeURIComponent(agentId)}`, "PATCH", patch),
     pauseAgent: (agentId: string, paused: boolean) => request(`/agents/${encodeURIComponent(agentId)}/pause`, "PATCH", { paused }),
     stopAgent: (agentId: string) => request(`/agents/${encodeURIComponent(agentId)}/stop`, "POST"),
     deleteAgent: (agentId: string) => request(`/agents/${encodeURIComponent(agentId)}`, "DELETE"),

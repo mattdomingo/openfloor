@@ -5,7 +5,7 @@ import { POST as postGeminiGateway } from "@/app/runtime/gemini/[...path]/route"
 import { GET as getGlmGateway, POST as postGlmGateway } from "@/app/runtime/glm/[...path]/route";
 import { GET as getKimiGateway, POST as postKimiGateway } from "@/app/runtime/kimi/[...path]/route";
 import { POST as postOpenAiGateway } from "@/app/runtime/openai/[...path]/route";
-import { createFloorAgent } from "@/db/floor";
+import { createFloorAgent, updateFloorAgentSettings } from "@/db/floor";
 import {
   deleteProviderCredential,
   getRunAgentOwnerCredential,
@@ -261,6 +261,22 @@ describe("provider credential persistence", () => {
     const missed = await getRunAgentOwnerCredential(apiKeyRun, "anthropic", env.DB);
     expect(missed?.ciphertext).toBeNull();
     expect(missed?.requestedKind).toBe("api_key");
+  });
+
+  it("resolves the newly named kind on the next run after a post-creation billing edit", async () => {
+    const { sessionId, owner } = await room("kind-edit");
+    await connectKey(owner.id, "anthropic", "sk-ant-api03-kkkk");
+    await connectKey(owner.id, "anthropic", "sk-ant-oat01-ssss", "oauth");
+    const firstRun = await kindAgentRun(sessionId, owner.id, "EditAgent", "api_key");
+    expect((await getRunAgentOwnerCredential(firstRun, "anthropic", env.DB))?.kind).toBe("api_key");
+    const agent = await env.DB.prepare("SELECT agent_id AS agentId FROM agent_runs WHERE id = ?").bind(firstRun).first<{ agentId: string }>();
+    // Finish the run first — the edit refuses while one is in flight.
+    await env.DB.prepare("UPDATE agent_runs SET status = 'ready' WHERE id = ?").bind(firstRun).run();
+    await updateFloorAgentSettings(sessionId, owner.id, agent!.agentId, { credentialKind: "oauth" }, env.DB);
+    const nextRun = await insertRunRow(sessionId, agent!.agentId, owner.id, "running");
+    const resolved = await getRunAgentOwnerCredential(nextRun, "anthropic", env.DB);
+    expect(resolved?.kind).toBe("oauth");
+    expect(resolved?.requestedKind).toBe("oauth");
   });
 
   it("a cross-method re-key (account merge path) preserves the user id, so credentials stay decryptable", async () => {
