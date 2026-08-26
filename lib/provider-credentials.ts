@@ -26,8 +26,13 @@ export function parseCredentialKind(value: unknown): CredentialKind | null {
 // subscription token sent to another vendor. Server fallback credentials are
 // always api_key by construction (plain string bindings) — openfloor never
 // operates one person's subscription seat on behalf of others.
+// openai's oauth kind (a ChatGPT auth bundle) is deliberately WITHHELD until
+// the brief's §5 ships (gated on Spike D): the parse shape and the dormant
+// Settings form remain §5-ready, but offering a connection no run can honor
+// would only manufacture 503s. The openai gateway keeps its own oauth-kind
+// refusal as defense in depth for hand-written rows.
 export function credentialKindsForProvider(provider: CredentialProvider): readonly CredentialKind[] {
-  return provider === "anthropic" || provider === "openai" ? CREDENTIAL_KINDS : ["api_key"];
+  return provider === "anthropic" ? CREDENTIAL_KINDS : ["api_key"];
 }
 
 // "API key" / "Claude subscription" / "ChatGPT subscription" — used by

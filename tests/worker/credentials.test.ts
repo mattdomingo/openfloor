@@ -774,10 +774,13 @@ describe("OpenAI gateway credential resolution", () => {
     delete (env as unknown as Record<string, unknown>).MOONSHOT_API_KEY;
   });
 
-  it("openai gateway refuses an oauth bundle outright until §5 ships — never sending it upstream", async () => {
+  it("refuses a hand-written openai oauth bundle at resolution — never sending it upstream", async () => {
     const { sessionId, owner, member, runId } = await runningRun("openai-oauth", "member");
-    // A real pasted bundle is pretty-printed: interior newlines survive
-    // storage by design, so it must never reach a header value.
+    // openai's oauth kind is withheld until §5 ships, so this row can only
+    // exist hand-written. A real pasted bundle is pretty-printed: interior
+    // newlines survive storage by design, so it must never reach a header
+    // value. The resolver's kind check refuses it first; the openai route's
+    // own oauth guard remains behind it as defense in depth.
     const bundle = JSON.stringify({ tokens: { account_id: "acct-1", access_token: "at", refresh_token: "rt" } }, null, 2);
     await connectKey(member.id, "openai", bundle, "oauth");
     await env.DB.prepare("UPDATE floor_agents SET credential_kind = 'oauth' WHERE session_id = ?").bind(sessionId).run();
@@ -788,7 +791,7 @@ describe("OpenAI gateway credential resolution", () => {
     vi.stubGlobal("fetch", fetchSpy);
     const refused = await postOpenAiGateway(gatewayRequest(await signedRunToken(runId, sessionId)), gatewayParams());
     expect(refused.status).toBe(503);
-    expect(await refused.text()).toContain("ChatGPT subscription credentials cannot run agents yet");
+    expect(await refused.text()).toContain("No OpenAI credential is available for this run");
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
