@@ -144,6 +144,7 @@ input, textarea { width: 100%; padding: 11px 12px; border: 1px solid var(--line-
 }
 .repository-log-output { max-height: 320px; overflow: auto; margin-top: var(--space-3); padding: var(--space-3); border-radius: var(--radius-sm); background: var(--surface-sunken); color: var(--text-primary); white-space: pre-wrap; word-break: break-word; font-family: var(--font-mono); font-size: var(--text-xs); }
 .queue-run-row { display: flex; align-items: center; justify-content: flex-end; gap: .45rem; margin-top: .6rem; }
+.queue-run-row .queue-chip[data-status="answered"] { margin-right: auto; }
 .queue-run-branch { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-tertiary); font-size: .68rem; }
 .repository-form { display: grid; gap: var(--space-4); margin-top: var(--space-4); }
 .repository-form label, .repository-form .repository-field { display: grid; gap: var(--space-2); color: var(--text-secondary); font-size: var(--text-sm); }

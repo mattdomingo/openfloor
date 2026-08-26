@@ -525,6 +525,9 @@
 .shop-shell .session-card:focus-within {
   box-shadow: 0 14px 32px rgba(0, 0, 0, .16);
 }
+.shop-shell .session-card[data-actions-open="true"] {
+  transform: translate(0, 0);
+}
 .shop-shell .session-card-head strong {
   font: 700 20px var(--sans);
   letter-spacing: -.018em;

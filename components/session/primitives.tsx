@@ -21,14 +21,21 @@ export function useHoverTip() {
       onMouseEnter: track,
       onMouseMove: track,
       onMouseLeave: () => setPosition(null),
+      onFocus: (event: React.FocusEvent<HTMLElement>) => {
+        const rect = event.currentTarget.getBoundingClientRect();
+        setPosition({ x: rect.left + rect.width / 2, y: rect.bottom });
+      },
+      onBlur: () => setPosition(null),
     },
   };
 }
 
-export function HoverTip({ position, children }: { position: { x: number; y: number } | null; children: ReactNode }) {
+export function HoverTip({ position, children, wrap = false }: { position: { x: number; y: number } | null; children: ReactNode; wrap?: boolean }) {
   if (position == null || typeof document === "undefined") return null;
+  const left = wrap ? Math.max(8, Math.min(position.x + 14, window.innerWidth - Math.min(360, window.innerWidth - 16))) : position.x + 14;
+  const top = wrap ? Math.max(8, Math.min(position.y + 12, window.innerHeight - 180)) : position.y + 18;
   return createPortal(
-    <span className="hover-tip" role="tooltip" style={{ left: position.x + 14, top: position.y + 18 }}>
+    <span className="hover-tip" data-wrap={wrap ? "true" : undefined} role="tooltip" style={{ left, top }}>
       {children}
     </span>,
     document.body,

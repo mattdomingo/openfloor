@@ -143,6 +143,16 @@
   pointer-events: none;
 }
 
+.hover-tip[data-wrap="true"] {
+  width: max-content;
+  max-width: min(360px, calc(100vw - 16px));
+  max-height: min(160px, calc(100vh - 16px));
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.45;
+}
+
 .session-timer {
   font-variant-numeric: tabular-nums;
 }
