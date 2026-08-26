@@ -17,7 +17,7 @@ export async function getAgentRunsForMember(sessionId: string, userId: string, d
 export async function getAgentRuns(sessionId: string, database = getDb()): Promise<AgentRun[]> {
   const rows = await database.prepare(
     `SELECT r.id, r.queue_item_id AS queueItemId, r.agent_id AS agentId, a.name AS agentName,
-            r.candidate_id AS candidateId, r.candidate_sha AS candidateSha, r.attempt, r.status,
+            r.candidate_id AS candidateId, r.candidate_sha AS candidateSha, r.attempt, r.status, r.kind,
             r.run_branch AS runBranch, r.local_commit_sha AS localCommitSha,
             r.run_commit_sha AS runCommitSha, r.remote_run_sha AS remoteRunSha,
             r.model, r.summary, r.final_response AS finalResponse, r.created_by AS createdBy,
@@ -26,8 +26,12 @@ export async function getAgentRuns(sessionId: string, database = getDb()): Promi
             r.integration_base_sha AS integrationBaseSha, r.integrated_candidate_sha AS integratedCandidateSha,
             r.conflict_reason AS conflictReason, r.integration_started_at AS integrationStartedAt,
             r.integrated_at AS integratedAt,
-            r.cancel_requested_at AS cancelRequestedAt, r.updated_at AS updatedAt
+            r.cancel_requested_at AS cancelRequestedAt, r.updated_at AS updatedAt,
+            CASE WHEN mca.run_id IS NULL THEN 'task' ELSE 'conflict_resolution' END AS purpose,
+            COALESCE(mca.case_id, source_case.id) AS conflictCaseId
      FROM agent_runs r JOIN floor_agents a ON a.id = r.agent_id
+     LEFT JOIN merge_conflict_attempts mca ON mca.run_id = r.id
+     LEFT JOIN merge_conflict_cases source_case ON source_case.source_run_id = r.id
      WHERE r.session_id = ? ORDER BY r.created_at DESC, r.id DESC LIMIT 20`,
   ).bind(sessionId).all<RunRecord>();
   return Promise.all(rows.results.map(async (run) => ({
@@ -49,11 +53,12 @@ export async function getQueueItemProvider(sessionId: string, queueItemId: strin
   return row?.provider ?? null;
 }
 
-export async function createAgentRun(sessionId: string, queueItemId: string, userId: string, database = getDb()): Promise<AgentRun> {
+export async function createAgentRun(sessionId: string, queueItemId: string, userId: string, kind: "task" | "reply" = "task", database = getDb()): Promise<AgentRun> {
   if ((await getActiveMembershipRole(sessionId, userId, database)) !== "owner") throw new AgentRunNotReadyError("Session not found");
   const context = await database.prepare(
     `SELECT q.id AS queueItemId, q.status AS queueStatus, q.agent_id AS agentId,
-            a.provider AS agentProvider, a.model AS agentModel,
+            a.provider AS agentProvider, a.model AS agentModel, a.kind AS agentKind,
+            a.deprovisioned_at AS agentDeprovisionedAt,
             rc.id AS connectionId, rc.status AS connectionStatus,
             c.id AS candidateId, c.candidate_sha AS candidateSha, c.remote_candidate_sha AS remoteCandidateSha
      FROM floor_queue_items q
@@ -63,7 +68,7 @@ export async function createAgentRun(sessionId: string, queueItemId: string, use
      WHERE q.session_id = ? AND q.id = ?`,
   ).bind(sessionId, queueItemId).first<{
     queueItemId: string; queueStatus: string; agentId: string | null; agentProvider: CredentialProvider | null;
-    agentModel: string | null; connectionId: string | null;
+    agentModel: string | null; agentKind: "answer" | "worker" | null; agentDeprovisionedAt: number | null; connectionId: string | null;
     connectionStatus: string | null; candidateId: string | null; candidateSha: string | null; remoteCandidateSha: string | null;
   }>();
   if (!context) throw new AgentRunNotReadyError("Queue item not found");
@@ -72,6 +77,12 @@ export async function createAgentRun(sessionId: string, queueItemId: string, use
   if (!context.connectionId || context.connectionStatus !== "ready" || !context.candidateId || !context.candidateSha || context.remoteCandidateSha !== context.candidateSha) {
     throw new AgentRunNotReadyError("Synchronize a ready, unmodified candidate before starting an agent run");
   }
+  const effectiveKind: "task" | "reply" = context.agentKind === "answer" ? "reply" : kind;
+  if (context.agentDeprovisionedAt !== null && context.agentKind) {
+    await database.prepare(
+      "UPDATE floor_agents SET deprovisioned_at = NULL, updated_at = ? WHERE id = ? AND session_id = ? AND kind IN ('answer', 'worker')",
+    ).bind(Date.now(), context.agentId, sessionId).run();
+  }
   const commands = await database.prepare(
     "SELECT position, command FROM repository_check_commands WHERE connection_id = ? ORDER BY position",
   ).bind(context.connectionId).all<{ position: number; command: string }>();
@@ -79,21 +90,25 @@ export async function createAgentRun(sessionId: string, queueItemId: string, use
     .bind(queueItemId).first<{ attempt: number }>();
   const attempt = Number(previous?.attempt ?? 0) + 1;
   const id = crypto.randomUUID();
-  const runBranch = `openfloor/${sessionId.slice(0, 8)}/run/${id.slice(0, 8)}`;
+  // A reply run never publishes, so it never earns a real branch — reserving
+  // the placeholder name here would leave the UI pointing at a branch that
+  // doesn't exist in git. Same reasoning skips its check rows below: the
+  // workflow's reply path never runs required checks.
+  const runBranch = effectiveKind === "reply" ? null : `openfloor/${sessionId.slice(0, 8)}/run/${id.slice(0, 8)}`;
   const now = Date.now();
   try {
     await database.batch([
       database.prepare(
         `INSERT INTO agent_runs
-         (id, session_id, queue_item_id, agent_id, candidate_id, candidate_sha, run_branch, attempt, status, model,
+         (id, session_id, queue_item_id, agent_id, candidate_id, candidate_sha, run_branch, attempt, status, model, kind,
           workflow_instance_id, sandbox_id, created_by, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'provisioning', ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'provisioning', ?, ?, ?, ?, ?, ?, ?)`,
       ).bind(id, sessionId, queueItemId, context.agentId, context.candidateId, context.candidateSha, runBranch, attempt,
-        resolveRunModel(context.agentProvider ?? "openai", context.agentModel), id, `run-${id}`, userId, now, now),
-      ...commands.results.map((check) => database.prepare(
+        resolveRunModel(context.agentProvider ?? "openai", context.agentModel), effectiveKind === "reply" ? "reply" : null, id, `run-${id}`, userId, now, now),
+      ...(effectiveKind === "reply" ? [] : commands.results.map((check) => database.prepare(
         `INSERT INTO agent_run_checks (id, run_id, position, command, status, updated_at)
          VALUES (?, ?, ?, ?, 'pending', ?)`,
-      ).bind(crypto.randomUUID(), id, Number(check.position), check.command, now)),
+      ).bind(crypto.randomUUID(), id, Number(check.position), check.command, now))),
       database.prepare("UPDATE floor_queue_items SET status = 'running', updated_at = ? WHERE id = ? AND session_id = ? AND status = 'queued'")
         .bind(now, queueItemId, sessionId),
       database.prepare("UPDATE sessions SET floor_revision = floor_revision + 1, updated_at = ? WHERE id = ?").bind(now, sessionId),
@@ -109,7 +124,7 @@ export async function createAgentRun(sessionId: string, queueItemId: string, use
 export async function getAgentRun(runId: string, database = getDb()): Promise<AgentRun | null> {
   const row = await database.prepare(
     `SELECT r.id, r.queue_item_id AS queueItemId, r.agent_id AS agentId, a.name AS agentName,
-            r.candidate_id AS candidateId, r.candidate_sha AS candidateSha, r.attempt, r.status,
+            r.candidate_id AS candidateId, r.candidate_sha AS candidateSha, r.attempt, r.status, r.kind,
             r.run_branch AS runBranch, r.local_commit_sha AS localCommitSha,
             r.run_commit_sha AS runCommitSha, r.remote_run_sha AS remoteRunSha,
             r.model, r.summary, r.final_response AS finalResponse, r.created_by AS createdBy,
@@ -118,8 +133,13 @@ export async function getAgentRun(runId: string, database = getDb()): Promise<Ag
             r.integration_base_sha AS integrationBaseSha, r.integrated_candidate_sha AS integratedCandidateSha,
             r.conflict_reason AS conflictReason, r.integration_started_at AS integrationStartedAt,
             r.integrated_at AS integratedAt,
-            r.cancel_requested_at AS cancelRequestedAt, r.updated_at AS updatedAt
-     FROM agent_runs r JOIN floor_agents a ON a.id = r.agent_id WHERE r.id = ?`,
+            r.cancel_requested_at AS cancelRequestedAt, r.updated_at AS updatedAt,
+            CASE WHEN mca.run_id IS NULL THEN 'task' ELSE 'conflict_resolution' END AS purpose,
+            COALESCE(mca.case_id, source_case.id) AS conflictCaseId
+     FROM agent_runs r JOIN floor_agents a ON a.id = r.agent_id
+     LEFT JOIN merge_conflict_attempts mca ON mca.run_id = r.id
+     LEFT JOIN merge_conflict_cases source_case ON source_case.source_run_id = r.id
+     WHERE r.id = ?`,
   ).bind(runId).first<RunRecord>();
   if (!row) return null;
   return { ...row, attempt: Number(row.attempt), checks: await getRunChecks(runId, database), files: await getRunFiles(runId, database) };
@@ -128,7 +148,7 @@ export async function getAgentRun(runId: string, database = getDb()): Promise<Ag
 export async function getRunExecutionContext(runId: string, database = getDb()) {
   const run = await database.prepare(
     `SELECT r.id, r.session_id AS sessionId, r.queue_item_id AS queueItemId, r.agent_id AS agentId,
-            r.candidate_sha AS candidateSha, r.attempt, r.status, r.sandbox_id AS sandboxId,
+            r.candidate_sha AS candidateSha, r.attempt, r.status, r.kind, r.sandbox_id AS sandboxId,
             r.run_branch AS runBranch, r.bundle_key AS bundleKey, r.bundle_size_bytes AS bundleSizeBytes,
             r.local_commit_sha AS localCommitSha,
             r.sandbox_process_id AS sandboxProcessId, r.model,
@@ -138,19 +158,23 @@ export async function getRunExecutionContext(runId: string, database = getDb()) 
             rc.installation_id AS installationId, rc.repository_id AS repositoryId,
             rc.repository_owner AS repositoryOwner, rc.repository_name AS repositoryName,
             rc.repository_full_name AS repositoryFullName,
-            c.branch_name AS candidateBranch
+            c.branch_name AS candidateBranch,
+            mca.case_id AS conflictCaseId
      FROM agent_runs r
      JOIN sessions s ON s.id = r.session_id
      JOIN floor_agents a ON a.id = r.agent_id
      JOIN repository_candidates c ON c.id = r.candidate_id
      JOIN repository_connections rc ON rc.id = c.connection_id
+     LEFT JOIN merge_conflict_attempts mca ON mca.run_id = r.id
      WHERE r.id = ?`,
   ).bind(runId).first<{
     id: string; sessionId: string; queueItemId: string; agentId: string; candidateSha: string; attempt: number; status: AgentRunStatus;
-    runBranch: string; bundleKey: string | null; bundleSizeBytes: number | null; localCommitSha: string | null; createdAt: number;
+    kind: "reply" | null;
+    runBranch: string | null; bundleKey: string | null; bundleSizeBytes: number | null; localCommitSha: string | null; createdAt: number;
     sandboxId: string; sandboxProcessId: string | null; model: string; sessionTitle: string; objective: string | null;
     agentName: string; agentRole: string; agentTask: string; provider: CredentialProvider; installationId: string; repositoryId: string;
     repositoryOwner: string; repositoryName: string; repositoryFullName: string; candidateBranch: string;
+    conflictCaseId: string | null;
   }>();
   if (!run) return null;
   const prompts = await database.prepare(
@@ -174,15 +198,18 @@ export async function getRunGatewayContext(runId: string, database = getDb()) {
   return await database.prepare(
     `SELECT r.id, r.session_id AS sessionId, r.agent_id AS agentId,
             r.candidate_sha AS candidateSha, r.status, r.bundle_key AS bundleKey,
+            mca.case_id AS conflictCaseId,
             rc.installation_id AS installationId, rc.repository_id AS repositoryId,
             rc.repository_owner AS repositoryOwner, rc.repository_name AS repositoryName,
             rc.repository_full_name AS repositoryFullName
      FROM agent_runs r
      JOIN repository_candidates c ON c.id = r.candidate_id
      JOIN repository_connections rc ON rc.id = c.connection_id
+     LEFT JOIN merge_conflict_attempts mca ON mca.run_id = r.id
      WHERE r.id = ?`,
   ).bind(runId).first<{
     id: string; sessionId: string; agentId: string; candidateSha: string; status: AgentRunStatus; bundleKey: string | null;
+    conflictCaseId: string | null;
     installationId: string; repositoryId: string; repositoryOwner: string; repositoryName: string; repositoryFullName: string;
   }>();
 }
@@ -499,6 +526,46 @@ export async function finishAgentRun(runId: string, status: "ready" | "failed" |
     // them on its own; the user must explicitly re-run, edit, or delete the prompt.
     database.prepare("UPDATE floor_queue_items SET status = ?, updated_at = ? WHERE id = ?")
       .bind(status === "ready" ? "blocked" : status, now, run.queueItemId),
+    database.prepare("UPDATE sessions SET floor_revision = floor_revision + 1, updated_at = ? WHERE id = ?").bind(now, run.sessionId),
+  ]);
+  await appendRunEvent(runId, status, summary, database);
+  const revision = await database.prepare("SELECT floor_revision AS revision FROM sessions WHERE id = ?").bind(run.sessionId).first<{ revision: number }>();
+  return { sessionId: run.sessionId, revision: Number(revision?.revision ?? 0) };
+}
+
+// finishAgentRun's counterpart for a reply run (agent_runs.kind = 'reply').
+// Deliberately not the same function: finishAgentRun parks a successful
+// "ready" run's queue item as 'blocked' because that status still needs to
+// publish and integrate before it's truly done. A reply has no such next
+// step — a delivered answer completes its queue item outright, the same way
+// finishRunIntegrated completes a published task run.
+export async function finishAgentReply(
+  runId: string,
+  status: "ready" | "failed" | "cancelled",
+  finalResponse: string | null,
+  summary: string,
+  // A reply run never passes through markRunChecking (it has no checks to
+  // run, and the "checking" status would misleadingly surface in the UI as
+  // a task-pipeline stage for what is really just an answered question) —
+  // so this is the only place its provider thread id gets recorded.
+  threadId: string | null = null,
+  database = getDb(),
+): Promise<{ sessionId: string; revision: number } | null> {
+  const run = await database.prepare("SELECT session_id AS sessionId, queue_item_id AS queueItemId, status FROM agent_runs WHERE id = ?")
+    .bind(runId).first<{ sessionId: string; queueItemId: string; status: AgentRunStatus }>();
+  if (!run) return null;
+  if (["ready", "failed", "cancelled"].includes(run.status)) {
+    const current = await database.prepare("SELECT floor_revision AS revision FROM sessions WHERE id = ?").bind(run.sessionId).first<{ revision: number }>();
+    return { sessionId: run.sessionId, revision: Number(current?.revision ?? 0) };
+  }
+  const now = Date.now();
+  await database.batch([
+    database.prepare(
+      `UPDATE agent_runs SET status = ?, codex_thread_id = ?, final_response = ?, summary = ?, completed_at = ?, updated_at = ?
+       WHERE id = ? AND status IN ('provisioning', 'running', 'cancel_requested')`,
+    ).bind(status, threadId, finalResponse?.slice(0, 20_000) ?? null, summary.slice(0, 1_000), now, now, runId),
+    database.prepare("UPDATE floor_queue_items SET status = ?, updated_at = ? WHERE id = ?")
+      .bind(status === "ready" ? "completed" : status, now, run.queueItemId),
     database.prepare("UPDATE sessions SET floor_revision = floor_revision + 1, updated_at = ? WHERE id = ?").bind(now, run.sessionId),
   ]);
   await appendRunEvent(runId, status, summary, database);

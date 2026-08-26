@@ -32,6 +32,14 @@ export type GeminiSystemSettingsInput = {
   contextUrl: string;
   contextToken: string;
   mcpServerPath: string;
+  conflictInputUrl?: string;
+  conflictInputToken?: string;
+  // Reply-run only. Excludes the file-editing tools on top of the srt
+  // filesystem restriction in buildGeminiSrtSettings below — belt-and-braces,
+  // same shape as the Claude runner's narrowed tool list. The real
+  // enforcement is srt's allowWrite, since run_shell_command can write files
+  // without going through these named tools at all.
+  readOnly?: boolean;
 };
 
 export function buildGeminiSystemSettings(input: GeminiSystemSettingsInput): string {
@@ -43,7 +51,7 @@ export function buildGeminiSystemSettings(input: GeminiSystemSettingsInput): str
       },
       privacy: { usageStatisticsEnabled: false },
       general: { enableAutoUpdate: false, enableAutoUpdateNotification: false },
-      tools: { exclude: ["web_fetch", "google_web_search"] },
+      tools: { exclude: input.readOnly ? ["web_fetch", "google_web_search", "write_file", "replace", "edit"] : ["web_fetch", "google_web_search"] },
       mcp: { allowed: ["openfloor"] },
       mcpServers: {
         openfloor: {
@@ -52,6 +60,10 @@ export function buildGeminiSystemSettings(input: GeminiSystemSettingsInput): str
           env: {
             OPENFLOOR_CONTEXT_URL: input.contextUrl,
             OPENFLOOR_CONTEXT_TOKEN: input.contextToken,
+            ...(input.conflictInputUrl && input.conflictInputToken ? {
+              OPENFLOOR_CONFLICT_INPUT_URL: input.conflictInputUrl,
+              OPENFLOOR_CONFLICT_INPUT_TOKEN: input.conflictInputToken,
+            } : {}),
           },
         },
       },
@@ -70,6 +82,10 @@ export function buildGeminiSystemSettings(input: GeminiSystemSettingsInput): str
 export type GeminiSrtSettingsInput = {
   gatewayHost: string;
   workspace: string;
+  // Reply-run only: drops the workspace from allowWrite so run_shell_command
+  // (which bypasses the named-tool exclusion in buildGeminiSystemSettings
+  // above) is denied at the OS level, not just the CLI's own tool list.
+  readOnly?: boolean;
 };
 
 export function buildGeminiSrtSettings(input: GeminiSrtSettingsInput): string {
@@ -83,8 +99,9 @@ export function buildGeminiSrtSettings(input: GeminiSrtSettingsInput): string {
       filesystem: {
         denyRead: [],
         // The workspace and the per-run scratch tree (result.json, prompt,
-        // the agent HOME with its settings and CLI state).
-        allowWrite: [input.workspace, "/tmp"],
+        // the agent HOME with its settings and CLI state) — except the
+        // workspace itself is excluded for a read-only reply run.
+        allowWrite: input.readOnly ? ["/tmp"] : [input.workspace, "/tmp"],
         denyWrite: [],
       },
     },

@@ -11,6 +11,9 @@ import {
   parseQueuePromptInput,
   parseRepositoryCandidateInput,
   parseRepositoryConnectionInput,
+  parseRoutingSettingsInput,
+  parseConflictInputRequest,
+  parseConflictAnswersInput,
   parseSessionInput,
 } from "@/lib/validation";
 
@@ -213,5 +216,28 @@ describe("credential connect input validation", () => {
     // Exactly one field: two shapes at once is a caller bug, not a choice.
     expect(parseCredentialConnectInput({ apiKey: "sk-a", setupToken: "sk-b" })).toBeNull();
     expect(parseCredentialConnectInput({ apiKey: "sk-a", authJson: "{}" })).toBeNull();
+  });
+});
+
+describe("merge conflict input validation", () => {
+  it("preserves omitted routing settings and requires at least one setting", () => {
+    expect(parseRoutingSettingsInput({ autoResolveConflicts: false })).toEqual({ autoResolveConflicts: false });
+    expect(parseRoutingSettingsInput({ autoDispatch: true, autoResolveConflicts: false })).toEqual({ autoDispatch: true, autoResolveConflicts: false });
+    expect(parseRoutingSettingsInput({ autoProvisionAgents: false, autoAgentProvider: "gemini" })).toEqual({ autoProvisionAgents: false, autoAgentProvider: "gemini" });
+    expect(parseRoutingSettingsInput({ autoAgentProvider: null })).toEqual({ autoAgentProvider: null });
+    expect(parseRoutingSettingsInput({})).toBeNull();
+    expect(parseRoutingSettingsInput({ autoResolveConflicts: "yes" })).toBeNull();
+    expect(parseRoutingSettingsInput({ autoProvisionAgents: "true" })).toBeNull();
+    expect(parseRoutingSettingsInput({ autoAgentProvider: "unknown" })).toBeNull();
+  });
+
+  it("bounds resolver questions and exact member answers", () => {
+    expect(parseConflictInputRequest({ explanation: " Need a product choice ", questions: [" Keep old API? "] }))
+      .toEqual({ explanation: "Need a product choice", questions: ["Keep old API?"] });
+    expect(parseConflictInputRequest({ explanation: "x", questions: [] })).toBeNull();
+    expect(parseConflictInputRequest({ explanation: "x", questions: ["a", "b", "c", "d"] })).toBeNull();
+    expect(parseConflictAnswersInput({ answers: [{ questionId: "q1", answer: " Keep compatibility " }] }))
+      .toEqual({ answers: [{ questionId: "q1", answer: "Keep compatibility" }] });
+    expect(parseConflictAnswersInput({ answers: [{ questionId: "q1", answer: "a" }, { questionId: "q1", answer: "b" }] })).toBeNull();
   });
 });

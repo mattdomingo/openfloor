@@ -12,6 +12,13 @@ const eventsToken = process.env.OPENFLOOR_EVENTS_TOKEN;
 const contextUrl = process.env.OPENFLOOR_CONTEXT_URL;
 const contextToken = process.env.OPENFLOOR_CONTEXT_TOKEN;
 const mcpServerPath = process.env.OPENFLOOR_MCP_SERVER_PATH;
+const conflictInputUrl = process.env.OPENFLOOR_CONFLICT_INPUT_URL;
+const conflictInputToken = process.env.OPENFLOOR_CONFLICT_INPUT_TOKEN;
+// Defense in depth only (worker/agent-run-workflow.ts never exports a bundle
+// or publishes for a reply run, so nothing written here can escape the
+// container regardless) — a reply run still gets Codex's own read-only
+// sandbox so it cannot touch the workspace while answering.
+const isReply = process.env.OPENFLOOR_RUN_MODE === "reply";
 
 if (!promptPath || !resultPath || !workspace || !gatewayUrl || !gatewayToken || !model) {
   throw new Error("openfloor Codex runner configuration is incomplete");
@@ -128,14 +135,21 @@ const mcpServers = contextUrl && contextToken && mcpServerPath ? {
   openfloor: {
     command: "node",
     args: [mcpServerPath],
-    env: { OPENFLOOR_CONTEXT_URL: contextUrl, OPENFLOOR_CONTEXT_TOKEN: contextToken },
+    env: {
+      OPENFLOOR_CONTEXT_URL: contextUrl,
+      OPENFLOOR_CONTEXT_TOKEN: contextToken,
+      ...(conflictInputUrl && conflictInputToken ? {
+        OPENFLOOR_CONFLICT_INPUT_URL: conflictInputUrl,
+        OPENFLOOR_CONFLICT_INPUT_TOKEN: conflictInputToken,
+      } : {}),
+    },
   },
 } : undefined;
 const codex = new Codex({ baseUrl: gatewayUrl, apiKey: gatewayToken, ...(mcpServers ? { config: { mcp_servers: mcpServers } } : {}) });
 const thread = codex.startThread({
   model,
   workingDirectory: workspace,
-  sandboxMode: "workspace-write",
+  sandboxMode: isReply ? "read-only" : "workspace-write",
   approvalPolicy: "never",
   networkAccessEnabled: false,
   webSearchMode: "disabled",

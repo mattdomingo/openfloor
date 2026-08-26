@@ -55,7 +55,7 @@ export async function getSessionContext(
     database.prepare(
       `SELECT a.id, a.name, a.role, a.task, owner.display_name AS ownerName
        FROM floor_agents a JOIN users owner ON owner.id = a.owner_user_id
-       WHERE a.session_id = ? ORDER BY a.created_at, a.id LIMIT ?`,
+       WHERE a.session_id = ? AND a.deprovisioned_at IS NULL ORDER BY a.created_at, a.id LIMIT ?`,
     ).bind(sessionId, AGENT_LIMIT).all<SessionContextAgent>(),
     database.prepare(
       `SELECT u.display_name AS userName, fa.task
@@ -71,7 +71,7 @@ export async function getSessionContext(
     database.prepare(
       `SELECT q.id, q.position, q.status, q.agent_id AS agentId, a.name AS agentName, q.assigned_reason AS assignedReason
        FROM floor_queue_items q LEFT JOIN floor_agents a ON a.id = q.agent_id
-       WHERE q.session_id = ? AND q.status != 'completed' ORDER BY q.position LIMIT ?`,
+       WHERE q.session_id = ? AND q.status != 'completed' AND q.dismissed_at IS NULL ORDER BY q.position LIMIT ?`,
     ).bind(sessionId, QUEUE_LIMIT).all<{ id: string; position: number; status: string; agentId: string | null; agentName: string | null; assignedReason: string | null }>(),
     database.prepare(
       `SELECT u.display_name AS authorName, m.text

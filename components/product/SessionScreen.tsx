@@ -6,10 +6,12 @@ import { useRouter } from "next/navigation";
 import { BASE_PATH } from "@/components/basePath";
 import { LocalDateTime } from "@/components/LocalDateTime";
 import { useDialogDismiss } from "@/components/session/primitives";
+import { QuotaNotice } from "@/components/session/QuotaNotice";
+import { usePresenceSocket } from "@/components/session/usePresenceSocket";
 import { initials } from "@/lib/display-name";
 import { reducePresence } from "@/lib/presence";
 import { isRepositoryReadyForFloor } from "@/lib/repository-gate";
-import { usesClaudeRunner, type CredentialProvider } from "@/lib/provider-credentials";
+import { AGENT_PROVIDER_LABELS, usesClaudeRunner, type CredentialProvider, type ProviderCredentialSummary } from "@/lib/provider-credentials";
 import type { AppUser, PresenceEvent, RemovedSessionMember, RepositoryCandidate, RepositoryConnection, RepositoryPreflight, SessionMember, SessionSummary } from "@/lib/session-types";
 import { AppHeader } from "./AppHeader";
 import { RepositoryCard } from "./RepositoryCard";
@@ -17,8 +19,9 @@ import { SkillsCard } from "./SkillsCard";
 import { McpServersCard } from "./McpServersCard";
 import type { SessionMcpServerSummary } from "@/db/mcp-servers";
 import type { SessionSkillSummary } from "@/db/skills";
-
-type ConnectionState = "connecting" | "connected" | "reconnecting";
+import { WaveField } from "@/app/entry-wave";
+import { ProviderCredentials } from "./ProviderCredentials";
+import { SelectMenu, type SelectMenuOption } from "@/components/session/SelectMenu";
 
 export function SessionScreen({
   user,
@@ -30,10 +33,12 @@ export function SessionScreen({
   initialPreflight,
   preflightEnabled,
   enabledProviders,
+  initialCredentials,
   initialSkills,
   initialMcpServers,
   githubSetup,
   repoGateRequested,
+  setupRequested,
 }: {
   user: AppUser;
   session: SessionSummary;
@@ -44,16 +49,17 @@ export function SessionScreen({
   initialPreflight: RepositoryPreflight | null;
   preflightEnabled: boolean;
   enabledProviders: CredentialProvider[];
+  initialCredentials: ProviderCredentialSummary[];
   initialSkills: SessionSkillSummary[];
   initialMcpServers: SessionMcpServerSummary[];
   githubSetup: boolean;
   repoGateRequested: boolean;
+  setupRequested: boolean;
 }) {
   const router = useRouter();
   const [members, setMembers] = useState(initialMembers);
   const [removedMembers, setRemovedMembers] = useState(initialRemovedMembers);
   const [onlineIds, setOnlineIds] = useState<Set<string>>(new Set());
-  const [connection, setConnection] = useState<ConnectionState>("connecting");
   const [inviteUrl, setInviteUrl] = useState<string | null | undefined>(undefined);
   const [inviteBusy, setInviteBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -62,17 +68,48 @@ export function SessionScreen({
   const [restoreBusy, setRestoreBusy] = useState<string | null>(null);
   const [restoreError, setRestoreError] = useState<string | null>(null);
   const [lockBusy, setLockBusy] = useState(false);
-  const repositoryReady = isRepositoryReadyForFloor(initialRepository, initialCandidate);
+  const endedAt = session.endedAt;
+  const [repository, setRepository] = useState(initialRepository);
+  const [candidate, setCandidate] = useState(initialCandidate);
+  const [syncedRepository, setSyncedRepository] = useState(initialRepository);
+  const [syncedCandidate, setSyncedCandidate] = useState(initialCandidate);
+  if (syncedRepository !== initialRepository || syncedCandidate !== initialCandidate) {
+    setSyncedRepository(initialRepository);
+    setSyncedCandidate(initialCandidate);
+    setRepository(initialRepository);
+    setCandidate(initialCandidate);
+  }
+  const repositoryReady = isRepositoryReadyForFloor(repository, candidate);
+  const floorAccessible = endedAt != null || repositoryReady;
   const [repoGateOpen, setRepoGateOpen] = useState(repoGateRequested && !repositoryReady);
+  const [setupOpen, setSetupOpen] = useState(
+    session.role === "owner" && endedAt == null && !repoGateRequested && (setupRequested || githubSetup),
+  );
+  const [setupStep, setSetupStep] = useState<1 | 2>(1);
+  const [githubSetupActive, setGithubSetupActive] = useState(githubSetup);
   const [repositoryHighlighted, setRepositoryHighlighted] = useState(false);
   const repositoryCardRef = useRef<HTMLDivElement>(null);
-  const retryRef = useRef(0);
-  const endedAt = session.endedAt;
 
   function enterAgentFloor(event: MouseEvent<HTMLAnchorElement>) {
-    if (repositoryReady) return;
+    if (floorAccessible) return;
     event.preventDefault();
     setRepoGateOpen(true);
+  }
+
+  function updateRepositoryState(state: { repository: RepositoryConnection | null; candidate: RepositoryCandidate | null }) {
+    setRepository(state.repository);
+    setCandidate(state.candidate);
+    if (githubSetupActive) {
+      setGithubSetupActive(false);
+      router.replace(`/session/${session.id}?setup=1`);
+    }
+  }
+
+  function closeSetup() {
+    setSetupOpen(false);
+    setSetupStep(1);
+    setGithubSetupActive(false);
+    router.replace(`/session/${session.id}`);
   }
 
   function goToRepositorySetup() {
@@ -94,61 +131,34 @@ export function SessionScreen({
     setRemovedMembers(body.removedMembers);
   }, [router, session.id]);
 
-  useEffect(() => {
-    let socket: WebSocket | null = null;
-    let retryTimer: number | null = null;
-    let disposed = false;
-
-    function connect() {
-      if (disposed) return;
-      setConnection(retryRef.current === 0 ? "connecting" : "reconnecting");
-      const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-      socket = new WebSocket(`${protocol}//${window.location.host}${BASE_PATH}/api/sessions/${session.id}/presence`);
-      socket.addEventListener("open", () => {
-        retryRef.current = 0;
-        setConnection("connected");
-      });
-      socket.addEventListener("message", (message) => {
-        let event: PresenceEvent;
-        try {
-          event = JSON.parse(String(message.data)) as PresenceEvent;
-        } catch {
-          return;
-        }
-        if (event.type === "presence.snapshot" || event.type === "presence.changed") {
-          setOnlineIds((current) => reducePresence(current, event));
-        }
-        if (event.type === "members.changed") void refreshMembers();
-        if (event.type === "session.ended") router.refresh();
-        // Re-fetches session.lockedAt from the server rather than patching
-        // local state, matching how session.ended is already handled here.
-        if (event.type === "session.locked") router.refresh();
-        if (event.type === "floor.changed" && event.domains.some((domain) => domain === "repository" || domain === "review")) router.refresh();
-      });
-      socket.addEventListener("close", (event) => {
-        if (disposed) return;
-        if (event.code === 4005) {
-          // Owner-initiated removal: leave instead of retrying, and carry the
-          // reason to /home the same way AgentFloorScreen already does for
-          // its own presence socket.
-          sessionStorage.setItem("openfloor:removed-notice", event.reason || "The owner removed you from this session.");
-          router.replace("/home");
-          return;
-        }
-        retryRef.current += 1;
-        setConnection("reconnecting");
-        const delay = Math.min(10_000, 500 * 2 ** Math.min(retryRef.current - 1, 5));
-        retryTimer = window.setTimeout(connect, delay);
-      });
+  const handlePresenceEvent = useCallback((event: PresenceEvent) => {
+    if (event.type === "presence.snapshot" || event.type === "presence.changed") {
+      setOnlineIds((current) => reducePresence(current, event));
     }
+    if (event.type === "members.changed") void refreshMembers();
+    if (event.type === "session.ended") router.refresh();
+    // Re-fetches session.lockedAt from the server rather than patching local
+    // state, matching how session.ended is already handled here.
+    if (event.type === "session.locked") router.refresh();
+    if (event.type === "floor.changed" && event.domains.some((domain) => domain === "repository" || domain === "review")) router.refresh();
+  }, [refreshMembers, router]);
 
-    connect();
-    return () => {
-      disposed = true;
-      if (retryTimer) window.clearTimeout(retryTimer);
-      socket?.close(1000, "Session page closed");
-    };
-  }, [refreshMembers, router, session.id]);
+  const handleLive = useCallback(() => {}, []);
+
+  const handleLeave = useCallback((code: 4001 | 4005, reason: string) => {
+    if (code === 4005) {
+      // Owner-initiated removal: distinct from a plain 4001 (e.g. voluntary
+      // leave) so /home can say what actually happened.
+      sessionStorage.setItem("openfloor:removed-notice", reason || "The owner removed you from this session.");
+    }
+    router.replace("/home");
+  }, [router]);
+
+  const { connection } = usePresenceSocket(session.id, {
+    onEvent: handlePresenceEvent,
+    onLive: handleLive,
+    onLeave: handleLeave,
+  });
 
   useEffect(() => {
     if (session.role !== "owner") return;
@@ -216,104 +226,127 @@ export function SessionScreen({
   }
 
   return (
-    <main className="product-shell">
+    <main className="product-shell shop-shell session-lobby-shell">
+      <WaveField varName="--wave" className="shop-wave" />
       <AppHeader user={user} sessionTitle={session.title} />
-      <section className="session-hero">
-        <div><p className="eyebrow">{endedAt != null ? "Ended session" : "Live session"}</p><h1>{session.title}</h1><p>{session.objective || "No objective has been written yet."}</p></div>
+      <section className="session-hero lobby-hero">
+        <div>
+          <p className="eyebrow">{endedAt != null ? "Ended session" : "Live session"}</p>
+          <h1>{session.title}</h1>
+          <p>{session.objective || "No objective has been written yet."}</p>
+          <div className="lobby-hero-meta">
+            <span>{members.length} {members.length === 1 ? "member" : "members"}</span>
+            <span>{repositoryReady ? "Floor ready" : "Setup incomplete"}</span>
+          </div>
+        </div>
         <div className="session-hero-actions">
-          <div className="connection-state" data-state={connection}><span aria-hidden="true" />{connection === "connected" ? `${onlineCount} online` : connection}</div>
-          <Link className="button" data-variant="primary" data-size="lg" href={`/session/${session.id}/floor`} onClick={enterAgentFloor} aria-haspopup={repositoryReady ? undefined : "dialog"}>Enter agent floor</Link>
+          <div className="connection-state" data-state={connection.status === "live" ? "connected" : connection.status}><span aria-hidden="true" />{connection.status === "live" ? `${onlineCount} online` : connection.status}</div>
+          {session.role === "owner" && endedAt == null && !repositoryReady && (
+            <button type="button" className="button" onClick={() => { setSetupStep(1); setSetupOpen(true); }}>Setup</button>
+          )}
+          <Link className="button" data-variant="primary" data-size="lg" href={`/session/${session.id}/floor`} onClick={enterAgentFloor} aria-haspopup={floorAccessible ? undefined : "dialog"}>Enter agent floor</Link>
         </div>
       </section>
 
-      <section className="session-layout">
-        <div className="member-panel">
-          <div className="panel-heading"><div><p className="eyebrow">People</p><h2>Session members</h2></div><span>{members.length}</span></div>
-          <ul className="member-list">
-            {visibleMembers.map((member) => (
-              <li key={member.id}>
-                <span className="avatar" aria-hidden="true">{initials(member.displayName)}</span>
-                <div><strong title={member.displayName}>{member.displayName}{member.id === user.id && <em> You</em>}</strong><span>Joined <LocalDateTime timestamp={member.joinedAt} mode="date" /></span></div>
-                <span className="member-role">{member.role}</span>
-                <span className="presence-label" data-online={member.online}>{member.online ? "Online" : "Offline"}</span>
-                {session.role === "owner" && member.id !== user.id && (
-                  <button type="button" className="button danger-button" data-size="sm" onClick={() => setRemoveTarget(member)}>Remove</button>
-                )}
-              </li>
-            ))}
-          </ul>
-        </div>
+      <div className="lobby-body">
+        {connection.status === "quota-exhausted" && endedAt == null && <QuotaNotice sessionId={session.id} role={session.role} />}
+        {endedAt != null && (
+          <section className="lobby-ended" aria-label="Session ended">
+            <p className="eyebrow">Read only</p>
+            <p>
+              {session.endedReason === "merged"
+                ? <>This session ended <LocalDateTime timestamp={endedAt} mode="date" /> because the candidate branch was merged.</>
+                : <>This session ended <LocalDateTime timestamp={endedAt} mode="date" />.</>} The floor remains readable and the invite link is revoked.
+            </p>
+          </section>
+        )}
 
-        {session.role === "owner" && removedMembers.length > 0 && (
-          <div className="member-panel removed-panel">
-            <div className="panel-heading"><div><p className="eyebrow">Removed</p><h2>No longer in this session</h2></div><span>{removedMembers.length}</span></div>
+        <section className="lobby-team-access" aria-label="Team and access">
+          <div className="member-panel lobby-surface">
+            <div className="panel-heading"><div><p className="eyebrow">Team</p><h2>Session members</h2></div><span>{members.length}</span></div>
             <ul className="member-list">
-              {removedMembers.map((member) => (
+              {visibleMembers.map((member) => (
                 <li key={member.id}>
                   <span className="avatar" aria-hidden="true">{initials(member.displayName)}</span>
-                  <div><strong title={member.displayName}>{member.displayName}</strong><span>Removed <LocalDateTime timestamp={member.removedAt} mode="date" /></span></div>
-                  <button type="button" className="button" data-size="sm" disabled={restoreBusy === member.id} onClick={() => restoreMemberAccess(member.id)}>
-                    {restoreBusy === member.id ? "Restoring…" : "Allow back in"}
-                  </button>
+                  <div><strong title={member.displayName}>{member.displayName}{member.id === user.id && <em> You</em>}</strong><span>Joined <LocalDateTime timestamp={member.joinedAt} mode="date" /></span></div>
+                  <span className="member-role">{member.role}</span>
+                  <span className="presence-label" data-online={member.online}>{member.online ? "Online" : "Offline"}</span>
+                  {session.role === "owner" && member.id !== user.id && endedAt == null && (
+                    <button type="button" className="button danger-button" data-size="sm" onClick={() => setRemoveTarget(member)}>Remove</button>
+                  )}
                 </li>
               ))}
             </ul>
-            {restoreError && <p className="form-error" role="alert">{restoreError}</p>}
+            {session.role === "owner" && removedMembers.length > 0 && (
+              <div className="removed-members">
+                <div className="panel-heading"><div><p className="eyebrow">Removed</p><h2>No longer in this session</h2></div><span>{removedMembers.length}</span></div>
+                <ul className="member-list">
+                  {removedMembers.map((member) => (
+                    <li key={member.id}>
+                      <span className="avatar" aria-hidden="true">{initials(member.displayName)}</span>
+                      <div><strong title={member.displayName}>{member.displayName}</strong><span>Removed <LocalDateTime timestamp={member.removedAt} mode="date" /></span></div>
+                      {endedAt == null && <button type="button" className="button" data-size="sm" disabled={restoreBusy === member.id} onClick={() => restoreMemberAccess(member.id)}>{restoreBusy === member.id ? "Restoring…" : "Allow back in"}</button>}
+                    </li>
+                  ))}
+                </ul>
+                {restoreError && <p className="form-error" role="alert">{restoreError}</p>}
+              </div>
+            )}
           </div>
+
+          <section className="action-card lobby-surface access-card">
+            <p className="eyebrow">Access</p>
+            {session.role === "owner" && endedAt == null ? (
+              <>
+                <h2>Invite and lock</h2>
+                <p>The active invite is reusable. Locking suspends new joins without affecting anyone already here.</p>
+                {inviteUrl ? <input className="invite-value" value={inviteUrl} readOnly onFocus={(event) => event.currentTarget.select()} aria-label="Active invite link" /> : <div className="invite-empty">No active invite link.</div>}
+                <div className="button-row">
+                  {inviteUrl && <button className="button" data-variant="primary" onClick={copyInvite}>Copy link</button>}
+                  <button className="button" onClick={rotateInvite} disabled={inviteBusy}>{inviteUrl ? "Rotate" : "Create link"}</button>
+                  {inviteUrl && <button className="button danger-button" onClick={revokeInviteLink} disabled={inviteBusy}>Revoke</button>}
+                </div>
+                <div className="access-lock-row">
+                  <div><strong>{session.lockedAt == null ? "Open to invited people" : "Session locked"}</strong><span>{session.lockedAt == null ? "Current invite holders may join." : "New joins are suspended."}</span></div>
+                  <button className="button" data-variant={session.lockedAt == null ? undefined : "primary"} onClick={toggleLock} disabled={lockBusy}>{session.lockedAt == null ? "Lock session" : "Unlock session"}</button>
+                </div>
+              </>
+            ) : (
+              <>
+                <h2>{endedAt == null ? "Member access" : "Session closed"}</h2>
+                <p>{endedAt == null ? "You are a member of this session. Only the owner can manage invites and locking." : "The invite is revoked and this session is read-only."}</p>
+              </>
+            )}
+          </section>
+        </section>
+
+        {endedAt == null && (
+          <section className="floor-setup-section" aria-labelledby="floor-setup-title">
+            <div className="floor-setup-heading">
+              <div><p className="eyebrow">Floor setup</p><h2 id="floor-setup-title">Prepare the workspace</h2><p>Repository access is required for the live floor. Skills and MCP servers are optional.</p></div>
+              <span className="setup-status" data-ready={repositoryReady}>{repositoryReady ? "Ready" : "Repository required"}</span>
+            </div>
+            <div ref={repositoryCardRef} className="repository-card-slot" data-highlighted={repositoryHighlighted}>
+              {!setupOpen && <RepositoryCard sessionId={session.id} sessionTitle={session.title} sessionObjective={session.objective} role={session.role} initialRepository={repository} initialCandidate={candidate} initialPreflight={initialPreflight} preflightEnabled={preflightEnabled} beginSetup={githubSetupActive} onStateChange={updateRepositoryState} />}
+              {setupOpen && <p className="setup-dialog-active">Repository setup is open in the dialog.</p>}
+            </div>
+            {enabledProviders.some(usesClaudeRunner) && (
+              <div className="floor-setup-secondary">
+                <SkillsCard sessionId={session.id} role={session.role} initialSkills={initialSkills} />
+                <McpServersCard sessionId={session.id} role={session.role} initialServers={initialMcpServers} />
+              </div>
+            )}
+          </section>
         )}
 
-        <aside className="session-actions">
-          {endedAt != null && (
-            <section className="action-card quiet-card">
-              <p className="eyebrow">Session ended</p>
-              <p>
-                {session.endedReason === "merged"
-                  ? <>This session ended <LocalDateTime timestamp={endedAt} mode="date" /> because the candidate branch was merged.</>
-                  : <>This session ended <LocalDateTime timestamp={endedAt} mode="date" />.</>} The floor is read-only and the invite link is revoked.
-              </p>
-            </section>
-          )}
-          {session.role === "owner" ? (
-            endedAt == null && (
-              <>
-                <section className="action-card">
-                  <p className="eyebrow">Invite people</p><h2>Bring your team in</h2><p>The active link is reusable until you rotate or revoke it.</p>
-                  {inviteUrl ? <input className="invite-value" value={inviteUrl} readOnly onFocus={(event) => event.currentTarget.select()} aria-label="Active invite link" /> : <div className="invite-empty">No active invite link.</div>}
-                  <div className="button-row">
-                    {inviteUrl && <button className="button" data-variant="primary" onClick={copyInvite}>Copy link</button>}
-                    <button className="button" onClick={rotateInvite} disabled={inviteBusy}>{inviteUrl ? "Rotate" : "Create link"}</button>
-                    {inviteUrl && <button className="button danger-button" onClick={revokeInviteLink} disabled={inviteBusy}>Revoke</button>}
-                  </div>
-                </section>
-                <section className="action-card">
-                  <p className="eyebrow">Access</p><h2>{session.lockedAt == null ? "Lock this session" : "This session is locked"}</h2>
-                  <p>{session.lockedAt == null
-                    ? "Locks the door. Nobody new can join with the invite link. Everyone already here is unaffected."
-                    : "The invite link is suspended — nobody new can join. Unlock to let people in again."}</p>
-                  <button className="button" data-variant={session.lockedAt == null ? undefined : "primary"} onClick={toggleLock} disabled={lockBusy}>
-                    {session.lockedAt == null ? "Lock session" : "Unlock session"}
-                  </button>
-                </section>
-                <section className="action-card">
-                  <p className="eyebrow">Wrap up</p><h2>End this session</h2><p>Ends it for everyone: the floor becomes read-only and the invite link stops working. Nothing is deleted.</p>
-                  <button className="button danger-button" onClick={() => setEnding(true)}>End session</button>
-                </section>
-              </>
-            )
-          ) : (
-            <section className="action-card"><p className="eyebrow">Membership</p><h2>Your membership</h2><p>Leaving removes this session from your home and ends your live connection.</p><button className="button danger-button" onClick={leave}>Leave session</button></section>
-          )}
-          {endedAt == null && (
-            <div ref={repositoryCardRef} className="repository-card-slot" data-highlighted={repositoryHighlighted}>
-              <RepositoryCard sessionId={session.id} sessionTitle={session.title} sessionObjective={session.objective} role={session.role} initialRepository={initialRepository} initialCandidate={initialCandidate} initialPreflight={initialPreflight} preflightEnabled={preflightEnabled} beginSetup={githubSetup} />
-              {enabledProviders.some(usesClaudeRunner) && <SkillsCard sessionId={session.id} role={session.role} initialSkills={initialSkills} />}
-              {enabledProviders.some(usesClaudeRunner) && <McpServersCard sessionId={session.id} role={session.role} initialServers={initialMcpServers} />}
-            </div>
-          )}
-          <section className="action-card quiet-card"><p className="eyebrow">Saved automatically</p><p>The session, its objective, members, and invite state are stored. Presence shows who is connected right now.</p></section>
-          {notice && <p className="notice" role="status">{notice}</p>}
-        </aside>
-      </section>
+        {(session.role !== "owner" || endedAt == null) && (
+          <section className="lobby-bottom-controls">
+            <div><p className="eyebrow">Session controls</p><p>{session.role === "owner" ? "Ending makes the floor read-only and revokes the invite. Nothing is deleted." : "Leaving removes this session from your home and ends your live connection."}</p></div>
+            {session.role === "owner" ? <button className="button danger-button" onClick={() => setEnding(true)}>End session</button> : <button className="button danger-button" onClick={leave}>Leave session</button>}
+          </section>
+        )}
+        {notice && <p className="notice" role="status">{notice}</p>}
+      </div>
       {ending && <EndSessionDialog sessionId={session.id} onClose={() => setEnding(false)} />}
       {removeTarget && (
         <RemoveMemberDialog
@@ -329,13 +362,180 @@ export function SessionScreen({
       {repoGateOpen && (
         <RepositoryGateDialog
           role={session.role}
-          repository={initialRepository}
-          candidate={initialCandidate}
+          repository={repository}
+          candidate={candidate}
           onClose={() => setRepoGateOpen(false)}
           onGoToSetup={goToRepositorySetup}
         />
       )}
+      {setupOpen && session.role === "owner" && endedAt == null && (
+        <SessionSetupDialog
+          session={session}
+          repository={repository}
+          candidate={candidate}
+          initialPreflight={initialPreflight}
+          preflightEnabled={preflightEnabled}
+          enabledProviders={enabledProviders}
+          initialCredentials={initialCredentials}
+          githubSetup={githubSetupActive}
+          step={setupStep}
+          onStepChange={setSetupStep}
+          onRepositoryStateChange={updateRepositoryState}
+          onClose={closeSetup}
+        />
+      )}
     </main>
+  );
+}
+
+function SessionSetupDialog({
+  session,
+  repository,
+  candidate,
+  initialPreflight,
+  preflightEnabled,
+  enabledProviders,
+  initialCredentials,
+  githubSetup,
+  step,
+  onStepChange,
+  onRepositoryStateChange,
+  onClose,
+}: {
+  session: SessionSummary;
+  repository: RepositoryConnection | null;
+  candidate: RepositoryCandidate | null;
+  initialPreflight: RepositoryPreflight | null;
+  preflightEnabled: boolean;
+  enabledProviders: CredentialProvider[];
+  initialCredentials: ProviderCredentialSummary[];
+  githubSetup: boolean;
+  step: 1 | 2;
+  onStepChange: (step: 1 | 2) => void;
+  onRepositoryStateChange: (state: { repository: RepositoryConnection | null; candidate: RepositoryCandidate | null }) => void;
+  onClose: () => void;
+}) {
+  const { dismiss, dialogProps } = useDialogDismiss(onClose);
+  const ready = isRepositoryReadyForFloor(repository, candidate);
+  const [credentials, setCredentials] = useState(initialCredentials);
+  const [autoAgentProvider, setAutoAgentProvider] = useState(session.autoAgentProvider);
+  const [providerBusy, setProviderBusy] = useState(false);
+  const [providerError, setProviderError] = useState<string | null>(null);
+  const connectedProviders = credentials
+    .map((credential) => credential.provider)
+    .filter((provider) => enabledProviders.includes(provider));
+  const configuredProvider = autoAgentProvider && connectedProviders.includes(autoAgentProvider) ? autoAgentProvider : null;
+  const providerState = configuredProvider
+    ? "selected"
+    : connectedProviders.length === 0
+      ? "openai_fallback"
+      : connectedProviders.length === 1
+        ? "single_connected"
+        : "selection_required";
+  const effectiveProvider = configuredProvider ?? (connectedProviders.length === 1 ? connectedProviders[0] : providerState === "openai_fallback" ? "openai" : null);
+  const providerOptions: SelectMenuOption[] = [
+    { value: "", label: "Choose provider" },
+    ...connectedProviders.map((provider) => ({ value: provider, label: AGENT_PROVIDER_LABELS[provider] })),
+  ];
+
+  async function updateAutoAgentProvider(provider: CredentialProvider | null) {
+    setProviderBusy(true);
+    setProviderError(null);
+    try {
+      const response = await fetch(`${BASE_PATH}/api/sessions/${session.id}/routing`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ autoAgentProvider: provider }),
+      });
+      const body = (await response.json().catch(() => null)) as { error?: string } | null;
+      if (!response.ok) {
+        setProviderError(body?.error ?? "Unable to save the generated-agent provider.");
+        return;
+      }
+      setAutoAgentProvider(provider);
+    } catch {
+      setProviderError("Unable to save the generated-agent provider.");
+    } finally {
+      setProviderBusy(false);
+    }
+  }
+
+  function updateCredentials(next: ProviderCredentialSummary[]) {
+    setCredentials(next);
+    if (autoAgentProvider && !next.some((credential) => credential.provider === autoAgentProvider)) {
+      setAutoAgentProvider(null);
+      void updateAutoAgentProvider(null);
+    }
+  }
+
+  return (
+    <dialog className="dialog session-setup-dialog" {...dialogProps} aria-labelledby="session-setup-title">
+      <div className="dialog-head setup-dialog-head">
+        <div className="dialog-title">
+          <p className="eyebrow">Session setup · Step {step} of 2</p>
+          <h2 id="session-setup-title">{step === 1 ? "Connect the workspace" : "Connect model API keys"}</h2>
+          <p>{step === 1 ? "A ready repository is required before anyone can enter the live agent floor." : "Optional. You can connect or change these per-user credentials later in Settings."}</p>
+        </div>
+        <ol className="setup-step-list" aria-label="Setup progress">
+          <li data-current={step === 1} data-complete={ready}>01 Repository <span>Required</span></li>
+          <li data-current={step === 2}>02 Model keys <span>Optional</span></li>
+        </ol>
+      </div>
+      <div className="dialog-body setup-dialog-body">
+        {step === 1 ? (
+          <RepositoryCard
+            sessionId={session.id}
+            sessionTitle={session.title}
+            sessionObjective={session.objective}
+            role={session.role}
+            initialRepository={repository}
+            initialCandidate={candidate}
+            initialPreflight={initialPreflight}
+            preflightEnabled={preflightEnabled}
+            beginSetup={githubSetup}
+            onStateChange={onRepositoryStateChange}
+          />
+        ) : (
+          <section className="setup-credentials" aria-label="Model API keys">
+            <p>
+              A run uses the key connected by that agent&rsquo;s owner, then the configured server key. If neither is
+              available, the run refuses clearly. Stored values are encrypted and never returned to the browser.
+            </p>
+            <ProviderCredentials initialCredentials={initialCredentials} providers={enabledProviders} showAgentDefaults onCredentialsChange={updateCredentials} />
+            <div className="setup-auto-provider" data-state={providerState}>
+              <span>
+                <strong>Generated-agent provider</strong>
+                {providerState === "openai_fallback" && <small>No personal key is connected. Generated agents use the existing OpenAI server-key fallback and refuse clearly if no server key is configured.</small>}
+                {providerState === "single_connected" && effectiveProvider && <small>{AGENT_PROVIDER_LABELS[effectiveProvider]} is selected automatically because it is the only connected, enabled provider.</small>}
+                {providerState === "selection_required" && <small>Choose which connected provider generated workers and Concierge should use.</small>}
+                {providerState === "selected" && effectiveProvider && <small>{AGENT_PROVIDER_LABELS[effectiveProvider]} is the default for generated workers and Concierge.</small>}
+              </span>
+              {connectedProviders.length > 1 && (
+                <SelectMenu
+                  value={configuredProvider ?? ""}
+                  options={providerOptions}
+                  label="Default provider for generated agents"
+                  disabled={providerBusy}
+                  onChange={(value) => void updateAutoAgentProvider((value || null) as CredentialProvider | null)}
+                />
+              )}
+            </div>
+            {providerError && <p className="form-error" role="alert">{providerError}</p>}
+          </section>
+        )}
+      </div>
+      <div className="dialog-foot setup-dialog-foot">
+        <button type="button" className="button" data-variant="quiet" onClick={dismiss}>Set up later</button>
+        <span className="setup-dialog-nav">
+          {step === 2 && <button type="button" className="button" onClick={() => onStepChange(1)}>Back</button>}
+          {step === 1 ? (
+            <button type="button" className="button" data-variant="primary" onClick={() => onStepChange(2)}>Continue to model keys</button>
+          ) : (
+            <button type="button" className="button" data-variant="primary" onClick={dismiss} disabled={providerState === "selection_required" || providerBusy}>Finish setup</button>
+          )}
+        </span>
+      </div>
+    </dialog>
   );
 }
 
@@ -352,7 +552,7 @@ function RepositoryGateDialog({ role, repository, candidate, onClose, onGoToSetu
   const executionEnabled = candidate != null;
 
   return (
-    <dialog className="dialog" {...dialogProps} aria-labelledby="repo-gate-title">
+    <dialog className="dialog repository-gate-dialog" {...dialogProps} aria-labelledby="repo-gate-title">
       <div className="dialog-head">
         <div className="dialog-title">
           <h2 id="repo-gate-title">Connect a repository to enter the agent floor</h2>

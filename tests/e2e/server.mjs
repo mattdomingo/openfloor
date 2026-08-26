@@ -16,10 +16,30 @@ const githubTestData = JSON.stringify({
     private: true,
     defaultBranch: "main",
     branches: ["main", "develop"],
+    files: {
+      "README.md": "# repository-integration\n\nFixture repository for e2e tests.\n",
+      "src/index.ts": "export const entry = true;\n",
+      "src/agent-change.ts": "export const implemented = false;\n",
+    },
   }],
 });
 const wranglerConfig = "tests/e2e/wrangler.jsonc";
-const agentRunTestData = process.env.OPENFLOOR_TEST_AGENT_RUN_DATA ?? "{\"holdPrompts\":[\"Hold for cancellation\"],\"failPrompts\":[\"intentionally failing\"],\"conflictFirstAttemptPrompts\":[\"deliberate integration conflict\"],\"changedPath\":\"src/agent-change.ts\",\"pathByPrompt\":{\"second published\":\"src/second-change.ts\"}}";
+const agentRunTestData = process.env.OPENFLOOR_TEST_AGENT_RUN_DATA ?? JSON.stringify({
+  holdPrompts: ["Hold for cancellation", "Hold persistent for auto provisioning", "Hold generated for auto provisioning"],
+  failPrompts: ["intentionally failing"],
+  conflictFirstAttemptPrompts: [
+    "deliberate integration conflict",
+    "conflict needing a session decision",
+    "manual merge conflict",
+    "candidate movement conflict",
+    "resolver check failure",
+  ],
+  resolverQuestionPrompts: ["conflict needing a session decision"],
+  resolverConflictFirstAttemptPrompts: ["candidate movement conflict"],
+  resolverFailFirstAttemptPrompts: ["resolver check failure"],
+  changedPath: "src/agent-change.ts",
+  pathByPrompt: { "second published": "src/second-change.ts" },
+});
 const migration = spawnSync(
   "npx",
   ["wrangler", "d1", "migrations", "apply", "DB", "--local", "--config", wranglerConfig, "--persist-to", statePath],

@@ -3,6 +3,7 @@ import type { AuthenticatedIdentity } from "@/lib/identity";
 import { currentMonth, effectivePlan, effectiveSeatLimit, PLAN_LIMITS, type Plan, type PlanStatus } from "@/lib/plans";
 import type { AppUser, RemovedSessionMember, SessionMember, SessionRole, SessionSummary } from "@/lib/session-types";
 import { getDb, type D1DatabaseLike } from "./index";
+import type { CredentialProvider } from "@/lib/provider-credentials";
 
 // Re-exported so existing importers (worker/presence.ts, tests) don't need
 // to churn — the model itself lives in lib/plans.ts, which (unlike this
@@ -25,6 +26,8 @@ type SessionRecord = {
   archivedAt: number | null;
   activeSeconds: number;
   lockedAt: number | null;
+  autoProvisionAgents: number | boolean;
+  autoAgentProvider: CredentialProvider | null;
 };
 
 export class SessionEndedError extends Error {
@@ -32,6 +35,8 @@ export class SessionEndedError extends Error {
     super("This session has ended.");
   }
 }
+
+export class SessionRoutingError extends Error {}
 
 export type InvitePreview = {
   inviteId: string;
@@ -228,7 +233,8 @@ export async function listSessionsForUser(userId: string, database = getDb()): P
               COUNT(all_members.user_id) AS memberCount,
               s.created_at AS createdAt, s.updated_at AS updatedAt, s.objective_updated_at AS objectiveUpdatedAt,
               s.ended_at AS endedAt, s.ended_reason AS endedReason,
-              mine.archived_at AS archivedAt, s.active_seconds AS activeSeconds, s.locked_at AS lockedAt
+              mine.archived_at AS archivedAt, s.active_seconds AS activeSeconds, s.locked_at AS lockedAt,
+              s.auto_provision_agents AS autoProvisionAgents, s.auto_agent_provider AS autoAgentProvider
        FROM sessions s
        JOIN session_members mine ON mine.session_id = s.id AND mine.user_id = ? AND mine.removed_at IS NULL
        JOIN session_members all_members ON all_members.session_id = s.id AND all_members.removed_at IS NULL
@@ -250,8 +256,13 @@ export async function createSession(
   const now = Date.now();
 
   await database.batch([
+    // auto_dispatch named explicitly as 1: the SQL column default stays
+    // false (flipping db/schema.ts's .default(true) would make drizzle-kit
+    // emit a sessions table recreate, which drizzle/0019 documents as
+    // cascade-deleting session_members/session_invites/github_connection_states).
+    // Existing sessions get the same value via migration 0027's one-time backfill.
     database
-      .prepare("INSERT INTO sessions (id, title, objective, created_at, updated_at, objective_updated_at) VALUES (?, ?, ?, ?, ?, ?)")
+      .prepare("INSERT INTO sessions (id, title, objective, auto_dispatch, created_at, updated_at, objective_updated_at) VALUES (?, ?, ?, 1, ?, ?, ?)")
       .bind(sessionId, input.title, input.objective, now, now, now),
     database
       .prepare("INSERT INTO session_members (session_id, user_id, role, joined_at) VALUES (?, ?, 'owner', ?)")
@@ -276,6 +287,8 @@ export async function createSession(
       archivedAt: null,
       activeSeconds: 0,
       lockedAt: null,
+      autoProvisionAgents: true,
+      autoAgentProvider: null,
     },
     inviteId,
   };
@@ -292,7 +305,8 @@ export async function getSessionForMember(
               COUNT(all_members.user_id) AS memberCount,
               s.created_at AS createdAt, s.updated_at AS updatedAt, s.objective_updated_at AS objectiveUpdatedAt,
               s.ended_at AS endedAt, s.ended_reason AS endedReason,
-              mine.archived_at AS archivedAt, s.active_seconds AS activeSeconds, s.locked_at AS lockedAt
+              mine.archived_at AS archivedAt, s.active_seconds AS activeSeconds, s.locked_at AS lockedAt,
+              s.auto_provision_agents AS autoProvisionAgents, s.auto_agent_provider AS autoAgentProvider
        FROM sessions s
        JOIN session_members mine ON mine.session_id = s.id AND mine.user_id = ? AND mine.removed_at IS NULL
        JOIN session_members all_members ON all_members.session_id = s.id AND all_members.removed_at IS NULL
@@ -468,7 +482,7 @@ export async function getInvitePreview(inviteId: string, database = getDb()): Pr
     .prepare(
       `SELECT i.id AS inviteId, s.id AS sessionId, s.title, s.objective, s.locked_at AS lockedAt,
               owner.display_name AS ownerName, owner.plan AS ownerPlan, owner.plan_status AS ownerPlanStatus,
-              owner.seat_limit AS ownerSeatLimit,
+              owner.seat_limit AS ownerSeatLimit, owner.email AS ownerEmail,
               (SELECT COUNT(*) FROM session_members m WHERE m.session_id = s.id AND m.removed_at IS NULL) AS memberCount
        FROM session_invites i
        JOIN sessions s ON s.id = i.session_id
@@ -479,11 +493,11 @@ export async function getInvitePreview(inviteId: string, database = getDb()): Pr
     .bind(inviteId)
     .first<{
       inviteId: string; sessionId: string; title: string; objective: string | null; lockedAt: number | null; ownerName: string;
-      ownerPlan: Plan; ownerPlanStatus: PlanStatus; ownerSeatLimit: number | null; memberCount: number;
+      ownerPlan: Plan; ownerPlanStatus: PlanStatus; ownerSeatLimit: number | null; ownerEmail: string; memberCount: number;
     }>();
   if (!row) return null;
-  const { ownerPlan, ownerPlanStatus, ownerSeatLimit, lockedAt, ...preview } = row;
-  return { ...preview, seatLimit: effectiveSeatLimit(ownerPlan, ownerPlanStatus, ownerSeatLimit), locked: lockedAt != null };
+  const { ownerPlan, ownerPlanStatus, ownerSeatLimit, ownerEmail, lockedAt, ...preview } = row;
+  return { ...preview, seatLimit: effectiveSeatLimit(ownerPlan, ownerPlanStatus, ownerSeatLimit, ownerEmail), locked: lockedAt != null };
 }
 
 export async function acceptInvite(
@@ -500,6 +514,8 @@ export async function acceptInvite(
                  WHERE o.session_id = i.session_id AND o.role = 'owner' AND o.removed_at IS NULL) AS ownerPlanStatus,
               (SELECT u.seat_limit FROM session_members o JOIN users u ON u.id = o.user_id
                  WHERE o.session_id = i.session_id AND o.role = 'owner' AND o.removed_at IS NULL) AS ownerSeatLimit,
+              (SELECT u.email FROM session_members o JOIN users u ON u.id = o.user_id
+                 WHERE o.session_id = i.session_id AND o.role = 'owner' AND o.removed_at IS NULL) AS ownerEmail,
               EXISTS(SELECT 1 FROM session_members m
                  WHERE m.session_id = i.session_id AND m.user_id = ?1) AS callerExists,
               (SELECT m.removed_at FROM session_members m
@@ -512,7 +528,7 @@ export async function acceptInvite(
     .bind(userId, inviteId)
     .first<{
       memberCount: number; ownerPlan: Plan | null; ownerPlanStatus: PlanStatus | null; ownerSeatLimit: number | null;
-      callerExists: number; callerRemovedAt: number | null; lockedAt: number | null;
+      ownerEmail: string | null; callerExists: number; callerRemovedAt: number | null; lockedAt: number | null;
     }>();
   if (!gate) return null;
   // A removed row still exists, so callerExists is true for it — check the
@@ -531,7 +547,7 @@ export async function acceptInvite(
   // ponytail: check-then-insert; concurrent accepts can exceed the cap by the
   // number of racers. Upgrade path if it matters: conditional INSERT...SELECT
   // guarded by the count inside the batch.
-  if (!alreadyMember && gate.memberCount >= effectiveSeatLimit(plan, status, gate.ownerSeatLimit)) {
+  if (!alreadyMember && gate.memberCount >= effectiveSeatLimit(plan, status, gate.ownerSeatLimit, gate.ownerEmail)) {
     return "full";
   }
 
@@ -607,21 +623,41 @@ export async function revokeInvite(
   return true;
 }
 
-export async function setSessionAutoDispatch(
+export async function setSessionRoutingSettings(
   sessionId: string,
   ownerId: string,
-  enabled: boolean,
+  input: { autoDispatch?: boolean; autoProvisionAgents?: boolean; autoAgentProvider?: CredentialProvider | null; autoResolveConflicts?: boolean },
   database = getDb(),
 ): Promise<boolean> {
   if ((await getActiveMembershipRole(sessionId, ownerId, database)) !== "owner") return false;
-  await database
-    .prepare(
-      `UPDATE sessions SET auto_dispatch = ?, floor_revision = floor_revision + 1, updated_at = ?
-       WHERE id = ? AND ended_at IS NULL`,
-    )
-    .bind(enabled ? 1 : 0, Date.now(), sessionId)
-    .run();
-  return true;
+  if (input.autoAgentProvider) {
+    const credential = await database.prepare(
+      "SELECT 1 AS present FROM user_provider_credentials WHERE user_id = ? AND provider = ?",
+    ).bind(ownerId, input.autoAgentProvider).first<{ present: number }>();
+    if (!credential) throw new SessionRoutingError("Connect that provider key before selecting it for generated agents.");
+  }
+  const result = await database.prepare(
+    `UPDATE sessions SET
+       auto_dispatch = COALESCE(?, auto_dispatch),
+       auto_provision_agents = COALESCE(?, auto_provision_agents),
+       auto_agent_provider = CASE WHEN ? = 1 THEN ? ELSE auto_agent_provider END,
+       auto_resolve_conflicts = COALESCE(?, auto_resolve_conflicts),
+       floor_revision = floor_revision + 1, updated_at = ?
+     WHERE id = ? AND ended_at IS NULL`,
+  ).bind(
+    input.autoDispatch === undefined ? null : input.autoDispatch ? 1 : 0,
+    input.autoProvisionAgents === undefined ? null : input.autoProvisionAgents ? 1 : 0,
+    input.autoAgentProvider === undefined ? 0 : 1,
+    input.autoAgentProvider ?? null,
+    input.autoResolveConflicts === undefined ? null : input.autoResolveConflicts ? 1 : 0,
+    Date.now(), sessionId,
+  ).run();
+  return Number(result.meta?.changes ?? 0) > 0;
+}
+
+/** Compatibility helper for callers that only change ordinary auto-dispatch. */
+export function setSessionAutoDispatch(sessionId: string, ownerId: string, enabled: boolean, database = getDb()) {
+  return setSessionRoutingSettings(sessionId, ownerId, { autoDispatch: enabled }, database);
 }
 
 export async function leaveSession(
@@ -719,14 +755,14 @@ export async function restoreMember(
 
   const owner = await database
     .prepare(
-      `SELECT u.plan AS plan, u.plan_status AS planStatus, u.seat_limit AS seatLimit,
+      `SELECT u.plan AS plan, u.plan_status AS planStatus, u.seat_limit AS seatLimit, u.email AS email,
               (SELECT COUNT(*) FROM session_members m WHERE m.session_id = ? AND m.removed_at IS NULL) AS memberCount
        FROM session_members o JOIN users u ON u.id = o.user_id
        WHERE o.session_id = ? AND o.role = 'owner' AND o.removed_at IS NULL`,
     )
     .bind(sessionId, sessionId)
-    .first<{ plan: Plan; planStatus: PlanStatus; seatLimit: number | null; memberCount: number }>();
-  const seatLimit = effectiveSeatLimit(owner?.plan ?? "free", owner?.planStatus ?? "inactive", owner?.seatLimit ?? null);
+    .first<{ plan: Plan; planStatus: PlanStatus; seatLimit: number | null; email: string | null; memberCount: number }>();
+  const seatLimit = effectiveSeatLimit(owner?.plan ?? "free", owner?.planStatus ?? "inactive", owner?.seatLimit ?? null, owner?.email);
   if ((owner?.memberCount ?? 0) >= seatLimit) return "full";
 
   const now = Date.now();
@@ -917,7 +953,7 @@ export async function getOwnerHourQuota(
 ): Promise<{ ownerId: string; plan: Plan; seconds: number; endedAt: number | null } | null> {
   const row = await database
     .prepare(
-      `SELECT o.user_id AS ownerId, u.plan AS plan, u.plan_status AS planStatus,
+      `SELECT o.user_id AS ownerId, u.plan AS plan, u.plan_status AS planStatus, u.email AS email,
               COALESCE(um.seconds, 0) AS seconds, s.ended_at AS endedAt
        FROM session_members o
        JOIN sessions s ON s.id = o.session_id
@@ -926,9 +962,9 @@ export async function getOwnerHourQuota(
        WHERE o.session_id = ? AND o.role = 'owner' AND o.removed_at IS NULL`,
     )
     .bind(currentMonth(), sessionId)
-    .first<{ ownerId: string; plan: Plan; planStatus: PlanStatus; seconds: number; endedAt: number | null }>();
+    .first<{ ownerId: string; plan: Plan; planStatus: PlanStatus; email: string | null; seconds: number; endedAt: number | null }>();
   if (!row) return null;
-  return { ownerId: row.ownerId, plan: effectivePlan(row.plan, row.planStatus), seconds: row.seconds, endedAt: row.endedAt };
+  return { ownerId: row.ownerId, plan: effectivePlan(row.plan, row.planStatus, row.email), seconds: row.seconds, endedAt: row.endedAt };
 }
 
 export async function getUsageForUser(
@@ -944,23 +980,23 @@ export async function getUsageForUser(
 }> {
   const row = await database
     .prepare(
-      `SELECT u.plan AS plan, u.plan_status AS planStatus, u.seat_limit AS seatLimit, COALESCE(um.seconds, 0) AS seconds
+      `SELECT u.plan AS plan, u.plan_status AS planStatus, u.seat_limit AS seatLimit, u.email AS email, COALESCE(um.seconds, 0) AS seconds
        FROM users u
        LEFT JOIN usage_months um ON um.owner_user_id = u.id AND um.month = ?
        WHERE u.id = ?`,
     )
     .bind(currentMonth(), userId)
-    .first<{ plan: Plan; planStatus: PlanStatus; seatLimit: number | null; seconds: number }>();
+    .first<{ plan: Plan; planStatus: PlanStatus; seatLimit: number | null; email: string | null; seconds: number }>();
   const plan = row?.plan ?? "free";
   const planStatus = row?.planStatus ?? "inactive";
-  const effective = effectivePlan(plan, planStatus);
+  const effective = effectivePlan(plan, planStatus, row?.email);
   return {
     plan,
     planStatus,
     effectivePlan: effective,
     seconds: row?.seconds ?? 0,
     limitHours: PLAN_LIMITS[effective].hours,
-    limitSeats: effectiveSeatLimit(plan, planStatus, row?.seatLimit ?? null),
+    limitSeats: effectiveSeatLimit(plan, planStatus, row?.seatLimit ?? null, row?.email),
   };
 }
 
@@ -970,5 +1006,5 @@ export async function hourQuotaExhausted(userId: string, database = getDb()): Pr
 }
 
 function normalizeSession(record: SessionRecord): SessionSummary {
-  return { ...record, memberCount: Number(record.memberCount) };
+  return { ...record, memberCount: Number(record.memberCount), autoProvisionAgents: Boolean(record.autoProvisionAgents) };
 }

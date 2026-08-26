@@ -29,10 +29,22 @@ export function usePersistentFloorData(sessionId: string, initialFloor: FloorSna
         onMissing();
         return null;
       }
-      const result = (await response.json()) as MutationResult;
-      if (!response.ok || !result.floor) {
-        setError(result.error ?? "The floor could not be updated.");
-        setBlockingRunId(result.runId ?? null);
+      // A thrown server error (e.g. an unhandled DB constraint) renders as a
+      // non-JSON error page, not a MutationResult. Reading text first and
+      // parsing it ourselves means that case reports its real HTTP status
+      // instead of falling into the catch block below and being misreported
+      // as "The floor could not be reached" — a network-failure message for
+      // what was actually a reachable server returning an error.
+      const text = await response.text();
+      let result: MutationResult | null = null;
+      try {
+        result = text ? (JSON.parse(text) as MutationResult) : null;
+      } catch {
+        result = null;
+      }
+      if (!response.ok || !result?.floor) {
+        setError(result?.error ?? `The floor returned an unexpected error (${response.status}).`);
+        setBlockingRunId(result?.runId ?? null);
         return null;
       }
       setFloor(result.floor);
@@ -71,10 +83,18 @@ export function usePersistentFloorData(sessionId: string, initialFloor: FloorSna
     refresh,
     createAgent: (input: CreateFloorAgentInput) => request("/agents", "POST", input),
     updateAgentTask: (agentId: string, task: string) => request(`/agents/${encodeURIComponent(agentId)}`, "PATCH", { task }),
+    pauseAgent: (agentId: string, paused: boolean) => request(`/agents/${encodeURIComponent(agentId)}/pause`, "PATCH", { paused }),
+    stopAgent: (agentId: string) => request(`/agents/${encodeURIComponent(agentId)}/stop`, "POST"),
+    deleteAgent: (agentId: string) => request(`/agents/${encodeURIComponent(agentId)}`, "DELETE"),
+    pauseAllAgents: () => request("/agents/pause-all", "POST"),
+    resumeAllAgents: () => request("/agents/resume-all", "POST"),
+    stopAllAgents: () => request("/agents/stop-all", "POST"),
     updateAssignment: (memberId: string, task: string | null) => request(`/assignments/${encodeURIComponent(memberId)}`, "PATCH", { task }),
     sendMessage: (text: string, recipientUserId: string | null) => request("/messages", "POST", { text, recipientUserId }),
     addQueueItem: (prompt: string, agentId: string | null) => request("/queue", "POST", { prompt, agentId }),
     reorderQueue: (itemIds: string[]) => request("/queue/order", "PATCH", { itemIds }),
+    setQueueItemAgent: (queueItemId: string, agentId: string) =>
+      request(`/queue/${encodeURIComponent(queueItemId)}`, "PATCH", { agentId }),
     runQueueItem: (queueItemId: string) => request(`/queue/${encodeURIComponent(queueItemId)}/run`, "POST"),
     editQueuePrompt: (queueItemId: string, promptId: string, text: string) =>
       request(`/queue/${encodeURIComponent(queueItemId)}/prompts/${encodeURIComponent(promptId)}`, "PATCH", { text }),
@@ -82,6 +102,12 @@ export function usePersistentFloorData(sessionId: string, initialFloor: FloorSna
       request(`/queue/${encodeURIComponent(queueItemId)}/pause`, "PATCH", { paused }),
     deleteQueueItem: (queueItemId: string) => request(`/queue/${encodeURIComponent(queueItemId)}`, "DELETE"),
     setAutoDispatch: (autoDispatch: boolean) => request("/routing", "PATCH", { autoDispatch }),
+    setAutoProvisionAgents: (autoProvisionAgents: boolean) => request("/routing", "PATCH", { autoProvisionAgents }),
+    setAutoAgentProvider: (autoAgentProvider: import("@/lib/provider-credentials").CredentialProvider | null) => request("/routing", "PATCH", { autoAgentProvider }),
+    setAutoResolveConflicts: (autoResolveConflicts: boolean) => request("/routing", "PATCH", { autoResolveConflicts }),
+    resolveConflict: (caseId: string) => request(`/conflicts/${encodeURIComponent(caseId)}/resolve`, "POST"),
+    answerConflict: (caseId: string, answers: Array<{ questionId: string; answer: string }>) =>
+      request(`/conflicts/${encodeURIComponent(caseId)}/answers`, "POST", { answers }),
     cancelRun: (runId: string) => request(`/runs/${encodeURIComponent(runId)}/cancel`, "POST"),
     discardRun: (runId: string) => request(`/runs/${encodeURIComponent(runId)}/discard`, "POST"),
     retryRun: (runId: string) => request(`/runs/${encodeURIComponent(runId)}/retry`, "POST"),

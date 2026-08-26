@@ -5,8 +5,9 @@ import { getActiveRepositoryCandidateForMember, getRepositoryConnectionForMember
 import { getLatestRepositoryPreflightForMember } from "@/db/preflights";
 import { listSessionMcpServersForMember } from "@/db/mcp-servers";
 import { listSessionSkillsForMember } from "@/db/skills";
+import { listProviderCredentials } from "@/db/provider-credentials";
 import { SessionScreen } from "@/components/product/SessionScreen";
-import { disabledRunProviders } from "@/lib/agent-run-start";
+import { disabledRunProviders } from "@/lib/provider-rollout";
 import { CREDENTIAL_PROVIDERS } from "@/lib/provider-credentials";
 import { env } from "cloudflare:workers";
 
@@ -17,16 +18,16 @@ export default async function SessionPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ github?: string; repo?: string }>;
+  searchParams: Promise<{ github?: string; repo?: string; setup?: string }>;
 }) {
   const { id } = await params;
   const query = await searchParams;
-  return <AuthenticatedSession id={id} githubSetup={query.github === "setup"} repoGateRequested={query.repo === "required"} />;
+  return <AuthenticatedSession id={id} githubSetup={query.github === "setup"} repoGateRequested={query.repo === "required"} setupRequested={query.setup === "1"} />;
 }
 
-async function AuthenticatedSession({ id, githubSetup, repoGateRequested }: { id: string; githubSetup: boolean; repoGateRequested: boolean }) {
+async function AuthenticatedSession({ id, githubSetup, repoGateRequested, setupRequested }: { id: string; githubSetup: boolean; repoGateRequested: boolean; setupRequested: boolean }) {
   const user = await requireOnboardedUser(`/session/${encodeURIComponent(id)}`);
-  const [session, members, removedMembers, repository, candidate, preflight, skills, mcpServers] = await Promise.all([
+  const [session, members, removedMembers, repository, candidate, preflight, skills, mcpServers, credentials] = await Promise.all([
     getSessionForMember(id, user.id),
     getSessionMembers(id, user.id),
     getRemovedSessionMembers(id, user.id),
@@ -35,10 +36,11 @@ async function AuthenticatedSession({ id, githubSetup, repoGateRequested }: { id
     getLatestRepositoryPreflightForMember(id, user.id),
     listSessionSkillsForMember(id, user.id),
     listSessionMcpServersForMember(id, user.id),
+    listProviderCredentials(user.id),
   ]);
   if (!session || !members) notFound();
   const preflightEnabled = (env as unknown as { PREFLIGHT_ENABLED?: string }).PREFLIGHT_ENABLED === "true";
   const disabled = disabledRunProviders();
   const enabledProviders = CREDENTIAL_PROVIDERS.filter((provider) => !disabled.has(provider));
-  return <SessionScreen user={user} session={session} initialMembers={members} initialRemovedMembers={removedMembers ?? []} initialRepository={repository} initialCandidate={candidate} initialPreflight={preflight} preflightEnabled={preflightEnabled} enabledProviders={enabledProviders} initialSkills={skills ?? []} initialMcpServers={mcpServers ?? []} githubSetup={githubSetup} repoGateRequested={repoGateRequested} />;
+  return <SessionScreen user={user} session={session} initialMembers={members} initialRemovedMembers={removedMembers ?? []} initialRepository={repository} initialCandidate={candidate} initialPreflight={preflight} preflightEnabled={preflightEnabled} enabledProviders={enabledProviders} initialCredentials={credentials} initialSkills={skills ?? []} initialMcpServers={mcpServers ?? []} githubSetup={githubSetup} repoGateRequested={repoGateRequested} setupRequested={setupRequested} />;
 }

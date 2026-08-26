@@ -27,18 +27,39 @@ export const PAID_PLAN_CATALOG: Record<PaidPlan, {
   max: { unitAmountCents: 5_000, currency: "usd", minimumSeats: 3, maximumSeats: 10 },
 };
 
+// Internal @opnflr.com accounts always test at enterprise's unlimited
+// seats/hours, independent of the row's stored plan/plan_status — this is
+// the one seam every limit check already passes through (effectivePlan /
+// effectiveSeatLimit), so no quota call site needs its own bypass. Email is
+// matched case-insensitively even though upsertUser only ever stores
+// normalizeEmail's lowercase output, since this is a security-relevant
+// default worth not depending on that invariant.
+const UNLIMITED_TESTING_EMAIL_SUFFIX = "@opnflr.com";
+
+function isUnlimitedTestingEmail(email: string | null | undefined): boolean {
+  return typeof email === "string" && email.toLowerCase().endsWith(UNLIMITED_TESTING_EMAIL_SUFFIX);
+}
+
 // A purchased plan only grants its limits while status is "active";
 // inactive (never purchased), past_due, and canceled all fall back to free
-// rather than locking the owner out entirely.
-export function effectivePlan(plan: Plan, status: PlanStatus): Plan {
+// rather than locking the owner out entirely. `email` is optional so every
+// existing call site keeps compiling; omitting it just means that call site
+// doesn't get the @opnflr.com override.
+export function effectivePlan(plan: Plan, status: PlanStatus, email?: string | null): Plan {
+  if (isUnlimitedTestingEmail(email)) return "enterprise";
   return status === "active" ? plan : "free";
 }
 
 // Stripe-managed Pro/Max accounts store their purchased per-session seat
 // quantity. Legacy/manual grants have no quantity and retain the historical
 // tier cap. Free and lapsed accounts always get Free's three seats.
-export function effectiveSeatLimit(plan: Plan, status: PlanStatus, purchasedSeats: number | null): number {
-  const effective = effectivePlan(plan, status);
+export function effectiveSeatLimit(
+  plan: Plan,
+  status: PlanStatus,
+  purchasedSeats: number | null,
+  email?: string | null,
+): number {
+  const effective = effectivePlan(plan, status, email);
   if (effective === "free" || effective === "enterprise") return PLAN_LIMITS[effective].seats;
   const catalog = PAID_PLAN_CATALOG[effective];
   return purchasedSeats != null

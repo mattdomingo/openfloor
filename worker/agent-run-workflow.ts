@@ -6,6 +6,7 @@ import {
   bumpAgentRunRevision,
   beginRunIntegration,
   cancelRunIntegration,
+  finishAgentReply,
   finishAgentRun,
   finishRunCheck,
   finishRunPublished,
@@ -40,6 +41,17 @@ import { buildClaudeSandboxSettings } from "../lib/claude-sandbox-settings";
 import { notifyFloorChanged } from "../lib/presence-server";
 import { pokeSessionRouter } from "../lib/router-server";
 import { signRunGatewayToken } from "../lib/runtime-token";
+import { renderConflictResolverPrompt } from "../lib/conflict-resolver-prompt";
+import {
+  advanceConflictAfterFailure,
+  finishResolverAwaitingInput,
+  getConflictRunContext,
+  getMergeConflictCases,
+  isConflictInputRequested,
+  markConflictResolved,
+  recordConflictPaths,
+  recordIntegrationConflict,
+} from "../db/conflicts";
 
 type R2BucketLike = { put(key: string, value: string, options?: unknown): Promise<unknown> };
 
@@ -65,7 +77,7 @@ const PUBLISHER_SANDBOX_IMAGE_VERSION = "v2";
 // Namespacing the pool key by image version makes old-image entries
 // unreachable immediately; the existing idle sweep reclaims them.
 // Bump this whenever Dockerfile.sandbox's run-sandbox contents change.
-const RUN_SANDBOX_IMAGE_VERSION = "v3";
+const RUN_SANDBOX_IMAGE_VERSION = "v4";
 // Non-Codex runs get a fresh HOME per run, inside the per-run scratch tree
 // that prepare wipes and the release reset removes. Pool sandboxes outlive
 // sessions, so everything a CLI persists under its home — transcripts, todos,
@@ -149,6 +161,41 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
           } },
         );
         if (!result.success) throw new Error(`Candidate workspace preparation failed with exit code ${result.exitCode}`);
+        if (context.conflictCaseId) {
+          const conflictSourceToken = await signRunGatewayToken({
+            runId, sessionId: context.sessionId, repositoryId: context.repositoryId,
+            candidateSha: context.candidateSha, operation: "conflict_source",
+          }, this.env.RUNTIME_GATEWAY_SECRET);
+          const merge = await sandbox.exec(
+            `set -e; mkdir -p /tmp/openfloor/source &&
+             curl --fail --silent --show-error --location --max-filesize 104857600 -H "Authorization: Bearer $OPENFLOOR_CONFLICT_SOURCE_TOKEN" "$OPENFLOOR_CONFLICT_SOURCE_URL?part=base" |
+               tar -xz --strip-components=1 -C /tmp/openfloor/source &&
+             curl --fail --silent --show-error --max-time 300 -H "Authorization: Bearer $OPENFLOOR_CONFLICT_SOURCE_TOKEN" "$OPENFLOOR_CONFLICT_SOURCE_URL?part=bundle" -o /tmp/openfloor/source.bundle &&
+             git -C /tmp/openfloor/source init -q && git -C /tmp/openfloor/source config user.name openfloor &&
+             git -C /tmp/openfloor/source config user.email runtime@opnflr.com && git -C /tmp/openfloor/source add -A &&
+             OPENFLOOR_SOURCE_TREE=$(git -C /tmp/openfloor/source write-tree) &&
+             OPENFLOOR_SOURCE_BASE=$(printf 'openfloor candidate baseline\n' | env GIT_AUTHOR_NAME=openfloor GIT_AUTHOR_EMAIL=runtime@opnflr.com GIT_COMMITTER_NAME=openfloor GIT_COMMITTER_EMAIL=runtime@opnflr.com GIT_AUTHOR_DATE=2000-01-01T00:00:00Z GIT_COMMITTER_DATE=2000-01-01T00:00:00Z git -C /tmp/openfloor/source commit-tree "$OPENFLOOR_SOURCE_TREE") &&
+             git -C /tmp/openfloor/source update-ref refs/heads/openfloor-source-base "$OPENFLOOR_SOURCE_BASE" &&
+             OPENFLOOR_SOURCE_REF=$(git bundle list-heads /tmp/openfloor/source.bundle | head -n 1 | cut -d' ' -f2-) &&
+             test -n "$OPENFLOOR_SOURCE_REF" &&
+             git -C /tmp/openfloor/source fetch -q /tmp/openfloor/source.bundle "$OPENFLOOR_SOURCE_REF:refs/heads/openfloor-source-result" &&
+             git -C /workspace/repository fetch -q /tmp/openfloor/source/.git refs/heads/openfloor-source-base:refs/heads/openfloor-source-base refs/heads/openfloor-source-result:refs/heads/openfloor-source-result &&
+             OPENFLOOR_LATEST_TREE=$(git -C /workspace/repository write-tree) &&
+             OPENFLOOR_LATEST=$(printf 'openfloor latest candidate\n' | env GIT_AUTHOR_NAME=openfloor GIT_AUTHOR_EMAIL=runtime@opnflr.com GIT_COMMITTER_NAME=openfloor GIT_COMMITTER_EMAIL=runtime@opnflr.com GIT_AUTHOR_DATE=2000-01-01T00:00:00Z GIT_COMMITTER_DATE=2000-01-01T00:00:00Z git -C /workspace/repository commit-tree "$OPENFLOOR_LATEST_TREE" -p refs/heads/openfloor-source-base) &&
+             git -C /workspace/repository update-ref refs/heads/openfloor-merge-head "$OPENFLOOR_LATEST" &&
+             git -C /workspace/repository reset -q --hard "$OPENFLOOR_LATEST" &&
+             set +e; git -C /workspace/repository merge --no-commit --no-ff refs/heads/openfloor-source-result >/tmp/openfloor/merge.log 2>&1; OPENFLOOR_MERGE_STATUS=$?; set -e;
+             test "$OPENFLOOR_MERGE_STATUS" -le 1 &&
+             git -C /workspace/repository diff --name-only --diff-filter=U`,
+            { timeout: 4 * 60 * 1000, env: {
+              OPENFLOOR_CONFLICT_SOURCE_TOKEN: conflictSourceToken,
+              OPENFLOOR_CONFLICT_SOURCE_URL: `${this.env.OPENFLOOR_RUNTIME_ORIGIN}/runtime/run/conflict-source`,
+            } },
+          );
+          if (!merge.success) throw new Error(`Conflict workspace reconstruction failed with exit code ${merge.exitCode}`);
+          const conflictPaths = merge.stdout.split("\n").map((path) => path.trim()).filter(Boolean);
+          await recordConflictPaths(runId, conflictPaths, this.env.DB);
+        }
         let prompt = await buildRunPrompt(context, this.env.DB);
         if (usesClaudeRunner(context.provider)) {
           // The target repository's CLAUDE.md is useful context, but it is
@@ -223,12 +270,21 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
             runId, sessionId: context.sessionId, repositoryId: context.repositoryId,
             candidateSha: context.candidateSha, operation: "context",
           }, this.env.RUNTIME_GATEWAY_SECRET);
+          const conflictInputToken = context.conflictCaseId ? await signRunGatewayToken({
+            runId, sessionId: context.sessionId, repositoryId: context.repositoryId,
+            candidateSha: context.candidateSha, operation: "conflict_input",
+          }, this.env.RUNTIME_GATEWAY_SECRET) : null;
           await sandbox.writeFile(
             `${RUN_AGENT_HOME}/.gemini/system-settings.json`,
             buildGeminiSystemSettings({
               contextUrl: `${this.env.OPENFLOOR_RUNTIME_ORIGIN}/runtime/run/context`,
               contextToken,
               mcpServerPath: "/opt/openfloor/openfloor-mcp.mjs",
+              ...(conflictInputToken ? {
+                conflictInputUrl: `${this.env.OPENFLOOR_RUNTIME_ORIGIN}/runtime/run/conflict-input`,
+                conflictInputToken,
+              } : {}),
+              readOnly: context.kind === "reply",
             }),
           );
           await sandbox.writeFile(
@@ -236,6 +292,7 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
             buildGeminiSrtSettings({
               gatewayHost: new URL(this.env.OPENFLOOR_RUNTIME_ORIGIN).host,
               workspace: "/workspace/repository",
+              readOnly: context.kind === "reply",
             }),
           );
           const prepared = await sandbox.exec(
@@ -267,6 +324,10 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
             runId, sessionId: context.sessionId, repositoryId: context.repositoryId,
             candidateSha: context.candidateSha, operation: "context",
           }, this.env.RUNTIME_GATEWAY_SECRET);
+          const conflictInputToken = context.conflictCaseId ? await signRunGatewayToken({
+            runId, sessionId: context.sessionId, repositoryId: context.repositoryId,
+            candidateSha: context.candidateSha, operation: "conflict_input",
+          }, this.env.RUNTIME_GATEWAY_SECRET) : null;
           // runuser -p preserves the startProcess env (including the HOME set
           // below, which is where the pinned sandbox settings live) while
           // dropping to the non-root user the Claude sandbox requires.
@@ -319,11 +380,20 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
               OPENFLOOR_RESULT_PATH: "/tmp/openfloor/result.json",
               OPENFLOOR_WORKSPACE: "/workspace/repository",
               OPENFLOOR_MODEL: context.model,
+              // Defense in depth only: a reply run never exports a bundle or
+              // publishes, so nothing it writes can escape the container
+              // regardless. Each runner uses this to select a read-only
+              // permission/sandbox/approval mode.
+              OPENFLOOR_RUN_MODE: context.kind === "reply" ? "reply" : "task",
               OPENFLOOR_EVENTS_URL: `${this.env.OPENFLOOR_RUNTIME_ORIGIN}/runtime/run/events`,
               OPENFLOOR_EVENTS_TOKEN: eventsToken,
               OPENFLOOR_CONTEXT_URL: `${this.env.OPENFLOOR_RUNTIME_ORIGIN}/runtime/run/context`,
               OPENFLOOR_CONTEXT_TOKEN: contextToken,
               OPENFLOOR_MCP_SERVER_PATH: "/opt/openfloor/openfloor-mcp.mjs",
+              ...(conflictInputToken ? {
+                OPENFLOOR_CONFLICT_INPUT_URL: `${this.env.OPENFLOOR_RUNTIME_ORIGIN}/runtime/run/conflict-input`,
+                OPENFLOOR_CONFLICT_INPUT_TOKEN: conflictInputToken,
+              } : {}),
               ...providerEnv,
             },
           });
@@ -337,9 +407,14 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
         const process = await sandbox.getProcess(processId);
         if (!process) throw new Error("The agent process could not be recovered");
         for (;;) {
+          if (context.conflictCaseId && await isConflictInputRequested(runId, this.env.DB)) {
+            await process.kill("SIGTERM");
+            const logs = await process.getLogs().catch(() => ({ stdout: "", stderr: "" }));
+            return { awaitingInput: true, cancelled: false, exitCode: 0, ...logs };
+          }
           if (await isRunCancellationRequested(runId, this.env.DB)) {
             await process.kill("SIGTERM");
-            return { cancelled: true, exitCode: 130, stdout: "", stderr: "Agent run cancelled." };
+            return { awaitingInput: false, cancelled: true, exitCode: 130, stdout: "", stderr: "Agent run cancelled." };
           }
           // Hold an exit-event stream instead of polling: one request per 15s
           // window and no completion lag, versus a status round trip every 2s.
@@ -357,13 +432,18 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
             exitCode = finished?.exitCode ?? (status === "completed" ? 0 : 1);
           }
           const [status, logs] = await Promise.all([process.getStatus(), process.getLogs()]);
-          return { cancelled: status === "killed", exitCode, ...logs };
+          return { awaitingInput: false, cancelled: status === "killed", exitCode, ...logs };
         }
       });
       const codexLog = bounded(processResult.stdout, processResult.stderr, MAX_LOG_BYTES);
       const codexLogKey = `runs/${runId}/codex.log`;
       await this.env.PREFLIGHT_LOGS.put(codexLogKey, codexLog, { httpMetadata: { contentType: "text/plain; charset=utf-8" } });
       await recordRunArtifact(runId, "codex_log", codexLogKey, "text/plain; charset=utf-8", codexLog.length, this.env.DB);
+      if (processResult.awaitingInput || context.conflictCaseId && await isConflictInputRequested(runId, this.env.DB)) {
+        await finishResolverAwaitingInput(runId, this.env.DB);
+        await this.notify(runId);
+        return { status: "awaiting_input" };
+      }
       if (processResult.cancelled || await isRunCancellationRequested(runId, this.env.DB)) {
         finalStatus = "cancelled";
         summary = "Agent run cancelled. No repository changes were published.";
@@ -372,6 +452,37 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
       const resultFile = await sandbox.exec("cat /tmp/openfloor/result.json", { timeout: 10_000 });
       const codexResult = parseCodexResult(resultFile.stdout);
       if (processResult.exitCode !== 0 || !codexResult.ok) throw new Error(codexResult.error || `The agent process exited with code ${processResult.exitCode}`);
+      if (context.conflictCaseId) {
+        const verified = await sandbox.exec(
+          "git -c core.hooksPath=/dev/null add -A && test -z \"$(git ls-files -u)\" && git diff --cached --check && git reset -q refs/heads/openfloor-base",
+          { cwd: "/workspace/repository", timeout: 60_000 },
+        );
+        if (!verified.success) throw new Error("Merge Resolver left unmerged entries or conflict markers in the workspace.");
+      }
+      // A reply run answers and stops here: no file collection, no required
+      // checks (createAgentRun never inserted rows for one — context.checks
+      // is empty), no bundle export, no publish, no integrate. Its queue item
+      // completes outright (finishAgentReply), unlike a task run's "ready",
+      // which still has to publish and integrate before it's truly done.
+      //
+      // markRunChecking is deliberately skipped here (unlike the task path
+      // below): it sets status = 'checking', a stage that means "required
+      // checks are running" — a reply run never runs checks, and surfacing
+      // that status made an answered question misleadingly look like it was
+      // moving through the task pipeline. Its thread id is instead recorded
+      // by finishAgentReply itself.
+      if (context.kind === "reply") {
+        const finalResponse = codexResult.finalResponse;
+        finalStatus = finalResponse ? "ready" : "failed";
+        summary = finalResponse ? "Answered the prompt." : "The agent did not produce a text answer.";
+        const completion = await finishAgentReply(runId, finalStatus, finalResponse, summary, codexResult.threadId, this.env.DB);
+        if (completion) {
+          await notifyFloorChanged(completion.sessionId, completion.revision, ["queue", "runs"]);
+          await pokeSessionRouter(completion.sessionId, "run_completed");
+        }
+        return { status: finalStatus };
+      }
+
       await markRunChecking(runId, codexResult.threadId, codexResult.finalResponse, this.env.DB);
       await this.notify(runId);
 
@@ -619,6 +730,7 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
       if (result.conflicted) {
         const update = await markRunIntegrationConflicted(runId, result.reason, this.env.DB);
         if (update) {
+          await recordIntegrationConflict(runId, result.reason, this.env.DB);
           await notifyFloorChanged(update.sessionId, update.revision, ["queue", "repository", "runs", "review"]);
           await pokeSessionRouter(update.sessionId, "run_completed");
         }
@@ -626,6 +738,7 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
       }
       const update = await finishRunIntegrated(runId, result.candidateSha, result.pullRequest, this.env.DB);
       if (update) {
+        await markConflictResolved(runId, result.candidateSha, this.env.DB);
         await notifyFloorChanged(update.sessionId, update.revision, ["queue", "repository", "runs", "review"]);
         await pokeSessionRouter(update.sessionId, "run_completed");
       }
@@ -702,6 +815,12 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
   private async complete(runId: string, status: "ready" | "failed" | "cancelled", summary: string) {
     const completion = await finishAgentRun(runId, status, summary, this.env.DB);
     if (completion) {
+      if (status === "failed" || status === "cancelled") {
+        // Explicit cancellation stops automatic relaunch. Failed attempts use
+        // the normal two-attempt budget; cancellation instead requires owner
+        // attention and a deliberate manual retry.
+        await advanceConflictAfterFailure(runId, summary, this.env.DB, status === "failed");
+      }
       await notifyFloorChanged(completion.sessionId, completion.revision, ["queue", "runs", "review"]);
       // The run left its active status; freed capacity may unblock the router.
       await pokeSessionRouter(completion.sessionId, "run_completed");
@@ -718,7 +837,25 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
 async function buildRunPrompt(context: NonNullable<Awaited<ReturnType<typeof getRunExecutionContext>>>, database: D1DatabaseLike): Promise<string> {
   const snapshot = await getSessionContext(context.sessionId, { runId: context.id, queueItemId: context.queueItemId }, database);
   if (!snapshot) throw new Error("Session context is unavailable for this run");
-  return renderSessionContext(snapshot, viewerFromRunContext(context));
+  const sessionBrief = renderSessionContext(snapshot, viewerFromRunContext(context));
+  if (context.conflictCaseId) {
+    const [runContext, cases] = await Promise.all([
+      getConflictRunContext(context.id, database),
+      getMergeConflictCases(context.sessionId, database),
+    ]);
+    const conflictCase = cases.find((item) => item.id === context.conflictCaseId);
+    if (!runContext || !conflictCase) throw new Error("Merge conflict context is unavailable for this run");
+    return renderConflictResolverPrompt({
+      conflict: conflictCase,
+      sourceSummary: runContext.sourceSummary,
+      sourceConflictReason: runContext.sourceConflictReason,
+      sessionBrief,
+    });
+  }
+  if (context.kind === "reply") {
+    return `${sessionBrief}\n\n## Reply instructions\n\nThis is a question or non-actionable message, not a coding task. Answer it in plain text using the repository and session brief above for context. Do not edit, create, or delete any files — your text response is the only output that reaches the floor.`;
+  }
+  return sessionBrief;
 }
 
 function parseCodexResult(value: string): { ok: boolean; threadId: string | null; finalResponse: string | null; error: string | null } {

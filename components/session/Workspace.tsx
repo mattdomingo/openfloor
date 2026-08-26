@@ -1,16 +1,17 @@
 "use client";
 
 import { CSSProperties, PointerEvent as ReactPointerEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import Link from "next/link";
 import { LocalDateTime } from "@/components/LocalDateTime";
-import type { CredentialProvider } from "@/lib/provider-credentials";
+import type { CredentialProvider, ProviderCredentialSummary } from "@/lib/provider-credentials";
 import type { AppUser, SessionMember, SessionSummary, TypingDraft } from "@/lib/session-types";
 import type { CreateFloorAgentInput } from "@/lib/floor-types";
 import { countMessagesSinceObjective, countUnreadTeamMessages, latestTeamMessageAt, resolvePersistedAgentMention } from "@/lib/floor-state";
 import type { AgentLayout, ChatThread, PanelId, QueueOrderMode, QueueScope, RailId, TeamPanelView, WorkspaceScreen } from "./data";
 import { floorParticipants, type PersistentFloorDataSource } from "./usePersistentFloorData";
+import type { RepositorySource } from "./useRepositoryTree";
 import type { RunActivitySource } from "./useRunActivity";
 import { type PanelChrome } from "./Rail";
+import { QuotaNotice } from "./QuotaNotice";
 import { TopBar } from "./TopBar";
 import { BriefRail } from "./BriefRail";
 import { AgentFloor } from "./AgentFloor";
@@ -18,22 +19,26 @@ import { PromptQueue } from "./PromptQueue";
 import { ReviewScreen } from "./ReviewScreen";
 import { FloorDock } from "./FloorDock";
 import { StatusBar } from "./StatusLine";
+import { useTransientNotice } from "./useTransientNotice";
+import { CONFLICT_ALERT_STORAGE_KEY, conflictAttentionEvent, withConflictAlertClaim } from "@/lib/conflict-notifications";
 
 const RAIL_COLLAPSED_WIDTH = 40;
 const RAIL_MIN_WIDTH = 250;
 const RAIL_MAX_WIDTH = 520;
 
-export function Workspace({ user, session, members, floorData, activity, typingDrafts, onTypingUpdate, onSaveObjective, agentRunEnabled, enabledProviders, presenceConnected, quotaExhausted }: {
+export function Workspace({ user, session, members, floorData, activity, repositoryTree, typingDrafts, onTypingUpdate, onSaveObjective, agentRunEnabled, enabledProviders, providerCredentials, presenceConnected, quotaExhausted }: {
   user: AppUser;
   session: SessionSummary;
   members: SessionMember[];
   floorData: PersistentFloorDataSource;
   activity: RunActivitySource;
+  repositoryTree: RepositorySource;
   typingDrafts: ReadonlyMap<string, TypingDraft>;
   onTypingUpdate: (text: string, typing: boolean) => void;
   onSaveObjective: (objective: string | null) => Promise<boolean>;
   agentRunEnabled: boolean;
   enabledProviders: CredentialProvider[];
+  providerCredentials: ProviderCredentialSummary[];
   presenceConnected: boolean;
   quotaExhausted: boolean;
 }) {
@@ -52,7 +57,13 @@ export function Workspace({ user, session, members, floorData, activity, typingD
   const [draggedPanel, setDraggedPanel] = useState<PanelId | null>(null);
   const [dragOverPanel, setDragOverPanel] = useState<PanelId | null>(null);
   const [resizing, setResizing] = useState(false);
-  const [notice, setNotice] = useState<string | null>(null);
+  // The dock toast's lifetime — dwell then fade, instead of the old plain
+  // useState that nothing ever cleared. `setNotice` keeps its name so the
+  // ~20 existing call sites below are unchanged.
+  const { message: notice, tone: noticeTone, visible: noticeVisible, show: setNotice } = useTransientNotice();
+  const [selectedConflictCaseId, setSelectedConflictCaseId] = useState<string | null>(null);
+  const [browserConflictAlerts, setBrowserConflictAlerts] = useState(() => typeof window !== "undefined" && window.localStorage.getItem(CONFLICT_ALERT_STORAGE_KEY) === "true");
+  const [documentVisibility, setDocumentVisibility] = useState<DocumentVisibilityState>(() => typeof document === "undefined" ? "visible" : document.visibilityState);
   const [queueTarget, setQueueTarget] = useState<string | null>(null);
   const [chatThread, setChatThread] = useState<ChatThread>("team");
   const [teamPanelView, setTeamPanelView] = useState<TeamPanelView>("goals");
@@ -85,6 +96,68 @@ export function Workspace({ user, session, members, floorData, activity, typingD
     window.localStorage.setItem(lastReadStorageKey, String(lastReadAt));
   }, [lastReadAt, lastReadStorageKey]);
   const unreadTeamCount = user.doNotDisturb ? 0 : countUnreadTeamMessages(messages, lastReadAt);
+  const attentionConflicts = useMemo(
+    () => review?.conflicts.filter((conflict) => conflict.status === "awaiting_input" || conflict.status === "failed") ?? [],
+    [review?.conflicts],
+  );
+
+  // Folds floorData.error into the same toast lifetime as `notice`, so a
+  // mutation failure dwells and fades exactly like any other notice instead
+  // of sitting forever — and finally gives floorData.clearError a caller.
+  useEffect(() => {
+    if (!floorData.error) return;
+    setNotice(floorData.error, "error");
+    floorData.clearError();
+    // Only floorData.error is a meaningful dependency: clearError's identity
+    // changes every render (it's an inline closure), but calling it here
+    // flips floorData.error back to null, which is what actually re-arms
+    // this effect for the next failure.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [floorData.error, setNotice]);
+
+  useEffect(() => {
+    const update = () => setDocumentVisibility(document.visibilityState);
+    document.addEventListener("visibilitychange", update);
+    return () => document.removeEventListener("visibilitychange", update);
+  }, []);
+
+  useEffect(() => {
+    if (!browserConflictAlerts || typeof Notification === "undefined" || Notification.permission !== "granted" || documentVisibility !== "hidden") return;
+    for (const conflict of attentionConflicts) {
+      const eventId = conflictAttentionEvent(conflict);
+      if (!eventId) continue;
+      void withConflictAlertClaim(eventId, () => {
+        const notification = new Notification(conflict.status === "awaiting_input" ? "Merge conflict needs your input" : "Merge Resolver needs attention", {
+          body: `${conflict.agentName} · ${conflict.conflictPaths.length} affected file${conflict.conflictPaths.length === 1 ? "" : "s"}`,
+          tag: `openfloor-conflict-${conflict.id}`,
+        });
+        notification.onclick = () => {
+          window.focus();
+          setSelectedConflictCaseId(conflict.id);
+          setScreen("review");
+          notification.close();
+        };
+      });
+    }
+  }, [attentionConflicts, browserConflictAlerts, documentVisibility]);
+
+  async function setConflictBrowserAlerts(enabled: boolean) {
+    if (!enabled) {
+      window.localStorage.setItem(CONFLICT_ALERT_STORAGE_KEY, "false");
+      setBrowserConflictAlerts(false);
+      setNotice("Browser conflict alerts disabled on this device");
+      return;
+    }
+    if (typeof Notification === "undefined") {
+      setNotice("This browser does not support notifications");
+      return;
+    }
+    const permission = await Notification.requestPermission();
+    const granted = permission === "granted";
+    window.localStorage.setItem(CONFLICT_ALERT_STORAGE_KEY, String(granted));
+    setBrowserConflictAlerts(granted);
+    setNotice(granted ? "Browser conflict alerts enabled on this device" : "Browser notification permission was not granted");
+  }
 
   async function createAgent(input: CreateFloorAgentInput) {
     const before = new Set(agents.map((agent) => agent.id));
@@ -191,29 +264,20 @@ export function Workspace({ user, session, members, floorData, activity, typingD
 
   function renderPanel(panel: PanelId, chrome: PanelChrome) {
     if (panel === "brief") return <BriefRail chrome={chrome} assignments={assignments} agents={agents} queue={queue} onAssignmentChange={async (id, task) => Boolean(await floorData.updateAssignment(id, task))} view={teamPanelView} onViewChange={setTeamPanelView} messages={messages} onSendMessage={async (text, recipient) => Boolean(await floorData.sendMessage(text, recipient))} chatThread={chatThread} onChatThreadChange={setChatThread} participants={participants} currentUserId={user.id} unreadTeamCount={unreadTeamCount} />;
-    if (panel === "queue") return <PromptQueue chrome={chrome} items={queue} runs={runs} owner={session.role === "owner"} runEnabled={agentRunEnabled} busy={floorData.busy} autoDispatch={floorData.floor.autoDispatch} onAutoDispatch={async (enabled) => { const result = await floorData.setAutoDispatch(enabled); if (result) setNotice(enabled ? "Auto-dispatch enabled" : "Auto-dispatch disabled"); }} onRun={async (id) => { const result = await floorData.runQueueItem(id); if (result) setNotice("Agent run started"); }} onCancel={async (id) => { const result = await floorData.cancelRun(id); if (result) setNotice("Cancellation requested"); }} onDiscard={async (id) => { const result = await floorData.discardRun(id); if (result) setNotice("Verified run branch discarded"); }} onRetry={async (id) => { const result = await floorData.retryRun(id); if (result) setNotice("Retry started against the latest candidate"); }} onEditPrompt={async (queueItemId, promptId, text) => { const result = await floorData.editQueuePrompt(queueItemId, promptId, text); if (result) setNotice("Prompt updated"); return Boolean(result); }} onPause={async (queueItemId, paused) => { const result = await floorData.setQueueItemPaused(queueItemId, paused); if (result) setNotice(paused ? "Prompt paused" : "Prompt resumed"); }} onDelete={async (queueItemId) => { const result = await floorData.deleteQueueItem(queueItemId); if (result) setNotice("Prompt removed"); }} currentUserId={user.id} scope={queueScope} onScope={setQueueScope} orderMode={queueOrderMode} onOrderMode={setQueueOrderMode} draggedItemId={draggedQueueItem} onItemDragStart={setDraggedQueueItem} onItemDragEnd={() => setDraggedQueueItem(null)} onItemDrop={(id) => void dropQueueItem(id)} onFocusAgent={(agentId) => { setSelectedAgentId(agentId); setAgentLayout("focus"); }} />;
-    return <AgentFloor chrome={chrome} sessionId={session.id} agents={agents} runs={runs} activity={activity} selected={selectedAgent} onSelect={setSelectedAgentId} agentLayout={agentLayout} onAgentLayout={setAgentLayout} onCreateAgent={createAgent} enabledProviders={enabledProviders} onUpdateTask={async (agentId, task) => Boolean(await floorData.updateAgentTask(agentId, task))} queue={queue} participants={participants} currentUserId={user.id} />;
+    if (panel === "queue") return <PromptQueue chrome={chrome} items={queue} runs={runs} agents={agents} owner={session.role === "owner"} runEnabled={agentRunEnabled} busy={floorData.busy} autoDispatch={floorData.floor.autoDispatch} onSetAgent={async (queueItemId, agentId) => { const result = await floorData.setQueueItemAgent(queueItemId, agentId); if (result) setNotice("Prompt targeted"); }} onAutoDispatch={async (enabled) => { const result = await floorData.setAutoDispatch(enabled); if (result) setNotice(enabled ? "Auto-dispatch enabled" : "Auto-dispatch disabled"); }} autoResolveConflicts={floorData.floor.autoResolveConflicts} onAutoResolveConflicts={async (enabled) => { const result = await floorData.setAutoResolveConflicts(enabled); if (result) setNotice(enabled ? "Automatic conflict resolution enabled" : "Automatic conflict resolution disabled"); }} browserConflictAlerts={browserConflictAlerts} onBrowserConflictAlerts={setConflictBrowserAlerts} onRun={async (id) => { const result = await floorData.runQueueItem(id); if (result) setNotice("Agent run started"); }} onCancel={async (id) => { const result = await floorData.cancelRun(id); if (result) setNotice("Cancellation requested"); }} onDiscard={async (id) => { const result = await floorData.discardRun(id); if (result) setNotice("Verified run branch discarded"); }} onRetry={async (id) => { const result = await floorData.retryRun(id); if (result) setNotice("Retry started against the latest candidate"); }} onEditPrompt={async (queueItemId, promptId, text) => { const result = await floorData.editQueuePrompt(queueItemId, promptId, text); if (result) setNotice("Prompt updated"); return Boolean(result); }} onPause={async (queueItemId, paused) => { const result = await floorData.setQueueItemPaused(queueItemId, paused); if (result) setNotice(paused ? "Prompt paused" : "Prompt resumed"); }} onDelete={async (queueItemId) => { const result = await floorData.deleteQueueItem(queueItemId); if (result) setNotice("Prompt removed"); }} currentUserId={user.id} scope={queueScope} onScope={setQueueScope} orderMode={queueOrderMode} onOrderMode={setQueueOrderMode} draggedItemId={draggedQueueItem} onItemDragStart={setDraggedQueueItem} onItemDragEnd={() => setDraggedQueueItem(null)} onItemDrop={(id) => void dropQueueItem(id)} onFocusAgent={(agentId) => { setSelectedAgentId(agentId); setAgentLayout("focus"); }} />;
+    return <AgentFloor chrome={chrome} sessionId={session.id} agents={agents} runs={runs} activity={activity} selected={selectedAgent} onSelect={setSelectedAgentId} agentLayout={agentLayout} onAgentLayout={setAgentLayout} onCreateAgent={createAgent} enabledProviders={enabledProviders} providerCredentials={providerCredentials} owner={session.role === "owner"} autoProvisionAgents={floorData.floor.autoProvisionAgents} autoAgentProvider={floorData.floor.autoAgentProvider} effectiveAutoAgentProvider={floorData.floor.effectiveAutoAgentProvider} autoAgentProviderState={floorData.floor.autoAgentProviderState} onAutoProvisionAgents={async (enabled) => Boolean(await floorData.setAutoProvisionAgents(enabled))} onAutoAgentProvider={async (provider) => Boolean(await floorData.setAutoAgentProvider(provider))} onUpdateTask={async (agentId, task) => Boolean(await floorData.updateAgentTask(agentId, task))} onPauseAgent={(agentId, paused) => { void (async () => { const result = await floorData.pauseAgent(agentId, paused); if (result) setNotice(paused ? "Agent paused" : "Agent resumed"); })(); }} onStopAgent={(agentId) => { void (async () => { const result = await floorData.stopAgent(agentId); if (result) setNotice("Agent stopped"); })(); }} onDeleteAgent={(agentId) => { void (async () => { const result = await floorData.deleteAgent(agentId); if (result) setNotice("Agent removed"); })(); }} onPauseAllAgents={async () => { const result = await floorData.pauseAllAgents(); if (result) setNotice("All agents paused"); }} onResumeAllAgents={async () => { const result = await floorData.resumeAllAgents(); if (result) setNotice("All agents resumed"); }} onStopAllAgents={async () => { const result = await floorData.stopAllAgents(); if (result) setNotice("All agents stopped"); }} agentControlsBusy={floorData.busy} queue={queue} participants={participants} currentUserId={user.id} />;
   }
 
   return <main className="app-shell" data-screen={screen}>
-    <TopBar screen={screen} onScreen={setScreen} onNotice={setNotice} session={session} user={user} members={members} unreadTeamCount={unreadTeamCount} presenceConnected={presenceConnected} staleMessageCount={countMessagesSinceObjective(messages, session.objectiveUpdatedAt)} onSaveObjective={onSaveObjective} repository={repository} branch={activeCandidate?.branchName ?? repository?.baseBranch ?? null} />
+    <TopBar screen={screen} onScreen={setScreen} onNotice={setNotice} session={session} user={user} members={members} unreadTeamCount={unreadTeamCount} reviewAttentionCount={attentionConflicts.length} presenceConnected={presenceConnected} staleMessageCount={countMessagesSinceObjective(messages, session.objectiveUpdatedAt)} onSaveObjective={onSaveObjective} repository={repository} branch={activeCandidate?.branchName ?? repository?.baseBranch ?? null} />
     {session.endedAt != null && (
       /* Banner only: the server-side write guard is the enforcement, so a
          stale control just surfaces its 409 through the dock status line. */
       <p className="notice" data-tone="attention" role="status">This session ended <LocalDateTime timestamp={session.endedAt} mode="date" />{session.endedReason === "merged" ? " because the candidate branch was merged" : ""}. The floor is read-only.</p>
     )}
-    {quotaExhausted && session.endedAt == null && (
-      /* Same advisory-only pattern as the ended-session banner above: the
-         presence gate (close code 4003) is the enforcement, this is just
-         the persistent explanation for why new connections keep failing. */
-      <p className="notice" data-tone="attention" role="status">
-        {`${session.role === "owner"
-          ? "Your plan's monthly session hours are used up."
-          : "Your host has used up their plan's monthly session hours."} New connections are paused until next month. `}
-        <Link href="/settings?section=plan">Upgrade for more session hours</Link>.
-      </p>
-    )}
-    {screen === "review" ? <ReviewScreen review={review} owner={session.role === "owner"} busy={floorData.busy} blockingRunId={floorData.blockingRunId} onReady={async () => { if (await floorData.readyReview()) setNotice("GitHub review status synchronized"); }} onMerge={async (deleteCandidateBranch) => { const result = await floorData.squashMergeReview(deleteCandidateBranch); if (result) setNotice(deleteCandidateBranch ? "Pull request squash merged and branches cleaned up" : "Pull request squash merged; candidate branch kept"); return Boolean(result); }} onDeleteBranch={async () => { const result = await floorData.deleteReviewBranch(); if (result) setNotice("Candidate branch deleted"); return Boolean(result); }} onCancelRun={async (runId) => { await floorData.cancelRun(runId); }} teamChat={messages} onSendTeamMessage={async (text, recipient) => Boolean(await floorData.sendMessage(text, recipient))} participants={participants} currentUserId={user.id} /> : <><div className="workspace" data-expanded={expandedPanel ? "true" : "false"} data-resizing={resizing ? "true" : "false"}>{panelOrder.map((panel, index) => { const next = panelOrder[index + 1]; const showHandle = !expandedPanel && next !== undefined && !(isCollapsed(panel) && panel !== "floor"); return <div key={panel} ref={(element) => { if (element) panelSlotRefs.current.set(panel, element); else panelSlotRefs.current.delete(panel); }} className="panel-slot" style={slotStyle(panel)} data-expanded={expandedPanel === panel ? "true" : "false"} data-collapsed={isCollapsed(panel) ? "true" : "false"} data-dragging={draggedPanel === panel ? "true" : "false"} data-drop-target={dragOverPanel === panel ? "true" : "false"} onDragOver={(event) => { event.preventDefault(); if (draggedPanel && draggedPanel !== panel) setDragOverPanel(panel); }} onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragOverPanel((current) => current === panel ? null : current); }} onDrop={() => dropPanel(panel)}>{renderPanel(panel, chromeFor(panel, index))}{showHandle && <div className="resize-handle" role="separator" aria-label={`Resize ${panel} panel`} onPointerDown={(event) => startResize(panel, next, event)} />}</div>; })}</div><FloorDock onSubmit={enqueuePrompt} agents={agents} queueTarget={queueTarget} onQueueTargetChange={setQueueTarget} textareaRef={composerRef} notice={notice} error={floorData.error} busy={floorData.busy} participants={participants} typingDrafts={typingDrafts} onTypingUpdate={onTypingUpdate} /></>}
-    {screen === "review" && (notice || floorData.error) && <StatusBar notice={floorData.error ?? notice ?? ""} visible tone={floorData.error ? "error" : "notice"} />}
+    {quotaExhausted && session.endedAt == null && <QuotaNotice sessionId={session.id} role={session.role} />}
+    {screen !== "review" && attentionConflicts[0] && <button type="button" className="notice conflict-attention-banner" data-tone="attention" onClick={() => { setSelectedConflictCaseId(attentionConflicts[0].id); setScreen("review"); }}><strong>{attentionConflicts[0].status === "awaiting_input" ? "Merge conflict needs a decision" : "Merge Resolver needs attention"}</strong><span>Open Review to see the conflict and {attentionConflicts[0].status === "awaiting_input" ? "answer its questions" : "retry resolution"}.</span></button>}
+    {screen === "review" ? <ReviewScreen review={review} repository={repository} repositoryTree={repositoryTree} selectedConflictCaseId={selectedConflictCaseId} owner={session.role === "owner"} busy={floorData.busy} blockingRunId={floorData.blockingRunId} onResolveConflict={async (caseId) => Boolean(await floorData.resolveConflict(caseId))} onAnswerConflict={async (caseId, answers) => Boolean(await floorData.answerConflict(caseId, answers))} onReady={async () => { if (await floorData.readyReview()) setNotice("GitHub review status synchronized"); }} onMerge={async (deleteCandidateBranch) => { const result = await floorData.squashMergeReview(deleteCandidateBranch); if (result) setNotice(deleteCandidateBranch ? "Pull request squash merged and branches cleaned up" : "Pull request squash merged; candidate branch kept"); return Boolean(result); }} onDeleteBranch={async () => { const result = await floorData.deleteReviewBranch(); if (result) setNotice("Candidate branch deleted"); return Boolean(result); }} onCancelRun={async (runId) => { await floorData.cancelRun(runId); }} teamChat={messages} onSendTeamMessage={async (text, recipient) => Boolean(await floorData.sendMessage(text, recipient))} participants={participants} currentUserId={user.id} /> : <><div className="workspace" data-expanded={expandedPanel ? "true" : "false"} data-resizing={resizing ? "true" : "false"}>{panelOrder.map((panel, index) => { const next = panelOrder[index + 1]; const showHandle = !expandedPanel && next !== undefined && !(isCollapsed(panel) && panel !== "floor"); return <div key={panel} ref={(element) => { if (element) panelSlotRefs.current.set(panel, element); else panelSlotRefs.current.delete(panel); }} className="panel-slot" style={slotStyle(panel)} data-expanded={expandedPanel === panel ? "true" : "false"} data-collapsed={isCollapsed(panel) ? "true" : "false"} data-dragging={draggedPanel === panel ? "true" : "false"} data-drop-target={dragOverPanel === panel ? "true" : "false"} onDragOver={(event) => { event.preventDefault(); if (draggedPanel && draggedPanel !== panel) setDragOverPanel(panel); }} onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragOverPanel((current) => current === panel ? null : current); }} onDrop={() => dropPanel(panel)}>{renderPanel(panel, chromeFor(panel, index))}{showHandle && <div className="resize-handle" role="separator" aria-label={`Resize ${panel} panel`} onPointerDown={(event) => startResize(panel, next, event)} />}</div>; })}</div><FloorDock onSubmit={enqueuePrompt} agents={agents} queueTarget={queueTarget} onQueueTargetChange={setQueueTarget} textareaRef={composerRef} notice={notice} noticeTone={noticeTone} noticeVisible={noticeVisible} busy={floorData.busy} participants={participants} typingDrafts={typingDrafts} onTypingUpdate={onTypingUpdate} /></>}
+    {screen === "review" && notice && <StatusBar notice={notice} visible={noticeVisible} tone={noticeTone} />}
   </main>;
 }

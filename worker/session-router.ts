@@ -1,6 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import { runRoutingTick, type RoutingTrigger } from "../db/routing";
-import { disabledRunProviders, startQueueItemRun } from "../lib/agent-run-start";
+import { disabledRunProviders, startConflictResolverRun, startQueueItemRun } from "../lib/agent-run-start";
 import { notifyFloorChanged } from "../lib/presence-server";
 
 const HELD_RETRY_BASE_MS = 10_000;
@@ -32,9 +32,9 @@ export class SessionRouter extends DurableObject {
     if (!sessionId) return;
     const trigger = (await this.ctx.storage.get<RoutingTrigger>("trigger")) ?? "alarm";
     try {
-      const outcome = await runRoutingTick(sessionId, trigger, { startRun: startQueueItemRun, disabledProviders: disabledRunProviders() });
+      const outcome = await runRoutingTick(sessionId, trigger, { startRun: startQueueItemRun, startConflictResolution: startConflictResolverRun, disabledProviders: disabledRunProviders() });
       if (outcome.revision !== null) {
-        await notifyFloorChanged(sessionId, outcome.revision, ["queue", "runs"]);
+        await notifyFloorChanged(sessionId, outcome.revision, ["agents", "queue", "runs"]);
       }
       if (outcome.held) {
         const misses = ((await this.ctx.storage.get<number>("misses")) ?? 0) + 1;
@@ -48,9 +48,9 @@ export class SessionRouter extends DurableObject {
         // back to the alarm path with the same semantics as before.
         await this.ctx.storage.delete("misses");
         await this.ctx.storage.put("trigger", "alarm");
-        const followUp = await runRoutingTick(sessionId, "alarm", { startRun: startQueueItemRun, disabledProviders: disabledRunProviders() });
+        const followUp = await runRoutingTick(sessionId, "alarm", { startRun: startQueueItemRun, startConflictResolution: startConflictResolverRun, disabledProviders: disabledRunProviders() });
         if (followUp.revision !== null) {
-          await notifyFloorChanged(sessionId, followUp.revision, ["queue", "runs"]);
+          await notifyFloorChanged(sessionId, followUp.revision, ["agents", "queue", "runs"]);
         }
         if (followUp.held || followUp.acted) {
           await this.ctx.storage.setAlarm(Date.now() + 1_000);

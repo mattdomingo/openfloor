@@ -5,7 +5,9 @@ import { BASE_PATH } from "@/components/basePath";
 
 // Per-user, account-wide preference persisted server-side (unlike ThemeToggle,
 // which is a per-device localStorage-only choice) — it must stay in sync
-// across every session and device the user opens.
+// across every session and device the user opens. Every caller pairs this
+// with its own "Do Not Disturb" label, so the button itself only needs to
+// say which position it's in.
 export function DoNotDisturbToggle({ initialValue }: { initialValue: boolean }) {
   const [value, setValue] = useState(initialValue);
   const [busy, setBusy] = useState(false);
@@ -23,17 +25,11 @@ export function DoNotDisturbToggle({ initialValue }: { initialValue: boolean }) 
     setBusy(false);
   }
 
+  const label = value ? "Do Not Disturb is on. Click to turn off." : "Do Not Disturb is off. Click to turn on.";
+
   return (
-    <button
-      type="button"
-      className="button"
-      data-variant="quiet"
-      aria-pressed={value}
-      disabled={busy}
-      onClick={() => void toggle()}
-      title={value ? "Do Not Disturb is on. Click to turn off." : "Do Not Disturb is off. Click to turn on."}
-    >
-      {value ? "DND: On" : "DND: Off"}
+    <button type="button" className="button" data-variant="quiet" aria-pressed={value} disabled={busy} onClick={() => void toggle()} title={label}>
+      {value ? "On" : "Off"}
     </button>
   );
 }

@@ -4,6 +4,10 @@ openfloor is a persistent multiplayer session shell for teams coordinating agent
 
 Members enter a session at `/app/session/[id]`, then continue to the authenticated workspace at `/app/session/[id]/floor`. A new floor starts empty. Everything shown comes from the session, persisted member actions, or a connected backend; openfloor does not seed sample agents, prompts, files, checks, or review candidates.
 
+Creating a session sends its owner to `/session/[id]?setup=1` and opens the lobby’s two-step setup: connect and enable the required GitHub repository, then optionally connect the owner’s model-provider API keys and choose the default for generated agents. One connected, rollout-enabled provider is selected automatically; multiple require an explicit default; zero use the existing OpenAI owner-key/server-key/refuse ladder. “Set up later” leaves the lobby usable and removes the query state. Provider keys remain per-user. Returning members never enter this creation flow automatically, and entering the live floor still requires the existing repository-ready invariant.
+
+The Agent Floor keeps persistent user-created agents and **New agent** unchanged. When the owner enables both auto-dispatch and **Auto agents**, routing assigns idle persistent agents first, then activates durable generated workers for additional tasks. Generated workers and Concierge carry an **Auto-generated** badge, retire when idle, and are reused without losing queue/run attribution. Concierge handles only read-only reply runs and can never publish code changes. Automated scheduling is capped at 15 active runs per session and 30 globally.
+
 ## Local development
 
 Install dependencies and create an ignored local environment file:
@@ -20,6 +24,8 @@ Repository execution additionally requires a GitHub App, Cloudflare Workflows/Sa
 
 Owners name each candidate and describe its intent, with the session title and objective supplied as defaults; openfloor safely slugs the name inside its protected branch prefix and uses the metadata for the draft pull request. openfloor runs Codex at an exact candidate SHA, validates and publishes each passing result independently, serially integrates it into one draft pull request, reconciles GitHub files/checks/mergeability, and lets only the session owner mark ready and request a protected squash merge. Confirmed merges clean only exact-SHA openfloor branches and the next run starts a fresh candidate cycle.
 
+A real GitHub integration conflict creates one durable merge-conflict case attached to the original queue item. Automatic conflict resolution is enabled by default, independent from ordinary queue auto-dispatch, and runs ahead of new queue work when capacity and provider gates allow. The resolver inherits the source agent, provider/model, and agent-owner credential policy; reconstructs a genuine three-way merge from the exact source result and latest candidate; runs configured checks; and publishes through the same verified branch pipeline. When repository intent is ambiguous, it stops without publishing and asks up to three questions in Review. Any current member may answer, while only the owner may manually start or retry a case. Browser conflict alerts are an optional per-device setting and require an explicit permission-granting click.
+
 Create the local D1 tables, then start the development server:
 
 ```bash
@@ -29,14 +35,16 @@ npm run dev
 
 Open the URL printed by the server, normally [http://localhost:3000](http://localhost:3000). Local development serves the application at the root, so use `/home` rather than `/app/home`; the `/app` prefix is added by production builds. You are automatically signed in with the identity from `.dev.vars`.
 
-To exercise the new path manually:
+To exercise the product manually:
 
 1. Open `/home` and create a session.
-2. On the session lobby, click **Enter agent floor**.
-3. Confirm the floor shows the real session title, objective, and your online presence.
-4. Create a named agent, add assigned or unassigned prompts, edit an assignment, and use team chat. Reload and confirm they persist.
-5. Open Review and confirm it remains empty until a genuine agent run records changed files.
-6. Use **Session settings** to return to the lobby.
+2. Confirm the owner-only setup dialog opens. Connect a repository and create its candidate branch; connect or choose the generated-agent provider when applicable, or choose **Set up later** and reopen **Setup** from the lobby.
+3. Click **Enter agent floor**. Without a ready repository, confirm only the focused repository-required dialog opens.
+4. Confirm the floor shows the real session title, objective, and your online presence.
+5. Confirm **New agent** still creates a persistent named agent. Turn on auto-dispatch and **Auto agents**, add more unassigned tasks than idle persistent agents, and confirm generated workers appear with badges and disappear after work finishes.
+6. Open Review and confirm it remains empty until a genuine agent run records changed files.
+7. In Queue settings, confirm **Automatically resolve merge conflicts** is on by default and browser alerts remain off until explicitly enabled.
+8. Use **Session settings** to return to the lobby.
 
 The browser test runs the complete two-user flow with a temporary local database, including invite acceptance, live presence, floor navigation, reconnection, and leaving:
 

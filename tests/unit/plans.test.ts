@@ -39,6 +39,20 @@ describe("effectivePlan", () => {
     expect(effectivePlan("max", "canceled")).toBe("free");
     expect(PLAN_LIMITS[effectivePlan("max", "canceled")]).toEqual(PLAN_LIMITS.free);
   });
+
+  it("grants @opnflr.com accounts enterprise regardless of stored plan/status", () => {
+    for (const status of [...nonActiveStatuses, "active" as PlanStatus]) {
+      expect(effectivePlan("free", status, "tester@opnflr.com")).toBe("enterprise");
+    }
+    // Case-insensitive, and independent of what upsertUser happens to store.
+    expect(effectivePlan("free", "canceled", "Tester@OPNFLR.COM")).toBe("enterprise");
+  });
+
+  it("does not match lookalike or unrelated domains", () => {
+    expect(effectivePlan("free", "active", "tester@notopnflr.com")).toBe("free");
+    expect(effectivePlan("free", "active", "tester@opnflr.com.evil.com")).toBe("free");
+    expect(effectivePlan("free", "inactive", undefined)).toBe("free");
+  });
 });
 
 describe("currentMonth", () => {
@@ -71,6 +85,10 @@ describe("paid seat pricing", () => {
     expect(effectiveSeatLimit("max", "past_due", 8)).toBe(3);
     expect(effectiveSeatLimit("pro", "active", null)).toBe(5);
     expect(effectiveSeatLimit("enterprise", "active", null)).toBe(Infinity);
+  });
+
+  it("@opnflr.com accounts get unlimited seats even on a free/lapsed row", () => {
+    expect(effectiveSeatLimit("free", "inactive", null, "tester@opnflr.com")).toBe(Infinity);
   });
 });
 

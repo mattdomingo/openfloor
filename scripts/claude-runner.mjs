@@ -12,6 +12,13 @@ const eventsToken = process.env.OPENFLOOR_EVENTS_TOKEN;
 const contextUrl = process.env.OPENFLOOR_CONTEXT_URL;
 const contextToken = process.env.OPENFLOOR_CONTEXT_TOKEN;
 const mcpServerPath = process.env.OPENFLOOR_MCP_SERVER_PATH;
+const conflictInputUrl = process.env.OPENFLOOR_CONFLICT_INPUT_URL;
+const conflictInputToken = process.env.OPENFLOOR_CONFLICT_INPUT_TOKEN;
+// Defense in depth only (worker/agent-run-workflow.ts never exports a bundle
+// or publishes for a reply run) — a reply run also gets a narrower positive
+// tool list with every file-modifying tool (Bash included — it can write
+// files too) removed, same shape as the Codex runner's read-only sandbox.
+const isReply = process.env.OPENFLOOR_RUN_MODE === "reply";
 
 if (!promptPath || !resultPath || !workspace || !gatewayUrl || !gatewayToken || !model) {
   throw new Error("openfloor Claude runner configuration is incomplete");
@@ -151,7 +158,14 @@ const mcpServers = contextUrl && contextToken && mcpServerPath ? {
   openfloor: {
     command: "node",
     args: [mcpServerPath],
-    env: { OPENFLOOR_CONTEXT_URL: contextUrl, OPENFLOOR_CONTEXT_TOKEN: contextToken },
+    env: {
+      OPENFLOOR_CONTEXT_URL: contextUrl,
+      OPENFLOOR_CONTEXT_TOKEN: contextToken,
+      ...(conflictInputUrl && conflictInputToken ? {
+        OPENFLOOR_CONFLICT_INPUT_URL: conflictInputUrl,
+        OPENFLOOR_CONFLICT_INPUT_TOKEN: conflictInputToken,
+      } : {}),
+    },
   },
   ...userMcpServers,
 } : (userMcpServerNames.length > 0 ? userMcpServers : undefined);
@@ -172,13 +186,13 @@ const response = query({
     // sandbox proxy — the Codex runner's webSearchMode: "disabled" parity).
     // A skill's allowed-tools frontmatter cannot widen any of this.
     permissionMode: "dontAsk",
-    tools: [
-      "Bash", "Read", "Write", "Edit", "MultiEdit", "NotebookEdit", "Glob", "Grep", "TodoWrite",
-      ...(skillNames.length > 0 ? ["Skill"] : []),
-    ],
+    tools: isReply
+      ? ["Read", "Glob", "Grep", "TodoWrite", ...(skillNames.length > 0 ? ["Skill"] : [])]
+      : ["Bash", "Read", "Write", "Edit", "MultiEdit", "NotebookEdit", "Glob", "Grep", "TodoWrite", ...(skillNames.length > 0 ? ["Skill"] : [])],
     allowedTools: [
-      "Bash", "Read", "Write", "Edit", "MultiEdit", "NotebookEdit", "Glob", "Grep", "TodoWrite",
+      ...(isReply ? ["Read", "Glob", "Grep", "TodoWrite"] : ["Bash", "Read", "Write", "Edit", "MultiEdit", "NotebookEdit", "Glob", "Grep", "TodoWrite"]),
       ...(mcpServers ? ["mcp__openfloor__openfloor_session_context"] : []),
+      ...(conflictInputUrl && conflictInputToken ? ["mcp__openfloor__openfloor_request_conflict_input"] : []),
       // Tools are enabled explicitly per configured server (the server-level
       // mcp__<name> spec) — never via a blanket permission mode. Which
       // servers exist at all is owner-configured; this makes their tools

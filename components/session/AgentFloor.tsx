@@ -1,16 +1,18 @@
 "use client";
 
 import { useLayoutEffect, useRef, useState } from "react";
-import type { CredentialProvider } from "@/lib/provider-credentials";
+import { AGENT_PROVIDER_LABELS, type CredentialProvider, type ProviderCredentialSummary } from "@/lib/provider-credentials";
 import type { AgentRun, CreateFloorAgentInput, FloorAgent, FloorParticipant, FloorQueueItem } from "@/lib/floor-types";
 import type { AgentLayout } from "./data";
-import { agentTone } from "./data";
+import { agentReplyText, agentTone } from "./data";
 import { HoverTip, Icon, useHoverTip } from "./primitives";
 import { Panel, type PanelChrome } from "./Rail";
 import { AgentCard, AgentSpotlight } from "./AgentCard";
 import type { RunActivitySource } from "./useRunActivity";
 import { AgentChatHistory } from "./AgentChatHistory";
 import { CreateAgentDialog } from "./CreateAgentDialog";
+import { SelectMenu, type SelectMenuOption } from "./SelectMenu";
+import { AgentBulkControlsMenu } from "./AgentBulkControlsMenu";
 
 function AgentRailItem({ agent, tone, selected, onSelect, railRef }: { agent: FloorAgent; tone: string; selected: boolean; onSelect: () => void; railRef: (id: string, element: HTMLButtonElement | null) => void }) {
   const tip = useHoverTip();
@@ -24,13 +26,13 @@ function AgentRailItem({ agent, tone, selected, onSelect, railRef }: { agent: Fl
         data-selected={selected ? "true" : "false"}
         role="tab"
         aria-selected={selected}
-        aria-label={agent.name}
+        aria-label={`${agent.name}${agent.kind ? ", auto-generated" : ""}`}
         onClick={onSelect}
         {...tip.handlers}
       >
         {agent.name.slice(0, 1)}
       </button>
-      <HoverTip position={tip.position}>{agent.name}</HoverTip>
+      <HoverTip position={tip.position}>{agent.name}{agent.kind ? " · Auto-generated" : ""}</HoverTip>
     </>
   );
 }
@@ -47,7 +49,7 @@ function AllAgentsButton({ active, onClick }: { active: boolean; onClick: () => 
   );
 }
 
-export function AgentFloor({ chrome, sessionId, agents, runs, activity, selected, onSelect, agentLayout, onAgentLayout, onCreateAgent, onUpdateTask, queue, participants, currentUserId, enabledProviders }: {
+export function AgentFloor({ chrome, sessionId, agents, runs, activity, selected, onSelect, agentLayout, onAgentLayout, onCreateAgent, onUpdateTask, onPauseAgent, onStopAgent, onDeleteAgent, onPauseAllAgents, onResumeAllAgents, onStopAllAgents, agentControlsBusy, queue, participants, currentUserId, enabledProviders, providerCredentials, owner, autoProvisionAgents, autoAgentProvider, effectiveAutoAgentProvider, autoAgentProviderState, onAutoProvisionAgents, onAutoAgentProvider }: {
   chrome: PanelChrome;
   sessionId: string;
   agents: FloorAgent[];
@@ -59,15 +61,34 @@ export function AgentFloor({ chrome, sessionId, agents, runs, activity, selected
   onAgentLayout: (layout: AgentLayout) => void;
   onCreateAgent: (input: CreateFloorAgentInput) => Promise<boolean>;
   onUpdateTask: (agentId: string, task: string) => Promise<boolean>;
+  onPauseAgent: (agentId: string, paused: boolean) => void;
+  onStopAgent: (agentId: string) => void;
+  onDeleteAgent: (agentId: string) => void;
+  onPauseAllAgents: () => Promise<void>;
+  onResumeAllAgents: () => Promise<void>;
+  onStopAllAgents: () => Promise<void>;
+  agentControlsBusy: boolean;
   queue: FloorQueueItem[];
   participants: FloorParticipant[];
   currentUserId: string;
   enabledProviders: CredentialProvider[];
+  providerCredentials: ProviderCredentialSummary[];
+  owner: boolean;
+  autoProvisionAgents: boolean;
+  autoAgentProvider: CredentialProvider | null;
+  effectiveAutoAgentProvider: CredentialProvider | null;
+  autoAgentProviderState: "selected" | "single_connected" | "openai_fallback" | "selection_required";
+  onAutoProvisionAgents: (enabled: boolean) => Promise<boolean>;
+  onAutoAgentProvider: (provider: CredentialProvider | null) => Promise<boolean>;
 }) {
   const [creating, setCreating] = useState(false);
   const [historyAgentId, setHistoryAgentId] = useState<string | null>(null);
   const createButtonRef = useRef<HTMLButtonElement>(null);
   const historyAgent = agents.find((agent) => agent.id === historyAgentId) ?? null;
+  const providerOptions: SelectMenuOption[] = providerCredentials
+    .filter((credential) => enabledProviders.includes(credential.provider))
+    .map((credential) => ({ value: credential.provider, label: AGENT_PROVIDER_LABELS[credential.provider] }));
+  if (providerOptions.length > 1) providerOptions.unshift({ value: "", label: "Choose provider" });
 
   function focusAgent(id: string) {
     onSelect(id);
@@ -118,6 +139,24 @@ export function AgentFloor({ chrome, sessionId, agents, runs, activity, selected
         </div>
       )}
       {agents.length > 0 && <AllAgentsButton active={agentLayout === "all"} onClick={() => onAgentLayout("all")} />}
+      {owner && agents.some((agent) => !agent.kind) && (
+        <AgentBulkControlsMenu onPauseAll={onPauseAllAgents} onResumeAll={onResumeAllAgents} onStopAll={onStopAllAgents} busy={agentControlsBusy} />
+      )}
+      {owner && (
+        <button type="button" className="chip auto-agent-toggle" data-selected={autoProvisionAgents ? "true" : "false"} aria-pressed={autoProvisionAgents} onClick={() => void onAutoProvisionAgents(!autoProvisionAgents)}>
+          Auto agents {autoProvisionAgents ? "on" : "off"}
+        </button>
+      )}
+      {owner && autoProvisionAgents && providerOptions.length > 0 && (
+        <SelectMenu
+          value={autoAgentProvider ?? effectiveAutoAgentProvider ?? ""}
+          options={providerOptions}
+          label="Default provider for auto-generated agents"
+          onChange={(value) => void onAutoAgentProvider((value || null) as CredentialProvider | null)}
+        />
+      )}
+      {owner && autoProvisionAgents && autoAgentProviderState === "openai_fallback" && <span className="auto-agent-note">No personal key · server OpenAI fallback</span>}
+      {owner && autoProvisionAgents && autoAgentProviderState === "selection_required" && <span className="auto-agent-note" data-tone="attention">Choose a default provider</span>}
       <button ref={createButtonRef} type="button" className="chip chip-create" onClick={() => setCreating(true)}><Icon name="plus" size={11} />New agent</button>
     </>
   );
@@ -127,9 +166,13 @@ export function AgentFloor({ chrome, sessionId, agents, runs, activity, selected
       {agents.length === 0 ? (
         <div className="floor-empty"><strong>No agents yet</strong><p>Create an agent when the session has work to assign.</p><button type="button" className="button" data-variant="primary" onClick={() => setCreating(true)}>Create agent</button></div>
       ) : agentLayout === "all" ? (
-        <div className="agent-grid">{agents.map((agent, index) => { const latestRun = runs.find((run) => run.agentId === agent.id) ?? null; return <AgentCard key={agent.id} agent={agent} tone={agentTone(agent.id, index)} latestRun={latestRun} activityEvents={latestRun ? activity.eventsFor(latestRun.id) : []} selected={selected?.id === agent.id} onFocus={() => focusAgent(agent.id)} onHistory={() => setHistoryAgentId(agent.id)} />; })}</div>
+        // Reserves headroom above the grid only while at least one tile has
+        // a reply bubble to pop up over it — the bubble is absolutely
+        // positioned and would otherwise clip against the panel's own
+        // scroll box (.panel-body) on the top row.
+        <div className="agent-grid" data-has-reply={agents.some((agent) => agentReplyText(runs.find((run) => run.agentId === agent.id) ?? null)) ? "true" : "false"}>{agents.map((agent, index) => { const latestRun = runs.find((run) => run.agentId === agent.id) ?? null; return <AgentCard key={agent.id} agent={agent} tone={agentTone(agent.id, index)} latestRun={latestRun} activityEvents={latestRun ? activity.eventsFor(latestRun.id) : []} selected={selected?.id === agent.id} onFocus={() => focusAgent(agent.id)} onHistory={() => setHistoryAgentId(agent.id)} onPause={onPauseAgent} onStop={onStopAgent} onDelete={onDeleteAgent} />; })}</div>
       ) : selected ? (
-        <AgentSpotlight agent={selected} tone={agentTone(selected.id, agents.findIndex((agent) => agent.id === selected.id))} sessionId={sessionId} latestRun={runs.find((run) => run.agentId === selected.id) ?? null} activity={activity} onHistory={() => setHistoryAgentId(selected.id)} onUpdateTask={onUpdateTask} />
+        <AgentSpotlight agent={selected} tone={agentTone(selected.id, agents.findIndex((agent) => agent.id === selected.id))} sessionId={sessionId} latestRun={runs.find((run) => run.agentId === selected.id) ?? null} activity={activity} onHistory={() => setHistoryAgentId(selected.id)} onUpdateTask={onUpdateTask} onPause={onPauseAgent} onStop={onStopAgent} onDelete={onDeleteAgent} />
       ) : null}
     </Panel>
     {creating && <CreateAgentDialog participants={participants} currentUserId={currentUserId} enabledProviders={enabledProviders} onClose={() => { setCreating(false); createButtonRef.current?.focus(); }} onCreate={onCreateAgent} />}

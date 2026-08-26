@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "3a94c4b2-91b8-4b9c-b6e4-e65f31986397",
+  "id": "1a73c0bf-45f4-49f7-a06f-d9bae5a5f156",
   "prevId": "5e384ac0-79b7-4eb9-ae9a-0f34e56fd3c0",
   "tables": {
     "agent_run_artifacts": {
@@ -840,13 +840,6 @@
           "autoincrement": false,
           "default": "'openai'"
         },
-        "credential_kind": {
-          "name": "credential_kind",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
         "model": {
           "name": "model",
           "type": "text",
@@ -1521,6 +1514,415 @@
         }
       },
       "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "merge_conflict_attempts": {
+      "name": "merge_conflict_attempts",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "case_id": {
+          "name": "case_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "run_id": {
+          "name": "run_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "launch_kind": {
+          "name": "launch_kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "idx_merge_conflict_attempts_run": {
+          "name": "idx_merge_conflict_attempts_run",
+          "columns": [
+            "run_id"
+          ],
+          "isUnique": true
+        },
+        "idx_merge_conflict_attempts_case": {
+          "name": "idx_merge_conflict_attempts_case",
+          "columns": [
+            "case_id",
+            "created_at"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "merge_conflict_attempts_case_id_merge_conflict_cases_id_fk": {
+          "name": "merge_conflict_attempts_case_id_merge_conflict_cases_id_fk",
+          "tableFrom": "merge_conflict_attempts",
+          "tableTo": "merge_conflict_cases",
+          "columnsFrom": [
+            "case_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "merge_conflict_attempts_run_id_agent_runs_id_fk": {
+          "name": "merge_conflict_attempts_run_id_agent_runs_id_fk",
+          "tableFrom": "merge_conflict_attempts",
+          "tableTo": "agent_runs",
+          "columnsFrom": [
+            "run_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "merge_conflict_attempts_launch_check": {
+          "name": "merge_conflict_attempts_launch_check",
+          "value": "\"merge_conflict_attempts\".\"launch_kind\" in ('automatic', 'manual', 'answer')"
+        }
+      }
+    },
+    "merge_conflict_cases": {
+      "name": "merge_conflict_cases",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "session_id": {
+          "name": "session_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "source_run_id": {
+          "name": "source_run_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "latest_source_run_id": {
+          "name": "latest_source_run_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "current_resolver_run_id": {
+          "name": "current_resolver_run_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "explanation": {
+          "name": "explanation",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "conflict_paths": {
+          "name": "conflict_paths",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'[]'"
+        },
+        "automatic_attempts": {
+          "name": "automatic_attempts",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "resume_requested": {
+          "name": "resume_requested",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": false
+        },
+        "failure_reason": {
+          "name": "failure_reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "resolved_at": {
+          "name": "resolved_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "idx_merge_conflict_cases_source_run": {
+          "name": "idx_merge_conflict_cases_source_run",
+          "columns": [
+            "source_run_id"
+          ],
+          "isUnique": true
+        },
+        "idx_merge_conflict_cases_session_status": {
+          "name": "idx_merge_conflict_cases_session_status",
+          "columns": [
+            "session_id",
+            "status",
+            "updated_at"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "merge_conflict_cases_session_id_sessions_id_fk": {
+          "name": "merge_conflict_cases_session_id_sessions_id_fk",
+          "tableFrom": "merge_conflict_cases",
+          "tableTo": "sessions",
+          "columnsFrom": [
+            "session_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "merge_conflict_cases_source_run_id_agent_runs_id_fk": {
+          "name": "merge_conflict_cases_source_run_id_agent_runs_id_fk",
+          "tableFrom": "merge_conflict_cases",
+          "tableTo": "agent_runs",
+          "columnsFrom": [
+            "source_run_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "merge_conflict_cases_latest_source_run_id_agent_runs_id_fk": {
+          "name": "merge_conflict_cases_latest_source_run_id_agent_runs_id_fk",
+          "tableFrom": "merge_conflict_cases",
+          "tableTo": "agent_runs",
+          "columnsFrom": [
+            "latest_source_run_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "merge_conflict_cases_current_resolver_run_id_agent_runs_id_fk": {
+          "name": "merge_conflict_cases_current_resolver_run_id_agent_runs_id_fk",
+          "tableFrom": "merge_conflict_cases",
+          "tableTo": "agent_runs",
+          "columnsFrom": [
+            "current_resolver_run_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "merge_conflict_cases_status_check": {
+          "name": "merge_conflict_cases_status_check",
+          "value": "\"merge_conflict_cases\".\"status\" in ('pending', 'resolving', 'awaiting_input', 'resolved', 'failed')"
+        }
+      }
+    },
+    "merge_conflict_questions": {
+      "name": "merge_conflict_questions",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "case_id": {
+          "name": "case_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "requested_by_run_id": {
+          "name": "requested_by_run_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "position": {
+          "name": "position",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "question": {
+          "name": "question",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "answer": {
+          "name": "answer",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "answered_by": {
+          "name": "answered_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "requested_at": {
+          "name": "requested_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "answered_at": {
+          "name": "answered_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "idx_merge_conflict_questions_run_position": {
+          "name": "idx_merge_conflict_questions_run_position",
+          "columns": [
+            "requested_by_run_id",
+            "position"
+          ],
+          "isUnique": true
+        },
+        "idx_merge_conflict_questions_case": {
+          "name": "idx_merge_conflict_questions_case",
+          "columns": [
+            "case_id",
+            "requested_at"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "merge_conflict_questions_case_id_merge_conflict_cases_id_fk": {
+          "name": "merge_conflict_questions_case_id_merge_conflict_cases_id_fk",
+          "tableFrom": "merge_conflict_questions",
+          "tableTo": "merge_conflict_cases",
+          "columnsFrom": [
+            "case_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "merge_conflict_questions_requested_by_run_id_agent_runs_id_fk": {
+          "name": "merge_conflict_questions_requested_by_run_id_agent_runs_id_fk",
+          "tableFrom": "merge_conflict_questions",
+          "tableTo": "agent_runs",
+          "columnsFrom": [
+            "requested_by_run_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "merge_conflict_questions_answered_by_users_id_fk": {
+          "name": "merge_conflict_questions_answered_by_users_id_fk",
+          "tableFrom": "merge_conflict_questions",
+          "tableTo": "users",
+          "columnsFrom": [
+            "answered_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "checkConstraints": {}
@@ -3294,6 +3696,14 @@
           "autoincrement": false,
           "default": false
         },
+        "auto_resolve_conflicts": {
+          "name": "auto_resolve_conflicts",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": true
+        },
         "active_seconds": {
           "name": "active_seconds",
           "type": "integer",
@@ -3671,13 +4081,12 @@
         }
       },
       "compositePrimaryKeys": {
-        "user_provider_credentials_user_id_provider_kind_pk": {
+        "user_provider_credentials_user_id_provider_pk": {
           "columns": [
             "user_id",
-            "provider",
-            "kind"
+            "provider"
           ],
-          "name": "user_provider_credentials_user_id_provider_kind_pk"
+          "name": "user_provider_credentials_user_id_provider_pk"
         }
       },
       "uniqueConstraints": {},

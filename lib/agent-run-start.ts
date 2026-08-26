@@ -4,6 +4,7 @@ import {
   beginRunIntegration,
   bumpAgentRunRevision,
   createAgentRun,
+  finishAgentReply,
   finishAgentRun,
   finishRunCheck,
   finishRunPublished,
@@ -30,8 +31,21 @@ import {
 } from "@/db/repositories";
 import { getMembershipRole, getOwnerHourQuota, getSessionForMember, PLAN_LIMITS } from "@/db/sessions";
 import { renderRunBrief } from "@/db/session-context";
+import {
+  advanceConflictAfterFailure,
+  createConflictResolverRun,
+  finishResolverAwaitingInput,
+  getConflictRunContext,
+  getMergeConflictCases,
+  markConflictResolved,
+  recordIntegrationConflict,
+  requestConflictInput,
+  type PendingConflict,
+} from "@/db/conflicts";
 import { createDraftPullRequest, createRepositoryBranch, getInstallationRepository, getRepositoryRefSha, GitHubApiError, mergeRepositoryBranch, setTestRepositoryMergeConflict } from "@/lib/github";
+import { renderConflictResolverPrompt } from "@/lib/conflict-resolver-prompt";
 import { providerLabel } from "@/lib/provider-credentials";
+import { disabledRunProviders } from "@/lib/provider-rollout";
 import { openFloorBranchName } from "@/lib/repository-refs";
 import { notifyFloorChanged, notifyRunActivity } from "@/lib/presence-server";
 import { env } from "cloudflare:workers";
@@ -50,6 +64,10 @@ type TestAgentRunData = {
   holdPrompts?: string[];
   failPrompts?: string[];
   conflictFirstAttemptPrompts?: string[];
+  resolverConflictFirstAttemptPrompts?: string[];
+  resolverFailFirstAttemptPrompts?: string[];
+  resolverFailPrompts?: string[];
+  resolverQuestionPrompts?: string[];
   changedPath?: string;
   pathByPrompt?: Record<string, string>;
   diff?: string;
@@ -58,6 +76,9 @@ type TestAgentRunData = {
   activityEventsByPrompt?: Record<string, Array<{ kind: string; detail: string }>>;
   log?: string;
   stageDelayMs?: number;
+  // Reply-run only (kind: "reply"): the text a test reply run answers with.
+  replyByPrompt?: Record<string, string>;
+  replyText?: string;
 };
 
 export type StartRunResult =
@@ -68,25 +89,7 @@ export type StartRunResult =
 // router passes this into runRoutingTick so gated items are SKIPPED during
 // auto-dispatch (a per-item condition); the seam check below still refuses a
 // direct manual start with kind "disabled" (the correct answer there).
-export function disabledRunProviders(): ReadonlySet<import("@/lib/provider-credentials").CredentialProvider> {
-  const bindings = env as unknown as {
-    CLAUDE_RUN_ENABLED?: string;
-    KIMI_RUN_ENABLED?: string;
-    GEMINI_RUN_ENABLED?: string;
-    GLM_RUN_ENABLED?: string;
-    OPENFLOOR_TEST_ALLOW_IDENTITY_HEADERS?: string;
-  };
-  if (bindings.OPENFLOOR_TEST_ALLOW_IDENTITY_HEADERS === "true") return new Set();
-  const flags = {
-    anthropic: bindings.CLAUDE_RUN_ENABLED,
-    kimi: bindings.KIMI_RUN_ENABLED,
-    gemini: bindings.GEMINI_RUN_ENABLED,
-    glm: bindings.GLM_RUN_ENABLED,
-  } as const;
-  return new Set(
-    (Object.keys(flags) as Array<keyof typeof flags>).filter((provider) => flags[provider] !== "true"),
-  );
-}
+export { disabledRunProviders } from "@/lib/provider-rollout";
 
 // This is the one seam that covers every way a run can start: the two HTTP
 // routes (run, retry) AND worker/session-router.ts's auto-dispatch DO, which
@@ -98,7 +101,7 @@ export function disabledRunProviders(): ReadonlySet<import("@/lib/provider-crede
 // throw would instead hit the router DO's bare catch and retry every 60s
 // forever, since "owner is out of hours" doesn't resolve until the month
 // rolls over.
-export async function startQueueItemRun(sessionId: string, queueItemId: string, userId: string): Promise<StartRunResult> {
+export async function startQueueItemRun(sessionId: string, queueItemId: string, userId: string, kind: "task" | "reply" = "task"): Promise<StartRunResult> {
   const bindings = env as unknown as {
     AGENT_RUN_WORKFLOW?: WorkflowBinding;
     AGENT_RUN_ENABLED?: string;
@@ -135,10 +138,13 @@ export async function startQueueItemRun(sessionId: string, queueItemId: string, 
   }
   try {
     await ensureNextCandidateCycle(sessionId, userId);
-    const run = await createAgentRun(sessionId, queueItemId, userId);
+    const run = await createAgentRun(sessionId, queueItemId, userId, kind);
+    const effectiveKind = run.kind === "reply" ? "reply" : "task";
     if (bindings.OPENFLOOR_TEST_ALLOW_IDENTITY_HEADERS === "true" && bindings.OPENFLOOR_TEST_AGENT_RUN_DATA && bindings.PREFLIGHT_LOGS) {
-      const result = await runTestAgent(run.id, bindings.OPENFLOOR_TEST_AGENT_RUN_DATA, bindings.PREFLIGHT_LOGS);
-      if (result === "ready") await publishTestRun(run.id, bindings.OPENFLOOR_TEST_AGENT_RUN_DATA);
+      const result = effectiveKind === "reply"
+        ? await runTestAgentReply(run.id, bindings.OPENFLOOR_TEST_AGENT_RUN_DATA, bindings.PREFLIGHT_LOGS)
+        : await runTestAgent(run.id, bindings.OPENFLOOR_TEST_AGENT_RUN_DATA, bindings.PREFLIGHT_LOGS);
+      if (result === "ready" && effectiveKind !== "reply") await publishTestRun(run.id, bindings.OPENFLOOR_TEST_AGENT_RUN_DATA);
     } else {
       if (!bindings.AGENT_RUN_WORKFLOW) throw new Error("Agent run Workflow binding is unavailable");
       await bindings.AGENT_RUN_WORKFLOW.create({ id: run.id, params: { runId: run.id } });
@@ -149,6 +155,50 @@ export async function startQueueItemRun(sessionId: string, queueItemId: string, 
     if (error instanceof AgentRunConflictError) return { ok: false, kind: "conflict", message: error.message };
     throw error;
   }
+}
+
+/** Starts a system-owned resolver attempt through the same Workflow binding
+ * as ordinary runs. The case creator already pinned the source agent/model;
+ * provider credentials continue to resolve from that agent owner at runtime. */
+export async function startConflictResolverRun(conflict: PendingConflict): Promise<StartRunResult> {
+  const bindings = env as unknown as {
+    AGENT_RUN_WORKFLOW?: WorkflowBinding;
+    AGENT_RUN_ENABLED?: string;
+    OPENFLOOR_TEST_ALLOW_IDENTITY_HEADERS?: string;
+    OPENFLOOR_TEST_AGENT_RUN_DATA?: string;
+    PREFLIGHT_LOGS?: R2BucketLike;
+  };
+  if (bindings.AGENT_RUN_ENABLED !== "true" && bindings.OPENFLOOR_TEST_ALLOW_IDENTITY_HEADERS !== "true") {
+    return { ok: false, kind: "disabled", message: "Agent execution is not enabled" };
+  }
+  if (disabledRunProviders().has(conflict.agentProvider)) {
+    return { ok: false, kind: "disabled", message: `${providerLabel(conflict.agentProvider)} execution is not enabled` };
+  }
+  const quota = await getOwnerHourQuota(conflict.sessionId, getDb());
+  if (quota && quota.endedAt == null && quota.seconds >= PLAN_LIMITS[quota.plan].hours * 3600) {
+    return { ok: false, kind: "quota_exhausted", message: "Your plan's monthly session hours are used up." };
+  }
+  const launchKind = conflict.resumeRequested
+    ? await hasAnsweredConflictQuestions(conflict.id) ? "answer" as const : "manual" as const
+    : "automatic" as const;
+  const run = await createConflictResolverRun(conflict.id, launchKind, getDb());
+  if (!run) return { ok: false, kind: "conflict", message: "The conflict case is no longer available to start." };
+  if (bindings.OPENFLOOR_TEST_ALLOW_IDENTITY_HEADERS === "true" && bindings.OPENFLOOR_TEST_AGENT_RUN_DATA && bindings.PREFLIGHT_LOGS) {
+    const result = await runTestAgent(run.runId, bindings.OPENFLOOR_TEST_AGENT_RUN_DATA, bindings.PREFLIGHT_LOGS);
+    if (result === "ready") await publishTestRun(run.runId, bindings.OPENFLOOR_TEST_AGENT_RUN_DATA);
+    else if (result === "failed") await advanceConflictAfterFailure(run.runId, "A required resolver check failed.", getDb());
+  } else {
+    if (!bindings.AGENT_RUN_WORKFLOW) throw new Error("Agent run Workflow binding is unavailable");
+    await bindings.AGENT_RUN_WORKFLOW.create({ id: run.runId, params: { runId: run.runId } });
+  }
+  return { ok: true, runId: run.runId };
+}
+
+async function hasAnsweredConflictQuestions(caseId: string): Promise<boolean> {
+  const row = await getDb().prepare(
+    "SELECT 1 AS present FROM merge_conflict_questions WHERE case_id = ? AND answer IS NOT NULL LIMIT 1",
+  ).bind(caseId).first<{ present: number }>();
+  return Boolean(row);
 }
 
 async function ensureNextCandidateCycle(sessionId: string, userId: string): Promise<void> {
@@ -182,15 +232,33 @@ async function runTestAgent(runId: string, encoded: string, bucket: R2BucketLike
   const context = await getRunExecutionContext(runId);
   if (!context) throw new Error("Test run context is missing");
   await holdTestRunStage(runId, data);
-  const brief = await renderRunBrief(runId);
-  if (!brief) throw new Error("Test run session brief is missing");
+  const prompt = await renderTestRunPrompt(runId);
+  if (!prompt) throw new Error("Test run session brief is missing");
   const promptKey = `runs/${runId}/prompt.txt`;
-  await bucket.put(promptKey, brief.text, { httpMetadata: { contentType: "text/plain; charset=utf-8" } });
-  await recordRunArtifact(runId, "prompt", promptKey, "text/plain; charset=utf-8", brief.text.length);
+  await bucket.put(promptKey, prompt, { httpMetadata: { contentType: "text/plain; charset=utf-8" } });
+  await recordRunArtifact(runId, "prompt", promptKey, "text/plain; charset=utf-8", prompt.length);
   await markRunRunning(runId, `test-${runId}`);
   await holdTestRunStage(runId, data);
   if (data.holdPrompts?.some((value) => context.prompts.some((prompt) => prompt.text.includes(value)))) return "hold";
-  const shouldFail = data.failPrompts?.some((value) => context.prompts.some((prompt) => prompt.text.includes(value))) ?? false;
+  if (context.conflictCaseId && data.resolverQuestionPrompts?.some((value) => context.prompts.some((item) => item.text.includes(value)))) {
+    const conflict = (await getMergeConflictCases(context.sessionId)).find((item) => item.id === context.conflictCaseId);
+    if (conflict && !conflict.questions.some((question) => question.answer !== null)) {
+      await requestConflictInput(runId, "Repository intent is ambiguous and needs a session decision.", [
+        "Should the resolver preserve the existing public behavior?",
+        "May the resolver remove the conflicting legacy path?",
+      ]);
+      await finishResolverAwaitingInput(runId);
+      return "failed";
+    }
+  }
+  const conflict = context.conflictCaseId
+    ? (await getMergeConflictCases(context.sessionId)).find((item) => item.id === context.conflictCaseId)
+    : null;
+  const shouldFail = context.conflictCaseId
+    ? (data.resolverFailPrompts?.some((value) => context.prompts.some((prompt) => prompt.text.includes(value))) ?? false)
+      || (conflict?.automaticAttempts === 1
+        && (data.resolverFailFirstAttemptPrompts?.some((value) => context.prompts.some((prompt) => prompt.text.includes(value))) ?? false))
+    : data.failPrompts?.some((value) => context.prompts.some((prompt) => prompt.text.includes(value))) ?? false;
   const matchedPath = Object.entries(data.pathByPrompt ?? {}).find(([prompt]) => context.prompts.some((item) => item.text.includes(prompt)))?.[1];
   const path = matchedPath ?? data.changedPath ?? "src/agent-change.ts";
   const matchedFiles = Object.entries(data.filesByPrompt ?? {}).find(([prompt]) => context.prompts.some((item) => item.text.includes(prompt)))?.[1];
@@ -241,6 +309,38 @@ async function runTestAgent(runId: string, encoded: string, bucket: R2BucketLike
   return shouldFail ? "failed" : "ready";
 }
 
+// Reply-run counterpart of runTestAgent: same brief-rendering and prompt
+// artifact, but no files/checks/log — a reply run answers, it doesn't edit.
+async function runTestAgentReply(runId: string, encoded: string, bucket: R2BucketLike): Promise<"hold" | "failed" | "ready"> {
+  const data = JSON.parse(encoded) as TestAgentRunData;
+  const context = await getRunExecutionContext(runId);
+  if (!context) throw new Error("Test run context is missing");
+  await holdTestRunStage(runId, data);
+  const brief = await renderRunBrief(runId);
+  if (!brief) throw new Error("Test run session brief is missing");
+  const promptKey = `runs/${runId}/prompt.txt`;
+  await bucket.put(promptKey, brief.text, { httpMetadata: { contentType: "text/plain; charset=utf-8" } });
+  await recordRunArtifact(runId, "prompt", promptKey, "text/plain; charset=utf-8", brief.text.length);
+  await markRunRunning(runId, `test-${runId}`);
+  await holdTestRunStage(runId, data);
+  if (data.holdPrompts?.some((value) => context.prompts.some((prompt) => prompt.text.includes(value)))) return "hold";
+  const shouldFail = data.failPrompts?.some((value) => context.prompts.some((prompt) => prompt.text.includes(value))) ?? false;
+  const matchedReply = Object.entries(data.replyByPrompt ?? {}).find(([prompt]) => context.prompts.some((item) => item.text.includes(prompt)))?.[1];
+  const finalResponse = matchedReply ?? data.replyText ?? `Answered: ${context.prompts.map((prompt) => prompt.text).join(" | ")}`;
+  const activitySource = data.activityEvents ?? [
+    { kind: "reasoning", detail: "Reading the session brief and repository before answering." },
+    { kind: "agent_message", detail: finalResponse },
+  ];
+  const inserted = await insertRunActivityEvents(runId, activitySource.map((event, index) => ({
+    sequence: RUNNER_SEQUENCE_BASE + index + 1, kind: event.kind, detail: event.detail,
+  })));
+  if (inserted.length > 0) await notifyRunActivity(context.sessionId, { runId, agentId: context.agentId, events: inserted });
+  await holdTestRunStage(runId, data);
+  await finishAgentReply(runId, shouldFail ? "failed" : "ready", shouldFail ? null : finalResponse, shouldFail ? "The reply could not be generated." : "Answered the prompt.");
+  await holdTestRunStage(runId, data);
+  return shouldFail ? "failed" : "ready";
+}
+
 async function publishTestRun(runId: string, encoded: string) {
   const data = JSON.parse(encoded) as TestAgentRunData;
   const context = await getRunExecutionContext(runId);
@@ -255,7 +355,14 @@ async function publishTestRun(runId: string, encoded: string) {
   const remoteSha = await createRepositoryBranch(config, context.installationId, repository, context.runBranch, commitSha);
   await finishRunPublished(runId, commitSha, remoteSha);
   await holdTestRunStage(runId, data);
-  if (context.attempt === 1 && data.conflictFirstAttemptPrompts?.some((value) => context.prompts.some((prompt) => prompt.text.includes(value)))) {
+  const conflict = context.conflictCaseId
+    ? (await getMergeConflictCases(context.sessionId)).find((item) => item.id === context.conflictCaseId)
+    : null;
+  const sourceConflict = !context.conflictCaseId && context.attempt === 1
+    && data.conflictFirstAttemptPrompts?.some((value) => context.prompts.some((prompt) => prompt.text.includes(value)));
+  const resolverConflict = Boolean(context.conflictCaseId && conflict?.automaticAttempts === 1
+    && data.resolverConflictFirstAttemptPrompts?.some((value) => context.prompts.some((prompt) => prompt.text.includes(value))));
+  if (sourceConflict || resolverConflict) {
     setTestRepositoryMergeConflict(repository.id, commitSha);
   }
   const integration = await beginRunIntegration(runId);
@@ -267,14 +374,32 @@ async function publishTestRun(runId: string, encoded: string) {
       head: integration.candidateBranch, base: integration.baseBranch,
     });
     await finishRunIntegrated(runId, merged.sha, pullRequest);
+    if (context.conflictCaseId) await markConflictResolved(runId, merged.sha);
     await holdTestRunStage(runId, data);
   } catch (error) {
     if (error instanceof GitHubApiError && error.status === 409) {
       await markRunIntegrationConflicted(runId, error.message);
+      await recordIntegrationConflict(runId, error.message);
       return;
     }
     throw error;
   }
+}
+
+async function renderTestRunPrompt(runId: string): Promise<string | null> {
+  const brief = await renderRunBrief(runId);
+  if (!brief) return null;
+  const context = await getRunExecutionContext(runId);
+  if (!context?.conflictCaseId) return brief.text;
+  const conflictContext = await getConflictRunContext(runId);
+  const conflict = (await getMergeConflictCases(context.sessionId)).find((item) => item.id === context.conflictCaseId);
+  if (!conflictContext || !conflict) return null;
+  return renderConflictResolverPrompt({
+    conflict,
+    sourceSummary: conflictContext.sourceSummary,
+    sourceConflictReason: conflictContext.sourceConflictReason,
+    sessionBrief: brief.text,
+  });
 }
 
 async function holdTestRunStage(runId: string, data: TestAgentRunData): Promise<void> {

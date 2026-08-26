@@ -10,6 +10,7 @@ import type {
   ReviewContributor,
 } from "@/lib/floor-types";
 import type { AgentInput, AgentTaskInput, AssignmentInput, MessageInput, QueuePromptInput } from "@/lib/validation";
+import { normalizeAgentName } from "@/lib/validation";
 import { getDb, type D1DatabaseLike } from "./index";
 import {
   getActiveRepositoryCandidate,
@@ -18,8 +19,11 @@ import {
   getRepositoryConnectionForMember,
 } from "./repositories";
 import { getLatestRepositoryPreflight } from "./preflights";
-import { getAgentRuns } from "./runs";
+import { getAgentRuns, requestAgentRunCancellation } from "./runs";
+import { getMergeConflictCases } from "./conflicts";
 import { getActiveMembershipRole, getMembershipRole } from "./sessions";
+import { resolveAutoAgentProvider } from "./provider-credentials";
+import { disabledRunProviders } from "@/lib/provider-rollout";
 
 type AgentRecord = FloorAgent;
 type AssignmentRecord = FloorAssignment;
@@ -40,15 +44,17 @@ export async function getFloorSnapshot(
 }
 
 async function readFloorSnapshot(sessionId: string, userId: string, database: D1DatabaseLike): Promise<FloorSnapshot> {
-  const [session, agents, assignments, messages, queue, prompts, repository, activeCandidate, reviewCandidate, latestPreflight, runs] = await Promise.all([
-    database.prepare("SELECT floor_revision AS revision, auto_dispatch AS autoDispatch FROM sessions WHERE id = ?").bind(sessionId).first<{ revision: number; autoDispatch: number }>(),
+  const [session, providerResolution, agents, assignments, messages, queue, prompts, repository, activeCandidate, reviewCandidate, latestPreflight, runs, conflicts] = await Promise.all([
+    database.prepare("SELECT floor_revision AS revision, auto_dispatch AS autoDispatch, auto_provision_agents AS autoProvisionAgents, auto_resolve_conflicts AS autoResolveConflicts FROM sessions WHERE id = ?").bind(sessionId).first<{ revision: number; autoDispatch: number; autoProvisionAgents: number; autoResolveConflicts: number }>(),
+    resolveAutoAgentProvider(sessionId, database, disabledRunProviders()),
     database.prepare(
       `SELECT a.id, a.name, a.role, a.task, a.owner_user_id AS ownerUserId,
               owner.display_name AS ownerName, a.created_by AS createdByUserId,
-              a.state, a.provider, a.model, a.created_at AS createdAt, a.updated_at AS updatedAt
+              a.state, a.kind, a.provider, a.model, a.paused_at AS pausedAt,
+              a.created_at AS createdAt, a.updated_at AS updatedAt
        FROM floor_agents a
        JOIN users owner ON owner.id = a.owner_user_id
-       WHERE a.session_id = ?
+       WHERE a.session_id = ? AND a.deprovisioned_at IS NULL
        ORDER BY a.created_at, a.id`,
     ).bind(sessionId).all<AgentRecord>(),
     database.prepare(
@@ -71,11 +77,11 @@ async function readFloorSnapshot(sessionId: string, userId: string, database: D1
     ).bind(sessionId, userId, userId).all<MessageRecord>(),
     database.prepare(
       `SELECT q.id, q.agent_id AS agentId, a.name AS agentName, q.position, q.status,
-              q.assigned_by AS assignedBy, q.assigned_reason AS assignedReason,
+              q.assigned_by AS assignedBy, q.assigned_reason AS assignedReason, q.intent,
               q.created_at AS createdAt, q.updated_at AS updatedAt
        FROM floor_queue_items q
        LEFT JOIN floor_agents a ON a.id = q.agent_id
-       WHERE q.session_id = ?
+       WHERE q.session_id = ? AND q.dismissed_at IS NULL
        ORDER BY q.position, q.created_at, q.id`,
     ).bind(sessionId).all<QueueRecord>(),
     database.prepare(
@@ -92,6 +98,7 @@ async function readFloorSnapshot(sessionId: string, userId: string, database: D1
     getLatestRepositoryReviewCandidate(sessionId, database),
     getLatestRepositoryPreflight(sessionId, database),
     getAgentRuns(sessionId, database),
+    getMergeConflictCases(sessionId, database),
   ]);
 
   const promptsByItem = new Map<string, FloorQueuePrompt[]>();
@@ -106,6 +113,11 @@ async function readFloorSnapshot(sessionId: string, userId: string, database: D1
   return {
     revision: Number(session?.revision ?? 0),
     autoDispatch: Boolean(session?.autoDispatch),
+    autoProvisionAgents: Boolean(session?.autoProvisionAgents),
+    autoAgentProvider: providerResolution.configuredProvider,
+    effectiveAutoAgentProvider: providerResolution.effectiveProvider,
+    autoAgentProviderState: providerResolution.state,
+    autoResolveConflicts: Boolean(session?.autoResolveConflicts),
     agents: agents.results,
     assignments: assignments.results.map((assignment) => ({
       ...assignment,
@@ -119,7 +131,7 @@ async function readFloorSnapshot(sessionId: string, userId: string, database: D1
     activeCandidate,
     latestPreflight,
     runs,
-    review: buildRunReview(runs, reviewCandidate, candidateReview, promptsByItem, assignments.results),
+    review: buildRunReview(runs, reviewCandidate, candidateReview, promptsByItem, assignments.results, conflicts),
   };
 }
 
@@ -157,6 +169,7 @@ function buildRunReview(
   githubReview: Awaited<ReturnType<typeof getRepositoryCandidateReviewData>> | null,
   promptsByItem: Map<string, FloorQueuePrompt[]>,
   members: Array<{ userId: string; userName: string }>,
+  conflicts: Awaited<ReturnType<typeof getMergeConflictCases>>,
 ): FloorReviewSnapshot | null {
   if (!candidate) return null;
   const candidateRuns = runs.filter((item) => item.candidateId === candidate.id && item.files.length > 0);
@@ -188,7 +201,8 @@ function buildRunReview(
     state: check.status === "passed" ? "passed" as const : check.status === "failed" || check.status === "timed_out" ? "failed" as const : "waiting" as const,
   })));
   const checks = [...(githubReview?.checks.map((check) => ({ id: check.id, name: check.name, detail: check.detail, state: check.state })) ?? []), ...localChecks];
-  const conflicted = candidateRuns.find((run) => run.status === "conflicted");
+  const activeConflictSourceIds = new Set(conflicts.filter((item) => !["resolved", "cancelled"].includes(item.status)).map((item) => item.latestSourceRunId));
+  const conflicted = candidateRuns.find((run) => run.status === "conflicted" && activeConflictSourceIds.has(run.id));
   const warnings: FloorReviewSnapshot["warnings"] = [];
   if (conflicted) warnings.push({ id: `${conflicted.id}-conflict`, title: "Integration conflict", detail: conflicted.conflictReason ?? "A run conflicts with the candidate.", severity: "conflict" });
   if (candidate.behindBase && candidate.status === "active") warnings.push({ id: `${candidate.id}-behind`, title: "Base branch advanced", detail: "Synchronize and resolve the candidate before merging.", severity: "warning" });
@@ -204,7 +218,8 @@ function buildRunReview(
     files,
     checks,
     warnings,
-    updatedAt: Math.max(candidate.updatedAt, ...candidateRuns.map((run) => run.updatedAt), 0),
+    conflicts,
+    updatedAt: Math.max(candidate.updatedAt, ...candidateRuns.map((run) => run.updatedAt), ...conflicts.map((conflict) => conflict.updatedAt), 0),
     githubChecksPassing: candidate.githubChecksPassing,
     cleanupStatus: candidate.cleanupStatus,
     branchDeletedAt: candidate.branchDeletedAt,
@@ -257,6 +272,117 @@ export async function createFloorAgent(
   return readFloorSnapshot(sessionId, userId, database);
 }
 
+const ANSWER_AGENT_NAME = "Concierge";
+const ANSWER_AGENT_ROLE = "Session answers";
+const ANSWER_AGENT_TASK = "Answer questions about this session and its repository.";
+const WORKER_AGENT_NAME = "Auto Worker";
+const WORKER_AGENT_ROLE = "Auto-provisioned engineer";
+const GENERATED_AGENT_NAME_ATTEMPTS = 100;
+
+// Generated agents are persisted for attribution but activated only while
+// the router has work for them. Their fixed metadata is system-owned. Kind,
+// never name, distinguishes Concierge from a persistent agent with the same
+// name; collisions therefore suffix the generated name safely.
+//
+// Callers are the per-session SessionRouter Durable Object's alarm(), which
+// never overlaps itself, so concurrent creation within one session is not a
+// practical race; the loop below is defensive, not load-bearing.
+export async function ensureAnswerAgent(
+  sessionId: string,
+  ownerUserId: string,
+  provider: import("@/lib/provider-credentials").CredentialProvider,
+  database: D1DatabaseLike = getDb(),
+): Promise<{ id: string; name: string; changed: boolean }> {
+  return provisionGeneratedAgent(sessionId, ownerUserId, provider, "answer", ANSWER_AGENT_TASK, database);
+}
+
+export async function ensureWorkerAgent(
+  sessionId: string,
+  ownerUserId: string,
+  provider: import("@/lib/provider-credentials").CredentialProvider,
+  task: string,
+  database: D1DatabaseLike = getDb(),
+): Promise<{ id: string; name: string; changed: boolean }> {
+  return provisionGeneratedAgent(sessionId, ownerUserId, provider, "worker", task.slice(0, 1_000), database);
+}
+
+async function provisionGeneratedAgent(
+  sessionId: string,
+  ownerUserId: string,
+  provider: import("@/lib/provider-credentials").CredentialProvider,
+  kind: "answer" | "worker",
+  task: string,
+  database: D1DatabaseLike,
+): Promise<{ id: string; name: string; changed: boolean }> {
+  const active = await database.prepare(
+    "SELECT id, name FROM floor_agents WHERE session_id = ? AND kind = ? AND deprovisioned_at IS NULL ORDER BY created_at, id LIMIT 1",
+  ).bind(sessionId, kind).first<{ id: string; name: string }>();
+  if (active && kind === "answer") return { id: active.id, name: active.name, changed: false };
+
+  const reusable = await database.prepare(
+    "SELECT id, name FROM floor_agents WHERE session_id = ? AND kind = ? AND deprovisioned_at IS NOT NULL ORDER BY deprovisioned_at, created_at, id LIMIT 1",
+  ).bind(sessionId, kind).first<{ id: string; name: string }>();
+  if (reusable) {
+    const now = Date.now();
+    const result = await database.prepare(
+      `UPDATE floor_agents SET owner_user_id = ?, provider = ?, task = ?, deprovisioned_at = NULL, updated_at = ?
+       WHERE id = ? AND session_id = ? AND deprovisioned_at IS NOT NULL`,
+    ).bind(ownerUserId, provider, task, now, reusable.id, sessionId).run();
+    if (Number(result.meta?.changes ?? 0) > 0) return { id: reusable.id, name: reusable.name, changed: true };
+  }
+
+  const baseName = kind === "answer" ? ANSWER_AGENT_NAME : WORKER_AGENT_NAME;
+  const role = kind === "answer" ? ANSWER_AGENT_ROLE : WORKER_AGENT_ROLE;
+  for (let attempt = 0; attempt < GENERATED_AGENT_NAME_ATTEMPTS; attempt += 1) {
+    const name = attempt === 0 ? baseName : `${baseName} ${attempt + 1}`;
+    const id = crypto.randomUUID();
+    const now = Date.now();
+    try {
+      const result = await database.prepare(
+        `INSERT INTO floor_agents
+           (id, session_id, created_by, owner_user_id, name, name_key, role, task, state, provider, kind, created_at, updated_at)
+         SELECT ?, ?, ?, ?, ?, ?, ?, ?, 'created', ?, ?, ?, ?
+         WHERE EXISTS (SELECT 1 FROM sessions WHERE id = ? AND ended_at IS NULL)`,
+      ).bind(id, sessionId, ownerUserId, ownerUserId, name, normalizeAgentName(name), role, task, provider, kind, now, now, sessionId).run();
+      if (Number(result.meta?.changes ?? 0) > 0) return { id, name, changed: true };
+      // The session ended between the check above and here; nothing to create.
+      throw new FloorTargetError("Session has ended.");
+    } catch (error) {
+      if (String(error).toLowerCase().includes("unique")) continue; // name collision, try the next suffix
+      throw error;
+    }
+  }
+  throw new Error(`Could not create a generated ${kind} agent: no available name.`);
+}
+
+/** Reconcile generated agents after toggles and terminal run transitions. */
+export async function deprovisionIdleGeneratedAgents(
+  sessionId: string,
+  autoProvisionEnabled: boolean,
+  database: D1DatabaseLike = getDb(),
+): Promise<boolean> {
+  const now = Date.now();
+  let changed = false;
+  if (!autoProvisionEnabled) {
+    const unassigned = await database.prepare(
+      `UPDATE floor_queue_items SET agent_id = NULL, assigned_by = NULL, assigned_reason = NULL, updated_at = ?
+       WHERE session_id = ? AND assigned_by = 'router' AND status IN ('queued', 'paused')
+         AND agent_id IN (SELECT id FROM floor_agents WHERE session_id = ? AND kind IN ('answer', 'worker') AND deprovisioned_at IS NULL)`,
+    ).bind(now, sessionId, sessionId).run();
+    changed = Number(unassigned.meta?.changes ?? 0) > 0;
+  }
+  const protectedQueueStatuses = autoProvisionEnabled
+    ? "('queued', 'running', 'blocked', 'paused')"
+    : "('running', 'blocked')";
+  const retired = await database.prepare(
+    `UPDATE floor_agents AS a SET deprovisioned_at = ?, updated_at = ?
+     WHERE a.session_id = ? AND a.kind IN ('answer', 'worker') AND a.deprovisioned_at IS NULL
+       AND NOT EXISTS (SELECT 1 FROM floor_queue_items q WHERE q.agent_id = a.id AND q.status IN ${protectedQueueStatuses})
+       AND NOT EXISTS (SELECT 1 FROM agent_runs r WHERE r.agent_id = a.id AND r.status IN ('provisioning', 'running', 'checking', 'cancel_requested', 'publishing', 'published', 'integrating'))`,
+  ).bind(now, now, sessionId).run();
+  return changed || Number(retired.meta?.changes ?? 0) > 0;
+}
+
 export async function updateFloorAgentTask(
   sessionId: string,
   userId: string,
@@ -266,15 +392,178 @@ export async function updateFloorAgentTask(
 ): Promise<FloorSnapshot | null> {
   if (!(await getActiveMembershipRole(sessionId, userId, database))) return null;
   const now = Date.now();
+  const result = await database.prepare(
+    `UPDATE floor_agents SET task = ?, updated_at = ?
+     WHERE id = ? AND session_id = ? AND kind IS NULL AND deprovisioned_at IS NULL
+       AND EXISTS (SELECT 1 FROM sessions WHERE id = ? AND ended_at IS NULL)`,
+  ).bind(input.task, now, agentId, sessionId, sessionId).run();
+  if (Number(result.meta?.changes ?? 0) === 0) {
+    if (!(await getActiveMembershipRole(sessionId, userId, database))) return null;
+    throw new FloorTargetError("Only active, persistent agents can be edited.");
+  }
+  await bumpFloorRevision(database, sessionId, now).run();
+  return readFloorSnapshot(sessionId, userId, database);
+}
+
+// Statuses agent_runs uses for the run-cancellation write path
+// (requestAgentRunCancellation in db/runs.ts accepts exactly this set).
+const CANCELLABLE_RUN_STATUSES = "('provisioning', 'running', 'checking', 'integrating')";
+// Broader "has real in-flight work" set used to refuse a delete outright —
+// includes cancel_requested (already mid-cancellation) so a second delete
+// attempt doesn't race the workflow's own cleanup.
+const AGENT_ACTIVE_RUN_STATUSES = "('provisioning', 'running', 'checking', 'cancel_requested', 'integrating')";
+
+/**
+ * Manual start/pause for a persistent agent. Any session member may call
+ * this — unlike run cancellation, pausing never touches an in-flight run,
+ * it only blocks the router from assigning/dispatching new work to this
+ * agent (db/routing.ts filters `paused_at IS NULL`). System-managed
+ * (kind IS NOT NULL) agents are router-controlled and excluded here, same
+ * as updateFloorAgentTask above.
+ */
+export async function pauseFloorAgent(
+  sessionId: string,
+  userId: string,
+  agentId: string,
+  paused: boolean,
+  database = getDb(),
+): Promise<FloorSnapshot | null> {
+  if (!(await getActiveMembershipRole(sessionId, userId, database))) return null;
+  const now = Date.now();
+  const result = await database.prepare(
+    `UPDATE floor_agents SET paused_at = ?, updated_at = ?
+     WHERE id = ? AND session_id = ? AND kind IS NULL AND deprovisioned_at IS NULL
+       AND paused_at IS ${paused ? "NULL" : "NOT NULL"}
+       AND EXISTS (SELECT 1 FROM sessions WHERE id = ? AND ended_at IS NULL)`,
+  ).bind(paused ? now : null, now, agentId, sessionId, sessionId).run();
+  if (Number(result.meta?.changes ?? 0) === 0) {
+    if (!(await getActiveMembershipRole(sessionId, userId, database))) return null;
+    throw new FloorConflictError(paused ? "This agent is already paused, system-managed, or removed." : "This agent is not paused.");
+  }
+  await bumpFloorRevision(database, sessionId, now).run();
+  return readFloorSnapshot(sessionId, userId, database);
+}
+
+/**
+ * Any member may Stop an agent: it always blocks new dispatch immediately
+ * (same effect as pauseFloorAgent(..., true)). Cancelling an in-flight run
+ * is a separate, owner-only privilege (agent_runs' documented invariant —
+ * "the owner may start or cancel; members receive no run mutation
+ * controls") so a non-owner's Stop leaves an active run to finish, exactly
+ * like Pause would; an owner's Stop also cancels it via the existing
+ * requestAgentRunCancellation.
+ */
+export async function stopFloorAgent(
+  sessionId: string,
+  userId: string,
+  agentId: string,
+  database = getDb(),
+): Promise<FloorSnapshot | null> {
+  const role = await getActiveMembershipRole(sessionId, userId, database);
+  if (!role) return null;
+  const now = Date.now();
+  const result = await database.prepare(
+    `UPDATE floor_agents SET paused_at = COALESCE(paused_at, ?), updated_at = ?
+     WHERE id = ? AND session_id = ? AND kind IS NULL AND deprovisioned_at IS NULL
+       AND EXISTS (SELECT 1 FROM sessions WHERE id = ? AND ended_at IS NULL)`,
+  ).bind(now, now, agentId, sessionId, sessionId).run();
+  if (Number(result.meta?.changes ?? 0) === 0) {
+    if (!(await getActiveMembershipRole(sessionId, userId, database))) return null;
+    throw new FloorTargetError("This agent cannot be stopped.");
+  }
+  if (role === "owner") {
+    const activeRun = await database.prepare(
+      `SELECT id FROM agent_runs WHERE session_id = ? AND agent_id = ? AND status IN ${CANCELLABLE_RUN_STATUSES}`,
+    ).bind(sessionId, agentId).first<{ id: string }>();
+    if (activeRun) await requestAgentRunCancellation(sessionId, activeRun.id, userId, database);
+  }
+  await bumpFloorRevision(database, sessionId, now).run();
+  return readFloorSnapshot(sessionId, userId, database);
+}
+
+/**
+ * Soft-deletes a persistent agent (deprovisioned_at, same column the
+ * auto-provisioning lifecycle uses for system agents) and unassigns it from
+ * any still-queued/paused items so the router can re-route them. Refuses
+ * while the agent has real in-flight work — stop it first.
+ */
+export async function deleteFloorAgent(
+  sessionId: string,
+  userId: string,
+  agentId: string,
+  database = getDb(),
+): Promise<FloorSnapshot | null> {
+  if (!(await getActiveMembershipRole(sessionId, userId, database))) return null;
+  const activeRun = await database.prepare(
+    `SELECT 1 AS present FROM agent_runs WHERE session_id = ? AND agent_id = ? AND status IN ${AGENT_ACTIVE_RUN_STATUSES}`,
+  ).bind(sessionId, agentId).first<{ present: number }>();
+  if (activeRun) throw new FloorConflictError("Stop this agent's run before deleting it.");
+  const now = Date.now();
   const results = await database.batch([
     database.prepare(
-      `UPDATE floor_agents SET task = ?, updated_at = ?
-       WHERE id = ? AND session_id = ?
+      `UPDATE floor_queue_items SET agent_id = NULL, assigned_by = NULL, assigned_reason = NULL, updated_at = ?
+       WHERE session_id = ? AND agent_id = ? AND status IN ('queued', 'paused')`,
+    ).bind(now, sessionId, agentId),
+    database.prepare(
+      `UPDATE floor_agents SET deprovisioned_at = ?, updated_at = ?
+       WHERE id = ? AND session_id = ? AND kind IS NULL AND deprovisioned_at IS NULL
          AND EXISTS (SELECT 1 FROM sessions WHERE id = ? AND ended_at IS NULL)`,
-    ).bind(input.task, now, agentId, sessionId, sessionId),
+    ).bind(now, now, agentId, sessionId, sessionId),
     bumpFloorRevision(database, sessionId, now),
   ]);
-  if (!(await activeBatchApplied(results, sessionId, userId, database))) return null;
+  if (Number(results[1]?.meta?.changes ?? 0) === 0) {
+    if (!(await getActiveMembershipRole(sessionId, userId, database))) return null;
+    throw new FloorConflictError("This agent no longer exists or cannot be removed.");
+  }
+  return readFloorSnapshot(sessionId, userId, database);
+}
+
+/** Owner-only bulk lever over the "any member" per-agent buttons above. */
+export async function pauseAllFloorAgents(sessionId: string, userId: string, database = getDb()): Promise<FloorSnapshot | null> {
+  if ((await getActiveMembershipRole(sessionId, userId, database)) !== "owner") return null;
+  const now = Date.now();
+  await database.batch([
+    database.prepare(
+      `UPDATE floor_agents SET paused_at = ?, updated_at = ?
+       WHERE session_id = ? AND kind IS NULL AND deprovisioned_at IS NULL AND paused_at IS NULL
+         AND EXISTS (SELECT 1 FROM sessions WHERE id = ? AND ended_at IS NULL)`,
+    ).bind(now, now, sessionId, sessionId),
+    bumpFloorRevision(database, sessionId, now),
+  ]);
+  return readFloorSnapshot(sessionId, userId, database);
+}
+
+export async function resumeAllFloorAgents(sessionId: string, userId: string, database = getDb()): Promise<FloorSnapshot | null> {
+  if ((await getActiveMembershipRole(sessionId, userId, database)) !== "owner") return null;
+  const now = Date.now();
+  await database.batch([
+    database.prepare(
+      `UPDATE floor_agents SET paused_at = NULL, updated_at = ?
+       WHERE session_id = ? AND kind IS NULL AND deprovisioned_at IS NULL AND paused_at IS NOT NULL
+         AND EXISTS (SELECT 1 FROM sessions WHERE id = ? AND ended_at IS NULL)`,
+    ).bind(now, sessionId, sessionId),
+    bumpFloorRevision(database, sessionId, now),
+  ]);
+  return readFloorSnapshot(sessionId, userId, database);
+}
+
+/** Bulk Stop: pauses every persistent agent and cancels every run it has
+ * active, reusing requestAgentRunCancellation per run — a strict superset
+ * of individual Stop, no new authorization surface. */
+export async function stopAllFloorAgents(sessionId: string, userId: string, database = getDb()): Promise<FloorSnapshot | null> {
+  if ((await getActiveMembershipRole(sessionId, userId, database)) !== "owner") return null;
+  const now = Date.now();
+  await database.prepare(
+    `UPDATE floor_agents SET paused_at = ?, updated_at = ?
+     WHERE session_id = ? AND kind IS NULL AND deprovisioned_at IS NULL AND paused_at IS NULL
+       AND EXISTS (SELECT 1 FROM sessions WHERE id = ? AND ended_at IS NULL)`,
+  ).bind(now, now, sessionId, sessionId).run();
+  const activeRuns = await database.prepare(
+    `SELECT r.id FROM agent_runs r JOIN floor_agents a ON a.id = r.agent_id
+     WHERE r.session_id = ? AND a.kind IS NULL AND r.status IN ${CANCELLABLE_RUN_STATUSES}`,
+  ).bind(sessionId).all<{ id: string }>();
+  for (const run of activeRuns.results) await requestAgentRunCancellation(sessionId, run.id, userId, database);
+  await bumpFloorRevision(database, sessionId, now).run();
   return readFloorSnapshot(sessionId, userId, database);
 }
 
@@ -334,7 +623,7 @@ export async function createFloorQueueItem(
     throw new FloorTargetError("Queue target must belong to this session.");
   }
   const last = await database.prepare(
-    "SELECT COALESCE(MAX(position), 0) AS position FROM floor_queue_items WHERE session_id = ?",
+    "SELECT COALESCE(MAX(position), 0) AS position FROM floor_queue_items WHERE session_id = ? AND dismissed_at IS NULL",
   ).bind(sessionId).first<{ position: number }>();
   const itemId = crypto.randomUUID();
   const now = Date.now();
@@ -400,7 +689,7 @@ export async function updateFloorQueuePrompt(
   const results = await database.batch([
     database.prepare(
       `UPDATE floor_queue_prompts SET text = ? WHERE id = ? AND queue_item_id = ?
-       AND EXISTS (SELECT 1 FROM floor_queue_items WHERE id = ? AND session_id = ? AND status IN ('queued', 'paused'))`,
+       AND EXISTS (SELECT 1 FROM floor_queue_items WHERE id = ? AND session_id = ? AND status IN ('queued', 'paused') AND dismissed_at IS NULL)`,
     ).bind(text, promptId, itemId, itemId, sessionId),
     database.prepare(`UPDATE floor_queue_items SET updated_at = ? WHERE id = ?`).bind(now, itemId),
     bumpFloorRevision(database, sessionId, now),
@@ -427,7 +716,7 @@ export async function setFloorQueueItemPaused(
   const results = await database.batch([
     database.prepare(
       `UPDATE floor_queue_items SET status = ?, updated_at = ? WHERE id = ? AND session_id = ?
-       AND status IN (${fromStatuses.map(() => "?").join(", ")})`,
+       AND status IN (${fromStatuses.map(() => "?").join(", ")}) AND dismissed_at IS NULL`,
     ).bind(paused ? "paused" : "queued", now, itemId, sessionId, ...fromStatuses),
     bumpFloorRevision(database, sessionId, now),
   ]);
@@ -438,6 +727,44 @@ export async function setFloorQueueItemPaused(
   return readFloorSnapshot(sessionId, userId, database);
 }
 
+// Gives an unassigned queued item a target so it can be Run manually — the
+// only other assigner is the router's assign phase, which never runs while
+// auto-dispatch is off, so a targetless prompt otherwise had no way to reach
+// a Run button (PromptQueue.tsx's Run condition requires item.agentId).
+export async function setFloorQueueItemAgent(
+  sessionId: string,
+  userId: string,
+  itemId: string,
+  agentId: string,
+  database = getDb(),
+): Promise<FloorSnapshot | null> {
+  if (!(await canManageQueueItem(sessionId, userId, itemId, database))) return null;
+  if (!(await isSessionAgent(sessionId, agentId, database))) {
+    throw new FloorTargetError("Queue target must belong to this session.");
+  }
+  const now = Date.now();
+  const results = await database.batch([
+    database.prepare(
+      `UPDATE floor_queue_items SET agent_id = ?, assigned_by = 'user', assigned_reason = NULL, updated_at = ?
+       WHERE id = ? AND session_id = ? AND status = 'queued' AND agent_id IS NULL AND dismissed_at IS NULL`,
+    ).bind(agentId, now, itemId, sessionId),
+    bumpFloorRevision(database, sessionId, now),
+  ]);
+  if (Number(results[0]?.meta?.changes ?? 0) === 0) {
+    if (!(await getActiveMembershipRole(sessionId, userId, database))) return null;
+    throw new FloorConflictError("This prompt already has a target, or is no longer queued.");
+  }
+  return readFloorSnapshot(sessionId, userId, database);
+}
+
+// Soft-delete: agent_runs.queue_item_id has no ON DELETE cascade (agent_runs
+// keeps four inbound cascades already — see its schema comment — so adding
+// one more here would force a table recreate against production data). A
+// failed/cancelled item always has a run row, so a hard DELETE on it raised
+// a raw FOREIGN KEY constraint failure, which the client misreported as
+// "The floor could not be reached." Dismissal preserves the run's audit
+// history and simply hides the item; every queue read and mutation guard
+// filters on dismissed_at IS NULL.
 export async function deleteFloorQueueItem(
   sessionId: string,
   userId: string,
@@ -445,16 +772,17 @@ export async function deleteFloorQueueItem(
   database = getDb(),
 ): Promise<FloorSnapshot | null> {
   if (!(await canManageQueueItem(sessionId, userId, itemId, database))) return null;
-  const item = await database.prepare("SELECT status FROM floor_queue_items WHERE id = ? AND session_id = ?")
-    .bind(itemId, sessionId).first<{ status: string }>();
+  const item = await database.prepare("SELECT status, dismissed_at AS dismissedAt FROM floor_queue_items WHERE id = ? AND session_id = ?")
+    .bind(itemId, sessionId).first<{ status: string; dismissedAt: number | null }>();
   if (!item) return null;
-  if (!["queued", "paused", "failed", "cancelled"].includes(item.status)) {
+  if (!["queued", "paused", "failed", "cancelled"].includes(item.status) || item.dismissedAt !== null) {
     throw new FloorConflictError("This prompt can no longer be removed.");
   }
   const remaining = (await queueIds(sessionId, database)).filter((id) => id !== itemId);
   const now = Date.now();
   const results = await database.batch([
-    database.prepare("DELETE FROM floor_queue_items WHERE id = ? AND session_id = ?").bind(itemId, sessionId),
+    database.prepare("UPDATE floor_queue_items SET dismissed_at = ?, updated_at = ? WHERE id = ? AND session_id = ? AND dismissed_at IS NULL")
+      .bind(now, now, itemId, sessionId),
     ...remaining.map((id, index) => database.prepare(
       `UPDATE floor_queue_items SET position = ?, updated_at = ? WHERE id = ? AND session_id = ?
        AND EXISTS (SELECT 1 FROM sessions WHERE id = ? AND ended_at IS NULL)`,
@@ -485,14 +813,14 @@ async function isSessionMember(sessionId: string, userId: string, database: D1Da
 
 async function isSessionAgent(sessionId: string, agentId: string, database: D1DatabaseLike) {
   const row = await database.prepare(
-    "SELECT 1 AS present FROM floor_agents WHERE session_id = ? AND id = ?",
+    "SELECT 1 AS present FROM floor_agents WHERE session_id = ? AND id = ? AND deprovisioned_at IS NULL",
   ).bind(sessionId, agentId).first<{ present: number }>();
   return Boolean(row);
 }
 
 async function queueIds(sessionId: string, database: D1DatabaseLike) {
   const result = await database.prepare(
-    "SELECT id FROM floor_queue_items WHERE session_id = ? ORDER BY position, created_at, id",
+    "SELECT id FROM floor_queue_items WHERE session_id = ? AND dismissed_at IS NULL ORDER BY position, created_at, id",
   ).bind(sessionId).all<{ id: string }>();
   return result.results.map((row) => row.id);
 }

@@ -66,6 +66,7 @@ import {
   AgentRunNotReadyError,
   cancelRunIntegration,
   createAgentRun,
+  finishAgentReply,
   finishAgentRun,
   finishRunPublished,
   finishRunIntegrated,
@@ -88,6 +89,44 @@ function identity(id: string, name: string) {
 }
 
 describe("D1 session persistence", () => {
+  it("backfills existing sessions off while preserving and safely deactivating legacy Concierge rows", async () => {
+    const owner = await upsertUser(identity("auto-migration-owner", "Migration Owner"), env.DB);
+    const existing = await createSession(owner.id, { title: "Existing auto room", objective: null }, env.DB);
+    expect(existing.session.autoProvisionAgents).toBe(true);
+    const now = Date.now();
+    const idleConciergeId = crypto.randomUUID();
+    const busyConciergeId = crypto.randomUUID();
+    for (const [id, name, nameKey] of [[idleConciergeId, "Concierge", "concierge"], [busyConciergeId, "Concierge 2", "concierge 2"]]) {
+      await env.DB.prepare(
+        `INSERT INTO floor_agents (id, session_id, created_by, owner_user_id, name, name_key, role, task, state, provider, kind, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, 'Session answers', 'Answer questions', 'created', 'openai', 'answer', ?, ?)`,
+      ).bind(id, existing.session.id, owner.id, owner.id, name, nameKey, now, now).run();
+    }
+    const idleQueueId = crypto.randomUUID();
+    const busyQueueId = crypto.randomUUID();
+    await env.DB.batch([
+      env.DB.prepare(
+        "INSERT INTO floor_queue_items (id, session_id, agent_id, position, status, created_at, updated_at) VALUES (?, ?, ?, 1, 'completed', ?, ?)",
+      ).bind(idleQueueId, existing.session.id, idleConciergeId, now, now),
+      env.DB.prepare(
+        "INSERT INTO floor_queue_items (id, session_id, agent_id, position, status, created_at, updated_at) VALUES (?, ?, ?, 2, 'running', ?, ?)",
+      ).bind(busyQueueId, existing.session.id, busyConciergeId, now, now),
+    ]);
+
+    const queries = JSON.parse(env.AUTO_AGENT_DATA_MIGRATION_QUERIES) as string[];
+    await env.DB.batch(queries.map((query) => env.DB.prepare(query)));
+    expect((await getSessionForMember(existing.session.id, owner.id, env.DB))?.autoProvisionAgents).toBe(false);
+    const agents = await env.DB.prepare(
+      "SELECT id, deprovisioned_at AS deprovisionedAt FROM floor_agents WHERE session_id = ? ORDER BY name",
+    ).bind(existing.session.id).all<{ id: string; deprovisionedAt: number | null }>();
+    expect(agents.results.find((agent) => agent.id === idleConciergeId)?.deprovisionedAt).not.toBeNull();
+    expect(agents.results.find((agent) => agent.id === busyConciergeId)?.deprovisionedAt).toBeNull();
+    expect((await env.DB.prepare("SELECT agent_id AS agentId FROM floor_queue_items WHERE id = ?").bind(idleQueueId).first<{ agentId: string }>())?.agentId).toBe(idleConciergeId);
+
+    const fresh = await createSession(owner.id, { title: "Fresh auto room", objective: null }, env.DB);
+    expect(fresh.session.autoProvisionAgents).toBe(true);
+  });
+
   it("upserts users by stable provider identity, refreshing email but not the onboarding-owned display name", async () => {
     const first = await upsertUser(identity("owner", "Owner One"), env.DB);
     const updated = await upsertUser({ ...identity("owner", "Owner Two"), email: "new@example.com" }, env.DB);
@@ -233,6 +272,36 @@ describe("D1 session persistence", () => {
     expect(await listSessionsForUser(owner.id, env.DB)).toEqual([
       expect.objectContaining({ id: created.session.id, role: "owner", memberCount: 1 }),
     ]);
+  });
+
+  it("defaults a new session to auto-dispatch on", async () => {
+    // Otherwise a prompt submitted with target "Auto" has no path to a Run
+    // button at all until an owner finds the queue's automation menu.
+    const owner = await upsertUser(identity("autodispatch-owner", "Owner"), env.DB);
+    const created = await createSession(owner.id, { title: "Auto room", objective: null }, env.DB);
+    const floor = await getFloorSnapshot(created.session.id, owner.id, env.DB);
+    expect(floor?.autoDispatch).toBe(true);
+  });
+
+  it("migration 0027's one-time backfill turns auto-dispatch on for live sessions only", async () => {
+    // Simulates a session created before auto_dispatch defaulted to true, plus
+    // an ended one that must NOT be turned on retroactively (AGENTS.md: an
+    // ended session is read-only). Mirrors drizzle/0027's UPDATE exactly.
+    const owner = await upsertUser(identity("backfill-owner", "Owner"), env.DB);
+    const live = await createSession(owner.id, { title: "Pre-existing live room", objective: null }, env.DB);
+    const ended = await createSession(owner.id, { title: "Pre-existing ended room", objective: null }, env.DB);
+    await env.DB.prepare("UPDATE sessions SET auto_dispatch = 0 WHERE id IN (?, ?)")
+      .bind(live.session.id, ended.session.id).run();
+    await endSession(ended.session.id, owner.id, "owner", env.DB);
+
+    await env.DB.prepare("UPDATE sessions SET auto_dispatch = 1 WHERE ended_at IS NULL").run();
+
+    const liveRow = await env.DB.prepare("SELECT auto_dispatch AS autoDispatch FROM sessions WHERE id = ?")
+      .bind(live.session.id).first<{ autoDispatch: number }>();
+    const endedRow = await env.DB.prepare("SELECT auto_dispatch AS autoDispatch FROM sessions WHERE id = ?")
+      .bind(ended.session.id).first<{ autoDispatch: number }>();
+    expect(liveRow?.autoDispatch).toBe(1);
+    expect(endedRow?.autoDispatch).toBe(0);
   });
 
   it("accepts invites idempotently and enforces one membership", async () => {
@@ -483,7 +552,7 @@ describe("D1 session persistence", () => {
       fullName: "openfloor-test/ended", private: true, defaultBranch: "main",
     }, "main", [], env.DB)).rejects.toBeInstanceOf(SessionEndedError);
     await expect(createRepositoryPreflight(created.session.id, owner.id, env.DB)).rejects.toBeInstanceOf(SessionEndedError);
-    await expect(createAgentRun(created.session.id, "missing-queue-item", owner.id, env.DB)).rejects.toBeInstanceOf(SessionEndedError);
+    await expect(createAgentRun(created.session.id, "missing-queue-item", owner.id, "task", env.DB)).rejects.toBeInstanceOf(SessionEndedError);
     // Outsiders keep getting concealment, not the ended error.
     await expect(updateSessionObjective(created.session.id, outsider.id, "Hidden", env.DB)).resolves.toBeNull();
 
@@ -644,6 +713,41 @@ describe("D1 session persistence", () => {
     expect(await getLatestRepositoryPreflightForMember(created.session.id, owner.id, env.DB)).toEqual(expect.objectContaining({ status: "timed_out" }));
   });
 
+  it("forces manually targeted Concierge code requests through a reactivated read-only reply run", async () => {
+    const owner = await upsertUser(identity("concierge-safe-owner", "Concierge Owner"), env.DB);
+    const created = await createSession(owner.id, { title: "Concierge safety", objective: null }, env.DB);
+    const saved = await saveRepositoryConnection(created.session.id, owner.id, null, "installation-concierge", {
+      id: "repository-concierge", nodeId: "R_concierge", owner: "openfloor-test", name: "concierge",
+      fullName: "openfloor-test/concierge", private: true, defaultBranch: "main",
+    }, "main", ["npm test"], env.DB);
+    const candidateId = crypto.randomUUID();
+    const branch = `openfloor/${created.session.id.slice(0, 8)}/candidate/${candidateId.slice(0, 8)}`;
+    await reserveRepositoryCandidate(created.session.id, owner.id, saved!.id, candidateId, "Concierge safety", "", branch, "main", "a".repeat(40), env.DB);
+    await activateRepositoryCandidate(created.session.id, candidateId, "a".repeat(40), env.DB);
+
+    const conciergeId = crypto.randomUUID();
+    const now = Date.now();
+    await env.DB.prepare(
+      `INSERT INTO floor_agents (id, session_id, created_by, owner_user_id, name, name_key, role, task, state, provider, kind, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'Concierge', 'concierge', 'Session answers', 'Answer questions', 'created', 'openai', 'answer', ?, ?)`,
+    ).bind(conciergeId, created.session.id, owner.id, owner.id, now, now).run();
+    const floor = await createFloorQueueItem(created.session.id, owner.id, { prompt: "Implement a writable code change", agentId: conciergeId }, env.DB);
+    const queueItemId = floor!.queue[0].id;
+    await env.DB.prepare("UPDATE floor_agents SET deprovisioned_at = ? WHERE id = ?").bind(now, conciergeId).run();
+
+    const run = await createAgentRun(created.session.id, queueItemId, owner.id, "task", env.DB);
+    expect(run.kind).toBe("reply");
+    expect(run.runBranch).toBeNull();
+    expect(run.checks).toEqual([]);
+    const agent = await env.DB.prepare("SELECT deprovisioned_at AS deprovisionedAt FROM floor_agents WHERE id = ?")
+      .bind(conciergeId).first<{ deprovisionedAt: number | null }>();
+    expect(agent?.deprovisionedAt).toBeNull();
+    await finishAgentReply(run.id, "ready", "I can explain the requested change, but Concierge cannot modify code.", "Answered read-only.", null, env.DB);
+    const updated = await getFloorSnapshot(created.session.id, owner.id, env.DB);
+    expect(updated?.queue[0].status).toBe("completed");
+    expect(updated?.runs[0]).toEqual(expect.objectContaining({ kind: "reply", runBranch: null }));
+  });
+
   it("persists owner-gated agent runs, real files, checks, retry, and cancellation", async () => {
     const owner = await upsertUser(identity("run-owner", "Run Owner"), env.DB);
     const member = await upsertUser(identity("run-member", "Run Member"), env.DB);
@@ -662,8 +766,8 @@ describe("D1 session persistence", () => {
     let floor = await createFloorAgent(created.session.id, owner.id, parsed, env.DB);
     floor = await createFloorQueueItem(created.session.id, owner.id, { prompt: "Add a real file", agentId: floor!.agents[0].id }, env.DB);
     const queueItemId = floor!.queue[0].id;
-    await expect(createAgentRun(created.session.id, queueItemId, member.id, env.DB)).rejects.toBeInstanceOf(AgentRunNotReadyError);
-    const run = await createAgentRun(created.session.id, queueItemId, owner.id, env.DB);
+    await expect(createAgentRun(created.session.id, queueItemId, member.id, "task", env.DB)).rejects.toBeInstanceOf(AgentRunNotReadyError);
+    const run = await createAgentRun(created.session.id, queueItemId, owner.id, "task", env.DB);
     expect(run).toEqual(expect.objectContaining({ status: "provisioning", model: "gpt-5.6-terra", attempt: 1 }));
     const context = await getRunExecutionContext(run.id, env.DB);
     expect(context).toEqual(expect.objectContaining({ candidateSha: "d".repeat(40), agentName: "Builder" }));
@@ -696,7 +800,7 @@ describe("D1 session persistence", () => {
     expect(floor?.runs[0].status).toBe("integrated");
 
     await env.DB.prepare("UPDATE floor_queue_items SET status = 'queued' WHERE id = ?").bind(queueItemId).run();
-    const conflict = await createAgentRun(created.session.id, queueItemId, owner.id, env.DB);
+    const conflict = await createAgentRun(created.session.id, queueItemId, owner.id, "task", env.DB);
     const conflictContext = await getRunExecutionContext(conflict.id, env.DB);
     await markRunRunning(conflict.id, "process-conflict", env.DB);
     await markRunChecking(conflict.id, "thread-conflict", "Conflicting change", env.DB);
@@ -710,7 +814,7 @@ describe("D1 session persistence", () => {
     await markRunIntegrationConflicted(conflict.id, "Both runs changed src/conflict.ts", env.DB);
     expect(await prepareConflictedRunRetry(created.session.id, conflict.id, member.id, env.DB)).toBeNull();
     expect(await prepareConflictedRunRetry(created.session.id, conflict.id, owner.id, env.DB)).toBe(queueItemId);
-    const retry = await createAgentRun(created.session.id, queueItemId, owner.id, env.DB);
+    const retry = await createAgentRun(created.session.id, queueItemId, owner.id, "task", env.DB);
     expect(retry.attempt).toBe(3);
     await expect(requestAgentRunCancellation(created.session.id, retry.id, member.id, env.DB)).resolves.toBeNull();
     await expect(requestAgentRunCancellation(created.session.id, retry.id, owner.id, env.DB)).resolves.toBe(true);
@@ -758,7 +862,7 @@ describe("D1 session persistence", () => {
     if (!parsed) throw new Error("Invalid agent fixture");
     let floor = await createFloorAgent(created.session.id, owner.id, parsed, env.DB);
     floor = await createFloorQueueItem(created.session.id, owner.id, { prompt: "Add a real file", agentId: floor!.agents[0].id }, env.DB);
-    const run = await createAgentRun(created.session.id, floor!.queue[0].id, owner.id, env.DB);
+    const run = await createAgentRun(created.session.id, floor!.queue[0].id, owner.id, "task", env.DB);
     await markRunRunning(run.id, "process-1", env.DB);
     await markRunChecking(run.id, "thread-1", "Implemented", env.DB);
     const context = await getRunExecutionContext(run.id, env.DB);

@@ -10,9 +10,10 @@ import {
   deleteProviderCredential,
   getRunAgentOwnerCredential,
   listProviderCredentials,
+  resolveAutoAgentProvider,
   upsertProviderCredential,
 } from "@/db/provider-credentials";
-import { acceptInvite, createSession, deleteAccount, removeMember, upsertUser } from "@/db/sessions";
+import { acceptInvite, createSession, deleteAccount, removeMember, SessionRoutingError, setSessionRoutingSettings, upsertUser } from "@/db/sessions";
 import { encryptCredential } from "@/lib/credential-crypto";
 import { credentialAadContext } from "@/lib/provider-credentials";
 import { signRunGatewayToken } from "@/lib/runtime-token";
@@ -169,6 +170,45 @@ describe("provider credential persistence", () => {
     // Disconnecting is per kind.
     expect(await deleteProviderCredential(user.id, "anthropic", "oauth", env.DB)).toBe(true);
     expect((await listProviderCredentials(user.id, env.DB)).map((entry) => entry.kind)).toEqual(["api_key"]);
+  });
+
+  it("resolves generated-agent defaults from connected, rollout-enabled owner keys", async () => {
+    const { sessionId, owner } = await room("auto-provider");
+    expect(await resolveAutoAgentProvider(sessionId, env.DB)).toEqual({
+      configuredProvider: null, effectiveProvider: "openai", state: "openai_fallback",
+    });
+
+    await connectKey(owner.id, "anthropic", "sk-ant-auto-one");
+    expect(await resolveAutoAgentProvider(sessionId, env.DB)).toEqual({
+      configuredProvider: null, effectiveProvider: "anthropic", state: "single_connected",
+    });
+    expect(await resolveAutoAgentProvider(sessionId, env.DB, new Set(["anthropic"]))).toEqual({
+      configuredProvider: null, effectiveProvider: "openai", state: "openai_fallback",
+    });
+
+    await connectOpenAiKey(owner.id, "sk-openai-auto-two");
+    expect(await resolveAutoAgentProvider(sessionId, env.DB)).toEqual({
+      configuredProvider: null, effectiveProvider: null, state: "selection_required",
+    });
+    await setSessionRoutingSettings(sessionId, owner.id, { autoAgentProvider: "anthropic" }, env.DB);
+    expect(await resolveAutoAgentProvider(sessionId, env.DB)).toEqual({
+      configuredProvider: "anthropic", effectiveProvider: "anthropic", state: "selected",
+    });
+
+    await deleteProviderCredential(owner.id, "anthropic", "api_key", env.DB);
+    expect(await resolveAutoAgentProvider(sessionId, env.DB)).toEqual({
+      configuredProvider: null, effectiveProvider: "openai", state: "single_connected",
+    });
+  });
+
+  it("keeps generated-agent provider changes owner-only and requires a connected key", async () => {
+    const { sessionId, owner, member } = await room("auto-provider-auth");
+    const outsider = await upsertUser(identity("auto-provider-outsider", "Outsider"), env.DB);
+    await expect(setSessionRoutingSettings(sessionId, member.id, { autoAgentProvider: "openai" }, env.DB)).resolves.toBe(false);
+    await expect(setSessionRoutingSettings(sessionId, outsider.id, { autoAgentProvider: "openai" }, env.DB)).resolves.toBe(false);
+    await expect(setSessionRoutingSettings(sessionId, owner.id, { autoAgentProvider: "openai" }, env.DB)).rejects.toBeInstanceOf(SessionRoutingError);
+    await connectOpenAiKey(owner.id, "sk-openai-owner-selection");
+    await expect(setSessionRoutingSettings(sessionId, owner.id, { autoAgentProvider: "openai" }, env.DB)).resolves.toBe(true);
   });
 
   it("resolves only the agent owner's credential for a provider", async () => {
@@ -775,7 +815,7 @@ describe("OpenAI gateway credential resolution", () => {
   });
 
   it("refuses a hand-written openai oauth bundle at resolution — never sending it upstream", async () => {
-    const { sessionId, owner, member, runId } = await runningRun("openai-oauth", "member");
+    const { sessionId, member, runId } = await runningRun("openai-oauth", "member");
     // openai's oauth kind is withheld until §5 ships, so this row can only
     // exist hand-written. A real pasted bundle is pretty-printed: interior
     // newlines survive storage by design, so it must never reach a header

@@ -105,7 +105,7 @@
 .screen-nav button[aria-pressed="true"] {
   background: var(--surface-raised);
   color: var(--text-primary);
-  box-shadow: 0 1px 2px rgba(46, 38, 27, 0.14);
+  box-shadow: 0 1px 2px rgba(18, 24, 31, 0.14);
 }
 
 .nav-unread-dot {
@@ -275,7 +275,7 @@
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-md);
   background: var(--surface-raised);
-  box-shadow: 0 12px 32px rgba(31, 36, 31, 0.18);
+  box-shadow: 0 12px 32px rgba(18, 24, 31, 0.18);
 }
 
 .objective-label {
@@ -426,7 +426,12 @@
 }
 
 /* Floats above the dock on demand — no reserved band, so it costs nothing
-   in layout when there's nothing to say (unlike the old fixed-height rail). */
+   in layout when there's nothing to say (unlike the old fixed-height rail).
+   Mounted only while useTransientNotice has a message; its own opacity/
+   transform fade matches .status-line's (data-visible flips to "false" for
+   the exit transition's duration before the message unmounts) so the whole
+   toast — border, background, shadow included — fades with its text instead
+   of the box vanishing abruptly once the text has faded. */
 .dock-toast {
   position: absolute;
   left: var(--space-4);
@@ -439,6 +444,12 @@
   border-radius: var(--radius-md);
   background: var(--surface-raised);
   box-shadow: var(--elevation-2);
+  transition: opacity var(--dur-float) var(--ease-out), transform var(--dur-float) var(--ease-out);
+}
+
+.dock-toast[data-visible="false"] {
+  opacity: 0;
+  transform: translateY(3px);
 }
 
 /* Same horizontal inset as .workspace's own padding, so the composer's left

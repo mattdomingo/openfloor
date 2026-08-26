@@ -17,6 +17,10 @@ export function QueueOrderMenu({
   owner,
   autoDispatch,
   onAutoDispatch,
+  autoResolveConflicts,
+  onAutoResolveConflicts,
+  browserConflictAlerts,
+  onBrowserConflictAlerts,
   busy,
 }: {
   mode: QueueOrderMode;
@@ -25,6 +29,10 @@ export function QueueOrderMenu({
   owner: boolean;
   autoDispatch: boolean;
   onAutoDispatch: (enabled: boolean) => Promise<void>;
+  autoResolveConflicts: boolean;
+  onAutoResolveConflicts: (enabled: boolean) => Promise<void>;
+  browserConflictAlerts: boolean;
+  onBrowserConflictAlerts: (enabled: boolean) => Promise<void>;
   busy: boolean;
 }) {
   const [open, setOpen] = useState(false);
@@ -72,6 +80,16 @@ export function QueueOrderMenu({
     setOpen(false);
   }
 
+  function chooseConflictResolution(next: boolean) {
+    void onAutoResolveConflicts(next);
+    setOpen(false);
+  }
+
+  function chooseBrowserAlerts(next: boolean) {
+    void onBrowserConflictAlerts(next);
+    setOpen(false);
+  }
+
   const list = open && position && typeof document !== "undefined" && createPortal(
     <div className="queue-order-list" ref={listRef} id={listId} role="group" aria-label="Queue settings" style={{ top: position.top, right: position.right }}>
       {owner && (
@@ -107,6 +125,21 @@ export function QueueOrderMenu({
           </ul>
         </>
       )}
+
+      {owner && (
+        <>
+          <span className="queue-order-label" aria-hidden="true">Merge conflicts</span>
+          <ul>
+            <li><button type="button" data-selected={autoResolveConflicts ? "true" : "false"} aria-pressed={autoResolveConflicts} disabled={busy} onClick={() => chooseConflictResolution(true)}><span>Automatic</span><small>Prioritize a Merge Resolver when GitHub reports a real conflict</small></button></li>
+            <li><button type="button" data-selected={!autoResolveConflicts ? "true" : "false"} aria-pressed={!autoResolveConflicts} disabled={busy} onClick={() => chooseConflictResolution(false)}><span>Manual</span><small>Record conflicts and wait for the owner to start resolution</small></button></li>
+          </ul>
+        </>
+      )}
+
+      <span className="queue-order-label" aria-hidden="true">This device</span>
+      <ul>
+        <li><button type="button" data-selected={browserConflictAlerts ? "true" : "false"} aria-pressed={browserConflictAlerts} onClick={() => chooseBrowserAlerts(!browserConflictAlerts)}><span>Browser conflict alerts {browserConflictAlerts ? "on" : "off"}</span><small>Alert this backgrounded floor tab after explicit browser permission</small></button></li>
+      </ul>
 
       {canReorder && (
         <>

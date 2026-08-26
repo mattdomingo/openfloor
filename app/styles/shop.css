@@ -1,0 +1,1135 @@
+/* The opnflr.com marketing identity, scoped via .shop-shell to /home,
+   /onboarding, /settings, and the session lobby. Every shared rule below is
+   prefixed .shop-shell so /join keeps its established product styling.
+   /floor resolves onto the same cool palette too, but via its own
+   .app-shell-scoped tokens in tokens.css rather than this file — its
+   layout and components stay the legacy-floor-* stylesheets, only the
+   token values move. route-owned rules receive a narrower shell prefix.
+
+   Palette is ported verbatim from openfloor-ai/openfloor.ai's styles.css
+   (:root and :root[data-theme="dark"]). Type and the button motif diverge
+   from the marketing site on purpose: Anton/Martian Mono read as a retro
+   poster face here, so display and data both ride the one variable-weight
+   Archivo already loaded (weight carries the emphasis) plus Geist Mono
+   (already loaded for the rest of the app) for tracked data. Radius/shadow
+   stay at zero and motion stays at .16s ease, same as the marketing site. */
+
+.shop-shell {
+  --shop: #c6ccd4;
+  --shop-2: #d3d8df;
+  --sheet: #dce1e7;
+  --bone: #d7dadf;
+  --ink: #12181f;
+  --muted: #3d4652;
+  --steel: #4a525c;
+  --rule: #a9b1bd;
+  --edge: #1e262f;
+  --accent-ink: #1A3FA6;
+  --accent-fill: #1B45B8;
+  --btn-ink: #fff;
+  --attention-ink: #8b5917;
+  --ready-ink: #207052;
+  --wave: 30, 38, 47;
+  --usage-tone: #0e8a76; /* the mark's teal dot — a color the Usage tab owns and nothing else does */
+
+  --gutter: clamp(20px, 5vw, 68px);
+  --measure: 1280px; /* narrower than the marketing site's 1680px — this is a page, not a landing */
+  --sans: var(--font-brand-sans), -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+  --mono: var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
+  --settle-step: 60ms; /* stagger unit for shop-settle — see "Page entrance" below */
+
+  position: relative;
+  isolation: isolate;
+  color-scheme: light;
+  background: var(--shop);
+  color: var(--ink);
+  font-family: var(--sans);
+}
+
+/* Dark resolution: app theme Light stays on the light shop palette above,
+   Dark and Midnight both resolve to the dark one below (Midnight then
+   layers its own surface shift — see the Polar/Midnight block further
+   down), and System follows the OS only when there is no explicit
+   data-theme. Keep the two dark variable blocks byte-identical, following
+   the same discipline as tokens.css. */
+:root[data-theme="dark"] .shop-shell,
+:root[data-theme="midnight"] .shop-shell {
+  color-scheme: dark;
+  --shop: #20262e;
+  --shop-2: #292f37;
+  --sheet: #313740;
+  --ink: #dfe3e8;
+  --muted: #a5acb6;
+  --steel: #8a919b;
+  --rule: #404751;
+  --edge: #4e5560;
+  --accent-ink: #7FB0FF;
+  --accent-fill: #6EA3FF;
+  --btn-ink: #0d1319;
+  --attention-ink: #e7b76d;
+  --ready-ink: #6dd4aa;
+  --wave: 190, 200, 214;
+  --usage-tone: #3fd9c0;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) .shop-shell {
+    color-scheme: dark;
+    --shop: #20262e;
+    --shop-2: #292f37;
+    --sheet: #313740;
+    --ink: #dfe3e8;
+    --muted: #a5acb6;
+    --steel: #8a919b;
+    --rule: #404751;
+    --edge: #4e5560;
+    --accent-ink: #7FB0FF;
+    --accent-fill: #6EA3FF;
+    --btn-ink: #0d1319;
+    --attention-ink: #e7b76d;
+    --ready-ink: #6dd4aa;
+    --wave: 190, 200, 214;
+  }
+}
+
+/* Polar/Midnight: same relationship to Light/Dark that the floor
+   (tokens.css, .app-shell/.join-shell) gives them — genuinely distinct
+   manual variants, not an alias. Only the surface stack (--shop/-2/--sheet)
+   and --rule (this shell's line-strong equivalent — see the --rule/--edge
+   note at the top of this file) shift; --ink/--muted/--steel/--edge/accent/
+   status stay whatever the light/dark block above already set. Values are
+   the same family tokens.css uses for .app-shell's own Polar/Midnight. */
+:root[data-theme="polar"] .shop-shell {
+  --shop: #eef0f2;
+  --shop-2: #f4f5f7;
+  --sheet: #f9fafb;
+  --rule: #b6bbc2;
+}
+
+:root[data-theme="midnight"] .shop-shell {
+  --shop: #0a0d11;
+  --shop-2: #0d1014;
+  --sheet: #11151a;
+  --rule: #2b323b;
+}
+
+/* ── Backdrop ────────────────────────────────────────────────────────── */
+
+/* One fixed canvas behind the entire page, not just the head band — it
+   sits at z-index -1 inside .shop-shell's own stacking context (the
+   isolation above), so the shell's background paints first, the wave
+   paints next, and every normal-flow descendant (header, tiles, dialog)
+   paints over it without needing a z-index of its own. Solid surfaces
+   (.session-card, .app-header, dialogs) occlude it locally just by having
+   a background — no mask needed. */
+.shop-wave {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  width: 100%;
+  height: 100%;
+  opacity: .28;
+  pointer-events: none;
+}
+
+/* ── Header ──────────────────────────────────────────────────────────── */
+
+.shop-shell .app-header {
+  min-height: 62px;
+  padding: 0 var(--gutter);
+  border-bottom: 1px solid var(--edge);
+  background: var(--shop);
+  backdrop-filter: none;
+  gap: var(--gutter);
+}
+.shop-shell .brand {
+  font-family: var(--sans);
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: -.015em;
+  text-transform: none;
+}
+.shop-shell .account-menu-panel {
+  border-radius: var(--radius-md);
+  border-color: var(--edge);
+  background: var(--sheet);
+  box-shadow: none;
+  animation: none;
+}
+.shop-shell .account-menu-trigger:hover .avatar,
+.shop-shell .account-menu-trigger[aria-expanded="true"] .avatar { outline-color: var(--edge); }
+.shop-shell .account-menu-item:hover { background: var(--shop-2); }
+
+/* ── Head band ───────────────────────────────────────────────────────── */
+
+.shop-shell .page-body {
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  padding: 0;
+}
+.shop-shell .page-heading {
+  position: relative;
+  align-items: flex-end;
+  gap: 24px;
+  padding: clamp(34px, 3.6vw, 54px) var(--gutter);
+}
+.shop-shell .page-heading-title { min-width: 0; flex: 1 1 auto; }
+.shop-shell .page-heading h1 {
+  margin-top: 0;
+  font: 800 clamp(32px, 4vw, 52px)/1.05 var(--sans);
+  letter-spacing: -.02em;
+  color: var(--ink);
+}
+
+/* ── Page entrance ───────────────────────────────────────────────────── */
+
+/* Every shop-shell route is a fresh mount on navigation (no persistent
+   layout across /home, /session, /settings, /onboarding — see
+   app/layout.tsx), so a mount-triggered animation is the whole cross-route
+   transition: no router hooks, no wrapper component. .tab-panel (below)
+   reuses the same keyframe, so a tab or settings-rail switch settles in
+   exactly the same way as a full navigation. */
+@keyframes shop-settle {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+/* The one bold move: the hairline under the heading and tab strip draws in
+   left-to-right, echoing the floor-bracket glyphs (shop-tab-indicator,
+   .settings-rail-item) that are the only other things in this shell that
+   move sideways. Replaces a static border-bottom with a same-color ::after
+   so it can be scaled — position:relative on the parent already exists or
+   is added alongside. */
+@keyframes shop-rule-draw {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
+}
+/* :not(.tab-panel) — HomeScreen's tab-panel is a direct .page-body child
+   *and* remounts on every Active/Archived/Ended/Usage switch (key={tab});
+   it keeps its own zero-delay rule below so re-selecting a tab still feels
+   instant, instead of inheriting a positional delay meant for first mount. */
+.shop-shell .page-body > :nth-child(1):not(.tab-panel) { animation: shop-settle .38s var(--ease-out) both; }
+.shop-shell .page-body > :nth-child(2):not(.tab-panel) { animation: shop-settle .38s var(--ease-out) var(--settle-step) both; }
+.shop-shell .page-body > :nth-child(3):not(.tab-panel) { animation: shop-settle .38s var(--ease-out) calc(var(--settle-step) * 2) both; }
+.shop-shell .page-body > :nth-child(4):not(.tab-panel) { animation: shop-settle .38s var(--ease-out) calc(var(--settle-step) * 3) both; }
+.shop-shell .page-body > :nth-child(n+5):not(.tab-panel) { animation: shop-settle .38s var(--ease-out) calc(var(--settle-step) * 4) both; }
+.shop-shell .page-heading::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 1px;
+  background: var(--edge);
+  transform-origin: left;
+  animation: shop-rule-draw .52s var(--ease-out) both;
+}
+
+/* ── Tabs ────────────────────────────────────────────────────────────── */
+
+.shop-shell .shop-tabs {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 26px;
+  padding: 0 var(--gutter);
+}
+.shop-shell .shop-tabs::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 1px;
+  background: var(--edge);
+  transform-origin: left;
+  animation: shop-rule-draw .52s var(--ease-out) var(--settle-step) both;
+}
+.shop-shell .shop-tab {
+  position: relative;
+  z-index: 1;
+  padding: 14px 0;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font: 500 11px var(--mono);
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: color .2s ease;
+}
+.shop-shell .shop-tab[aria-pressed="true"] { color: var(--ink); }
+/* Usage owns a color none of the filter tabs use, at rest and selected. */
+.shop-shell .shop-tab[data-tone="usage"] { color: var(--usage-tone); }
+.shop-shell .shop-tab[data-tone="usage"][aria-pressed="true"] { color: var(--usage-tone); font-weight: 700; }
+
+/* The hover mark is a pair of floor brackets (the sign-in mark's own glyph,
+   viewBox 0 0 3 8) that slide/snap to whichever tab is hovered or focused,
+   instead of a bar underneath it — selection itself is carried only by the
+   selected tab's text color above. Position/width come from HomeScreen.tsx
+   measuring the real hovered button (label lengths vary), written as an
+   inline transform so the slide is a compositor-only animation. Opacity is
+   the only thing toggled on hover-out — position/width hold their last
+   value so the mark fades in place instead of jumping before it vanishes. */
+.shop-shell .shop-tab-indicator {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  height: 26px;
+  color: var(--ink);
+  opacity: 0;
+  transition: transform .32s cubic-bezier(.2, .8, .2, 1), width .32s cubic-bezier(.2, .8, .2, 1), opacity .2s ease;
+  pointer-events: none;
+}
+.shop-shell .shop-tab-indicator[data-visible="true"] { opacity: 1; }
+.shop-shell .shop-tab-indicator[data-tone="usage"] { color: var(--usage-tone); }
+.shop-shell .shop-tab-indicator::before,
+.shop-shell .shop-tab-indicator::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  width: 7px;
+  height: 100%;
+  background-color: currentColor;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-size: 100% 100%;
+  mask-size: 100% 100%;
+}
+.shop-shell .shop-tab-indicator::before {
+  left: 0;
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 3 8'%3E%3Cpath d='M0 0h1v7h2v1H0Z'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 3 8'%3E%3Cpath d='M0 0h1v7h2v1H0Z'/%3E%3C/svg%3E");
+}
+.shop-shell .shop-tab-indicator::after {
+  right: 0;
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 3 8'%3E%3Cpath d='M3 0h-1v7h-2v1h3Z'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 3 8'%3E%3Cpath d='M3 0h-1v7h-2v1h3Z'/%3E%3C/svg%3E");
+}
+
+.shop-shell .usage-tab-content { padding: clamp(28px, 3vw, 44px) var(--gutter); }
+.shop-shell .usage-card {
+  width: 280px;
+  max-width: 100%;
+  padding: 18px 20px;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-md);
+  background: var(--sheet);
+  text-align: left;
+}
+.shop-shell .usage-card-plan {
+  margin: 0;
+  color: var(--muted);
+  font: 500 10px var(--mono);
+  letter-spacing: .12em;
+  text-transform: uppercase;
+}
+.shop-shell .usage-meter {
+  display: block;
+  width: 100%;
+  height: 6px;
+  margin-top: 10px;
+  appearance: none;
+  border: none;
+  background: var(--rule);
+}
+.shop-shell .usage-meter::-webkit-progress-bar { background: var(--rule); }
+.shop-shell .usage-meter::-webkit-progress-value { background: var(--accent-ink); }
+.shop-shell .usage-meter::-moz-progress-bar { background: var(--accent-ink); }
+.shop-shell .usage-card-stat {
+  margin: 10px 0 0;
+  color: var(--ink);
+  font: 500 12px var(--mono);
+  letter-spacing: .02em;
+}
+.shop-shell .usage-card-note {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+/* ── Bracket buttons ─────────────────────────────────────────────────── */
+
+/* Same motif as the pre-auth sign-in mark (app/page.tsx SignInMark): the
+   label sits between two floor brackets — the exact glyph from that mark
+   (viewBox 0 0 3 8, a stroke with a foot flared out at the bottom only,
+   the mathematical ⌊⌋ "floor" shape the product is named for), not a
+   generic square-cornered box. At rest it's just the word, same as the
+   session lobby's own buttons — the brackets scale in from the text's
+   edges on hover/focus instead of sitting there permanently, so the page
+   isn't wall-to-wall brackets. Drawn with mask-image + currentColor, so
+   each variant's own color (quiet/primary/danger) carries through for
+   free — never forced to one shared tone. */
+.shop-shell .button {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  min-height: 0;
+  gap: 0;
+  padding: 3px 1px;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  color: var(--muted);
+  font: 600 13px var(--sans);
+  letter-spacing: .01em;
+  box-shadow: none;
+  cursor: pointer;
+  transition: gap .18s ease, color .16s ease;
+}
+.shop-shell .button::before,
+.shop-shell .button::after {
+  content: "";
+  flex: none;
+  width: 0;
+  height: 1.3em;
+  opacity: 0;
+  background-color: currentColor;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-size: 100% 100%;
+  mask-size: 100% 100%;
+  transition: width .18s ease, opacity .12s ease, transform .18s ease;
+}
+.shop-shell .button::before {
+  transform: scaleX(0);
+  transform-origin: right center;
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 3 8'%3E%3Cpath d='M0 0h1v7h2v1H0Z'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 3 8'%3E%3Cpath d='M0 0h1v7h2v1H0Z'/%3E%3C/svg%3E");
+}
+.shop-shell .button::after {
+  transform: scaleX(0);
+  transform-origin: left center;
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 3 8'%3E%3Cpath d='M3 0h-1v7h-2v1h3Z'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 3 8'%3E%3Cpath d='M3 0h-1v7h-2v1h3Z'/%3E%3C/svg%3E");
+}
+.shop-shell .button:hover,
+.shop-shell .button:focus-visible,
+.shop-shell .button:active,
+.shop-shell .button[data-variant="primary"]:hover,
+.shop-shell .button[data-variant="primary"]:focus-visible,
+.shop-shell .button[data-variant="primary"]:active {
+  gap: 9px;
+  color: var(--ink);
+  background: none;
+  transform: none;
+  box-shadow: none;
+}
+.shop-shell .button:hover::before,
+.shop-shell .button:hover::after,
+.shop-shell .button:focus-visible::before,
+.shop-shell .button:focus-visible::after,
+.shop-shell .button:active::before,
+.shop-shell .button:active::after {
+  width: .5em;
+  opacity: 1;
+  transform: scaleX(1);
+}
+
+.shop-shell .button[data-variant="primary"] { color: var(--accent-ink); font-weight: 700; }
+:root[data-theme="dark"] .shop-shell .button[data-variant="primary"],
+:root[data-theme="midnight"] .shop-shell .button[data-variant="primary"] { color: var(--accent-fill); }
+
+.shop-shell .button[data-size="sm"] { padding: 2px 1px; gap: 6px; font-size: 11px; }
+.shop-shell .button[data-size="sm"]::before,
+.shop-shell .button[data-size="sm"]::after { height: 1.15em; }
+.shop-shell .button[data-size="sm"]:hover { gap: 9px; }
+
+.shop-shell .danger-button { color: #b8453a; }
+.shop-shell .danger-button:hover { color: #d9584a; }
+
+/* ── Tabs ────────────────────────────────────────────────────────────── */
+
+.shop-shell .segmented {
+  gap: var(--gutter);
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+}
+.shop-shell .segmented button {
+  padding: 10px 0;
+  border-radius: 0;
+  border-bottom: 2px solid transparent;
+  color: var(--muted);
+  font: 500 11px var(--mono);
+  letter-spacing: .1em;
+  text-transform: uppercase;
+}
+.shop-shell .segmented button[aria-pressed="true"] {
+  background: none;
+  border-bottom-color: var(--accent-ink);
+  color: var(--ink);
+  box-shadow: none;
+}
+/* Content below the tabs remounts (key={tab} in HomeScreen.tsx, key={section}
+   in SettingsScreen.tsx) on every switch, replaying shop-settle (defined
+   above, under "Page entrance") with zero delay so the swap still feels
+   instant — a positional stagger here would make re-selecting a tab feel
+   laggy. On first page mount this plays too, simultaneously with
+   .page-heading, which is intentional: content and heading settle together,
+   the tab strip's rule draws in a beat after. */
+.shop-shell .tab-panel {
+  animation: shop-settle .34s var(--ease-out) both;
+}
+/* A grid of tiles stages its own entrance per-tile (below); the container
+   only needs to fade, not also rise, or the two motions compound. */
+.shop-shell .tab-panel:has(.session-grid) {
+  animation-name: none;
+  opacity: 1;
+}
+
+/* ── Session tiles ───────────────────────────────────────────────────── */
+
+.shop-shell .session-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 18px;
+  margin: 0;
+  padding: clamp(28px, 3vw, 44px) var(--gutter);
+}
+/* Tiles cascade in one after another rather than as one slab — the
+   container above only fades (.tab-panel:has(.session-grid)), so this is
+   the only rise. Capped at 6 steps so a long grid doesn't trail. */
+.shop-shell .session-grid > :nth-child(1) { animation: shop-settle .34s var(--ease-out) both; }
+.shop-shell .session-grid > :nth-child(2) { animation: shop-settle .34s var(--ease-out) var(--settle-step) both; }
+.shop-shell .session-grid > :nth-child(3) { animation: shop-settle .34s var(--ease-out) calc(var(--settle-step) * 2) both; }
+.shop-shell .session-grid > :nth-child(4) { animation: shop-settle .34s var(--ease-out) calc(var(--settle-step) * 3) both; }
+.shop-shell .session-grid > :nth-child(5) { animation: shop-settle .34s var(--ease-out) calc(var(--settle-step) * 4) both; }
+.shop-shell .session-grid > :nth-child(n+6) { animation: shop-settle .34s var(--ease-out) calc(var(--settle-step) * 5) both; }
+/* Magnetized hover: the tile leans a few px toward the cursor and lifts on
+   a soft shadow, instead of the flat accent-border outline this replaces.
+   --tilt-x/-y are written by HomeScreen.tsx on pointer move (direct style
+   writes, not React state, so this never re-renders); global
+   prefers-reduced-motion (base.css) clamps the transition to ~0 for anyone
+   who's asked for less motion. Radius matches the session's own agent
+   tiles (--radius-md) rather than the marketing site's square corners. */
+.shop-shell .session-card {
+  --tilt-x: 0px;
+  --tilt-y: 0px;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 24px;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-md);
+  background: var(--sheet);
+  box-shadow: none;
+  transform: translate(var(--tilt-x), var(--tilt-y));
+  transition: transform .4s cubic-bezier(.2, .8, .2, 1), box-shadow .25s ease;
+}
+.shop-shell .session-card:hover,
+.shop-shell .session-card:focus-within {
+  box-shadow: 0 14px 32px rgba(0, 0, 0, .16);
+}
+.shop-shell .session-card-head strong {
+  font: 700 20px var(--sans);
+  letter-spacing: -.018em;
+}
+.shop-shell .session-card-link:hover strong { color: var(--accent-ink); }
+
+/* The create-session tile: same box as a real session-card, but a plain
+   "+" — the tooltip (HomeScreen.tsx) is what actually says "New session". */
+.shop-shell .session-card-new {
+  align-items: center;
+  justify-content: center;
+  min-height: 168px;
+  width: 100%;
+  color: var(--muted);
+  font: inherit;
+  cursor: pointer;
+  transition: transform .4s cubic-bezier(.2, .8, .2, 1), box-shadow .25s ease, color .16s ease, border-color .16s ease;
+}
+.shop-shell .session-card-new:hover,
+.shop-shell .session-card-new:focus-visible {
+  color: var(--accent-ink);
+  border-color: var(--accent-ink);
+  box-shadow: 0 14px 32px rgba(0, 0, 0, .16);
+}
+.shop-shell .session-card-new-plus {
+  font: 300 44px/1 var(--sans);
+}
+
+/* Quiet caption, not a competing fact — sits right under the title instead
+   of crowding the foot strip. */
+.shop-shell .session-card-updated {
+  position: relative;
+  margin-top: 4px;
+  color: var(--steel);
+  font: 500 10px var(--mono);
+  letter-spacing: .07em;
+  text-transform: uppercase;
+}
+
+/* Description: clamped to two lines so a long objective never pushes the
+   meta strip below out of alignment with its row-mates. The hover tip is
+   only wired up (in HomeScreen.tsx) when the text is actually cut off. */
+.shop-shell .session-card-desc {
+  position: relative;
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1.6;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+.shop-shell .session-card-desc[data-empty="true"] { color: var(--steel); font-style: italic; }
+
+/* Meta strip: pinned to the tile's bottom edge (the card is a flex column)
+   so every tile in a row lines up regardless of description length. Just
+   two facts now — who, and how much — with real room between them. */
+.shop-shell .session-card-meta {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 16px;
+  margin-top: auto;
+  padding-top: 16px;
+  border-top: 1px solid var(--rule);
+  font: 500 10px var(--mono);
+  letter-spacing: .07em;
+  text-transform: uppercase;
+}
+.shop-shell .session-card-role { color: var(--accent-ink); font-weight: 700; }
+.shop-shell .session-card-stats { color: var(--muted); }
+
+/* ── Session actions (dot trigger + inline reveal) ──────────────────────── */
+
+.shop-shell .session-card-menu {
+  position: relative;
+  flex: none;
+  display: flex;
+  align-items: center;
+}
+.shop-shell .session-card-menu-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 8px 6px;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+  transition: color .16s ease;
+}
+.shop-shell .session-card-menu-trigger:hover,
+.shop-shell .session-card-menu[data-open="true"] .session-card-menu-trigger { color: var(--ink); }
+.shop-shell .session-card-menu-trigger span {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.shop-shell .session-card-menu-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 0;
+  opacity: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  transition: max-width .3s cubic-bezier(.2, .8, .2, 1), opacity .2s ease;
+}
+.shop-shell .session-card-menu[data-open="true"] .session-card-menu-actions {
+  max-width: 220px;
+  opacity: 1;
+  margin-left: 4px;
+}
+
+/* ── Forms ───────────────────────────────────────────────────────────── */
+
+.shop-shell .create-card {
+  margin: clamp(28px, 3vw, 44px) var(--gutter);
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  max-width: 560px;
+}
+.shop-shell .create-card label { font: 500 10px var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
+.shop-shell .create-card label em { color: var(--steel); text-transform: none; letter-spacing: normal; font-family: var(--sans); }
+.shop-shell input,
+.shop-shell textarea {
+  border-radius: var(--radius-sm);
+  border-color: var(--edge);
+  background: var(--sheet);
+  color: var(--ink);
+  font: 400 14.5px var(--sans);
+  padding: 12px 14px;
+}
+.shop-shell input::placeholder,
+.shop-shell textarea::placeholder { color: var(--steel); }
+.shop-shell input:focus-visible,
+.shop-shell textarea:focus-visible {
+  box-shadow: none;
+  outline: 2px solid var(--accent-ink);
+  outline-offset: 2px;
+  border-color: var(--edge);
+}
+.shop-shell .form-error { color: #b8453a; }
+
+/* ── Empty states & notices ──────────────────────────────────────────── */
+
+.shop-shell .empty-state {
+  margin: clamp(28px, 3vw, 44px) var(--gutter) 0;
+  padding: 26px 28px;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-md);
+  background: var(--sheet);
+  box-shadow: none;
+  max-width: 62ch;
+  text-align: left;
+}
+.shop-shell .empty-state strong { font: 700 22px var(--sans); }
+.shop-shell .empty-state p { color: var(--muted); }
+
+.shop-shell .notice {
+  width: fit-content;
+  max-width: 100%;
+  border-left: 0;
+  border: 1px solid var(--accent-ink);
+  border-radius: var(--radius-md);
+  background: none;
+  color: var(--muted);
+  font: 400 12px var(--mono);
+  line-height: 1.7;
+}
+.shop-shell .notice[data-tone="attention"] { border-color: #b5761f; background: none; }
+.shop-shell .notice a { color: var(--accent-ink); }
+
+/* ── Delete dialog ───────────────────────────────────────────────────── */
+
+.shop-shell .dialog {
+  border-radius: var(--radius-md);
+  border-color: var(--edge);
+  background: var(--sheet);
+  color: var(--ink);
+  box-shadow: none;
+  overflow: hidden;
+}
+.shop-shell .dialog::backdrop { background: rgba(13, 19, 25, .55); }
+.shop-shell .dialog-head,
+.shop-shell .dialog-foot {
+  border-color: var(--edge);
+  background: var(--sheet);
+}
+.shop-shell .dialog-body { background: var(--sheet); }
+.shop-shell .dialog-title h2 { font: 700 20px var(--sans); letter-spacing: -.018em; }
+.shop-shell .dialog-title p,
+.shop-shell .dialog-body p { color: var(--muted); }
+
+/* ── Focus ───────────────────────────────────────────────────────────── */
+
+.shop-shell :focus-visible {
+  box-shadow: none;
+  outline: 2px solid var(--accent-ink);
+  outline-offset: 3px;
+  border-radius: 0;
+}
+
+/* ── Mobile ──────────────────────────────────────────────────────────── */
+
+@media (max-width: 760px) {
+  .shop-shell .page-heading { padding-inline: 16px; }
+  .shop-shell .shop-tabs,
+  .shop-shell .session-grid,
+  .shop-shell .usage-tab-content,
+  .shop-shell .empty-state { padding-inline: 16px; }
+  .shop-shell .usage-card { width: 100%; }
+  .shop-shell .create-card { margin-inline: 16px; }
+  .shop-shell .session-grid { grid-template-columns: 1fr; }
+  .shop-shell .session-card-head { align-items: flex-start; flex-direction: column; gap: 8px; }
+}
+
+/* ── Account onboarding ─────────────────────────────────────────────── */
+
+.onboarding-shell { min-height: 100vh; }
+.onboarding-shell .app-header { justify-content: flex-start; }
+.onboarding-shell .onboarding-stage {
+  display: grid;
+  place-items: center;
+  min-height: calc(100vh - 63px);
+  padding: clamp(28px, 5vw, 72px) var(--gutter);
+}
+.onboarding-shell .onboarding-card {
+  display: grid;
+  grid-template-columns: minmax(220px, .58fr) minmax(0, 1.42fr);
+  width: min(1040px, 100%);
+  overflow: hidden;
+  border: 1px solid var(--edge);
+  border-radius: 24px;
+  background: color-mix(in srgb, var(--sheet) 94%, transparent);
+  animation: shop-settle .4s var(--ease-out) both;
+}
+.onboarding-shell .onboarding-intro {
+  grid-row: 1 / 3;
+  padding: clamp(28px, 4vw, 48px);
+  border-right: 1px solid var(--edge);
+  background: color-mix(in srgb, var(--shop-2) 90%, transparent);
+}
+.onboarding-shell .eyebrow {
+  color: var(--steel);
+  font: 650 10px var(--mono);
+  letter-spacing: .15em;
+  text-transform: uppercase;
+}
+.onboarding-shell .onboarding-intro h1 {
+  max-width: 8ch;
+  margin-top: 12px;
+  color: var(--ink);
+  font: 800 clamp(34px, 4.6vw, 56px)/.98 var(--sans);
+  letter-spacing: -.035em;
+}
+.onboarding-shell .onboarding-intro > p:last-child {
+  max-width: 34ch;
+  margin-top: 22px;
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1.65;
+}
+.onboarding-shell .onboarding-progress {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+  margin: 0;
+  padding: 26px clamp(24px, 4vw, 48px) 0;
+  list-style: none;
+}
+.onboarding-shell .onboarding-progress li {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 8px;
+  padding-top: 9px;
+  border-top: 2px solid var(--rule);
+  color: var(--steel);
+  font: 650 10px var(--mono);
+  letter-spacing: .1em;
+  text-transform: uppercase;
+}
+.onboarding-shell .onboarding-progress li[aria-current="step"] { border-color: var(--accent-ink); color: var(--ink); }
+.onboarding-shell .onboarding-progress li[data-complete="true"] { border-color: var(--ready-ink); }
+.onboarding-shell .onboarding-progress span { color: var(--accent-ink); }
+.onboarding-shell .onboarding-form { min-width: 0; }
+.onboarding-shell .onboarding-step {
+  display: grid;
+  gap: 24px;
+  padding: 34px clamp(24px, 4vw, 48px) clamp(30px, 4vw, 48px);
+}
+.onboarding-shell .onboarding-step[hidden] { display: none; }
+/* display:none → block restarts a CSS animation, so stepping from
+   Profile to Plan (the hidden attribute toggling, no remount) replays this
+   the same way switching a shop tab does. */
+.onboarding-shell .onboarding-step:not([hidden]) { animation: shop-settle .34s var(--ease-out) both; }
+.onboarding-shell .onboarding-step-heading h2 {
+  margin-top: 7px;
+  color: var(--ink);
+  font: 750 clamp(25px, 3vw, 34px)/1.08 var(--sans);
+  letter-spacing: -.025em;
+}
+.onboarding-shell .onboarding-step-heading h2:focus { outline: none; }
+.onboarding-shell .onboarding-step-heading > p:last-child {
+  max-width: 58ch;
+  margin-top: 9px;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.55;
+}
+.onboarding-shell .field { display: grid; min-width: 0; gap: 8px; }
+.onboarding-shell .field > .label {
+  display: flex;
+  justify-content: space-between;
+  color: var(--ink);
+  font: 650 10px var(--mono);
+  letter-spacing: .11em;
+  text-transform: uppercase;
+}
+.onboarding-shell .field .label em { color: var(--steel); font: 500 10px var(--sans); letter-spacing: 0; text-transform: none; }
+.onboarding-shell .field-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.onboarding-shell .onboarding-avatar-picker { align-items: center; }
+.onboarding-shell .onboarding-avatar-picker > div { display: grid; min-width: 0; gap: 7px; }
+.onboarding-shell .onboarding-avatar-picker input { min-width: 0; max-width: 100%; padding: 9px; font-size: 12px; }
+.onboarding-shell .onboarding-avatar-picker small { color: var(--steel); font-size: 11px; }
+.onboarding-shell .onboarding-avatar-picker .avatar {
+  flex: 0 0 72px;
+  width: 72px;
+  height: 72px;
+  border: 1px solid var(--edge);
+  border-radius: 20px;
+  overflow: hidden;
+  font-size: var(--text-lg);
+}
+.onboarding-shell .plan-picker {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.onboarding-shell .plan-card,
+.onboarding-shell .onboarding-invite-plan > div {
+  min-height: 130px;
+  border-color: var(--rule);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--shop-2) 78%, transparent);
+  box-shadow: none;
+}
+.onboarding-shell .plan-card { position: relative; padding: 18px; transition: border-color .16s ease, background .16s ease; }
+.onboarding-shell .plan-card:hover,
+.onboarding-shell .plan-card:focus-visible,
+.onboarding-shell .plan-card[aria-pressed="true"] { border-color: var(--accent-ink); background: var(--shop-2); box-shadow: none; }
+.onboarding-shell .plan-card[aria-pressed="true"]::after {
+  content: "Selected";
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  color: var(--accent-ink);
+  font: 650 8px var(--mono);
+  letter-spacing: .1em;
+  text-transform: uppercase;
+}
+.onboarding-shell .plan-card strong,
+.onboarding-shell .onboarding-invite-plan strong { font: 750 19px var(--sans); }
+.onboarding-shell .plan-card span,
+.onboarding-shell .onboarding-invite-plan span { color: var(--accent-ink); font: 650 11px var(--mono); }
+.onboarding-shell .plan-card small,
+.onboarding-shell .onboarding-invite-plan small { color: var(--muted); font-size: 12px; line-height: 1.45; }
+.onboarding-shell .plan-card-enterprise { cursor: pointer; }
+.onboarding-shell .seat-picker {
+  padding: 14px 18px;
+  border: 1px solid var(--rule);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--shop-2) 65%, transparent);
+}
+.onboarding-shell .seat-picker > span:first-child { color: var(--ink); font: 650 11px var(--mono); }
+.onboarding-shell .seat-picker > div { display: flex; gap: 10px; }
+.onboarding-shell .onboarding-invite-plan { display: grid; gap: 12px; }
+.onboarding-shell .onboarding-invite-plan > div { display: grid; align-content: center; gap: 8px; padding: 20px; border: 1px solid var(--accent-ink); }
+.onboarding-shell .onboarding-invite-plan p { color: var(--muted); font-size: 13px; line-height: 1.55; }
+.onboarding-shell .form-actions { align-items: center; justify-content: flex-end; gap: 18px; padding-top: 4px; }
+.onboarding-shell .form-error { margin: 0; font-size: 13px; }
+
+@media (max-width: 800px) {
+  .onboarding-shell .onboarding-card { grid-template-columns: 1fr; }
+  .onboarding-shell .onboarding-intro { grid-row: auto; border-right: 0; border-bottom: 1px solid var(--edge); }
+  .onboarding-shell .onboarding-intro h1 { max-width: none; }
+}
+
+@media (max-width: 560px) {
+  .onboarding-shell .app-header { padding-inline: 16px; }
+  .onboarding-shell .onboarding-stage { place-items: start stretch; padding: 16px; }
+  .onboarding-shell .onboarding-card { border-radius: 18px; }
+  .onboarding-shell .onboarding-intro { padding: 26px 22px; }
+  .onboarding-shell .onboarding-progress { padding: 22px 22px 0; }
+  .onboarding-shell .onboarding-step { padding: 28px 22px 30px; }
+  .onboarding-shell .field-grid,
+  .onboarding-shell .plan-picker { grid-template-columns: 1fr; }
+  .onboarding-shell .onboarding-avatar-picker { align-items: flex-start; flex-direction: column; }
+  .onboarding-shell .seat-picker { align-items: flex-start; flex-direction: column; }
+  .onboarding-shell .seat-picker > div { width: 100%; justify-content: flex-end; }
+  .onboarding-shell .onboarding-plan-actions { align-items: stretch; flex-direction: column-reverse; }
+  .onboarding-shell .onboarding-plan-actions .button { justify-content: center; }
+}
+
+/* ── Session lobby ───────────────────────────────────────────────────── */
+
+.session-lobby-shell { min-height: 100vh; }
+.session-lobby-shell .account-menu-panel,
+.session-lobby-shell .dialog { border-radius: var(--radius-md); }
+.session-lobby-shell .lobby-hero {
+  position: relative;
+  align-items: flex-end;
+  padding: clamp(42px, 6vw, 82px) var(--gutter);
+  border-bottom: none;
+  background: color-mix(in srgb, var(--shop) 84%, transparent);
+}
+.session-lobby-shell .lobby-hero::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 1px;
+  background: var(--edge);
+  transform-origin: left;
+  animation: shop-rule-draw .52s var(--ease-out) both;
+}
+.session-lobby-shell .lobby-hero > div:first-child { max-width: 850px; }
+.session-lobby-shell .lobby-hero > :nth-child(1) { animation: shop-settle .38s var(--ease-out) both; }
+.session-lobby-shell .lobby-hero > :nth-child(2) { animation: shop-settle .38s var(--ease-out) var(--settle-step) both; }
+.session-lobby-shell .lobby-body > :nth-child(1) { animation: shop-settle .38s var(--ease-out) calc(var(--settle-step) * 2) both; }
+.session-lobby-shell .lobby-body > :nth-child(2) { animation: shop-settle .38s var(--ease-out) calc(var(--settle-step) * 3) both; }
+.session-lobby-shell .lobby-body > :nth-child(n+3) { animation: shop-settle .38s var(--ease-out) calc(var(--settle-step) * 4) both; }
+.session-lobby-shell .lobby-hero h1 {
+  margin-top: 8px;
+  color: var(--ink);
+  font: 800 clamp(38px, 5.6vw, 72px)/.98 var(--sans);
+  letter-spacing: -.035em;
+}
+.session-lobby-shell .lobby-hero p:last-of-type { max-width: 70ch; color: var(--muted); font: 450 clamp(16px, 1.7vw, 20px)/1.55 var(--sans); }
+.session-lobby-shell .eyebrow { color: var(--steel); font: 650 10px var(--mono); letter-spacing: .15em; }
+.session-lobby-shell .lobby-hero-meta { display: flex; flex-wrap: wrap; gap: 8px 22px; margin-top: 22px; color: var(--steel); font: 600 10px var(--mono); letter-spacing: .1em; text-transform: uppercase; }
+.session-lobby-shell .connection-state { padding: 0; border: 0; border-radius: 0; background: none; color: var(--muted); font: 650 10px var(--mono); letter-spacing: .08em; text-transform: uppercase; }
+
+.session-lobby-shell .lobby-body { display: grid; gap: 30px; width: min(var(--measure), calc(100% - (2 * var(--gutter)))); margin: 0 auto; padding: clamp(30px, 4vw, 58px) 0 72px; }
+.session-lobby-shell .lobby-team-access { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(320px, .85fr); gap: 22px; align-items: start; }
+.session-lobby-shell .lobby-surface,
+.session-lobby-shell .floor-setup-section,
+.session-lobby-shell .lobby-ended,
+.session-lobby-shell .lobby-bottom-controls {
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-md);
+  background: var(--sheet);
+  box-shadow: none;
+}
+.session-lobby-shell .panel-heading { padding: 22px 24px; border-color: var(--rule); }
+.session-lobby-shell .panel-heading h2,
+.session-lobby-shell .action-card h2,
+.session-lobby-shell .floor-setup-heading h2 { color: var(--ink); font: 750 24px/1.1 var(--sans); letter-spacing: -.02em; }
+.session-lobby-shell .panel-heading > span { color: var(--steel); font: 600 11px var(--mono); }
+.session-lobby-shell .member-list li { grid-template-columns: auto minmax(0, 1fr) auto auto auto; gap: 12px; padding: 16px 24px; border-color: var(--rule); }
+.session-lobby-shell .member-list strong { color: var(--ink); }
+.session-lobby-shell .member-list div span,
+.session-lobby-shell .member-role,
+.session-lobby-shell .presence-label { color: var(--steel); font: 550 10px var(--mono); letter-spacing: .04em; text-transform: uppercase; }
+.session-lobby-shell .member-list strong em { color: var(--accent-ink); }
+.session-lobby-shell .removed-members { border-top: 1px solid var(--edge); }
+.session-lobby-shell .removed-members .form-error { margin: 14px 24px; }
+
+.session-lobby-shell .access-card { padding: 24px; }
+.session-lobby-shell .action-card > p:not(.eyebrow) { margin: 10px 0 20px; color: var(--muted); font-size: 14px; line-height: 1.6; }
+.session-lobby-shell .invite-value,
+.session-lobby-shell input,
+.session-lobby-shell textarea { border-color: var(--edge); border-radius: var(--radius-sm); background: var(--shop-2); color: var(--ink); }
+.session-lobby-shell .invite-empty { border-color: var(--rule); border-radius: var(--radius-sm); color: var(--steel); }
+.session-lobby-shell .access-lock-row { display: flex; align-items: center; justify-content: space-between; gap: 18px; margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--rule); }
+.session-lobby-shell .access-lock-row > div { display: grid; gap: 4px; }
+.session-lobby-shell .access-lock-row strong { color: var(--ink); font-size: 14px; }
+.session-lobby-shell .access-lock-row span { color: var(--steel); font: 500 10px var(--mono); text-transform: uppercase; }
+
+.session-lobby-shell .lobby-ended { padding: 18px 22px; border-color: #b5761f; }
+.session-lobby-shell .lobby-ended p:last-child { margin-top: 7px; color: var(--muted); line-height: 1.55; }
+.session-lobby-shell .floor-setup-section { overflow: visible; }
+.session-lobby-shell .floor-setup-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; padding: 26px 28px; border-bottom: 1px solid var(--edge); }
+.session-lobby-shell .floor-setup-heading > div > p:last-child { margin-top: 8px; color: var(--muted); line-height: 1.55; }
+.session-lobby-shell .setup-status { flex: none; padding: 7px 10px; border: 1px solid #b5761f; border-radius: var(--radius-sm); color: var(--attention-ink); font: 650 10px var(--mono); letter-spacing: .08em; text-transform: uppercase; }
+.session-lobby-shell .setup-status[data-ready="true"] { border-color: #25805f; color: var(--ready-ink); }
+.session-lobby-shell .repository-card-slot { padding: 22px; }
+.session-lobby-shell .repository-card-slot .repository-card { padding: 24px; border-color: var(--edge); border-radius: var(--radius-md); background: var(--shop-2); box-shadow: none; }
+.session-lobby-shell .button,
+.session-lobby-shell .button[data-size="sm"],
+.session-lobby-shell .button[data-variant="primary"],
+.session-lobby-shell .button[data-variant="quiet"] {
+  min-height: 34px;
+  gap: 0;
+  padding: 7px 1px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--accent-ink);
+  cursor: pointer;
+  transition: gap .18s ease, color .16s ease;
+}
+.session-lobby-shell .button::before,
+.session-lobby-shell .button::after {
+  width: 0;
+  opacity: 0;
+  transform: scaleX(0);
+  transition: width .18s ease, opacity .12s ease, transform .18s ease;
+}
+.session-lobby-shell .button::before { transform-origin: right center; }
+.session-lobby-shell .button::after { transform-origin: left center; }
+.session-lobby-shell .button:hover,
+.session-lobby-shell .button[data-size="sm"]:hover,
+.session-lobby-shell .button[data-variant="primary"]:hover,
+.session-lobby-shell .button[data-variant="quiet"]:hover,
+.session-lobby-shell .button:focus-visible {
+  gap: 9px;
+  background: none;
+  color: var(--accent-ink);
+}
+.session-lobby-shell .button:hover::before,
+.session-lobby-shell .button:hover::after,
+.session-lobby-shell .button:focus-visible::before,
+.session-lobby-shell .button:focus-visible::after {
+  width: .5em;
+  opacity: 1;
+  transform: scaleX(1);
+}
+.session-lobby-shell .danger-button,
+.session-lobby-shell .danger-button:hover,
+.session-lobby-shell .danger-button:focus-visible { color: #b8453a; }
+.session-lobby-shell .repository-summary,
+.session-lobby-shell .repository-checks { color: var(--muted); }
+.session-lobby-shell .repository-summary span,
+.session-lobby-shell .repository-form label,
+.session-lobby-shell .repository-form .repository-field,
+.session-lobby-shell .repository-form small { color: var(--steel); }
+.session-lobby-shell .repository-checks { padding: 14px 0; border-bottom: 1px solid var(--rule); }
+.session-lobby-shell .select-menu-trigger,
+.session-lobby-shell .select-menu-list { border-color: var(--edge); border-radius: var(--radius-sm); background: var(--shop-2); color: var(--ink); box-shadow: none; }
+.session-lobby-shell .select-menu-list li { border-radius: var(--radius-sm); }
+.session-lobby-shell .floor-setup-secondary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px; padding: 0 22px 22px; }
+.session-lobby-shell .floor-setup-secondary .action-card { min-width: 0; border-color: var(--edge); border-radius: var(--radius-md); background: var(--shop-2); box-shadow: none; }
+.session-lobby-shell .settings-category-list { margin-top: 18px; border-color: var(--rule); }
+.session-lobby-shell .settings-category-row { border-color: var(--rule); border-radius: var(--radius-sm); background: var(--shop-2); }
+.session-lobby-shell .settings-category-name { color: var(--ink); }
+.session-lobby-shell .settings-category-detail { color: var(--muted); }
+.session-lobby-shell .setup-dialog-active { padding: 28px; border: 1px dashed var(--rule); border-radius: var(--radius-sm); color: var(--steel); text-align: center; }
+
+.session-lobby-shell .lobby-bottom-controls { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 20px 24px; background: transparent; }
+.session-lobby-shell .lobby-bottom-controls p:last-child { margin-top: 5px; color: var(--muted); font-size: 13px; }
+
+.session-lobby-shell .session-setup-dialog { width: min(940px, calc(100vw - 32px)); max-width: 940px; max-height: calc(100vh - 32px); }
+.session-lobby-shell .setup-dialog-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 30px; }
+.session-lobby-shell .setup-step-list { display: flex; gap: 24px; margin: 0; padding: 0; list-style: none; }
+.session-lobby-shell .setup-step-list li { display: grid; align-content: start; gap: 4px; padding-top: 6px; border-top: 2px solid var(--rule); color: var(--steel); font: 650 10px var(--mono); letter-spacing: .07em; text-transform: uppercase; }
+.session-lobby-shell .setup-step-list li[data-current="true"] { border-color: var(--accent-ink); color: var(--ink); }
+.session-lobby-shell .setup-step-list li[data-complete="true"] { border-color: #25805f; }
+.session-lobby-shell .setup-step-list span { font-size: 9px; font-weight: 500; }
+.session-lobby-shell .setup-dialog-body { overflow-y: auto; padding: 22px; }
+.session-lobby-shell .setup-dialog-body > .repository-card { border-radius: var(--radius-md); border-color: var(--edge); background: var(--shop-2); box-shadow: none; }
+.session-lobby-shell .setup-credentials > p { margin-bottom: 20px; color: var(--muted); line-height: 1.6; }
+.session-lobby-shell .provider-credential-row .settings-category-name { display: grid; gap: 3px; }
+.session-lobby-shell .provider-credential-row .settings-category-name small { color: var(--steel); font: 500 9px var(--mono); text-transform: none; }
+.session-lobby-shell .provider-credential-row form { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 10px; }
+.session-lobby-shell .provider-credential-row input { background: var(--sheet); }
+.session-lobby-shell .provider-credential-row .form-actions { align-self: end; }
+.session-lobby-shell .provider-credential-row .form-error { grid-column: 1 / -1; }
+.session-lobby-shell .setup-auto-provider { display: flex; align-items: center; justify-content: space-between; gap: 18px; margin-top: 18px; padding: 16px 18px; border: 1px solid var(--rule); border-radius: var(--radius-sm); background: var(--shop-2); }
+.session-lobby-shell .setup-auto-provider > span { display: grid; gap: 5px; }
+.session-lobby-shell .setup-auto-provider strong { color: var(--ink); font-size: 13px; }
+.session-lobby-shell .setup-auto-provider small { max-width: 600px; color: var(--steel); font-size: 11px; line-height: 1.45; }
+.session-lobby-shell .setup-auto-provider[data-state="selection_required"] { border-color: #b5761f; }
+.session-lobby-shell .setup-dialog-foot { justify-content: space-between; }
+.session-lobby-shell .setup-dialog-nav { display: flex; gap: 10px; }
+
+@media (max-width: 860px) {
+  .session-lobby-shell .lobby-team-access,
+  .session-lobby-shell .floor-setup-secondary { grid-template-columns: 1fr; }
+  .session-lobby-shell .lobby-hero { align-items: flex-start; flex-direction: column; }
+}
+
+@media (max-width: 620px) {
+  .session-lobby-shell .lobby-hero { padding-inline: 16px; }
+  .session-lobby-shell .lobby-body { width: calc(100% - 32px); padding-top: 22px; }
+  .session-lobby-shell .session-hero-actions { width: 100%; align-items: flex-start; }
+  .session-lobby-shell .member-list li { grid-template-columns: auto minmax(0, 1fr) auto; padding-inline: 16px; }
+  .session-lobby-shell .member-role { display: none; }
+  .session-lobby-shell .member-list li > .button { grid-column: 2 / -1; justify-self: start; }
+  .session-lobby-shell .access-lock-row,
+  .session-lobby-shell .floor-setup-heading,
+  .session-lobby-shell .lobby-bottom-controls,
+  .session-lobby-shell .setup-dialog-head { align-items: flex-start; flex-direction: column; display: flex; }
+  .session-lobby-shell .repository-card-slot,
+  .session-lobby-shell .floor-setup-secondary { padding-inline: 14px; }
+  .session-lobby-shell .setup-step-list { width: 100%; }
+  .session-lobby-shell .setup-step-list li { flex: 1; }
+  .session-lobby-shell .provider-credential-row form { grid-template-columns: 1fr; }
+  .session-lobby-shell .setup-auto-provider { align-items: flex-start; flex-direction: column; }
+  .session-lobby-shell .setup-dialog-foot { align-items: stretch; flex-direction: column; }
+  .session-lobby-shell .setup-dialog-nav { justify-content: flex-end; }
+}

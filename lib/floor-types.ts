@@ -15,6 +15,11 @@ export type FloorParticipant = {
 
 export type FloorAgentState = "created";
 
+// Null means a persistent user-created agent. System-managed agents are
+// activated and deactivated by the router: "answer" is the concierge and
+// "worker" handles code tasks.
+export type FloorAgentKind = "answer" | "worker" | null;
+
 export type FloorAgent = {
   id: string;
   name: string;
@@ -24,11 +29,16 @@ export type FloorAgent = {
   ownerName: string;
   createdByUserId: string;
   state: FloorAgentState;
+  kind: FloorAgentKind;
   // Which agent provider runs for this agent execute on, and an optional
   // model override (null = the provider's default). The create-agent dialog
   // writes the selected provider; model selection is a later milestone.
   provider: CredentialProvider;
   model: string | null;
+  // Manual pause/stop state for a persistent agent (kind === null). Non-null
+  // blocks new router assignment/dispatch; an in-flight run finishes
+  // normally. Always null for a system-managed agent.
+  pausedAt: number | null;
   createdAt: number;
   updatedAt: number;
 };
@@ -58,6 +68,10 @@ export type FloorQueuePrompt = {
   createdAt: number;
 };
 
+// Classified by db/routing.ts's classifyPrompt. Null means classified before
+// this column existed, or not yet visited by a routing tick; treat as "task".
+export type PromptIntent = "task" | "question" | "noise";
+
 export type FloorQueueItem = {
   id: string;
   agentId: string | null;
@@ -66,12 +80,18 @@ export type FloorQueueItem = {
   status: "queued" | "running" | "blocked" | "completed" | "paused" | "failed" | "cancelled";
   assignedBy: "user" | "router" | null;
   assignedReason: string | null;
+  intent: PromptIntent | null;
   prompts: FloorQueuePrompt[];
   createdAt: number;
   updatedAt: number;
 };
 
 export type AgentRunStatus = "provisioning" | "running" | "checking" | "ready" | "publishing" | "published" | "integrating" | "integrated" | "conflicted" | "failed" | "cancel_requested" | "cancelled";
+
+// Null means an ordinary task run that publishes and integrates. "reply" is a
+// read-only run that answers a question/non-actionable prompt — see
+// agent_runs.kind in db/schema.ts for the full invariant.
+export type AgentRunKind = "reply" | null;
 
 export type RunActivityKind = "reasoning" | "command" | "file_edit" | "agent_message" | "tool_call" | "error" | "truncated";
 
@@ -120,6 +140,7 @@ export type AgentRun = {
   remoteRunSha: string | null;
   attempt: number;
   status: AgentRunStatus;
+  kind: AgentRunKind;
   model: string;
   summary: string | null;
   finalResponse: string | null;
@@ -137,8 +158,52 @@ export type AgentRun = {
   branchDeletedAt: number | null;
   cancelRequestedAt: number | null;
   updatedAt: number;
+  purpose: "task" | "conflict_resolution";
+  conflictCaseId: string | null;
   checks: AgentRunCheck[];
   files: AgentRunFile[];
+};
+
+export type MergeConflictStatus = "pending" | "resolving" | "awaiting_input" | "resolved" | "failed";
+
+export type MergeConflictQuestion = {
+  id: string;
+  question: string;
+  answer: string | null;
+  answeredByUserId: string | null;
+  answeredByName: string | null;
+  requestedAt: number;
+  answeredAt: number | null;
+};
+
+export type MergeConflictCase = {
+  id: string;
+  status: MergeConflictStatus;
+  sourceRunId: string;
+  latestSourceRunId: string;
+  currentResolverRunId: string | null;
+  queueItemId: string;
+  agentId: string;
+  agentName: string;
+  conflictReason: string;
+  explanation: string | null;
+  conflictPaths: string[];
+  automaticAttempts: number;
+  failureReason: string | null;
+  questions: MergeConflictQuestion[];
+  prompts: Array<{ id: string; authorName: string; text: string }>;
+  attempts: Array<{
+    runId: string;
+    launchKind: "automatic" | "manual" | "answer";
+    status: AgentRunStatus;
+    summary: string | null;
+    createdAt: number;
+    completedAt: number | null;
+    checks: Array<{ command: string; status: AgentRunCheck["status"] }>;
+  }>;
+  createdAt: number;
+  updatedAt: number;
+  resolvedAt: number | null;
 };
 
 export type ReviewContributor = {
@@ -164,6 +229,7 @@ export type FloorReviewSnapshot = {
   }>;
   checks: Array<{ id: string; name: string; detail: string | null; state: "passed" | "waiting" | "failed" }>;
   warnings: Array<{ id: string; title: string; detail: string; severity: "conflict" | "warning" }>;
+  conflicts: MergeConflictCase[];
   updatedAt: number;
   githubChecksPassing: boolean | null;
   cleanupStatus: "pending" | "complete" | "partial" | null;
@@ -183,6 +249,11 @@ export type FloorReviewSnapshot = {
 export type FloorSnapshot = {
   revision: number;
   autoDispatch: boolean;
+  autoProvisionAgents: boolean;
+  autoAgentProvider: CredentialProvider | null;
+  effectiveAutoAgentProvider: CredentialProvider | null;
+  autoAgentProviderState: "selected" | "single_connected" | "openai_fallback" | "selection_required";
+  autoResolveConflicts: boolean;
   agents: FloorAgent[];
   assignments: FloorAssignment[];
   messages: FloorMessage[];

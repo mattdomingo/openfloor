@@ -1,21 +1,27 @@
 import { env } from "cloudflare:workers";
 import { afterEach, describe, expect, it } from "vitest";
-import { createFloorAgent, createFloorQueueItem } from "@/db/floor";
-import { runRoutingTick, SESSION_RUN_CAP, type RoutingDeps } from "@/db/routing";
-import { acceptInvite, createSession, setSessionAutoDispatch, upsertUser } from "@/db/sessions";
+import { createFloorAgent, createFloorQueueItem, getFloorSnapshot } from "@/db/floor";
+import { classifyPrompt, runRoutingTick, SESSION_RUN_CAP, type RoutingDeps } from "@/db/routing";
+import { finishAgentReply } from "@/db/runs";
+import { acceptInvite, createSession, setSessionAutoDispatch, setSessionRoutingSettings, upsertUser } from "@/db/sessions";
 import type { StartRunResult } from "@/lib/agent-run-start";
+import type { PromptIntent } from "@/lib/floor-types";
 import { parseAgentInput } from "@/lib/validation";
 
 function identity(id: string, name: string) {
   return { providerUserId: `routing-${id}`, email: `${id}@example.com`, displayName: name, fullName: name };
 }
 
-async function routingRoom(suffix: string, autoDispatch = true) {
+async function routingRoom(suffix: string, autoDispatch = true, autoProvisionAgents = true) {
   const owner = await upsertUser(identity(`${suffix}-owner`, "Owner Example"), env.DB);
   const member = await upsertUser(identity(`${suffix}-member`, "Member Example"), env.DB);
   const created = await createSession(owner.id, { title: `Routing ${suffix}`, objective: null }, env.DB);
   await acceptInvite(created.inviteId, member.id, env.DB);
-  if (autoDispatch) await setSessionAutoDispatch(created.session.id, owner.id, true, env.DB);
+  // Sessions now default to auto_dispatch = 1 (db/sessions.ts createSession),
+  // so the "off" case has to explicitly turn it back off rather than relying
+  // on the old false default.
+  await setSessionAutoDispatch(created.session.id, owner.id, autoDispatch, env.DB);
+  if (!autoProvisionAgents) await setSessionRoutingSettings(created.session.id, owner.id, { autoProvisionAgents: false }, env.DB);
   return { sessionId: created.session.id, owner, member };
 }
 
@@ -29,13 +35,20 @@ async function addAgent(sessionId: string, ownerUserId: string, name: string, ro
 }
 
 /** Default dispatch stub: create a real running agent_runs row and flip the item, like createAgentRun does. */
-function startRunStub(results: StartRunResult[] = []): { calls: Array<{ queueItemId: string; userId: string }>; deps: RoutingDeps } {
+function startRunStub(results: StartRunResult[] = []): {
+  calls: Array<{ queueItemId: string; userId: string }>;
+  kinds: Array<{ queueItemId: string; kind: "task" | "reply" }>;
+  deps: RoutingDeps;
+} {
   const calls: Array<{ queueItemId: string; userId: string }> = [];
+  const kinds: Array<{ queueItemId: string; kind: "task" | "reply" }> = [];
   return {
     calls,
+    kinds,
     deps: {
-      startRun: async (sessionId, queueItemId, userId) => {
+      startRun: async (sessionId, queueItemId, userId, kind) => {
         calls.push({ queueItemId, userId });
+        kinds.push({ queueItemId, kind });
         const scripted = results.shift();
         if (scripted) return scripted;
         const item = await env.DB.prepare("SELECT agent_id AS agentId FROM floor_queue_items WHERE id = ?")
@@ -58,8 +71,12 @@ async function decisions(sessionId: string) {
 
 async function queueItem(id: string) {
   return env.DB.prepare(
-    "SELECT agent_id AS agentId, status, assigned_by AS assignedBy, assigned_reason AS assignedReason FROM floor_queue_items WHERE id = ?",
-  ).bind(id).first<{ agentId: string | null; status: string; assignedBy: string | null; assignedReason: string | null }>();
+    "SELECT agent_id AS agentId, status, assigned_by AS assignedBy, assigned_reason AS assignedReason, intent FROM floor_queue_items WHERE id = ?",
+  ).bind(id).first<{ agentId: string | null; status: string; assignedBy: string | null; assignedReason: string | null; intent: string | null }>();
+}
+
+async function agentRow(id: string) {
+  return env.DB.prepare("SELECT id, name, kind FROM floor_agents WHERE id = ?").bind(id).first<{ id: string; name: string; kind: string | null }>();
 }
 
 /** Insert a run row, creating connection/candidate scaffolding on first use. Without a queueItemId a backing running item is created. */
@@ -102,7 +119,7 @@ describe("agent router tick", () => {
   afterEach(async () => {
     // Retire active runs so the shared global budget does not leak across tests.
     await env.DB.prepare(
-      "UPDATE agent_runs SET status = 'integrated' WHERE status IN ('provisioning', 'running', 'checking', 'cancel_requested')",
+      "UPDATE agent_runs SET status = 'integrated' WHERE status IN ('provisioning', 'running', 'checking', 'ready', 'publishing', 'published', 'integrating', 'cancel_requested')",
     ).run();
   });
 
@@ -186,12 +203,12 @@ describe("agent router tick", () => {
 
   it("holds with a budget reason when the session run cap is reached", async () => {
     const room = await routingRoom("capacity");
-    const agentA = await addAgent(room.sessionId, room.owner.id, "Alpha", "Backend", "api work");
-    const agentB = await addAgent(room.sessionId, room.owner.id, "Beta", "Frontend", "ui work");
-    const agentC = await addAgent(room.sessionId, room.owner.id, "Gamma", "Docs", "doc work");
-    await insertRunRow(room.sessionId, agentA, room.owner.id, "running", Date.now() - 10_000);
-    await insertRunRow(room.sessionId, agentB, room.owner.id, "checking", Date.now() - 9_000);
-    await createFloorQueueItem(room.sessionId, room.owner.id, { prompt: "Write the docs", agentId: agentC }, env.DB);
+    for (let index = 0; index < SESSION_RUN_CAP; index += 1) {
+      const agentId = await addAgent(room.sessionId, room.owner.id, `Busy ${index}`, "Engineer", `work ${index}`);
+      await insertRunRow(room.sessionId, agentId, room.owner.id, index % 2 === 0 ? "running" : "publishing", Date.now() - 10_000 + index);
+    }
+    const waitingAgent = await addAgent(room.sessionId, room.owner.id, "Waiting", "Docs", "doc work");
+    await createFloorQueueItem(room.sessionId, room.owner.id, { prompt: "Write the docs", agentId: waitingAgent }, env.DB);
     const stub = startRunStub();
     const outcome = await runRoutingTick(room.sessionId, "alarm", stub.deps, env.DB);
     expect(outcome.held).toBe(true);
@@ -245,7 +262,7 @@ describe("agent router tick", () => {
   });
 
   it("holds when no agents exist and never re-assigns user-assigned items", async () => {
-    const emptyRoom = await routingRoom("noagents");
+    const emptyRoom = await routingRoom("noagents", true, false);
     await createFloorQueueItem(emptyRoom.sessionId, emptyRoom.owner.id, { prompt: "Anything", agentId: null }, env.DB);
     const stub = startRunStub();
     const outcome = await runRoutingTick(emptyRoom.sessionId, "enqueue", stub.deps, env.DB);
@@ -337,5 +354,228 @@ describe("agent router tick", () => {
     const stub = startRunStub();
     await runRoutingTick(room.sessionId, "enqueue", { ...stub.deps, disabledProviders: new Set(["anthropic"]) }, env.DB);
     expect((await queueItem(itemId))?.agentId).toBe(codexAgentId);
+  });
+
+  it("uses idle persistent agents first, then activates and reuses only the workers it can dispatch", async () => {
+    const room = await routingRoom("elastic-workers");
+    const firstPersistent = await addAgent(room.sessionId, room.owner.id, "Persistent One", "Engineer", "general work");
+    const secondPersistent = await addAgent(room.sessionId, room.owner.id, "Persistent Two", "Engineer", "general work");
+    for (const prompt of ["Implement alpha", "Implement beta", "Implement gamma"]) {
+      await createFloorQueueItem(room.sessionId, room.owner.id, { prompt, agentId: null }, env.DB);
+    }
+
+    const firstTick = startRunStub();
+    await runRoutingTick(room.sessionId, "enqueue", firstTick.deps, env.DB);
+    const assigned = await env.DB.prepare(
+      "SELECT id, agent_id AS agentId FROM floor_queue_items WHERE session_id = ? AND position < 999 ORDER BY position",
+    ).bind(room.sessionId).all<{ id: string; agentId: string }>();
+    expect(assigned.results.slice(0, 2).map((item) => item.agentId)).toEqual([firstPersistent, secondPersistent]);
+    const workers = await env.DB.prepare(
+      "SELECT id, deprovisioned_at AS deprovisionedAt FROM floor_agents WHERE session_id = ? AND kind = 'worker'",
+    ).bind(room.sessionId).all<{ id: string; deprovisionedAt: number | null }>();
+    expect(workers.results).toHaveLength(1);
+    expect(assigned.results[2].agentId).toBe(workers.results[0].id);
+
+    const workerItem = assigned.results[2];
+    await env.DB.prepare("UPDATE agent_runs SET status = 'integrated' WHERE queue_item_id = ?").bind(workerItem.id).run();
+    await env.DB.prepare("UPDATE floor_queue_items SET status = 'completed' WHERE id = ?").bind(workerItem.id).run();
+    await runRoutingTick(room.sessionId, "run_completed", startRunStub().deps, env.DB);
+    expect((await env.DB.prepare("SELECT deprovisioned_at AS value FROM floor_agents WHERE id = ?").bind(workers.results[0].id).first<{ value: number | null }>())?.value).not.toBeNull();
+
+    const next = await createFloorQueueItem(room.sessionId, room.owner.id, { prompt: "Implement delta", agentId: null }, env.DB);
+    const nextItem = next!.queue.find((item) => item.status === "queued")!;
+    await runRoutingTick(room.sessionId, "enqueue", startRunStub().deps, env.DB);
+    expect((await queueItem(nextItem.id))?.agentId).toBe(workers.results[0].id);
+    const workerCount = await env.DB.prepare("SELECT COUNT(*) AS count FROM floor_agents WHERE session_id = ? AND kind = 'worker'")
+      .bind(room.sessionId).first<{ count: number }>();
+    expect(Number(workerCount?.count)).toBe(1);
+  });
+
+  it("turning provisioning off unassigns queued router work and retires its idle generated agent", async () => {
+    const room = await routingRoom("provision-off");
+    const floor = await createFloorQueueItem(room.sessionId, room.owner.id, { prompt: "Implement a change", agentId: null }, env.DB);
+    const itemId = floor!.queue[0].id;
+    const held = startRunStub([{ ok: false, kind: "not_ready", message: "Repository is not ready" }]);
+    await runRoutingTick(room.sessionId, "enqueue", held.deps, env.DB);
+    const generatedId = (await queueItem(itemId))!.agentId!;
+
+    await setSessionRoutingSettings(room.sessionId, room.owner.id, { autoProvisionAgents: false }, env.DB);
+    const outcome = await runRoutingTick(room.sessionId, "toggle", startRunStub().deps, env.DB);
+    expect(outcome.acted).toBe(true);
+    expect(await queueItem(itemId)).toEqual(expect.objectContaining({ agentId: null, assignedBy: null }));
+    const generated = await env.DB.prepare("SELECT deprovisioned_at AS deprovisionedAt FROM floor_agents WHERE id = ?")
+      .bind(generatedId).first<{ deprovisionedAt: number | null }>();
+    expect(generated?.deprovisionedAt).not.toBeNull();
+    expect((await getFloorSnapshot(room.sessionId, room.owner.id, env.DB))?.agents).toHaveLength(0);
+  });
+
+  it("requires an explicit enabled provider when multiple owner keys are connected", async () => {
+    const room = await routingRoom("provider-selection");
+    const now = Date.now();
+    for (const provider of ["openai", "anthropic"] as const) {
+      await env.DB.prepare(
+        `INSERT INTO user_provider_credentials (user_id, provider, kind, ciphertext, fingerprint, created_at, updated_at)
+         VALUES (?, ?, 'api_key', ?, 'test', ?, ?)`,
+      ).bind(room.owner.id, provider, `cipher-${provider}`, now, now).run();
+    }
+    const floor = await createFloorQueueItem(room.sessionId, room.owner.id, { prompt: "Implement provider routing", agentId: null }, env.DB);
+    const itemId = floor!.queue[0].id;
+    const missing = await runRoutingTick(room.sessionId, "enqueue", startRunStub().deps, env.DB);
+    expect(missing.held).toBe(true);
+    expect((await queueItem(itemId))?.agentId).toBeNull();
+    expect((await decisions(room.sessionId)).at(-1)?.reason).toBe("Choose a default generated-agent provider");
+
+    await setSessionRoutingSettings(room.sessionId, room.owner.id, { autoAgentProvider: "anthropic" }, env.DB);
+    const gated = await runRoutingTick(room.sessionId, "toggle", { ...startRunStub().deps, disabledProviders: new Set(["anthropic", "openai"]) }, env.DB);
+    expect(gated.held).toBe(true);
+    expect((await queueItem(itemId))?.agentId).toBeNull();
+
+    await setSessionRoutingSettings(room.sessionId, room.owner.id, { autoAgentProvider: "openai" }, env.DB);
+    await runRoutingTick(room.sessionId, "toggle", startRunStub().deps, env.DB);
+    const generated = await env.DB.prepare("SELECT provider FROM floor_agents WHERE id = ?")
+      .bind((await queueItem(itemId))!.agentId).first<{ provider: string }>();
+    expect(generated?.provider).toBe("openai");
+  });
+
+  it("does not provision past the 30-run global automated budget", async () => {
+    const target = await routingRoom("global-target");
+    const blocker = await routingRoom("global-blocker", false);
+    for (let index = 0; index < 30; index += 1) {
+      const agentId = await addAgent(blocker.sessionId, blocker.owner.id, `Global ${index}`, "Engineer", `global ${index}`);
+      await insertRunRow(blocker.sessionId, agentId, blocker.owner.id, "running", Date.now() + index);
+    }
+    const floor = await createFloorQueueItem(target.sessionId, target.owner.id, { prompt: "Implement after global capacity", agentId: null }, env.DB);
+    const itemId = floor!.queue[0].id;
+    const outcome = await runRoutingTick(target.sessionId, "enqueue", startRunStub().deps, env.DB);
+    expect(outcome.held).toBe(true);
+    expect((await queueItem(itemId))?.agentId).toBeNull();
+    const workers = await env.DB.prepare("SELECT COUNT(*) AS count FROM floor_agents WHERE session_id = ? AND kind = 'worker'")
+      .bind(target.sessionId).first<{ count: number }>();
+    expect(Number(workers?.count)).toBe(0);
+  });
+
+  it("never ranks Concierge for task work", async () => {
+    const room = await routingRoom("concierge-task");
+    const now = Date.now();
+    const conciergeId = crypto.randomUUID();
+    await env.DB.prepare(
+      `INSERT INTO floor_agents (id, session_id, created_by, owner_user_id, name, name_key, role, task, state, provider, kind, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'Concierge', 'concierge', 'Session answers', 'Answer questions', 'created', 'openai', 'answer', ?, ?)`,
+    ).bind(conciergeId, room.sessionId, room.owner.id, room.owner.id, now, now).run();
+    await createFloorQueueItem(room.sessionId, room.owner.id, { prompt: "What is the status?", agentId: conciergeId }, env.DB);
+    const taskFloor = await createFloorQueueItem(room.sessionId, room.owner.id, { prompt: "Implement the status endpoint", agentId: null }, env.DB);
+    const taskId = taskFloor!.queue.find((item) => item.agentId === null)!.id;
+    const stub = startRunStub();
+    await runRoutingTick(room.sessionId, "enqueue", stub.deps, env.DB);
+    const taskAgent = await agentRow((await queueItem(taskId))!.agentId!);
+    expect(taskAgent?.kind).toBe("worker");
+    expect(taskAgent?.id).not.toBe(conciergeId);
+    expect(stub.kinds).toEqual(expect.arrayContaining([{ queueItemId: taskId, kind: "task" }]));
+  });
+
+  it("routes an untargeted question to a lazily-created answer agent and dispatches a reply run", async () => {
+    const room = await routingRoom("question");
+    await addAgent(room.sessionId, room.owner.id, "Nova", "Frontend", "Own the login screen styling");
+    const floor = await createFloorQueueItem(room.sessionId, room.member.id, { prompt: "What does the auth module do?", agentId: null }, env.DB);
+    const itemId = floor!.queue[0].id;
+    const stub = startRunStub();
+    const outcome = await runRoutingTick(room.sessionId, "enqueue", stub.deps, env.DB);
+    expect(outcome.acted).toBe(true);
+
+    const item = await queueItem(itemId);
+    expect(item?.intent).toBe("question");
+    expect(item?.assignedBy).toBe("router");
+    expect(item?.assignedReason).toContain("Question");
+    const agent = await agentRow(item!.agentId!);
+    expect(agent?.kind).toBe("answer");
+    expect(agent?.name).toBe("Concierge");
+    expect(stub.kinds).toEqual([{ queueItemId: itemId, kind: "reply" }]);
+
+    const recorded = await decisions(room.sessionId);
+    expect(recorded.find((decision) => decision.queueItemId === itemId && decision.decision === "assigned")?.reason).toContain("Question");
+  });
+
+  it("routes a noise prompt (ping) to the same answer agent across the session, created only once", async () => {
+    const room = await routingRoom("noise");
+    const first = await createFloorQueueItem(room.sessionId, room.member.id, { prompt: "ping", agentId: null }, env.DB);
+    const firstItemId = first!.queue[0].id;
+    const firstStub = startRunStub();
+    await runRoutingTick(room.sessionId, "enqueue", firstStub.deps, env.DB);
+    const firstItem = await queueItem(firstItemId);
+    expect(firstItem?.intent).toBe("noise");
+    const answerAgentId = firstItem!.agentId!;
+
+    const second = await createFloorQueueItem(room.sessionId, room.member.id, { prompt: "thanks!", agentId: null }, env.DB);
+    const secondItemId = second!.queue.find((entry) => entry.id !== firstItemId)!.id;
+    const secondStub = startRunStub();
+    await runRoutingTick(room.sessionId, "enqueue", secondStub.deps, env.DB);
+    const secondItem = await queueItem(secondItemId);
+    expect(secondItem?.intent).toBe("noise");
+    expect(secondItem?.agentId).toBe(answerAgentId);
+
+    const answerAgents = await env.DB.prepare("SELECT COUNT(*) AS count FROM floor_agents WHERE session_id = ? AND kind = 'answer'")
+      .bind(room.sessionId).first<{ count: number }>();
+    expect(Number(answerAgents?.count)).toBe(1);
+  });
+
+  it("keeps a targeted question with its named agent instead of the concierge, and still dispatches a reply", async () => {
+    const room = await routingRoom("targeted-question");
+    const rexId = await addAgent(room.sessionId, room.owner.id, "Rex", "Backend", "Own the auth api");
+    const floor = await createFloorQueueItem(room.sessionId, room.member.id, { prompt: "@Rex what's the status of the auth work?", agentId: rexId }, env.DB);
+    const itemId = floor!.queue[0].id;
+    const stub = startRunStub();
+    await runRoutingTick(room.sessionId, "enqueue", stub.deps, env.DB);
+    const item = await queueItem(itemId);
+    expect(item?.agentId).toBe(rexId);
+    expect(item?.assignedBy).toBe("user");
+    expect(item?.intent).toBe("question");
+    expect(stub.kinds).toEqual([{ queueItemId: itemId, kind: "reply" }]);
+    const answerAgents = await env.DB.prepare("SELECT COUNT(*) AS count FROM floor_agents WHERE session_id = ? AND kind = 'answer'")
+      .bind(room.sessionId).first<{ count: number }>();
+    expect(Number(answerAgents?.count)).toBe(0);
+  });
+
+  it("a finished reply completes its queue item outright, not blocked", async () => {
+    const room = await routingRoom("reply-complete");
+    const floor = await createFloorQueueItem(room.sessionId, room.member.id, { prompt: "hello", agentId: null }, env.DB);
+    const itemId = floor!.queue[0].id;
+    const stub = startRunStub();
+    await runRoutingTick(room.sessionId, "enqueue", stub.deps, env.DB);
+    const item = await queueItem(itemId);
+    expect(item?.status).toBe("running");
+    const run = await env.DB.prepare("SELECT id FROM agent_runs WHERE queue_item_id = ?").bind(itemId).first<{ id: string }>();
+    const outcome = await finishAgentReply(run!.id, "ready", "Hi! How can I help?", "Answered the prompt.", null, env.DB);
+    expect(outcome).not.toBeNull();
+    const finished = await queueItem(itemId);
+    expect(finished?.status).toBe("completed");
+  });
+});
+
+describe("classifyPrompt", () => {
+  it.each<[string, PromptIntent]>([
+    ["ping", "noise"],
+    ["hi", "noise"],
+    ["hello!", "noise"],
+    ["thanks", "noise"],
+    ["thank you", "noise"],
+    ["ty", "noise"],
+    ["ok", "noise"],
+    ["test", "noise"],
+    ["👋", "noise"],
+    ["what does auth.ts do?", "question"],
+    ["Why is the deploy failing?", "question"],
+    ["can you fix the login bug?", "task"],
+    ["ping the health endpoint", "task"],
+    ["test the login flow end to end", "task"],
+    ["Add a logout button", "task"],
+    ["Refactor the auth middleware validation", "task"],
+    ["Zzz unrelated wording entirely", "task"],
+    ["", "task"],
+  ])("classifies %j as %s", (text, expected) => {
+    expect(classifyPrompt(text)).toBe(expected);
+  });
+
+  it("treats a very long prompt the same as a normal one (no special-casing on length)", () => {
+    expect(classifyPrompt(`fix ${"the bug ".repeat(2000)}`)).toBe("task");
   });
 });
