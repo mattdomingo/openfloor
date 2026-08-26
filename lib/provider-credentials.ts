@@ -57,6 +57,12 @@ export type ProviderCredentialSummary = {
   validatedAt: number | null;
   createdAt: number;
   updatedAt: number;
+  // This-UTC-month spend against this exact credential (from
+  // provider_spend_months) and the owner-set cap it's checked against
+  // (lib/agent-run-start.ts's checkProviderBudget). Null limit means no cap
+  // set — the meter still shows spend, just with no ceiling to warn against.
+  monthSpendMicroUsd: number;
+  monthlyLimitMicroUsd: number | null;
 };
 
 export function parseCredentialProvider(value: unknown): CredentialProvider | null {

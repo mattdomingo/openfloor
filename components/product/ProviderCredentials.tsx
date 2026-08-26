@@ -52,6 +52,20 @@ export function ProviderCredentials({
   );
 }
 
+// 80%/100% thresholds match lib/agent-run-start.ts's checkProviderBudget,
+// which refuses new runs at the cap this colors red.
+function budgetLevel(spendMicroUsd: number, limitMicroUsd: number | null): "ok" | "warn" | "over" {
+  if (limitMicroUsd === null || limitMicroUsd === 0) return "ok";
+  const ratio = spendMicroUsd / limitMicroUsd;
+  if (ratio >= 1) return "over";
+  if (ratio >= 0.8) return "warn";
+  return "ok";
+}
+
+function formatUsd(microUsd: number): string {
+  return `$${(microUsd / 1_000_000).toFixed(2)}`;
+}
+
 function ProviderCredentialRow({ provider, kind, credential, showAgentDefaults, onChanged }: {
   provider: CredentialProvider;
   kind: CredentialKind;
@@ -108,6 +122,24 @@ function ProviderCredentialRow({ provider, kind, credential, showAgentDefaults, 
     onChanged(null);
   }
 
+  async function saveLimit(monthlyLimitUsd: number | null) {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    const response = await fetch(`${BASE_PATH}/api/account/credentials/${provider}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ kind, monthlyLimitUsd }),
+    });
+    const body = (await response.json().catch(() => null)) as { credential?: ProviderCredentialSummary; error?: string } | null;
+    setBusy(false);
+    if (!response.ok || !body?.credential) {
+      setError(body?.error ?? "Unable to save that limit. Try again.");
+      return;
+    }
+    onChanged(body.credential);
+  }
+
   return (
     <li className="settings-category-row provider-credential-row" data-expanded={expanded}>
       <button
@@ -129,13 +161,22 @@ function ProviderCredentialRow({ provider, kind, credential, showAgentDefaults, 
         <div id={panelId} className="provider-credential-body">
           {credential ? (
             <>
-              <span className="settings-category-detail">
-                {kind === "api_key" ? (
-                  <>API key ending in ····{credential.fingerprint}.</>
-                ) : (
-                  <>{bundle ? <>account ····{credential.fingerprint}</> : <>····{credential.fingerprint}</>}.</>
-                )}
-              </span>
+              {/* .settings-category-row .button (globals.css) grid-places the
+                  Disconnect button at "row 1 / span 2" beside this block,
+                  assuming exactly two grid children — so the fingerprint line
+                  and the budget control are wrapped together into ONE child
+                  here rather than added as a third sibling, which would
+                  otherwise steal the row the button expects to span. */}
+              <div className="provider-credential-detail">
+                <span className="settings-category-detail">
+                  {kind === "api_key" ? (
+                    <>API key ending in ····{credential.fingerprint}.</>
+                  ) : (
+                    <>{bundle ? <>account ····{credential.fingerprint}</> : <>····{credential.fingerprint}</>}.</>
+                  )}
+                </span>
+                <ProviderBudgetControl credential={credential} busy={busy} onSaveLimit={saveLimit} />
+              </div>
               <button type="button" className="button" data-variant="quiet" data-size="sm" onClick={disconnect} disabled={busy}>
                 {busy ? "Disconnecting…" : "Disconnect"}
               </button>
@@ -189,5 +230,72 @@ function ProviderCredentialRow({ provider, kind, credential, showAgentDefaults, 
         </div>
       )}
     </li>
+  );
+}
+
+// This-UTC-month spend against an owner-set cap (null = uncapped). Warns at
+// 80%, matches red at 100% — lib/agent-run-start.ts's checkProviderBudget
+// refuses new runs at that same 100% line.
+function ProviderBudgetControl({ credential, busy, onSaveLimit }: {
+  credential: ProviderCredentialSummary;
+  busy: boolean;
+  onSaveLimit: (monthlyLimitUsd: number | null) => void;
+}) {
+  const hasLimit = credential.monthlyLimitMicroUsd !== null;
+  const [editing, setEditing] = useState(false);
+  const [limitInput, setLimitInput] = useState(
+    hasLimit ? String((credential.monthlyLimitMicroUsd as number) / 1_000_000) : "",
+  );
+  const level = budgetLevel(credential.monthSpendMicroUsd, credential.monthlyLimitMicroUsd);
+
+  function submitLimit(event: FormEvent) {
+    event.preventDefault();
+    const trimmed = limitInput.trim();
+    if (!trimmed) {
+      onSaveLimit(null);
+    } else {
+      const parsed = Number(trimmed);
+      if (!Number.isFinite(parsed) || parsed < 0) return;
+      onSaveLimit(parsed);
+    }
+    setEditing(false);
+  }
+
+  return (
+    <div className="provider-budget">
+      <div className="provider-budget-line">
+        <span>This month: {formatUsd(credential.monthSpendMicroUsd)}{hasLimit ? ` of ${formatUsd(credential.monthlyLimitMicroUsd as number)}` : ""}</span>
+        <button type="button" className="button" data-variant="quiet" data-size="sm" onClick={() => setEditing((value) => !value)} disabled={busy}>
+          {hasLimit ? "Change limit" : "Set limit"}
+        </button>
+      </div>
+      <progress
+        className="usage-meter"
+        data-level={level}
+        value={hasLimit ? Math.min(credential.monthSpendMicroUsd, credential.monthlyLimitMicroUsd as number) : credential.monthSpendMicroUsd}
+        max={hasLimit ? (credential.monthlyLimitMicroUsd as number) : Math.max(credential.monthSpendMicroUsd, 1)}
+        aria-label={`This month's spend${hasLimit ? `, against a ${formatUsd(credential.monthlyLimitMicroUsd as number)} monthly limit` : ""}`}
+      />
+      {editing && (
+        <form className="provider-budget-form" onSubmit={submitLimit}>
+          <label className="field">
+            <span className="label">Monthly limit (USD, blank for none)</span>
+            <input
+              type="number"
+              min={0}
+              step="1"
+              inputMode="numeric"
+              value={limitInput}
+              onChange={(event) => setLimitInput(event.target.value)}
+              placeholder="No limit"
+              aria-label="Monthly limit in US dollars"
+            />
+          </label>
+          <div className="form-actions">
+            <button className="button" data-variant="primary" data-size="sm" disabled={busy}>{busy ? "Saving…" : "Save"}</button>
+          </div>
+        </form>
+      )}
+    </div>
   );
 }
