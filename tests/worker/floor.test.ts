@@ -83,7 +83,7 @@ describe("D1 persistent floor", () => {
   it("persists uniquely named agents with real member ownership", async () => {
     const room = await floorRoom("agents");
     const floor = await createFloorAgent(room.sessionId, room.member.id, agentInput(room.owner.id), env.DB);
-    expect(floor?.agents).toEqual([expect.objectContaining({ name: "Lumen", ownerUserId: room.owner.id, state: "created", provider: "openai", model: null })]);
+    expect(floor?.agents).toEqual([expect.objectContaining({ name: "Lumen", ownerUserId: room.owner.id, state: "created", provider: "openai", model: null, credentialKind: null })]);
     expect(floor?.revision).toBe(1);
     await expect(createFloorAgent(room.sessionId, room.owner.id, agentInput(room.owner.id, "LUMEN"), env.DB)).rejects.toBeInstanceOf(FloorConflictError);
     await expect(createFloorAgent(room.sessionId, room.owner.id, agentInput(room.outsider.id, "Other"), env.DB)).rejects.toBeInstanceOf(FloorTargetError);
@@ -98,6 +98,14 @@ describe("D1 persistent floor", () => {
     expect(floor?.agents.find((agent) => agent.name === "Claude")?.provider).toBe("anthropic");
     const second = await createFloorAgent(room.sessionId, room.owner.id, agentInput(room.owner.id, "Codex"), env.DB);
     expect(second?.agents.find((agent) => agent.name === "Codex")?.provider).toBe("openai");
+  });
+
+  it("exposes an agent's stored billing choice in the floor snapshot", async () => {
+    const room = await floorRoom("billing-visible");
+    const input = parseAgentInput({ name: "Sub", role: "Researcher", task: "Research", ownerUserId: room.owner.id, provider: "anthropic", credentialKind: "oauth" });
+    if (!input) throw new Error("Invalid test agent");
+    const floor = await createFloorAgent(room.sessionId, room.owner.id, input, env.DB);
+    expect(floor?.agents.find((agent) => agent.name === "Sub")?.credentialKind).toBe("oauth");
   });
 
   it("persists unassigned and targeted prompts and ordering", async () => {

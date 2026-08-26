@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { AgentRun, FloorAgent, RunActivityEvent } from "@/lib/floor-types";
-import { AGENT_PROVIDER_LABELS } from "@/lib/provider-credentials";
+import { AGENT_PROVIDER_LABELS, credentialKindLabel } from "@/lib/provider-credentials";
 import { BASE_PATH } from "@/components/basePath";
 import { LocalDateTime } from "@/components/LocalDateTime";
 import { Icon } from "./primitives";
@@ -73,7 +73,7 @@ export function AgentSpotlight({ agent, tone, sessionId, latestRun, activity, on
     <article className="spotlight" data-status={paused ? "paused" : latestRun ? runStatusToken(latestRun) : "idle"} data-tone={tone}>
       <div className="spotlight-head">
         <span className="agent-glyph" data-size="lg" aria-hidden="true">{agent.name.slice(0, 1)}</span>
-        <div className="agent-identity"><h3>{agent.name}{agent.kind && <em className="kind-tag" data-kind="auto">Auto-generated</em>}</h3><span>{agent.role} · {AGENT_PROVIDER_LABELS[agent.provider]} · owned by {agent.ownerName}</span></div>
+        <div className="agent-identity"><h3>{agent.name}{agent.kind && <em className="kind-tag" data-kind="auto">Auto-generated</em>}</h3><span>{agent.role} · {AGENT_PROVIDER_LABELS[agent.provider]}{agent.model ? ` · ${agent.model}` : ""}{agent.credentialKind ? ` · ${credentialKindLabel(agent.provider, agent.credentialKind)}` : ""} · owned by {agent.ownerName}</span></div>
         <span className="agent-state">{stateLabel}</span>
       </div>
       {!agent.kind && (

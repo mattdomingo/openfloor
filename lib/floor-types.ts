@@ -35,6 +35,14 @@ export type FloorAgent = {
   // writes the selected provider; model selection is a later milestone.
   provider: CredentialProvider;
   model: string | null;
+  // Which of the owner's credential kinds this agent's runs bill (null = the
+  // owner's default). Member-visible on purpose: this is the agent's own
+  // stored choice, made in a dialog every member can open — NOT the owner's
+  // connection state, which stays private (the rule that forbids revealing
+  // which kinds an owner has connected is about their account, not the
+  // agent). Showing it is what makes the "connect it or change the agent"
+  // run refusal diagnosable, so do not "fix" this back to hidden.
+  credentialKind: CredentialKind | null;
   // Manual pause/stop state for a persistent agent (kind === null). Non-null
   // blocks new router assignment/dispatch; an in-flight run finishes
   // normally. Always null for a system-managed agent.
