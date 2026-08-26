@@ -729,8 +729,7 @@
 .shop-shell input:focus-visible,
 .shop-shell textarea:focus-visible {
   box-shadow: none;
-  outline: 2px solid var(--accent-ink);
-  outline-offset: 2px;
+  outline: none;
   border-color: var(--edge);
 }
 .shop-shell .form-error { color: #b8453a; }

@@ -9,7 +9,7 @@ button { cursor: pointer; }
 button:disabled { cursor: wait; opacity: .62; }
 button, a, input, textarea { transition: var(--transition-interactive); }
 :focus-visible { outline: none; box-shadow: var(--focus-ring); border-radius: var(--radius-sm); }
-input:focus-visible, textarea:focus-visible { box-shadow: 0 0 0 3px var(--accent-soft); border-color: var(--accent); }
+input:focus-visible, textarea:focus-visible { box-shadow: none; }
 
 .eyebrow {
   color: var(--accent);
