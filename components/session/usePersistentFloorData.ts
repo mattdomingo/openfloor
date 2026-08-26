@@ -116,6 +116,7 @@ export function usePersistentFloorData(sessionId: string, initialFloor: FloorSna
     readyReview: () => request("/review/ready", "POST"),
     squashMergeReview: (deleteCandidateBranch: boolean) => request("/review/merge", "POST", { deleteCandidateBranch }),
     deleteReviewBranch: () => request("/review/branch", "DELETE"),
+    abandonCandidate: (deleteBranch: boolean) => request("/repository/candidate", "DELETE", { deleteBranch }),
   };
 }
 
