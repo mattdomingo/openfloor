@@ -330,7 +330,7 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   const unassignedItem = owner.locator("li.queue-item", { hasText: "Document the next backend contract" });
   await expect(unassignedItem.getByRole("button", { name: "Run", exact: true })).toHaveCount(0);
   await unassignedItem.getByRole("combobox", { name: "Queue target" }).click();
-  await owner.getByRole("option", { name: "Lumen" }).click();
+  await owner.getByRole("option", { name: "Lumen" }).click({ force: true });
   await expect(unassignedItem.getByText("Unassigned", { exact: true })).toHaveCount(0);
   await expect(unassignedItem.getByRole("button", { name: "Run", exact: true })).toBeVisible();
 
@@ -364,7 +364,7 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await memberTeamPanel.getByRole("button", { name: "Goals" }).click();
   await expect(memberTeamPanel.getByLabel("Assignment for Owner E.")).toHaveValue("Own the persistent release");
 
-  await owner.getByRole("button", { name: "Review" }).click();
+  await owner.getByRole("button", { name: /Review/ }).first().click();
   await expect(owner.getByRole("heading", { name: "No review available" })).toBeVisible();
   await expect(owner.getByRole("button", { name: "Approve candidate" })).toHaveCount(0);
   await expect(owner.getByText(/server\/session\/reducer|AgentCard\.tsx/)).toHaveCount(0);
@@ -397,7 +397,7 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await agentFloor.getByRole("button", { name: "Hide raw log" }).click();
   await owner.reload();
   await expect(owner.getByText("integrated", { exact: true }).first()).toBeVisible();
-  await owner.getByRole("button", { name: "Review" }).click();
+  await owner.getByRole("button", { name: /Review/ }).first().click();
   await expect(owner.getByRole("heading", { name: "Review", exact: true })).toBeVisible();
   await expect(owner.getByRole("heading", { name: /openfloor\// })).toBeVisible();
   const commitFact = owner.locator(".review-hero-facts > div", { hasText: "Commit" });
@@ -426,7 +426,7 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await expect(secondPublishedItem.getByText("integrated", { exact: true })).toBeVisible();
   await expect(firstPublishedItem.locator("code.queue-run-branch")).toHaveCount(1);
   await expect(secondPublishedItem.locator("code.queue-run-branch")).toHaveCount(1);
-  await owner.getByRole("button", { name: "Review" }).click();
+  await owner.getByRole("button", { name: /Review/ }).first().click();
   await expect(owner.getByText("second-change.ts", { exact: true })).toBeVisible();
   await expect(owner.getByRole("link", { name: /Draft PR #1/ })).toHaveCount(1);
   await owner.getByRole("button", { name: "Workspace" }).click();
@@ -442,12 +442,21 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   const memberRollbackItem = member.locator("li.queue-item", { hasText: "Create a member rollback change" });
   await ownerRollbackItem.getByRole("button", { name: "Run", exact: true }).click();
   await expect(memberRollbackItem.getByText("integrated", { exact: true })).toBeVisible();
-  await expect(memberRollbackItem.getByRole("button", { name: "Rollback changes" })).toBeVisible();
-  await memberRollbackItem.getByRole("button", { name: "Rollback changes" }).click();
+  await expect(memberRollbackItem.getByRole("button", { name: "Remove changes" })).toBeVisible();
+  await memberRollbackItem.getByRole("button", { name: "Remove changes" }).click();
+  const rollbackImpact = member.getByRole("dialog", { name: "Remove these prompt changes?" });
+  await expect(rollbackImpact.getByText("Create a member rollback change", { exact: true })).toBeVisible();
+  await expect(rollbackImpact.getByText("npm test", { exact: true })).toBeVisible();
+  await rollbackImpact.getByRole("button", { name: "Remove changes" }).click();
   await expect(memberRollbackItem.getByText("rolled back", { exact: true })).toBeVisible();
   await expect(ownerRollbackItem.getByText("rolled back", { exact: true })).toBeVisible();
-  await owner.getByRole("button", { name: "Review" }).click();
+  await owner.getByRole("button", { name: /Review/ }).first().click();
   await expect(owner.getByText("member-change.ts", { exact: true })).toHaveCount(0);
+  await owner.getByRole("button", { name: "Prompts", exact: true }).click();
+  await owner.getByRole("button", { name: "History", exact: true }).click();
+  const rollbackHistoryItem = owner.locator(".review-prompt-item", { hasText: "Create a member rollback change" });
+  await expect(rollbackHistoryItem).toBeVisible();
+  await expect(rollbackHistoryItem.getByText(/Rolled back/)).toBeVisible();
   await owner.getByRole("button", { name: "Workspace" }).click();
 
   await owner.getByRole("region", { name: "Open floor" }).getByRole("combobox", { name: "Queue target" }).click();
@@ -460,7 +469,7 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await expect(conflictItem.getByText("integrated", { exact: true })).toBeVisible();
   await expect(member.getByRole("button", { name: "Retry against latest candidate" })).toHaveCount(0);
   await expect(conflictItem.getByRole("button", { name: "Retry against latest candidate" })).toHaveCount(0);
-  await owner.getByRole("button", { name: "Review" }).click();
+  await owner.getByRole("button", { name: /Review/ }).first().click();
   const automaticConflict = owner.locator(".conflict-case", { hasText: "Create a deliberate integration conflict" });
   await expect(automaticConflict.getByText("resolved", { exact: true })).toBeVisible();
   await expect(owner.getByLabel("Integration warnings").getByText("No integration warnings.")).toBeVisible();
@@ -492,7 +501,7 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   expect(questionCase).toBeTruthy();
   await expect(memberQuestionConflict.getByText(/Waiting for the session owner or an original prompt author/)).toBeVisible();
   await expect(memberQuestionConflict.locator("textarea")).toHaveCount(0);
-  await owner.getByRole("button", { name: "Review" }).click();
+  await owner.getByRole("button", { name: /Review/ }).first().click();
   const ownerQuestionConflict = owner.locator(".conflict-case[data-selected='true']", { hasText: "Create a conflict needing a session decision" });
   const answerFields = ownerQuestionConflict.locator("textarea");
   await answerFields.nth(0).fill("Preserve the existing public behavior.");
@@ -513,7 +522,7 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   const movementItem = owner.locator("li.queue-item", { hasText: "Create a candidate movement conflict" });
   await movementItem.getByRole("button", { name: "Run", exact: true }).click();
   await expect(movementItem.getByText("integrated", { exact: true })).toBeVisible();
-  await owner.getByRole("button", { name: "Review" }).click();
+  await owner.getByRole("button", { name: /Review/ }).first().click();
   const movementConflict = owner.locator(".conflict-case", { hasText: "Create a candidate movement conflict" });
   await expect(movementConflict.getByText("Attempt 1 · automatic · conflicted", { exact: true })).toBeVisible();
   await expect(movementConflict.getByText("Attempt 2 · automatic · integrated", { exact: true })).toBeVisible();
@@ -526,7 +535,7 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   const resolverCheckItem = owner.locator("li.queue-item", { hasText: "Create a resolver check failure" });
   await resolverCheckItem.getByRole("button", { name: "Run", exact: true }).click();
   await expect(resolverCheckItem.getByText("integrated", { exact: true })).toBeVisible();
-  await owner.getByRole("button", { name: "Review" }).click();
+  await owner.getByRole("button", { name: /Review/ }).first().click();
   const resolverCheckConflict = owner.locator(".conflict-case", { hasText: "Create a resolver check failure" });
   await expect(resolverCheckConflict.getByText("Attempt 1 · automatic · failed", { exact: true })).toBeVisible();
   await expect(resolverCheckConflict.getByText("Attempt 2 · automatic · integrated", { exact: true })).toBeVisible();
@@ -542,10 +551,10 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await manualConflictItem.getByRole("button", { name: "Run", exact: true }).click();
   await expect(manualConflictItem.getByText("conflicted", { exact: true })).toBeVisible();
   await expect(manualConflictItem.getByRole("button", { name: "Retry against latest candidate" })).toHaveCount(0);
-  await owner.getByRole("button", { name: "Review" }).click();
+  await owner.getByRole("button", { name: /Review/ }).first().click();
   const manualConflict = owner.locator(".conflict-case", { hasText: "Create a manual merge conflict" });
   await expect(manualConflict.getByRole("button", { name: "Start Merge Resolver" })).toBeVisible();
-  await member.getByRole("button", { name: "Review" }).click();
+  await member.getByRole("button", { name: /Review/ }).first().click();
   await expect(member.locator(".conflict-case", { hasText: "Create a manual merge conflict" }).getByRole("button", { name: "Start Merge Resolver" })).toHaveCount(0);
   await manualConflict.getByRole("button", { name: "Start Merge Resolver" }).click();
   await expect(manualConflict.getByText("resolved", { exact: true })).toBeVisible();
@@ -574,8 +583,8 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await expect(owner.getByText("cancelled", { exact: true }).first()).toBeVisible();
   await expect(cancellableItem.getByRole("button", { name: "Resume", exact: true })).toBeVisible();
 
-  await owner.getByRole("button", { name: "Review" }).click();
-  await member.getByRole("button", { name: "Review" }).click();
+  await owner.getByRole("button", { name: /Review/ }).first().click();
+  await member.getByRole("button", { name: /Review/ }).first().click();
   await expect(member.getByRole("button", { name: "Ready for review" })).toHaveCount(0);
   await expect(member.getByRole("button", { name: "Squash merge" })).toHaveCount(0);
   await owner.getByRole("button", { name: "Ready for review" }).click();
