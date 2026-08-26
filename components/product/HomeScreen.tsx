@@ -227,9 +227,9 @@ export function HomeScreen({
                 {`Your ${planLabel(usage.effectivePlan)} plan's ${usage.limitHours}h of monthly session time is used up. `}
                 {/* No `from` here on purpose: tests/render/rendered-html.test.ts:224
                     asserts this literal href, and the settings origin resolver
-                    (app/settings/origin.ts) already falls back to Sessions/home
+                    (app/home/settings/origin.ts) already falls back to Sessions/home
                     when `from` is absent — appending it would be redundant. */}
-                <Link href="/settings?section=plan">Upgrade for more session hours</Link>.
+                <Link href="/home/settings?section=plan">Upgrade for more session hours</Link>.
               </p>
             )}
           </div>

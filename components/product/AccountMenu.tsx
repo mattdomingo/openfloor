@@ -11,7 +11,7 @@ import { initials } from "@/lib/display-name";
 import type { AppUser } from "@/lib/session-types";
 
 /* The account entry point for the whole product: the avatar becomes a real
-   button that opens a popover with identity, a link into /settings, the
+   button that opens a popover with identity, a link into /home/settings, the
    two account-wide/per-device preference controls, and sign out. Replaces
    the separate copies of ThemeToggle/DoNotDisturbToggle/Sign-out that used
    to live directly in AppHeader and TopBar, and the floor-only
@@ -23,9 +23,9 @@ export function AccountMenu({ user }: { user: AppUser }) {
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   // usePathname() excludes basePath, matching what resolveSettingsOrigin
-  // (app/settings/origin.ts) expects to receive back on `from`.
+  // (app/home/settings/origin.ts) expects to receive back on `from`.
   const pathname = usePathname();
-  const settingsHref = pathname && pathname !== "/settings" ? `/settings?from=${encodeURIComponent(pathname)}` : "/settings";
+  const settingsHref = pathname && pathname !== "/home/settings" ? `/home/settings?from=${encodeURIComponent(pathname)}` : "/home/settings";
 
   useEffect(() => {
     if (!open) return;

@@ -67,7 +67,7 @@ export function SettingsScreen({ user: initialUser, usage, billing, credentials,
   initialSection: "profile" | "plan";
   billingNotice: string | null;
   // Where "Account settings" was opened from — resolved server-side in
-  // app/settings/page.tsx (app/settings/origin.ts) so the header link and
+  // app/home/settings/page.tsx (app/home/settings/origin.ts) so the header link and
   // its label ("Sessions" or a real session title) always match a page the
   // user can actually return to.
   backTo: { href: string; label: string };
@@ -255,8 +255,8 @@ function PlanSection({ usage, billing, billingNotice, originPath }: { usage: Usa
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(kind === "portal"
-        ? { returnTo: `${BASE_PATH}/settings?section=plan${fromSuffix}` }
-        : { plan: selectedPlan, quantity, returnTo: `${BASE_PATH}/settings?section=plan&billing=success${fromSuffix}` }),
+        ? { returnTo: `${BASE_PATH}/home/settings?section=plan${fromSuffix}` }
+        : { plan: selectedPlan, quantity, returnTo: `${BASE_PATH}/home/settings?section=plan&billing=success${fromSuffix}` }),
     });
     const body = await response.json().catch(() => null) as { url?: string; error?: string } | null;
     if (!response.ok || !body?.url) {
