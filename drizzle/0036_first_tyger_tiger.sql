@@ -1,0 +1,1 @@
+ALTER TABLE `floor_agents` ADD `idle_since` integer;

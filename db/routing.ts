@@ -15,7 +15,13 @@ const ACTIVE_RUN_CONDITION = `(status IN ${ACTIVE_RUN_STATUSES} AND (status <> '
 
 export type RoutingTrigger = "enqueue" | "run_completed" | "toggle" | "agent_changed" | "alarm";
 
-export type TickOutcome = { acted: boolean; held: boolean; revision: number | null };
+// wakeAt: when a generated agent (Concierge/worker) is idling out its
+// retirement grace window (db/floor.ts's deprovisionIdleGeneratedAgents),
+// the epoch millis it should next be reconsidered — null when nothing is
+// idling. SessionRouter's alarm loop uses this to re-wake itself even when
+// the tick was otherwise quiescent, so the ~10s linger actually expires
+// instead of waiting for an unrelated poke.
+export type TickOutcome = { acted: boolean; held: boolean; revision: number | null; wakeAt: number | null };
 
 export type RoutingDeps = {
   startRun: (sessionId: string, queueItemId: string, userId: string, kind: "task" | "reply") => Promise<StartRunResult>;
@@ -111,17 +117,22 @@ export async function runRoutingTick(
   trigger: RoutingTrigger,
   deps: RoutingDeps,
   database: D1DatabaseLike = getDb(),
+  // Single consistent "now" for every timestamp this tick writes, and the
+  // clock deprovisionIdleGeneratedAgents (db/floor.ts) measures a generated
+  // agent's idle grace window against — a caller (a test, most often) can
+  // drive it forward without a real wall-clock wait.
+  now: number = Date.now(),
 ): Promise<TickOutcome> {
   const session = await database.prepare(
     "SELECT auto_dispatch AS autoDispatch, auto_provision_agents AS autoProvisionAgents, auto_resolve_conflicts AS autoResolveConflicts, ended_at AS endedAt FROM sessions WHERE id = ?",
   ).bind(sessionId).first<{ autoDispatch: number; autoProvisionAgents: number; autoResolveConflicts: number; endedAt: number | null }>();
   if (!session || session.endedAt !== null) {
-    return { acted: false, held: false, revision: null };
+    return { acted: false, held: false, revision: null, wakeAt: null };
   }
   const owner = await database.prepare(
     "SELECT user_id AS userId FROM session_members WHERE session_id = ? AND role = 'owner' AND removed_at IS NULL ORDER BY joined_at, user_id LIMIT 1",
   ).bind(sessionId).first<{ userId: string }>();
-  if (!owner) return { acted: false, held: false, revision: null };
+  if (!owner) return { acted: false, held: false, revision: null, wakeAt: null };
   const ownerUserId = owner.userId;
 
   // Conflict resolution is a separate automation from ordinary dispatch.
@@ -142,25 +153,24 @@ export async function runRoutingTick(
     const globalActive = Number(globalCount?.count ?? 0);
     if (Number(agentActive?.count ?? 0) === 0) {
       if (sessionActive >= SESSION_RUN_CAP || globalActive >= GLOBAL_RUN_BUDGET) {
-        return { acted: false, held: true, revision: null };
+        return { acted: false, held: true, revision: null, wakeAt: null };
       }
       const result = await deps.startConflictResolution(pendingConflict);
       if (result.ok) {
         const revision = await database.prepare("SELECT floor_revision AS revision FROM sessions WHERE id = ?")
           .bind(sessionId).first<{ revision: number }>();
-        return { acted: true, held: false, revision: Number(revision?.revision ?? 0) };
+        return { acted: true, held: false, revision: Number(revision?.revision ?? 0), wakeAt: null };
       }
       // A stable conflict-specific condition (provider/quota/race/readiness)
       // leaves the case visible but must not halt other agents' queued work.
     }
   }
-  const lifecycleChanged = await deprovisionIdleGeneratedAgents(sessionId, Boolean(session.autoProvisionAgents), database);
+  const { changed: lifecycleChanged, nextRetireAt } = await deprovisionIdleGeneratedAgents(sessionId, Boolean(session.autoProvisionAgents), database, now);
   if (!session.autoDispatch) {
-    if (!lifecycleChanged) return { acted: false, held: false, revision: null };
-    const now = Date.now();
+    if (!lifecycleChanged) return { acted: false, held: false, revision: null, wakeAt: nextRetireAt };
     await database.prepare("UPDATE sessions SET floor_revision = floor_revision + 1, updated_at = ? WHERE id = ? AND ended_at IS NULL").bind(now, sessionId).run();
     const revision = await database.prepare("SELECT floor_revision AS revision FROM sessions WHERE id = ?").bind(sessionId).first<{ revision: number }>();
-    return { acted: true, held: false, revision: Number(revision?.revision ?? 0) };
+    return { acted: true, held: false, revision: Number(revision?.revision ?? 0), wakeAt: nextRetireAt };
   }
 
   const providerResolution = session.autoProvisionAgents
@@ -219,7 +229,6 @@ export async function runRoutingTick(
     sessionActive += Number(row.activeCount);
   }
   const globalActive = Number(globalCount?.count ?? 0);
-  const now = Date.now();
 
   const decisions: Array<{
     queueItemId: string | null;
@@ -241,7 +250,13 @@ export async function runRoutingTick(
   }
   // --- Assign phase: give every unassigned queued item an agent. ---
   const unassigned = queue.filter((item) => item.agentId === null);
-  const taskAgents = agents.filter((agent) => agent.kind !== "answer");
+  // A worker mid-retirement-grace-window (deprovisionIdleGeneratedAgents,
+  // db/floor.ts) is still deprovisioned_at IS NULL and so still appears in
+  // `agents` — exclude it here exactly like resolveAnswerAgent already
+  // excludes a lingering answer-kind agent via its own canProvision check,
+  // or turning auto-provisioning off would immediately hand a worker a new
+  // task in the very same tick that unassigned its old one.
+  const taskAgents = agents.filter((agent) => agent.kind !== "answer" && (agent.kind !== "worker" || canProvision));
   const routingCapacity = Math.max(0, Math.min(SESSION_RUN_CAP - sessionActive, GLOBAL_RUN_BUDGET - globalActive));
   if (unassigned.length > 0) {
     // Existing targeted/router assignments get the first available slots.
@@ -489,5 +504,5 @@ export async function runRoutingTick(
     const row = await database.prepare("SELECT floor_revision AS revision FROM sessions WHERE id = ?").bind(sessionId).first<{ revision: number }>();
     revision = Number(row?.revision ?? 0);
   }
-  return { acted: changedQueueOrRuns, held, revision };
+  return { acted: changedQueueOrRuns, held, revision, wakeAt: nextRetireAt };
 }

@@ -119,7 +119,7 @@ export async function createAgentRun(sessionId: string, queueItemId: string, use
   const effectiveKind: "task" | "reply" = context.agentKind === "answer" ? "reply" : kind;
   if (context.agentDeprovisionedAt !== null && context.agentKind) {
     await database.prepare(
-      "UPDATE floor_agents SET deprovisioned_at = NULL, updated_at = ? WHERE id = ? AND session_id = ? AND kind IN ('answer', 'worker')",
+      "UPDATE floor_agents SET deprovisioned_at = NULL, idle_since = NULL, updated_at = ? WHERE id = ? AND session_id = ? AND kind IN ('answer', 'worker')",
     ).bind(Date.now(), context.agentId, sessionId).run();
   }
   const previous = await database.prepare("SELECT COALESCE(MAX(attempt), 0) AS attempt FROM agent_runs WHERE queue_item_id = ?")

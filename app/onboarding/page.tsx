@@ -5,6 +5,7 @@ import { upsertUser } from "@/db/sessions";
 import { OnboardingScreen } from "@/components/product/OnboardingScreen";
 import { validInviteOnboardingReturn } from "@/lib/onboarding-plan";
 import { listUserGitHubInstallations } from "@/db/github-installations";
+import { listProviderCredentials } from "@/db/provider-credentials";
 
 export const dynamic = "force-dynamic";
 
@@ -19,7 +20,10 @@ export default async function OnboardingPage({
   const user = await upsertUser(identity);
   if (user.onboardedAt != null) redirect(returnTo);
   const inviteReturnTo = await validInviteOnboardingReturn(returnTo);
-  const githubInstallations = await listUserGitHubInstallations(user.id);
+  const [githubInstallations, credentials] = await Promise.all([
+    listUserGitHubInstallations(user.id),
+    listProviderCredentials(user.id),
+  ]);
   return <OnboardingScreen
     fullName={identity.fullName}
     firstName={user.firstName}
@@ -29,5 +33,6 @@ export default async function OnboardingPage({
     inviteSignup={inviteReturnTo != null}
     githubInstallations={githubInstallations}
     githubConnected={github === "connected"}
+    initialCredentials={credentials}
   />;
 }

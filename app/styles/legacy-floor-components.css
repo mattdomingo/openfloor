@@ -1449,42 +1449,76 @@
   overflow-wrap: anywhere;
 }
 
-/* Reply indicator is out of flow so answers never shift the agent grid. */
-.agent-response-icon {
+/* Real speech bubble over the tile's own body, not out-of-flow above it —
+   ENG-138 (see AGENTS.md) forbids reply-driven .agent-grid padding, so this
+   stays inside .agent-card's bounds (top: 62px, just under the head row)
+   instead of popping above the card the way the superseded version did.
+   Confined to a fixed clamp so a long answer never grows the card; click
+   moves focus to the spotlight, where the same text renders in full inside
+   .spotlight-response. */
+.agent-reply-bubble {
+  display: -webkit-box;
   position: absolute;
-  top: 58px;
+  top: 62px;
+  left: var(--space-3);
   right: var(--space-3);
   z-index: 3;
-  display: inline-grid;
-  place-items: center;
-  width: 26px;
-  height: 26px;
-  padding: 0;
+  max-height: 4.6em;
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
   border: 1px solid var(--line-strong);
-  border-radius: 50%;
-  background: color-mix(in srgb, var(--agent-color) 12%, var(--surface-raised));
-  color: var(--agent-color);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  text-align: left;
   cursor: pointer;
-  box-shadow: var(--elevation-1);
+  overflow: hidden;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  box-shadow: var(--elevation-2);
 }
 
-.agent-response-icon:hover,
-.agent-response-icon:focus-visible {
-  border-color: var(--agent-color);
+/* The tail: a rotated square sharing the bubble's own background/border,
+   half-hidden behind the bubble so only its top-left edge (rotated to point
+   up) shows as a triangle pointing at the agent identity row above it. */
+.agent-reply-bubble::after {
+  content: "";
+  position: absolute;
+  top: -6px;
+  left: 22px;
+  width: 12px;
+  height: 12px;
+  border-left: 1px solid var(--line-strong);
+  border-top: 1px solid var(--line-strong);
+  border-radius: 2px 0 0 0;
+  background: var(--surface-raised);
+  transform: rotate(45deg);
+}
+
+.agent-reply-bubble:hover,
+.agent-reply-bubble:focus-visible {
+  border-color: var(--agent-color, var(--line-strong));
   background: var(--surface-panel);
 }
 
-.agent-card .agent-task {
-  padding-right: 30px;
+.agent-reply-bubble:hover::after,
+.agent-reply-bubble:focus-visible::after {
+  border-color: var(--agent-color, var(--line-strong));
+  background: var(--surface-panel);
 }
 
 @media (prefers-reduced-motion: no-preference) {
-  .agent-response-icon {
+  .agent-reply-bubble {
     animation: agent-reply-in var(--dur-float) var(--ease-out);
   }
 
   @keyframes agent-reply-in {
-    0% { opacity: 0; transform: scale(0.92) translateY(6px); }
+    0% { opacity: 0; transform: scale(0.92) translateY(-6px); }
     100% { opacity: 1; transform: scale(1) translateY(0); }
   }
 }
@@ -3542,6 +3576,17 @@
   border-color: color-mix(in srgb, var(--accent) 45%, var(--line-soft));
   background: var(--accent-soft);
   color: var(--accent);
+}
+
+/* Durable discoverability affordance for item.answer (db/floor.ts) — visible
+   even once the answering run has aged out of getAgentRuns' 20-row window or
+   its Concierge has retired, unlike the status chip's "answered" label. */
+.queue-chip[data-kind="answer"] {
+  gap: 4px;
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line-soft));
+  background: var(--accent-soft);
+  color: var(--accent);
+  cursor: pointer;
 }
 
 /* Run status chips borrow the shared status palette so a prompt's stage in

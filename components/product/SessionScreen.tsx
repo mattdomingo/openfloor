@@ -11,7 +11,7 @@ import { usePresenceSocket } from "@/components/session/usePresenceSocket";
 import { initials } from "@/lib/display-name";
 import { reducePresence } from "@/lib/presence";
 import { isRepositoryReadyForFloor } from "@/lib/repository-gate";
-import { usesClaudeRunner, type CredentialProvider } from "@/lib/provider-credentials";
+import { AGENT_PROVIDER_LABELS, usesClaudeRunner, type CredentialProvider, type ProviderCredentialSummary } from "@/lib/provider-credentials";
 import type { AppUser, PresenceEvent, RemovedSessionMember, RepositoryCandidate, RepositoryConnection, RepositoryPreflight, SessionMember, SessionSummary } from "@/lib/session-types";
 import { AppHeader } from "./AppHeader";
 import { RepositoryCard } from "./RepositoryCard";
@@ -20,6 +20,8 @@ import { McpServersCard } from "./McpServersCard";
 import type { SessionMcpServerSummary } from "@/db/mcp-servers";
 import type { SessionSkillSummary } from "@/db/skills";
 import { WaveField } from "@/app/entry-wave";
+import { ProviderCredentials } from "./ProviderCredentials";
+import { SelectMenu, type SelectMenuOption } from "@/components/session/SelectMenu";
 
 export function SessionScreen({
   user,
@@ -31,9 +33,11 @@ export function SessionScreen({
   initialPreflight,
   preflightEnabled,
   enabledProviders,
+  initialCredentials,
   initialSkills,
   initialMcpServers,
   repoGateRequested,
+  setupRequested,
   lowHoursRemaining,
 }: {
   user: AppUser;
@@ -45,9 +49,11 @@ export function SessionScreen({
   initialPreflight: RepositoryPreflight | null;
   preflightEnabled: boolean;
   enabledProviders: CredentialProvider[];
+  initialCredentials: ProviderCredentialSummary[];
   initialSkills: SessionSkillSummary[];
   initialMcpServers: SessionMcpServerSummary[];
   repoGateRequested: boolean;
+  setupRequested: boolean;
   /* Seconds of plan time left, read once on the server and only when the
      owner is already inside the warning band. It ages while the page stays
      open, which is fine in one direction: the number only ever overstates
@@ -81,6 +87,10 @@ export function SessionScreen({
   const repositoryReady = isRepositoryReadyForFloor(repository, candidate);
   const floorAccessible = endedAt == null && repositoryReady;
   const [repoGateOpen, setRepoGateOpen] = useState(repoGateRequested && !repositoryReady);
+  const [setupOpen, setSetupOpen] = useState(
+    session.role === "owner" && endedAt == null && !repoGateRequested && setupRequested,
+  );
+  const [setupStep, setSetupStep] = useState<1 | 2>(1);
   const [repositoryHighlighted, setRepositoryHighlighted] = useState(false);
   const repositoryCardRef = useRef<HTMLDivElement>(null);
 
@@ -93,6 +103,12 @@ export function SessionScreen({
   function updateRepositoryState(state: { repository: RepositoryConnection | null; candidate: RepositoryCandidate | null }) {
     setRepository(state.repository);
     setCandidate(state.candidate);
+  }
+
+  function closeSetup() {
+    setSetupOpen(false);
+    setSetupStep(1);
+    router.replace(`/session/${session.id}`);
   }
 
   function goToRepositorySetup() {
@@ -224,8 +240,8 @@ export function SessionScreen({
         </div>
         <div className="session-hero-actions">
           <div className="connection-state" data-state={connection.status === "live" ? "connected" : connection.status}><span aria-hidden="true" />{connection.status === "live" ? `${onlineCount} online` : connection.status}</div>
-          {session.role === "owner" && endedAt == null && !repositoryReady && (
-            <button type="button" className="button" onClick={goToRepositorySetup}>Repository setup</button>
+          {session.role === "owner" && endedAt == null && (
+            <button type="button" className="button" onClick={() => { setSetupStep(1); setSetupOpen(true); }}>Setup</button>
           )}
           {endedAt == null && (
             <Link className="button" data-variant="primary" data-size="lg" href={`/session/${session.id}/floor`} onClick={enterAgentFloor} aria-haspopup={floorAccessible ? undefined : "dialog"}>Enter agent floor</Link>
@@ -315,7 +331,8 @@ export function SessionScreen({
               <span className="setup-status" data-ready={repositoryReady}>{repositoryReady ? "Ready" : "Repository required"}</span>
             </div>
             <div ref={repositoryCardRef} className="repository-card-slot" data-highlighted={repositoryHighlighted}>
-              <RepositoryCard sessionId={session.id} sessionTitle={session.title} sessionObjective={session.objective} role={session.role} initialRepository={repository} initialCandidate={candidate} initialPreflight={initialPreflight} preflightEnabled={preflightEnabled} beginSetup={false} onStateChange={updateRepositoryState} />
+              {!setupOpen && <RepositoryCard sessionId={session.id} sessionTitle={session.title} sessionObjective={session.objective} role={session.role} initialRepository={repository} initialCandidate={candidate} initialPreflight={initialPreflight} preflightEnabled={preflightEnabled} beginSetup={false} onStateChange={updateRepositoryState} />}
+              {setupOpen && <p className="setup-dialog-active">Repository setup is open in the dialog.</p>}
             </div>
             {enabledProviders.some(usesClaudeRunner) && (
               <div className="floor-setup-secondary">
@@ -355,7 +372,175 @@ export function SessionScreen({
           onGoToSetup={goToRepositorySetup}
         />
       )}
+      {setupOpen && session.role === "owner" && endedAt == null && (
+        <SessionSetupDialog
+          session={session}
+          repository={repository}
+          candidate={candidate}
+          initialPreflight={initialPreflight}
+          preflightEnabled={preflightEnabled}
+          enabledProviders={enabledProviders}
+          initialCredentials={initialCredentials}
+          step={setupStep}
+          onStepChange={setSetupStep}
+          onRepositoryStateChange={updateRepositoryState}
+          onClose={closeSetup}
+        />
+      )}
     </main>
+  );
+}
+
+function SessionSetupDialog({
+  session,
+  repository,
+  candidate,
+  initialPreflight,
+  preflightEnabled,
+  enabledProviders,
+  initialCredentials,
+  step,
+  onStepChange,
+  onRepositoryStateChange,
+  onClose,
+}: {
+  session: SessionSummary;
+  repository: RepositoryConnection | null;
+  candidate: RepositoryCandidate | null;
+  initialPreflight: RepositoryPreflight | null;
+  preflightEnabled: boolean;
+  enabledProviders: CredentialProvider[];
+  initialCredentials: ProviderCredentialSummary[];
+  step: 1 | 2;
+  onStepChange: (step: 1 | 2) => void;
+  onRepositoryStateChange: (state: { repository: RepositoryConnection | null; candidate: RepositoryCandidate | null }) => void;
+  onClose: () => void;
+}) {
+  const { dismiss, dialogProps } = useDialogDismiss(onClose);
+  const ready = isRepositoryReadyForFloor(repository, candidate);
+  const [credentials, setCredentials] = useState(initialCredentials);
+  const [autoAgentProvider, setAutoAgentProvider] = useState(session.autoAgentProvider);
+  const [providerBusy, setProviderBusy] = useState(false);
+  const [providerError, setProviderError] = useState<string | null>(null);
+  // Deduped: since credential kinds became first-class a provider can hold
+  // two rows (api_key + oauth) — one provider, one option, or the length
+  // checks below misread a fully-connected provider as "selection required"
+  // and the dropdown shows the same provider twice (the client twin of
+  // resolveAutoAgentProvider's SELECT DISTINCT).
+  const connectedProviders = [...new Set(credentials.map((credential) => credential.provider))]
+    .filter((provider) => enabledProviders.includes(provider));
+  const configuredProvider = autoAgentProvider && connectedProviders.includes(autoAgentProvider) ? autoAgentProvider : null;
+  const providerState = configuredProvider
+    ? "selected"
+    : connectedProviders.length === 0
+      ? "openai_fallback"
+      : connectedProviders.length === 1
+        ? "single_connected"
+        : "selection_required";
+  const effectiveProvider = configuredProvider ?? (connectedProviders.length === 1 ? connectedProviders[0] : providerState === "openai_fallback" ? "openai" : null);
+  const providerOptions: SelectMenuOption[] = [
+    { value: "", label: "Choose provider" },
+    ...connectedProviders.map((provider) => ({ value: provider, label: AGENT_PROVIDER_LABELS[provider] })),
+  ];
+
+  async function updateAutoAgentProvider(provider: CredentialProvider | null) {
+    setProviderBusy(true);
+    setProviderError(null);
+    try {
+      const response = await fetch(`${BASE_PATH}/api/sessions/${session.id}/routing`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ autoAgentProvider: provider }),
+      });
+      const body = (await response.json().catch(() => null)) as { error?: string } | null;
+      if (!response.ok) {
+        setProviderError(body?.error ?? "Unable to save the generated-agent provider.");
+        return;
+      }
+      setAutoAgentProvider(provider);
+    } catch {
+      setProviderError("Unable to save the generated-agent provider.");
+    } finally {
+      setProviderBusy(false);
+    }
+  }
+
+  function updateCredentials(next: ProviderCredentialSummary[]) {
+    setCredentials(next);
+    if (autoAgentProvider && !next.some((credential) => credential.provider === autoAgentProvider)) {
+      setAutoAgentProvider(null);
+      void updateAutoAgentProvider(null);
+    }
+  }
+
+  return (
+    <dialog className="dialog session-setup-dialog" {...dialogProps} aria-labelledby="session-setup-title">
+      <div className="dialog-head setup-dialog-head">
+        <div className="dialog-title">
+          <p className="eyebrow">Session setup · Step {step} of 2</p>
+          <h2 id="session-setup-title">{step === 1 ? "Connect the workspace" : "Connect model API keys"}</h2>
+          <p>{step === 1 ? "A ready repository is required before anyone can enter the live agent floor." : "Optional. You can connect or change these per-user credentials later in Settings."}</p>
+        </div>
+        <ol className="setup-step-list" aria-label="Setup progress">
+          <li data-current={step === 1} data-complete={ready}>01 Repository <span>Required</span></li>
+          <li data-current={step === 2}>02 Model keys <span>Optional</span></li>
+        </ol>
+      </div>
+      <div className="dialog-body setup-dialog-body">
+        {step === 1 ? (
+          <RepositoryCard
+            sessionId={session.id}
+            sessionTitle={session.title}
+            sessionObjective={session.objective}
+            role={session.role}
+            initialRepository={repository}
+            initialCandidate={candidate}
+            initialPreflight={initialPreflight}
+            preflightEnabled={preflightEnabled}
+            beginSetup={false}
+            onStateChange={onRepositoryStateChange}
+          />
+        ) : (
+          <section className="setup-credentials" aria-label="Model API keys">
+            <p>
+              A run uses the key connected by that agent&rsquo;s owner, then the configured server key. If neither is
+              available, the run refuses clearly. Stored values are encrypted and never returned to the browser.
+            </p>
+            <ProviderCredentials initialCredentials={initialCredentials} providers={enabledProviders} showAgentDefaults onCredentialsChange={updateCredentials} />
+            <div className="setup-auto-provider" data-state={providerState}>
+              <span>
+                <strong>Generated-agent provider</strong>
+                {providerState === "openai_fallback" && <small>No personal key is connected. Generated agents use the existing OpenAI server-key fallback and refuse clearly if no server key is configured.</small>}
+                {providerState === "single_connected" && effectiveProvider && <small>{AGENT_PROVIDER_LABELS[effectiveProvider]} is selected automatically because it is the only connected, enabled provider.</small>}
+                {providerState === "selection_required" && <small>Choose which connected provider generated workers and Concierge should use.</small>}
+                {providerState === "selected" && effectiveProvider && <small>{AGENT_PROVIDER_LABELS[effectiveProvider]} is the default for generated workers and Concierge.</small>}
+              </span>
+              {connectedProviders.length > 1 && (
+                <SelectMenu
+                  value={configuredProvider ?? ""}
+                  options={providerOptions}
+                  label="Default provider for generated agents"
+                  disabled={providerBusy}
+                  onChange={(value) => void updateAutoAgentProvider((value || null) as CredentialProvider | null)}
+                />
+              )}
+            </div>
+            {providerError && <p className="form-error" role="alert">{providerError}</p>}
+          </section>
+        )}
+      </div>
+      <div className="dialog-foot setup-dialog-foot">
+        <button type="button" className="button" data-variant="quiet" onClick={dismiss}>Set up later</button>
+        <span className="setup-dialog-nav">
+          {step === 2 && <button type="button" className="button" onClick={() => onStepChange(1)}>Back</button>}
+          {step === 1 ? (
+            <button type="button" className="button" data-variant="primary" onClick={() => onStepChange(2)}>Continue to model keys</button>
+          ) : (
+            <button type="button" className="button" data-variant="primary" onClick={dismiss} disabled={providerState === "selection_required" || providerBusy}>Finish setup</button>
+          )}
+        </span>
+      </div>
+    </dialog>
   );
 }
 

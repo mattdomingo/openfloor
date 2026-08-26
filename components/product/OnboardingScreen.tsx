@@ -9,11 +9,13 @@ import { Avatar, Spinner } from "@/components/session/primitives";
 import { ACCEPTED_AVATAR_TYPES, MAX_AVATAR_BYTES } from "@/lib/avatar-constraints";
 import { initialsFromParts } from "@/lib/display-name";
 import { PAID_PLAN_CATALOG, PLAN_LIMITS, planLimitsSummary, type PaidPlan } from "@/lib/plans";
+import { CREDENTIAL_PROVIDERS, type ProviderCredentialSummary } from "@/lib/provider-credentials";
 import { Brand } from "./Brand";
+import { ProviderCredentials } from "./ProviderCredentials";
 import type { UserGitHubInstallationSummary } from "@/lib/session-types";
 
 type OnboardingPlan = "free" | PaidPlan;
-type OnboardingStep = 1 | 2 | 3;
+type OnboardingStep = 1 | 2 | 3 | 4;
 
 function splitName(fullName: string | null): { firstName: string; lastName: string } {
   const parts = (fullName ?? "").trim().split(/\s+/).filter(Boolean);
@@ -24,7 +26,7 @@ function splitName(fullName: string | null): { firstName: string; lastName: stri
 
 export function OnboardingScreen({
   fullName, firstName: savedFirstName, lastName: savedLastName, githubHandle: savedGithubHandle, returnTo, inviteSignup,
-  githubInstallations: initialGithubInstallations, githubConnected,
+  githubInstallations: initialGithubInstallations, githubConnected, initialCredentials,
 }: {
   fullName: string | null;
   firstName: string | null;
@@ -34,6 +36,7 @@ export function OnboardingScreen({
   inviteSignup: boolean;
   githubInstallations: UserGitHubInstallationSummary[];
   githubConnected: boolean;
+  initialCredentials: ProviderCredentialSummary[];
 }) {
   const router = useRouter();
   const initial = splitName(fullName);
@@ -52,13 +55,16 @@ export function OnboardingScreen({
   const [githubInstallations] = useState(initialGithubInstallations);
   const profileHeadingRef = useRef<HTMLHeadingElement>(null);
   const githubHeadingRef = useRef<HTMLHeadingElement>(null);
+  const connectionsHeadingRef = useRef<HTMLHeadingElement>(null);
   const planHeadingRef = useRef<HTMLHeadingElement>(null);
+  const stepHeadingRefs = { 1: profileHeadingRef, 2: githubHeadingRef, 3: connectionsHeadingRef, 4: planHeadingRef };
   const validProfile = firstName.trim().length > 0 && lastName.trim().length > 0;
   const githubReady = githubInstallations.some((installation) => installation.status === "active");
   const ready = validProfile && githubReady && plan != null;
 
   useEffect(() => {
-    (step === 1 ? profileHeadingRef : step === 2 ? githubHeadingRef : planHeadingRef).current?.focus();
+    stepHeadingRefs[step].current?.focus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [step]);
 
   useEffect(() => () => {
@@ -145,6 +151,10 @@ export function OnboardingScreen({
       if (githubReady) setStep(3);
       return;
     }
+    if (step === 3) {
+      setStep(4);
+      return;
+    }
     if (!ready || submitting) return;
     setSubmitting(true);
     setSubmitError(null);
@@ -183,25 +193,28 @@ export function OnboardingScreen({
           <div className="onboarding-intro">
             <p className="eyebrow">Welcome to openfloor</p>
             <h1 id="onboarding-title">Set up your account</h1>
-            <p>Your profile introduces you to the room. GitHub supplies repository access. Your plan sets session capacity.</p>
+            <p>Your profile introduces you to the room. GitHub supplies repository access. AI connections power your agents. Your plan sets session capacity.</p>
           </div>
 
           <ol className="onboarding-progress" aria-label="Account setup progress">
             <li aria-current={step === 1 ? "step" : undefined} data-complete={step > 1}>
               <span>01</span><strong>Profile</strong>
             </li>
-            <li aria-current={step === 2 ? "step" : undefined}>
+            <li aria-current={step === 2 ? "step" : undefined} data-complete={step > 2}>
               <span>02</span><strong>GitHub</strong>
             </li>
-            <li aria-current={step === 3 ? "step" : undefined}>
-              <span>03</span><strong>Plan</strong>
+            <li aria-current={step === 3 ? "step" : undefined} data-complete={step > 3}>
+              <span>03</span><strong>Connections</strong>
+            </li>
+            <li aria-current={step === 4 ? "step" : undefined}>
+              <span>04</span><strong>Plan</strong>
             </li>
           </ol>
 
           <form className="onboarding-form" onSubmit={submit} noValidate>
             <section className="onboarding-step" hidden={step !== 1} aria-labelledby="profile-step-title">
               <div className="onboarding-step-heading">
-                <p className="eyebrow">Step 1 of 3</p>
+                <p className="eyebrow">Step 1 of 4</p>
                 <h2 id="profile-step-title" ref={profileHeadingRef} tabIndex={-1}>Create your profile</h2>
                 <p>Use the name your teammates will recognize. You can update these details later in Settings.</p>
               </div>
@@ -228,7 +241,7 @@ export function OnboardingScreen({
 
             <section className="onboarding-step" hidden={step !== 2} aria-labelledby="github-step-title">
               <div className="onboarding-step-heading">
-                <p className="eyebrow">Step 2 of 3</p>
+                <p className="eyebrow">Step 2 of 4</p>
                 <h2 id="github-step-title" ref={githubHeadingRef} tabIndex={-1}>Connect GitHub</h2>
                 <p>Install openfloor GitHub App for each personal account or organization whose repositories you want to use.</p>
               </div>
@@ -248,9 +261,22 @@ export function OnboardingScreen({
               </div>
             </section>
 
-            <section className="onboarding-step" hidden={step !== 3} aria-labelledby="plan-step-title">
+            <section className="onboarding-step" hidden={step !== 3} aria-labelledby="connections-step-title">
               <div className="onboarding-step-heading">
-                <p className="eyebrow">Step 3 of 3</p>
+                <p className="eyebrow">Step 3 of 4</p>
+                <h2 id="connections-step-title" ref={connectionsHeadingRef} tabIndex={-1}>Connect AI providers</h2>
+                <p>Optional. Connect the model provider keys you want to run agents with. You can add or change these anytime in Settings.</p>
+              </div>
+              <ProviderCredentials initialCredentials={initialCredentials} providers={[...CREDENTIAL_PROVIDERS]} />
+              <div className="form-actions onboarding-plan-actions">
+                <button type="button" className="button" data-variant="quiet" disabled={submitting} onClick={() => setStep(2)}>Back</button>
+                <button type="button" className="button" data-variant="primary" data-size="lg" onClick={() => setStep(4)}>Continue</button>
+              </div>
+            </section>
+
+            <section className="onboarding-step" hidden={step !== 4} aria-labelledby="plan-step-title">
+              <div className="onboarding-step-heading">
+                <p className="eyebrow">Step 4 of 4</p>
                 <h2 id="plan-step-title" ref={planHeadingRef} tabIndex={-1}>{inviteSignup ? "Your invite includes Free" : "Choose your plan"}</h2>
                 <p>{inviteSignup ? "Finish your profile now, then review the session invite before you join." : "Pick the capacity that fits your work."}</p>
               </div>
@@ -293,7 +319,7 @@ export function OnboardingScreen({
 
               {submitError && <p className="form-error" role="alert">{submitError}</p>}
               <div className="form-actions onboarding-plan-actions">
-                <button type="button" className="button" data-variant="quiet" disabled={submitting} onClick={() => setStep(2)}>Back</button>
+                <button type="button" className="button" data-variant="quiet" disabled={submitting} onClick={() => setStep(3)}>Back</button>
                 <button type="submit" className="button" data-variant="primary" data-size="lg" disabled={!ready || submitting}>{submitting ? <><Spinner />Saving…</> : plan === "free" ? "Finish setup" : "Continue to payment"}</button>
               </div>
             </section>

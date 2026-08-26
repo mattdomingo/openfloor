@@ -43,6 +43,27 @@ describe("provider credential routes", () => {
     expect(remove.status).toBe(401);
   });
 
+  it("serves connections tiles and accepts a credential before onboarding completes", async () => {
+    const headers = {
+      accept: "text/html", host: "localhost",
+      "x-openfloor-dev-user-id": "credentials-pre-onboard",
+      "x-openfloor-dev-user-email": "credentials-pre-onboard@example.com",
+      "x-openfloor-dev-user-name": "Pre Onboard",
+    };
+    const onboardingPage = await SELF.fetch("http://localhost/onboarding", { headers });
+    expect(onboardingPage.status).toBe(200);
+    const html = await onboardingPage.text();
+    expect(html).toContain("Connect AI providers");
+    expect(html).toContain("Anthropic");
+
+    const connected = await SELF.fetch("http://localhost/api/account/credentials/anthropic", {
+      method: "PUT",
+      headers: jsonHeaders(headers),
+      body: JSON.stringify({ apiKey: ACCEPTED_ANTHROPIC_KEY }),
+    });
+    expect(connected.status).toBe(200);
+  });
+
   it("connects, lists, and disconnects a credential without ever returning the key", async () => {
     const { userId, headers } = await onboardedUser("credentials-owner", "Cred", "Owner");
 

@@ -131,7 +131,7 @@ async function onboardedUser(providerUserId: string, firstName: string, lastName
 }
 
 describe("session lobby setup rendering", () => {
-  it("opens a ready lobby without the retired setup dialog", async () => {
+  it("opens the setup dialog for the owner, but the repo gate wins and non-owners never see it", async () => {
     const owner = await onboardedUser("setup-render-owner", "Setup", "Owner");
     const created = await SELF.fetch("http://localhost/api/sessions", {
       method: "POST",
@@ -143,7 +143,7 @@ describe("session lobby setup rendering", () => {
 
     const setupHtml = await (await SELF.fetch(`http://localhost/session/${session.id}?setup=1`, { headers: owner.headers })).text();
     expect(setupHtml).toContain("Floor ready");
-    expect(setupHtml).not.toContain("Session setup · Step");
+    expect(setupHtml).toContain("Session setup · Step");
 
     const gateHtml = await (await SELF.fetch(`http://localhost/session/${session.id}?repo=required&setup=1`, { headers: owner.headers })).text();
     expect(gateHtml).toContain("Floor ready");
@@ -355,6 +355,8 @@ describe("plan-selection onboarding", () => {
     expect(html).toContain("Account setup progress");
     expect(html).toContain('aria-current="step"');
     expect(html).toContain("Create your profile");
+    expect(html).toContain("Connect AI providers");
+    expect(html).toContain("Anthropic");
     expect(html).toContain("Choose your plan");
     expect(html).toMatch(/\$<!-- -->30<!-- -->\/seat\/month|\$30\/seat\/month/);
     expect(html).toMatch(/\$<!-- -->50<!-- -->\/seat\/month|\$50\/seat\/month/);
