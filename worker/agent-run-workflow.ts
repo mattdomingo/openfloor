@@ -21,6 +21,7 @@ import {
   releaseRunIntegration,
   recordRunPublicationFailure,
   recordRunArtifact,
+  recordRunUsage,
   replaceRunFiles,
   setRunProcessId,
   setRunSandboxId,
@@ -455,7 +456,14 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
         return await this.complete(runId, finalStatus, summary);
       }
       const resultFile = await sandbox.exec("cat /tmp/openfloor/result.json", { timeout: 10_000 });
-      const codexResult = parseCodexResult(resultFile.stdout);
+      const codexResult = parseRunResult(resultFile.stdout);
+      // Recorded even when the run went on to fail below (ok: false, or a
+      // nonzero exit code) — a failed run still spent real tokens against
+      // the owner's budget, and skipping it here would let a crashlooping
+      // agent bypass its own monthly limit.
+      await recordRunUsage(runId, context.provider, context.model, {
+        usage: codexResult.usage, modelUsage: codexResult.modelUsage, totalCostUsd: codexResult.totalCostUsd,
+      }, this.env.DB);
       if (processResult.exitCode !== 0 || !codexResult.ok) throw new Error(codexResult.error || `The agent process exited with code ${processResult.exitCode}`);
       if (context.conflictCaseId) {
         const verified = await sandbox.exec(
@@ -1000,7 +1008,19 @@ async function buildRunPrompt(context: NonNullable<Awaited<ReturnType<typeof get
   return sessionBrief;
 }
 
-function parseCodexResult(value: string): { ok: boolean; threadId: string | null; finalResponse: string | null; error: string | null } {
+// Renamed from the Codex-only-era parseCodexResult: now shared by every
+// runner (claude-runner.mjs, codex-runner.mjs, gemini-runner.mjs all write
+// the same result.json shape). `usage`/`modelUsage`/`totalCostUsd` are the
+// raw, provider-shaped fields each runner captured — passed through
+// unvalidated to lib/run-usage.ts's normalizeRunUsage, which knows each
+// provider's real shape and is unit-tested against it; duplicating that
+// parsing here would be the second editable copy the codebase's open-enum
+// convention exists to avoid.
+function parseRunResult(value: string): {
+  ok: boolean; threadId: string | null; finalResponse: string | null; error: string | null;
+  usage: unknown; modelUsage: Record<string, { inputTokens: number; outputTokens: number; cacheReadInputTokens: number; cacheCreationInputTokens: number; costUSD: number }> | null;
+  totalCostUsd: number | null;
+} {
   try {
     const parsed = JSON.parse(value) as Record<string, unknown>;
     return {
@@ -1008,9 +1028,12 @@ function parseCodexResult(value: string): { ok: boolean; threadId: string | null
       threadId: typeof parsed.threadId === "string" ? parsed.threadId : null,
       finalResponse: typeof parsed.finalResponse === "string" ? parsed.finalResponse.slice(0, 20_000) : null,
       error: typeof parsed.error === "string" ? parsed.error.slice(0, 1_000) : null,
+      usage: parsed.usage ?? null,
+      modelUsage: (parsed.modelUsage as Record<string, { inputTokens: number; outputTokens: number; cacheReadInputTokens: number; cacheCreationInputTokens: number; costUSD: number }>) ?? null,
+      totalCostUsd: typeof parsed.totalCostUsd === "number" ? parsed.totalCostUsd : null,
     };
   } catch {
-    return { ok: false, threadId: null, finalResponse: null, error: "The agent did not produce a valid result" };
+    return { ok: false, threadId: null, finalResponse: null, error: "The agent did not produce a valid result", usage: null, modelUsage: null, totalCostUsd: null };
   }
 }
 

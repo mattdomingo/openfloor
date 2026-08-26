@@ -1,5 +1,6 @@
 import type { AgentRun, AgentRunCheck, AgentRunFile, AgentRunStatus, RunActivityEvent } from "@/lib/floor-types";
 import { resolveRunModel, type CredentialProvider } from "@/lib/provider-credentials";
+import { normalizeRunUsage } from "@/lib/run-usage";
 import { getDb, type D1DatabaseLike } from "./index";
 import { getActiveMembershipRole, getMembershipRole } from "./sessions";
 export class AgentRunConflictError extends Error {}
@@ -60,6 +61,23 @@ export async function getQueueItemProvider(sessionId: string, queueItemId: strin
      WHERE q.session_id = ? AND q.id = ?`,
   ).bind(sessionId, queueItemId).first<{ provider: CredentialProvider }>();
   return row?.provider ?? null;
+}
+
+// Feeds db/provider-credentials.ts's checkProviderBudget: who pays for this
+// queue item's agent, which vendor, and which credential kind it names
+// (null = the owner's default — same convention as floor_agents.credential_kind
+// everywhere else).
+export async function getQueueItemAgentBudgetContext(
+  sessionId: string,
+  queueItemId: string,
+  database = getDb(),
+): Promise<{ ownerUserId: string; provider: CredentialProvider; credentialKind: "api_key" | "oauth" | null } | null> {
+  const row = await database.prepare(
+    `SELECT a.owner_user_id AS ownerUserId, a.provider AS provider, a.credential_kind AS credentialKind
+     FROM floor_queue_items q JOIN floor_agents a ON a.id = q.agent_id
+     WHERE q.session_id = ? AND q.id = ?`,
+  ).bind(sessionId, queueItemId).first<{ ownerUserId: string; provider: CredentialProvider; credentialKind: "api_key" | "oauth" | null }>();
+  return row ?? null;
 }
 
 export async function createAgentRun(sessionId: string, queueItemId: string, userId: string, kind: "task" | "reply" = "task", database = getDb()): Promise<AgentRun> {
@@ -251,6 +269,63 @@ export async function setRunSandboxId(runId: string, sandboxId: string, database
 export async function setRunProcessId(runId: string, processId: string, database = getDb()): Promise<void> {
   await database.prepare("UPDATE agent_runs SET sandbox_process_id = ?, updated_at = ? WHERE id = ?")
     .bind(processId, Date.now(), runId).run();
+}
+
+// Called once per run, right after result.json is parsed (before the
+// ok/exitCode failure check) — a run that went on to fail still spent real
+// tokens against the owner's monthly budget, and recording only successes
+// would let a crashlooping agent bypass its own limit. Idempotent-in-intent
+// but not idempotent-in-fact: the workflow calls this exactly once per run
+// (a step retry would double-count the rollup), same non-guarantee as
+// recordRunArtifact just above this call site in the workflow.
+export async function recordRunUsage(
+  runId: string,
+  provider: CredentialProvider,
+  model: string,
+  raw: {
+    usage: unknown;
+    modelUsage: Record<string, { inputTokens: number; outputTokens: number; cacheReadInputTokens: number; cacheCreationInputTokens: number; costUSD: number }> | null;
+    totalCostUsd: number | null;
+  },
+  database = getDb(),
+): Promise<void> {
+  const normalized = normalizeRunUsage(provider, model, raw);
+  const now = Date.now();
+  await database.prepare(
+    `UPDATE agent_runs SET input_tokens = ?, output_tokens = ?, cache_read_tokens = ?, cache_write_tokens = ?,
+            cost_micro_usd = ?, cost_source = ?, updated_at = ?
+     WHERE id = ?`,
+  ).bind(
+    normalized.inputTokens, normalized.outputTokens, normalized.cacheReadTokens, normalized.cacheWriteTokens,
+    normalized.costMicroUsd, normalized.costSource, now, runId,
+  ).run();
+  // No priced usage (an unpriced model, or a run that made no model call at
+  // all) means no rollup row either — a null cost must not silently write a
+  // zero that would look like a genuinely free run.
+  if (normalized.costMicroUsd === null) return;
+  // billed_kind is written by the gateway (db/provider-credentials.ts's
+  // resolveRunProviderSecret result) the moment the run's first model call
+  // resolves a credential — it is expected to already be set by the time the
+  // run completes. Its absence here means no gateway call ever succeeded,
+  // which normalizeRunUsage should already have reflected as a null cost
+  // above; this is a defensive second check, not the primary guard.
+  const owner = await database.prepare(
+    `SELECT a.owner_user_id AS ownerUserId, r.billed_kind AS billedKind
+     FROM agent_runs r JOIN floor_agents a ON a.id = r.agent_id WHERE r.id = ?`,
+  ).bind(runId).first<{ ownerUserId: string; billedKind: "api_key" | "oauth" | "server" | null }>();
+  if (!owner?.billedKind) return;
+  const month = new Date(now).toISOString().slice(0, 7);
+  await database.prepare(
+    `INSERT INTO provider_spend_months (user_id, provider, kind, month, micro_usd, input_tokens, output_tokens)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(user_id, provider, kind, month) DO UPDATE SET
+       micro_usd = micro_usd + excluded.micro_usd,
+       input_tokens = input_tokens + excluded.input_tokens,
+       output_tokens = output_tokens + excluded.output_tokens`,
+  ).bind(
+    owner.ownerUserId, provider, owner.billedKind, month,
+    normalized.costMicroUsd, normalized.inputTokens ?? 0, normalized.outputTokens ?? 0,
+  ).run();
 }
 
 export async function markRunChecking(runId: string, threadId: string | null, finalResponse: string | null, database = getDb()): Promise<void> {
