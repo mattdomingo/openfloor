@@ -62,6 +62,7 @@ import {
   finishAgentRunRollbackGroup,
 } from "../db/rollbacks";
 import { githubGitAuthorization } from "../lib/github-git-auth";
+import { rollbackSandboxIds } from "../lib/rollback-sandbox";
 
 type R2BucketLike = { put(key: string, value: string, options?: unknown): Promise<unknown> };
 
@@ -102,10 +103,10 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
   async run(event: Readonly<WorkflowEvent<Params>>, step: WorkflowStep): Promise<{ status: string }> {
     const runId = event.payload.runId;
     if (event.payload.action === "rollback") {
-      return this.rollback(runId, event.payload.rollbackId, event.instanceId, step);
+      return this.rollback(runId, event.payload.rollbackId, step);
     }
     if (event.payload.action === "rollback_group") {
-      return this.rollback(runId, event.payload.rollbackGroupId, event.instanceId, step, true);
+      return this.rollback(runId, event.payload.rollbackGroupId, step, true);
     }
     const context = await step.do("load run", async () => {
       const value = await getRunExecutionContext(runId, this.env.DB);
@@ -714,21 +715,26 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
     if (update) await notifyFloorChanged(update.sessionId, update.revision, ["queue", "runs", "review"]);
   }
 
-  private async rollback(runId: string, rollbackId: string, instanceId: string, step: WorkflowStep, grouped = false): Promise<{ status: string }> {
-    const sandbox = getSandbox(this.env.SANDBOX, `rollback-${instanceId}`, {
-      keepAlive: true,
-      enableDefaultSession: false,
-      normalizeId: true,
-      labels: { runId, purpose: "candidate-rollback" },
-    });
-    const publisher = getSandbox(this.env.SANDBOX, `rollback-publisher-${instanceId}`, {
-      keepAlive: true,
-      enableDefaultSession: false,
-      normalizeId: true,
-      labels: { runId, purpose: "trusted-rollback-publisher" },
-    });
+  private async rollback(runId: string, rollbackId: string, step: WorkflowStep, grouped = false): Promise<{ status: string }> {
+    let sandbox: ReturnType<typeof getSandbox<Sandbox>> | null = null;
+    let publisher: ReturnType<typeof getSandbox<Sandbox>> | null = null;
     let pushedSha: string | null = null;
     try {
+      const sandboxIds = rollbackSandboxIds(rollbackId);
+      const rollbackSandbox = getSandbox(this.env.SANDBOX, sandboxIds.executor, {
+        keepAlive: true,
+        enableDefaultSession: false,
+        normalizeId: true,
+        labels: { runId, purpose: "candidate-rollback" },
+      });
+      const rollbackPublisher = getSandbox(this.env.SANDBOX, sandboxIds.publisher, {
+        keepAlive: true,
+        enableDefaultSession: false,
+        normalizeId: true,
+        labels: { runId, purpose: "trusted-rollback-publisher" },
+      });
+      sandbox = rollbackSandbox;
+      publisher = rollbackPublisher;
       const rawContext = await step.do("claim candidate rollback", async () => grouped
         ? beginAgentRunRollbackGroup(rollbackId, this.env.DB)
         : beginAgentRunRollback(rollbackId, this.env.DB));
@@ -746,7 +752,7 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
         private: context.repositoryPrivate,
         defaultBranch: context.defaultBranch,
       };
-      const prepareRollback = async (targetSandbox: typeof sandbox) => {
+      const prepareRollback = async (targetSandbox: typeof rollbackSandbox) => {
         const observed = await getRepositoryRefSha(config, context.installationId, repository, context.candidateBranch);
         if (observed !== context.expectedCandidateSha) throw new NonRetryableError("The candidate changed before rollback preparation");
         const token = await createInstallationToken(config, context.installationId, context.repositoryId);
@@ -795,16 +801,16 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
         if (!/^[0-9a-f]{40}$/.test(sha)) throw new NonRetryableError("Rollback did not produce a valid commit");
         return sha;
       };
-      const rollbackSha = await step.do("prepare candidate rollback", { retries: { limit: 2, delay: "5 seconds" }, timeout: "10 minutes" }, async () => prepareRollback(sandbox));
+      const rollbackSha = await step.do("prepare candidate rollback", { retries: { limit: 2, delay: "5 seconds" }, timeout: "10 minutes" }, async () => prepareRollback(rollbackSandbox));
 
       for (const [index, command] of context.commands.entries()) {
         await step.do(`run rollback check ${index}`, { retries: { limit: 0, delay: "1 second" }, timeout: "11 minutes" }, async () => {
-          const result = await sandbox.exec(`cd /workspace/repository && ${command}`, { timeout: COMMAND_TIMEOUT_MS });
+          const result = await rollbackSandbox.exec(`cd /workspace/repository && ${command}`, { timeout: COMMAND_TIMEOUT_MS });
           if (!result.success) throw new NonRetryableError(`Required rollback check failed: ${command}`);
         });
       }
 
-      const publisherSha = await step.do("reconstruct trusted rollback", { retries: { limit: 2, delay: "5 seconds" }, timeout: "10 minutes" }, async () => prepareRollback(publisher));
+      const publisherSha = await step.do("reconstruct trusted rollback", { retries: { limit: 2, delay: "5 seconds" }, timeout: "10 minutes" }, async () => prepareRollback(rollbackPublisher));
       if (publisherSha !== rollbackSha) throw new NonRetryableError("Trusted rollback reconstruction produced a different commit");
 
       pushedSha = await step.do("publish candidate rollback", { retries: { limit: 4, delay: "5 seconds", backoff: "exponential" }, timeout: "5 minutes" }, async () => {
@@ -812,7 +818,7 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
         if (observed === rollbackSha) return rollbackSha;
         if (observed !== context.expectedCandidateSha) throw new NonRetryableError("The candidate changed before rollback publication");
         const token = await createInstallationToken(config, context.installationId, context.repositoryId);
-        const result = await publisher.exec(
+        const result = await rollbackPublisher.exec(
           `cd /workspace/repository && git -c credential.helper= -c "http.extraHeader=$OPENFLOOR_GIT_AUTHORIZATION" push
              "--force-with-lease=refs/heads/$OPENFLOOR_CANDIDATE_BRANCH:$OPENFLOOR_EXPECTED_SHA"
              "$OPENFLOOR_REPOSITORY_URL" "$OPENFLOOR_ROLLBACK_SHA:refs/heads/$OPENFLOOR_CANDIDATE_BRANCH"`,
@@ -858,12 +864,14 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
       return { status: "failed" };
     } finally {
       try {
-        await step.do("destroy rollback sandbox", { retries: { limit: 2, delay: "5 seconds" }, timeout: "2 minutes" }, async () => sandbox.destroy());
+        const claimed = sandbox;
+        if (claimed) await step.do("destroy rollback sandbox", { retries: { limit: 2, delay: "5 seconds" }, timeout: "2 minutes" }, async () => claimed.destroy());
       } catch {
         // The one-shot trusted rollback sandbox contains no reusable credentials.
       }
       try {
-        await step.do("destroy rollback publisher", { retries: { limit: 2, delay: "5 seconds" }, timeout: "2 minutes" }, async () => publisher.destroy());
+        const claimed = publisher;
+        if (claimed) await step.do("destroy rollback publisher", { retries: { limit: 2, delay: "5 seconds" }, timeout: "2 minutes" }, async () => claimed.destroy());
       } catch {
         // The publisher is one-shot and is never reused after credentialed Git transport.
       }
