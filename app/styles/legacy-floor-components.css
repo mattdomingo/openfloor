@@ -2913,6 +2913,8 @@
 /* Create agent dialog --------------------------------------------------- */
 
 .dialog {
+  display: flex;
+  flex-direction: column;
   width: min(660px, calc(100vw - 2 * var(--space-5)));
   max-width: none;
   max-height: min(86vh, 760px);
@@ -3038,6 +3040,7 @@
 .dialog-body {
   display: grid;
   gap: var(--space-4);
+  min-height: 0;
   padding: var(--space-4) var(--space-5);
   overflow-y: auto;
   background:

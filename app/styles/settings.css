@@ -177,6 +177,58 @@
   justify-self: end;
 }
 
+/* ── Collapsible provider-credential rows ────────────────────────────────
+   Doubled class beats the two-class .settings-shell .settings-category-row
+   selector above so the fixed name/detail/button grid doesn't fight the
+   accordion's own header + collapsible-body layout. Shell-agnostic since
+   this row renders both in Settings and inside the session setup dialog. */
+.provider-credential-row.provider-credential-row {
+  display: block;
+  padding: 0;
+  overflow: hidden;
+}
+.provider-credential-toggle {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  width: 100%;
+  padding: 18px 20px;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.provider-credential-toggle:hover { background: var(--shop-2, transparent); }
+.provider-credential-toggle:focus-visible { outline: 2px solid var(--accent-ink); outline-offset: -2px; }
+.provider-credential-toggle .settings-category-name { flex: 1 1 auto; min-width: 0; }
+.provider-credential-status {
+  flex: none;
+  color: var(--steel);
+  font: 650 10px var(--mono);
+  letter-spacing: .05em;
+  text-transform: uppercase;
+}
+.provider-credential-status[data-connected="true"] { color: #25805f; }
+.provider-credential-toggle::after {
+  content: "";
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-right: 2px solid var(--steel);
+  border-bottom: 2px solid var(--steel);
+  transform: rotate(45deg);
+  transition: transform .15s ease;
+}
+.provider-credential-row[data-expanded="true"] .provider-credential-toggle::after { transform: rotate(-135deg); }
+.provider-credential-body {
+  display: grid;
+  gap: 12px;
+  padding: 0 20px 18px;
+}
+.provider-credential-body > .button { justify-self: start; }
+
 /* Seats per session: 3  ⌊−⌋ ⌊+⌋ — the base .seat-picker rule (components.css)
    pushes the −/+ buttons to the far end of the row with margin-right:auto on
    the label, which reads fine full-bleed under Onboarding's 2-column plan

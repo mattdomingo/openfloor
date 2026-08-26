@@ -68,6 +68,10 @@ function ProviderCredentialRow({ provider, kind, credential, showAgentDefaults, 
   const bundle = provider === "openai" && kind === "oauth";
   const field = kind === "api_key" ? "apiKey" : bundle ? "authJson" : "setupToken";
   const rowName = kind === "api_key" ? providerLabel(provider) : credentialKindLabel(provider, kind);
+  const panelId = `credential-panel-${provider}-${kind}`;
+  // Connected rows start collapsed (nothing to do); unconnected rows start
+  // open so the key field is visible without an extra click.
+  const [expanded, setExpanded] = useState(!credential);
 
   async function connect(event: FormEvent) {
     event.preventDefault();
@@ -105,73 +109,85 @@ function ProviderCredentialRow({ provider, kind, credential, showAgentDefaults, 
   }
 
   return (
-    <li className="settings-category-row provider-credential-row">
-      <span className="settings-category-name">
-        {rowName}
-        {showAgentDefaults && kind === "api_key" && <small>{AGENT_PROVIDER_LABELS[provider]} · {DEFAULT_PROVIDER_MODELS[provider]}</small>}
-      </span>
-      {credential ? (
-        <>
-          <span className="settings-category-detail">
-            {kind === "api_key" ? (
-              <><strong>Connected</strong> — API key ending in ····{credential.fingerprint}.</>
-            ) : (
-              <>
-                <strong>{credential.validatedAt ? "Connected" : "Connected — not yet verified"}</strong>
-                {" — "}{bundle ? <>account ····{credential.fingerprint}</> : <>····{credential.fingerprint}</>}.
-              </>
-            )}
-          </span>
-          <button type="button" className="button" data-variant="quiet" data-size="sm" onClick={disconnect} disabled={busy}>
-            {busy ? "Disconnecting…" : "Disconnect"}
-          </button>
-        </>
-      ) : (
-        <form className="settings-category-detail" onSubmit={connect}>
-          {kind === "oauth" && (
-            <p className="settings-category-detail">
-              {bundle
-                ? <>Run <code>codex login</code> on your machine, then paste the contents of <code>~/.codex/auth.json</code>.</>
-                : <>Run <code>claude setup-token</code> on your machine and paste the token.</>}
-              {" "}Used only for runs of agents you own; the subscription&rsquo;s rate limits are yours and apply here too.
-              openfloor never uses it for anyone else, and disconnecting is immediate.
-            </p>
-          )}
-          {bundle ? (
-            <label className="field">
-              <span className="label">auth.json</span>
-              <textarea
-                aria-label={`${providerLabel(provider)} auth.json`}
-                value={secret}
-                onChange={(event) => setSecret(event.target.value)}
-                maxLength={8192}
-                rows={4}
-                autoComplete="off"
-                spellCheck={false}
-              />
-            </label>
+    <li className="settings-category-row provider-credential-row" data-expanded={expanded}>
+      <button
+        type="button"
+        className="provider-credential-toggle"
+        aria-expanded={expanded}
+        aria-controls={panelId}
+        onClick={() => setExpanded((value) => !value)}
+      >
+        <span className="settings-category-name">
+          {rowName}
+          {showAgentDefaults && kind === "api_key" && <small>{AGENT_PROVIDER_LABELS[provider]} · {DEFAULT_PROVIDER_MODELS[provider]}</small>}
+        </span>
+        <span className="provider-credential-status" data-connected={Boolean(credential)}>
+          {credential ? (kind === "api_key" || credential.validatedAt ? "Connected" : "Connected — not yet verified") : "Not connected"}
+        </span>
+      </button>
+      {expanded && (
+        <div id={panelId} className="provider-credential-body">
+          {credential ? (
+            <>
+              <span className="settings-category-detail">
+                {kind === "api_key" ? (
+                  <>API key ending in ····{credential.fingerprint}.</>
+                ) : (
+                  <>{bundle ? <>account ····{credential.fingerprint}</> : <>····{credential.fingerprint}</>}.</>
+                )}
+              </span>
+              <button type="button" className="button" data-variant="quiet" data-size="sm" onClick={disconnect} disabled={busy}>
+                {busy ? "Disconnecting…" : "Disconnect"}
+              </button>
+            </>
           ) : (
-            <label className="field">
-              <span className="label">{kind === "api_key" ? "API key" : "Setup token"}</span>
-              <input
-                aria-label={`${rowName} ${kind === "api_key" ? "API key" : "setup token"}`}
-                type="password"
-                value={secret}
-                onChange={(event) => setSecret(event.target.value)}
-                maxLength={512}
-                autoComplete="off"
-                spellCheck={false}
-              />
-            </label>
+            <form className="settings-category-detail" onSubmit={connect}>
+              {kind === "oauth" && (
+                <p className="settings-category-detail">
+                  {bundle
+                    ? <>Run <code>codex login</code> on your machine, then paste the contents of <code>~/.codex/auth.json</code>.</>
+                    : <>Run <code>claude setup-token</code> on your machine and paste the token.</>}
+                  {" "}Used only for runs of agents you own; the subscription&rsquo;s rate limits are yours and apply here too.
+                  openfloor never uses it for anyone else, and disconnecting is immediate.
+                </p>
+              )}
+              {bundle ? (
+                <label className="field">
+                  <span className="label">auth.json</span>
+                  <textarea
+                    aria-label={`${providerLabel(provider)} auth.json`}
+                    value={secret}
+                    onChange={(event) => setSecret(event.target.value)}
+                    maxLength={8192}
+                    rows={4}
+                    autoComplete="off"
+                    spellCheck={false}
+                  />
+                </label>
+              ) : (
+                <label className="field">
+                  <span className="label">{kind === "api_key" ? "API key" : "Setup token"}</span>
+                  <input
+                    aria-label={`${rowName} ${kind === "api_key" ? "API key" : "setup token"}`}
+                    type="password"
+                    value={secret}
+                    onChange={(event) => setSecret(event.target.value)}
+                    maxLength={512}
+                    autoComplete="off"
+                    spellCheck={false}
+                  />
+                </label>
+              )}
+              <div className="form-actions">
+                <button className="button" data-variant="primary" data-size="sm" disabled={!secret.trim() || busy}>
+                  {busy ? (bundle ? "Connecting…" : "Verifying…") : "Connect"}
+                </button>
+              </div>
+            </form>
           )}
-          <div className="form-actions">
-            <button className="button" data-variant="primary" data-size="sm" disabled={!secret.trim() || busy}>
-              {busy ? (bundle ? "Connecting…" : "Verifying…") : "Connect"}
-            </button>
-          </div>
-        </form>
+          {error && <p className="form-error" role="alert">{error}</p>}
+        </div>
       )}
-      {error && <p className="form-error" role="alert">{error}</p>}
     </li>
   );
 }
