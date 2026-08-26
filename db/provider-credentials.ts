@@ -52,8 +52,11 @@ export async function resolveAutoAgentProvider(
      WHERE s.id = ?`,
   ).bind(sessionId).first<{ configuredProvider: CredentialProvider | null; ownerUserId: string }>();
   if (!session) return { configuredProvider: null, effectiveProvider: null, state: "selection_required" };
+  // DISTINCT because a provider can hold two rows since credential kinds
+  // became first-class (api_key + oauth) — one provider with both kinds is
+  // still ONE connected provider, not a "selection required" pair.
   const credentials = await database.prepare(
-    "SELECT provider FROM user_provider_credentials WHERE user_id = ? ORDER BY provider",
+    "SELECT DISTINCT provider FROM user_provider_credentials WHERE user_id = ? ORDER BY provider",
   ).bind(session.ownerUserId).all<{ provider: CredentialProvider }>();
   const enabledCredentials = credentials.results
     .map((credential) => credential.provider)
