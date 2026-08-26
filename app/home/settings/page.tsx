@@ -4,16 +4,18 @@ import { listProviderCredentials } from "@/db/provider-credentials";
 import { SettingsScreen } from "@/components/product/SettingsScreen";
 import { getBillingSummary } from "@/db/billing";
 import { resolveSettingsOrigin } from "./origin";
+import { listUserGitHubInstallations } from "@/db/github-installations";
 
 export const dynamic = "force-dynamic";
 
 export default async function SettingsPage({ searchParams }: { searchParams: Promise<{ section?: string; billing?: string; from?: string }> }) {
   const user = await requireOnboardedUser("/home/settings");
   const query = await searchParams;
-  const [usage, billing, credentials, origin] = await Promise.all([
+  const [usage, billing, credentials, githubInstallations, origin] = await Promise.all([
     getUsageForUser(user.id),
     getBillingSummary(user.id),
     listProviderCredentials(user.id),
+    listUserGitHubInstallations(user.id),
     resolveSettingsOrigin(query.from, user.id),
   ]);
   return (
@@ -22,7 +24,8 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
       usage={usage}
       billing={billing}
       credentials={credentials}
-      initialSection={query.section === "plan" ? "plan" : "profile"}
+      githubInstallations={githubInstallations}
+      initialSection={query.section === "plan" || query.section === "connections" ? query.section : "profile"}
       billingNotice={query.billing ?? null}
       backTo={origin}
       originPath={origin.href === "/home" ? null : origin.href}

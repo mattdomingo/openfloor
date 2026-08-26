@@ -8,7 +8,7 @@ import { LocalDateTime } from "@/components/LocalDateTime";
 import { HoverTip, Icon, useHoverTip } from "./primitives";
 import { SelectMenu } from "./SelectMenu";
 import type { RunActivitySource } from "./useRunActivity";
-import { ACTIVE_RUN_STATUSES, agentReplyText, isRunLive, runStatusToken } from "./data";
+import { ACTIVE_RUN_STATUSES, agentReplyText, formatAgentCost, isRunLive, runStatusToken } from "./data";
 
 const KIND_GLYPHS: Record<string, string> = {
   reasoning: "✳",
@@ -31,6 +31,7 @@ export function AgentCard({ agent, tone, latestRun, activityEvents, selected, ow
   const paused = agent.pausedAt !== null;
   const controllable = agent.kind !== "answer";
   const stateLabel = paused ? "Paused" : latestRun ? runStatusToken(latestRun).replace("_", " ") : "Created";
+  const cost = formatAgentCost(agent);
   return (
     <article className="agent-card" data-selected={selected ? "true" : "false"} data-status={paused ? "paused" : latestRun ? runStatusToken(latestRun) : "idle"} data-tone={tone} role="button" tabIndex={0} onClick={onFocus} onKeyDown={(event) => {
       if (event.target === event.currentTarget && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); onFocus(); }
@@ -55,7 +56,7 @@ export function AgentCard({ agent, tone, latestRun, activityEvents, selected, ow
           {!agent.kind && <button type="button" className="button danger-button" data-size="sm" title="Delete" aria-label={`Delete ${agent.name}`} onClick={() => onDelete(agent.id)}><Icon name="trash" size={12} /></button>}
         </div>
       )}
-      <div className="agent-foot"><span>Owned by {agent.ownerName}</span><span><LocalDateTime timestamp={agent.createdAt} /></span></div>
+      <div className="agent-foot"><span>Owned by {agent.ownerName}</span><span className="agent-cost" title={cost.title}>{cost.label}</span><span><LocalDateTime timestamp={agent.createdAt} /></span></div>
     </article>
   );
 }
@@ -68,7 +69,7 @@ function AgentResponseIcon({ agentName, reply, onOpen }: { agentName: string; re
   </>;
 }
 
-export function AgentSpotlight({ agent, tone, sessionId, latestRun, activity, canRollback, busy, owner, onRollback, onHistory, onUpdateSettings, onPause, onStop, onDelete }: { agent: FloorAgent; tone: string; sessionId: string; latestRun: AgentRun | null; activity: RunActivitySource; canRollback: boolean; busy: boolean; owner: boolean; onRollback: (runId: string) => Promise<void>; onHistory: () => void; onUpdateSettings: (agentId: string, patch: FloorAgentSettingsPatch) => Promise<boolean>; onPause: (agentId: string, paused: boolean) => void; onStop: (agentId: string) => void; onDelete: (agentId: string) => void }) {
+export function AgentSpotlight({ agent, tone, sessionId, latestRun, activity, owner, onHistory, onUpdateSettings, onPause, onStop, onDelete }: { agent: FloorAgent; tone: string; sessionId: string; latestRun: AgentRun | null; activity: RunActivitySource; owner: boolean; onHistory: () => void; onUpdateSettings: (agentId: string, patch: FloorAgentSettingsPatch) => Promise<boolean>; onPause: (agentId: string, paused: boolean) => void; onStop: (agentId: string) => void; onDelete: (agentId: string) => void }) {
   // A reply run never runs checks, exports files, or publishes a branch —
   // that execution summary belongs only to a task run.
   const isReply = latestRun?.kind === "reply";
@@ -130,7 +131,7 @@ export function AgentSpotlight({ agent, tone, sessionId, latestRun, activity, ca
         <div className="spotlight-row"><span className="label">Response</span><div className="spotlight-response">{latestRun.finalResponse}</div></div>
       )}
       {!isReply && (
-        <div className="spotlight-row"><span className="label">Execution</span>{latestRun ? <div className="spotlight-execution"><ActivityTimeline run={latestRun} activity={activity} /><p className="review-empty">{latestRun.files.length} changed file{latestRun.files.length === 1 ? "" : "s"} · {latestRun.checks.filter((check) => check.status === "passed").length}/{latestRun.checks.length} checks passed</p>{latestRun.runBranch && <p className="review-empty"><code>{latestRun.runBranch}</code>{latestRun.discardedAt ? " · discarded" : ""}{latestRun.rollbackStatus === "completed" ? " · rolled back" : ""}</p>}{latestRun.rollbackFailureReason && <p className="review-empty">{latestRun.rollbackFailureReason}</p>}{canRollback && <button type="button" className="button danger-button" data-size="sm" disabled={busy} onClick={() => void onRollback(latestRun.id)}>{latestRun.rollbackStatus === "failed" ? "Retry rollback" : "Rollback latest changes"}</button>}<ArtifactToggle sessionId={sessionId} run={latestRun} label="Open raw log" closeLabel="Hide raw log" emptyText="The raw log becomes available when the run finishes." /><ArtifactToggle sessionId={sessionId} run={latestRun} kind="prompt" label="Session brief sent to this agent" closeLabel="Hide session brief" emptyText="The session brief becomes available once the run starts." /></div> : <p className="review-empty">No agent run has started.</p>}</div>
+        <div className="spotlight-row"><span className="label">Execution</span>{latestRun ? <div className="spotlight-execution"><ActivityTimeline run={latestRun} activity={activity} /><p className="review-empty">{latestRun.files.length} changed file{latestRun.files.length === 1 ? "" : "s"} · {latestRun.checks.filter((check) => check.status === "passed").length}/{latestRun.checks.length} checks passed</p>{latestRun.runBranch && <p className="review-empty"><code>{latestRun.runBranch}</code>{latestRun.discardedAt ? " · discarded" : ""}{latestRun.rollbackStatus === "completed" ? " · rolled back" : ""}</p>}{latestRun.rollbackFailureReason && <p className="review-empty">{latestRun.rollbackFailureReason}</p>}<ArtifactToggle sessionId={sessionId} run={latestRun} label="Open raw log" closeLabel="Hide raw log" emptyText="The raw log becomes available when the run finishes." /><ArtifactToggle sessionId={sessionId} run={latestRun} kind="prompt" label="Session brief sent to this agent" closeLabel="Hide session brief" emptyText="The session brief becomes available once the run starts." /></div> : <p className="review-empty">No agent run has started.</p>}</div>
       )}
       {isReply && latestRun && (
         <div className="spotlight-row"><span className="label">Activity</span><div className="spotlight-execution"><ActivityTimeline run={latestRun} activity={activity} /><ArtifactToggle sessionId={sessionId} run={latestRun} kind="prompt" label="Session brief sent to this agent" closeLabel="Hide session brief" emptyText="The session brief becomes available once the run starts." /></div></div>

@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   AGENT_PROVIDER_LABELS,
+  connectedKindsForProvider,
+  connectedProviders,
   CREDENTIAL_PROVIDERS,
   credentialAadContext,
   credentialFingerprint,
@@ -14,8 +16,10 @@ import {
   resolveRunCredentialSource,
   resolveRunModel,
   usesClaudeRunner,
+  type ProviderCredentialSummary,
 } from "@/lib/provider-credentials";
 import { validateProviderApiKey, validateProviderOauthSecret } from "@/lib/provider-validation";
+import { MODEL_PRICING } from "@/lib/model-pricing";
 
 describe("provider parsing and labels", () => {
   it("accepts only known providers", () => {
@@ -82,6 +86,18 @@ describe("per-provider run models", () => {
       expect(PROVIDER_MODELS[provider][0]).toBe(DEFAULT_PROVIDER_MODELS[provider]);
     }
   });
+
+  // Anti-drift: every model a run can actually select must be priceable
+  // (lib/model-pricing.ts), or the cost tile silently shows "—" for it
+  // forever. A model added to PROVIDER_MODELS without a matching price entry
+  // is caught here, not in production.
+  it("prices every model in the allowlist", () => {
+    for (const provider of CREDENTIAL_PROVIDERS) {
+      for (const model of PROVIDER_MODELS[provider]) {
+        expect(MODEL_PRICING[model], `${provider} model "${model}" has no MODEL_PRICING entry`).toBeDefined();
+      }
+    }
+  });
 });
 
 describe("run credential resolution order", () => {
@@ -145,6 +161,41 @@ describe("credential kinds", () => {
     expect(credentialKindLabel("openai", "oauth")).toBe("ChatGPT subscription");
     // The vendor's own product name — what the member's invoice says.
     expect(credentialKindLabel("kimi", "oauth")).toBe("Kimi Code subscription");
+  });
+});
+
+function credential(provider: ProviderCredentialSummary["provider"], kind: ProviderCredentialSummary["kind"]): ProviderCredentialSummary {
+  return { provider, kind, fingerprint: "abcd", validatedAt: null, createdAt: 0, updatedAt: 0, monthSpendMicroUsd: 0, monthlyLimitMicroUsd: null };
+}
+
+describe("connected providers/kinds for the create-agent dialog", () => {
+  it("dedupes a provider holding both api_key and oauth rows into one option", () => {
+    const credentials = [credential("anthropic", "api_key"), credential("anthropic", "oauth")];
+    expect(connectedProviders(credentials, CREDENTIAL_PROVIDERS)).toEqual(["anthropic"]);
+  });
+
+  it("excludes providers disabled by rollout even if a key is connected", () => {
+    const credentials = [credential("anthropic", "api_key"), credential("gemini", "api_key")];
+    expect(connectedProviders(credentials, ["gemini"])).toEqual(["gemini"]);
+  });
+
+  it("returns nothing when no credentials are connected", () => {
+    expect(connectedProviders([], CREDENTIAL_PROVIDERS)).toEqual([]);
+  });
+
+  it("intersects connected kinds with the kinds a provider actually accepts", () => {
+    const credentials = [credential("anthropic", "api_key"), credential("anthropic", "oauth")];
+    expect(connectedKindsForProvider(credentials, "anthropic")).toEqual(["api_key", "oauth"]);
+    expect(connectedKindsForProvider([credential("anthropic", "api_key")], "anthropic")).toEqual(["api_key"]);
+  });
+
+  it("never returns a kind the provider does not accept, even from a hand-written row", () => {
+    const credentials = [credential("openai", "api_key"), credential("openai", "oauth")];
+    expect(connectedKindsForProvider(credentials, "openai")).toEqual(["api_key"]);
+  });
+
+  it("returns nothing for a provider with no connected rows", () => {
+    expect(connectedKindsForProvider([credential("openai", "api_key")], "anthropic")).toEqual([]);
   });
 });
 

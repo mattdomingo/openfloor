@@ -2,11 +2,14 @@
 // this module is shared by client components and unit tests (same rule as
 // lib/plans.ts). Persistence lives in db/provider-credentials.ts.
 
-// Grok (xAI) is deliberately absent — twice over: its Anthropic-compat
-// endpoint rejects the CLI's system-role messages, and its Responses API
-// rejects the "content": null Codex writes on replayed reasoning items
-// (both 2026-08-24 — see the AGENTS.md decision log), so no runner can
-// serve it today.
+// Grok (xAI) is deliberately absent — three routes closed: its Anthropic-compat
+// endpoint rejects the CLI's system-role messages (2026-08-24, reconfirmed
+// 2026-08-26), its Responses API rejects the "content": null Codex writes on
+// replayed reasoning items (2026-08-24, reconfirmed at codex-sdk 0.149.1 on
+// 2026-08-26, where effort "none" is also vendor-rejected), and the chat wire
+// is hard-refused by the pinned Codex binary itself (`wire_api = "chat"` is
+// no longer supported — verified 2026-08-26). See the AGENTS.md decision log
+// before proposing route four.
 export const CREDENTIAL_PROVIDERS = ["anthropic", "openai", "kimi", "gemini", "glm"] as const;
 export type CredentialProvider = (typeof CREDENTIAL_PROVIDERS)[number];
 
@@ -43,6 +46,34 @@ export function credentialKindsForProvider(provider: CredentialProvider): readon
   return provider === "anthropic" || provider === "kimi" ? CREDENTIAL_KINDS : ["api_key"];
 }
 
+// Deduped: a provider can hold two credential rows (api_key + oauth) — it is
+// still one connected provider, not two options with the same value (which
+// also collide as React keys in a listbox). Shared by the create-agent
+// dialog and the auto-agent provider pickers (AgentFloor, SessionScreen) so
+// the dedupe-and-filter rule lives in exactly one place.
+export function connectedProviders(
+  credentials: readonly ProviderCredentialSummary[],
+  enabled: readonly CredentialProvider[],
+): CredentialProvider[] {
+  return [...new Set(credentials.map((credential) => credential.provider))].filter((provider) =>
+    enabled.includes(provider),
+  );
+}
+
+// Kinds the user has actually connected for one provider, intersected with
+// the kinds that provider accepts (defense in depth against a hand-written
+// row of a kind the provider was never meant to offer).
+export function connectedKindsForProvider(
+  credentials: readonly ProviderCredentialSummary[],
+  provider: CredentialProvider,
+): CredentialKind[] {
+  const accepted = credentialKindsForProvider(provider);
+  const connected = new Set(
+    credentials.filter((credential) => credential.provider === provider).map((credential) => credential.kind),
+  );
+  return accepted.filter((kind) => connected.has(kind));
+}
+
 // "API key" / "Claude subscription" / "Kimi Code subscription" — used by
 // Settings rows and gateway refusal messages, so each must be a name the
 // member recognizes from their invoice.
@@ -69,6 +100,12 @@ export type ProviderCredentialSummary = {
   validatedAt: number | null;
   createdAt: number;
   updatedAt: number;
+  // This-UTC-month spend against this exact credential (from
+  // provider_spend_months) and the owner-set cap it's checked against
+  // (lib/agent-run-start.ts's checkProviderBudget). Null limit means no cap
+  // set — the meter still shows spend, just with no ceiling to warn against.
+  monthSpendMicroUsd: number;
+  monthlyLimitMicroUsd: number | null;
 };
 
 export function parseCredentialProvider(value: unknown): CredentialProvider | null {

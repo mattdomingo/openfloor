@@ -9,6 +9,9 @@ export const GLOBAL_RUN_BUDGET = 30;
 export const SESSION_RUN_CAP = 15;
 
 const ACTIVE_RUN_STATUSES = "('provisioning', 'running', 'checking', 'ready', 'publishing', 'published', 'integrating', 'cancel_requested')";
+// Reply runs finish at `ready` without occupying agent/repository capacity.
+// Task runs at ready still hold their slot until publication/integration.
+const ACTIVE_RUN_CONDITION = `(status IN ${ACTIVE_RUN_STATUSES} AND (status <> 'ready' OR kind IS NULL))`;
 
 export type RoutingTrigger = "enqueue" | "run_completed" | "toggle" | "agent_changed" | "alarm";
 
@@ -128,11 +131,11 @@ export async function runRoutingTick(
   const pendingConflict = await getPendingConflict(sessionId, database);
   if (pendingConflict && deps.startConflictResolution && !(deps.disabledProviders?.has(pendingConflict.agentProvider) ?? false)) {
     const [agentActive, sessionCount, globalCount] = await Promise.all([
-      database.prepare(`SELECT COUNT(*) AS count FROM agent_runs WHERE agent_id = ? AND status IN ${ACTIVE_RUN_STATUSES}`)
+      database.prepare(`SELECT COUNT(*) AS count FROM agent_runs WHERE agent_id = ? AND ${ACTIVE_RUN_CONDITION}`)
         .bind(pendingConflict.agentId).first<{ count: number }>(),
-      database.prepare(`SELECT COUNT(*) AS count FROM agent_runs WHERE session_id = ? AND status IN ${ACTIVE_RUN_STATUSES}`)
+      database.prepare(`SELECT COUNT(*) AS count FROM agent_runs WHERE session_id = ? AND ${ACTIVE_RUN_CONDITION}`)
         .bind(sessionId).first<{ count: number }>(),
-      database.prepare(`SELECT COUNT(*) AS count FROM agent_runs WHERE status IN ${ACTIVE_RUN_STATUSES}`)
+      database.prepare(`SELECT COUNT(*) AS count FROM agent_runs WHERE ${ACTIVE_RUN_CONDITION}`)
         .first<{ count: number }>(),
     ]);
     const sessionActive = Number(sessionCount?.count ?? 0);
@@ -191,11 +194,11 @@ export async function runRoutingTick(
     database.prepare(
       `SELECT agent_id AS agentId,
               MAX(created_at) AS lastRunAt,
-              SUM(CASE WHEN status IN ${ACTIVE_RUN_STATUSES} THEN 1 ELSE 0 END) AS activeCount
+              SUM(CASE WHEN ${ACTIVE_RUN_CONDITION} THEN 1 ELSE 0 END) AS activeCount
        FROM agent_runs WHERE session_id = ? GROUP BY agent_id`,
     ).bind(sessionId).all<{ agentId: string; lastRunAt: number; activeCount: number }>(),
     database.prepare(
-      `SELECT COUNT(*) AS count FROM agent_runs WHERE status IN ${ACTIVE_RUN_STATUSES}`,
+      `SELECT COUNT(*) AS count FROM agent_runs WHERE ${ACTIVE_RUN_CONDITION}`,
     ).first<{ count: number }>(),
   ]);
 
@@ -451,6 +454,13 @@ export async function runRoutingTick(
         decisions.push({ queueItemId: item.id, agentId: item.agentId, runId: result.runId, decision: "dispatched", reason: "Agent was idle and capacity was available", candidates: [] });
       } else if (result.kind === "conflict") {
         // Duplicate wake or a manual Run raced us; the unique index already guarded this.
+        continue;
+      } else if (result.kind === "budget_exhausted") {
+        // Per-owner, per-credential — like the disabledProviders check above,
+        // NOT a session-wide precondition. One agent owner's exhausted
+        // Anthropic budget must never freeze another owner's agents, or even
+        // this owner's other providers, on the same floor.
+        decisions.push({ queueItemId: item.id, agentId: item.agentId, runId: null, decision: "skipped", reason: result.message, candidates: [] });
         continue;
       } else {
         // "not_ready" and "disabled" are session-wide preconditions; stop dispatching.

@@ -212,7 +212,9 @@ type CandidateRecord = Omit<RepositoryCandidate, "behindBase" | "pullRequestDraf
 function mapCandidate(record: CandidateRecord): RepositoryCandidate {
   return {
     ...record,
-    status: record.mergedAt ? "merged" : record.status,
+    // mergedAt wins if somehow both are set (abandon only ever applies to a
+    // still-live candidate, so this ordering is defensive, not reachable).
+    status: record.mergedAt ? "merged" : record.abandonedAt ? "abandoned" : record.status,
     pullRequestDraft: record.pullRequestDraft == null ? null : Boolean(record.pullRequestDraft),
     pullRequestMerged: record.pullRequestMerged == null ? null : Boolean(record.pullRequestMerged),
     pullRequestMergeable: record.pullRequestMergeable == null ? null : Boolean(record.pullRequestMergeable),
@@ -245,15 +247,18 @@ export async function getActiveRepositoryCandidate(
             pull_request_mergeable_state AS pullRequestMergeableState, github_checks_passing AS githubChecksPassing,
             review_ready_at AS reviewReadyAt, review_synced_at AS reviewSyncedAt,
             merge_commit_sha AS mergeCommitSha, merged_at AS mergedAt, cleanup_status AS cleanupStatus,
-            cleanup_completed_at AS cleanupCompletedAt, branch_deleted_at AS branchDeletedAt,
+            cleanup_completed_at AS cleanupCompletedAt, branch_deleted_at AS branchDeletedAt, abandoned_at AS abandonedAt,
             status, created_by AS createdBy, created_at AS createdAt, updated_at AS updatedAt,
             last_synced_at AS lastSyncedAt
-     FROM repository_candidates WHERE session_id = ? AND status IN ('creating', 'active') AND merged_at IS NULL
+     FROM repository_candidates WHERE session_id = ? AND status IN ('creating', 'active') AND merged_at IS NULL AND abandoned_at IS NULL
      ORDER BY created_at DESC LIMIT 1`,
   ).bind(sessionId).first<CandidateRecord>();
   return record ? mapCandidate(record) : null;
 }
 
+// Latest candidate regardless of live/merged/abandoned state — Review keeps
+// showing an abandoned or merged candidate's history, it just stops being
+// the *live* one returned by getActiveRepositoryCandidate above.
 export async function getLatestRepositoryReviewCandidate(sessionId: string, database: D1DatabaseLike): Promise<RepositoryCandidate | null> {
   const record = await database.prepare(
     `SELECT id, session_id AS sessionId, connection_id AS connectionId, name, description, branch_name AS branchName,
@@ -266,7 +271,7 @@ export async function getLatestRepositoryReviewCandidate(sessionId: string, data
             pull_request_mergeable_state AS pullRequestMergeableState, github_checks_passing AS githubChecksPassing,
             review_ready_at AS reviewReadyAt, review_synced_at AS reviewSyncedAt,
             merge_commit_sha AS mergeCommitSha, merged_at AS mergedAt, cleanup_status AS cleanupStatus,
-            cleanup_completed_at AS cleanupCompletedAt, branch_deleted_at AS branchDeletedAt,
+            cleanup_completed_at AS cleanupCompletedAt, branch_deleted_at AS branchDeletedAt, abandoned_at AS abandonedAt,
             status, created_by AS createdBy, created_at AS createdAt, updated_at AS updatedAt,
             last_synced_at AS lastSyncedAt
      FROM repository_candidates WHERE session_id = ? AND status = 'active'
@@ -340,6 +345,37 @@ export async function failRepositoryCandidate(candidateId: string, database = ge
     .bind(Date.now(), candidateId).run();
 }
 
+export async function getLatestFailedRepositoryCandidateForOwner(
+  sessionId: string,
+  userId: string,
+  database = getDb(),
+): Promise<Pick<RepositoryCandidate, "id" | "connectionId" | "name" | "description" | "branchName" | "baseBranch" | "baseSha"> | null> {
+  if ((await getActiveMembershipRole(sessionId, userId, database)) !== "owner") return null;
+  return database.prepare(
+    `SELECT id, connection_id AS connectionId, name, description, branch_name AS branchName,
+            base_branch AS baseBranch, base_sha AS baseSha
+     FROM repository_candidates
+     WHERE session_id = ? AND status = 'creation_failed' AND merged_at IS NULL
+     ORDER BY created_at DESC LIMIT 1`,
+  ).bind(sessionId).first<Pick<RepositoryCandidate, "id" | "connectionId" | "name" | "description" | "branchName" | "baseBranch" | "baseSha">>();
+}
+
+export async function reactivateFailedRepositoryCandidate(
+  sessionId: string,
+  candidateId: string,
+  database = getDb(),
+): Promise<boolean> {
+  const result = await database.prepare(
+    `UPDATE repository_candidates SET status = 'creating', updated_at = ?
+     WHERE id = ? AND session_id = ? AND status = 'creation_failed'
+       AND NOT EXISTS (
+         SELECT 1 FROM repository_candidates active
+         WHERE active.session_id = ? AND active.status IN ('creating', 'active') AND active.merged_at IS NULL
+       )`,
+  ).bind(Date.now(), candidateId, sessionId, sessionId).run();
+  return result.success && Number(result.meta?.changes ?? 0) === 1;
+}
+
 export async function reconcileRepositoryCandidate(
   sessionId: string,
   metadata: GitHubRepositoryOption,
@@ -356,7 +392,7 @@ export async function reconcileRepositoryCandidate(
     ).bind(metadata.owner, metadata.name, metadata.fullName, metadata.private ? 1 : 0, metadata.defaultBranch, status, now, sessionId),
     database.prepare(
       `UPDATE repository_candidates SET remote_base_sha = ?, remote_candidate_sha = ?, last_synced_at = ?, updated_at = ?
-       WHERE session_id = ? AND status = 'active' AND merged_at IS NULL`,
+       WHERE session_id = ? AND status = 'active' AND merged_at IS NULL AND abandoned_at IS NULL`,
     ).bind(remoteBaseSha, remoteCandidateSha, now, now, sessionId),
     database.prepare("UPDATE sessions SET floor_revision = floor_revision + 1, updated_at = ? WHERE id = ?").bind(now, sessionId),
   ]);
@@ -401,7 +437,7 @@ export async function findRepositoryWebhookTargets(
     `SELECT rc.session_id AS sessionId, rc.repository_id AS repositoryId, rc.base_branch AS baseBranch,
             c.branch_name AS candidateBranch, c.candidate_sha AS candidateSha, c.integration_run_id AS integrationRunId
      FROM repository_connections rc
-     LEFT JOIN repository_candidates c ON c.session_id = rc.session_id AND c.status = 'active' AND c.merged_at IS NULL
+     LEFT JOIN repository_candidates c ON c.session_id = rc.session_id AND c.status = 'active' AND c.merged_at IS NULL AND c.abandoned_at IS NULL
      WHERE rc.installation_id = ? AND rc.status != 'disconnected' AND (? IS NULL OR rc.repository_id = ?)`,
   ).bind(installationId, repositoryId, repositoryId).all<{ sessionId: string; repositoryId: string; baseBranch: string; candidateBranch: string | null; candidateSha: string | null; integrationRunId: string | null }>();
   return result.results;
@@ -420,10 +456,10 @@ export async function updateRepositoryPushState(
   const now = Date.now();
   const statements = [database.prepare("UPDATE sessions SET floor_revision = floor_revision + 1, updated_at = ? WHERE id = ?").bind(now, sessionId)];
   if (ref === `refs/heads/${baseBranch}`) {
-    statements.push(database.prepare("UPDATE repository_candidates SET remote_base_sha = ?, last_synced_at = ?, updated_at = ? WHERE session_id = ? AND status = 'active' AND merged_at IS NULL").bind(after, now, now, sessionId));
+    statements.push(database.prepare("UPDATE repository_candidates SET remote_base_sha = ?, last_synced_at = ?, updated_at = ? WHERE session_id = ? AND status = 'active' AND merged_at IS NULL AND abandoned_at IS NULL").bind(after, now, now, sessionId));
   }
   if (candidateBranch && ref === `refs/heads/${candidateBranch}`) {
-    statements.push(database.prepare("UPDATE repository_candidates SET remote_candidate_sha = ?, last_synced_at = ?, updated_at = ? WHERE session_id = ? AND status = 'active' AND merged_at IS NULL").bind(after, now, now, sessionId));
+    statements.push(database.prepare("UPDATE repository_candidates SET remote_candidate_sha = ?, last_synced_at = ?, updated_at = ? WHERE session_id = ? AND status = 'active' AND merged_at IS NULL AND abandoned_at IS NULL").bind(after, now, now, sessionId));
     if (after !== candidateSha && !integrationRunId) statements.push(database.prepare("UPDATE repository_connections SET status = 'externally_modified', updated_at = ? WHERE session_id = ?").bind(now, sessionId));
   }
   if (ref.startsWith("refs/heads/openfloor/")) {
@@ -449,7 +485,7 @@ export async function updateRepositoryPullRequestState(
               merged_at = CASE WHEN ? THEN COALESCE(merged_at, ?) ELSE merged_at END,
               cleanup_status = CASE WHEN ? THEN COALESCE(cleanup_status, 'pending') ELSE cleanup_status END,
               updated_at = ?
-       WHERE session_id = ? AND status = 'active' AND branch_name = ?`,
+       WHERE session_id = ? AND status = 'active' AND abandoned_at IS NULL AND branch_name = ?`,
     ).bind(pullRequest.number, pullRequest.nodeId, pullRequest.url, pullRequest.state, pullRequest.draft ? 1 : 0,
       pullRequest.merged ? 1 : 0, pullRequest.mergeCommitSha, pullRequest.merged ? 1 : 0, now,
       pullRequest.merged ? 1 : 0, now, sessionId, pullRequest.headRef),
@@ -496,7 +532,7 @@ export async function getCandidateReviewMutationContext(
             rc.repository_name AS repositoryName, rc.repository_full_name AS repositoryFullName,
             rc.repository_private AS repositoryPrivate, rc.default_branch AS defaultBranch
      FROM repository_candidates c JOIN repository_connections rc ON rc.id = c.connection_id
-     WHERE c.session_id = ? AND c.status = 'active' ORDER BY c.created_at DESC LIMIT 1`,
+     WHERE c.session_id = ? AND c.status = 'active' AND c.abandoned_at IS NULL ORDER BY c.created_at DESC LIMIT 1`,
   ).bind(sessionId).first<{
     candidateId: string; candidateBranch: string; baseBranch: string; candidateSha: string | null; remoteCandidateSha: string | null;
     integrationRunId: string | null;
@@ -516,10 +552,11 @@ export async function getCandidateReviewMutationContext(
   return { ...candidate, repositoryPrivate: Boolean(candidate.repositoryPrivate), runs: runs.results };
 }
 
-/* For the deferred "delete candidate branch" action, reachable from the
-   review page after the session has already auto-ended on merge. Deliberately
-   getMembershipRole, not the active guard: this must keep working post-end,
-   the same way endSession/deleteSession do. */
+/* Shared by the deferred post-merge "delete candidate branch" action and
+   candidate abandonment (lib/candidate-abandon.ts) — both need the latest
+   candidate's branch/SHA/lease state plus its still-live run branches, for
+   an owner, working post-end the same way endSession/deleteSession do.
+   Deliberately getMembershipRole, not the active guard. */
 export async function getCandidateBranchDeleteContext(
   sessionId: string,
   userId: string,
@@ -529,6 +566,7 @@ export async function getCandidateBranchDeleteContext(
   const candidate = await database.prepare(
     `SELECT c.id AS candidateId, c.branch_name AS candidateBranch, c.candidate_sha AS candidateSha,
             c.merged_at AS mergedAt, c.branch_deleted_at AS branchDeletedAt, c.integration_run_id AS integrationRunId,
+            c.abandoned_at AS abandonedAt,
             rc.installation_id AS installationId, rc.repository_id AS repositoryId,
             rc.repository_owner AS repositoryOwner, rc.repository_name AS repositoryName,
             rc.repository_full_name AS repositoryFullName, rc.repository_private AS repositoryPrivate,
@@ -537,12 +575,19 @@ export async function getCandidateBranchDeleteContext(
      WHERE c.session_id = ? ORDER BY c.created_at DESC LIMIT 1`,
   ).bind(sessionId).first<{
     candidateId: string; candidateBranch: string; candidateSha: string | null;
-    mergedAt: number | null; branchDeletedAt: number | null; integrationRunId: string | null;
+    mergedAt: number | null; branchDeletedAt: number | null; integrationRunId: string | null; abandonedAt: number | null;
     installationId: string; repositoryId: string; repositoryOwner: string; repositoryName: string;
     repositoryFullName: string; repositoryPrivate: number | boolean; defaultBranch: string;
   }>();
   if (!candidate) return null;
-  return { ...candidate, repositoryPrivate: Boolean(candidate.repositoryPrivate) };
+  const runs = await database.prepare(
+    `SELECT id, run_branch AS branchName, run_commit_sha AS expectedSha, remote_run_sha AS remoteSha,
+            branch_deleted_at AS branchDeletedAt
+     FROM agent_runs WHERE candidate_id = ? AND status IN ('published', 'integrated', 'conflicted')
+       AND discarded_at IS NULL AND run_branch IS NOT NULL AND run_commit_sha IS NOT NULL
+     ORDER BY created_at`,
+  ).bind(candidate.candidateId).all<{ id: string; branchName: string; expectedSha: string; remoteSha: string | null; branchDeletedAt: number | null }>();
+  return { ...candidate, repositoryPrivate: Boolean(candidate.repositoryPrivate), runs: runs.results };
 }
 
 export async function reconcileCandidateReview(
@@ -587,7 +632,7 @@ export async function markCandidateReviewReady(
   await database.batch([
     database.prepare(
       `UPDATE repository_candidates SET review_ready_at = COALESCE(review_ready_at, ?), review_ready_by = ?,
-              pull_request_draft = 0, updated_at = ? WHERE id = ? AND session_id = ? AND status = 'active' AND merged_at IS NULL`,
+              pull_request_draft = 0, updated_at = ? WHERE id = ? AND session_id = ? AND status = 'active' AND merged_at IS NULL AND abandoned_at IS NULL`,
     ).bind(now, userId, now, candidateId, sessionId),
     database.prepare("UPDATE sessions SET floor_revision = floor_revision + 1, updated_at = ? WHERE id = ?").bind(now, sessionId),
   ]);
@@ -606,9 +651,31 @@ export async function markCandidateMerged(
     database.prepare(
       `UPDATE repository_candidates SET pull_request_state = 'closed', pull_request_draft = 0,
               pull_request_merged = 1, merge_commit_sha = ?, merged_at = ?, merged_by = ?, cleanup_status = 'pending', updated_at = ?
-       WHERE id = ? AND session_id = ? AND status = 'active' AND merged_at IS NULL`,
+       WHERE id = ? AND session_id = ? AND status = 'active' AND merged_at IS NULL AND abandoned_at IS NULL`,
     ).bind(mergeCommitSha, now, userId, now, candidateId, sessionId),
     database.prepare("UPDATE repository_connections SET status = 'ready', updated_at = ? WHERE session_id = ? AND status != 'disconnected'").bind(now, sessionId),
+    database.prepare("UPDATE sessions SET floor_revision = floor_revision + 1, updated_at = ? WHERE id = ?").bind(now, sessionId),
+  ]);
+  return getFloorRevision(sessionId, database);
+}
+
+/* Owner-initiated abandonment of a still-live candidate — see
+   lib/candidate-abandon.ts. Idempotent no-op once the candidate has already
+   left the live state (merged, already abandoned, or creation_failed): the
+   WHERE clause mirrors idx_repository_candidates_one_live exactly, so a
+   caller that races this against a merge always loses cleanly rather than
+   double-writing. */
+export async function markCandidateAbandoned(
+  sessionId: string,
+  candidateId: string,
+  database = getDb(),
+): Promise<number> {
+  const now = Date.now();
+  await database.batch([
+    database.prepare(
+      `UPDATE repository_candidates SET abandoned_at = ?, updated_at = ?
+       WHERE id = ? AND session_id = ? AND status IN ('creating', 'active') AND merged_at IS NULL AND abandoned_at IS NULL`,
+    ).bind(now, now, candidateId, sessionId),
     database.prepare("UPDATE sessions SET floor_revision = floor_revision + 1, updated_at = ? WHERE id = ?").bind(now, sessionId),
   ]);
   return getFloorRevision(sessionId, database);
@@ -628,7 +695,7 @@ export async function finishCandidateCleanup(
     database.prepare(
       `UPDATE repository_candidates SET cleanup_status = ?, cleanup_completed_at = ?,
               branch_deleted_at = CASE WHEN ? THEN ? ELSE branch_deleted_at END, updated_at = ?
-       WHERE id = ? AND session_id = ? AND merged_at IS NOT NULL`,
+       WHERE id = ? AND session_id = ? AND (merged_at IS NOT NULL OR abandoned_at IS NOT NULL)`,
     ).bind(complete ? "complete" : "partial", now, candidateDeleted ? 1 : 0, now, now, candidateId, sessionId),
     database.prepare("UPDATE sessions SET floor_revision = floor_revision + 1, updated_at = ? WHERE id = ?").bind(now, sessionId),
   ]);

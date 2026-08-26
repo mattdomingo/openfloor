@@ -20,7 +20,7 @@ import {
   getRepositoryConnectionForMember,
 } from "./repositories";
 import { getLatestRepositoryPreflight } from "./preflights";
-import { getAgentRuns, requestAgentRunCancellation } from "./runs";
+import { getAgentRuns, getAgentRunsForCandidate, requestAgentRunCancellation } from "./runs";
 import { getMergeConflictCases } from "./conflicts";
 import { getActiveMembershipRole, getMembershipRole } from "./sessions";
 import { resolveAutoAgentProvider } from "./provider-credentials";
@@ -29,7 +29,12 @@ import { disabledRunProviders } from "@/lib/provider-rollout";
 type AgentRecord = FloorAgent;
 type AssignmentRecord = FloorAssignment;
 type MessageRecord = FloorMessage;
-type QueueRecord = Omit<FloorQueueItem, "prompts">;
+type QueueRecord = Omit<FloorQueueItem, "prompts" | "rollback"> & {
+  rollbackRunId: string | null;
+  rollbackStatus: AgentRun["rollbackStatus"];
+  rollbackFailureReason: string | null;
+  agentOwnerUserId: string | null;
+};
 type PromptRecord = FloorQueuePrompt & { queueItemId: string };
 
 export class FloorConflictError extends Error {}
@@ -46,16 +51,40 @@ export async function getFloorSnapshot(
 
 async function readFloorSnapshot(sessionId: string, userId: string, database: D1DatabaseLike): Promise<FloorSnapshot> {
   const [session, providerResolution, agents, assignments, messages, queue, prompts, repository, activeCandidate, reviewCandidate, latestPreflight, runs, conflicts] = await Promise.all([
-    database.prepare("SELECT floor_revision AS revision, auto_dispatch AS autoDispatch, auto_provision_agents AS autoProvisionAgents, auto_resolve_conflicts AS autoResolveConflicts FROM sessions WHERE id = ?").bind(sessionId).first<{ revision: number; autoDispatch: number; autoProvisionAgents: number; autoResolveConflicts: number }>(),
+    database.prepare(
+      `SELECT s.floor_revision AS revision, s.auto_dispatch AS autoDispatch,
+              s.auto_provision_agents AS autoProvisionAgents, s.auto_resolve_conflicts AS autoResolveConflicts,
+              (SELECT role FROM session_members WHERE session_id = s.id AND user_id = ? AND removed_at IS NULL) AS viewerRole
+       FROM sessions s WHERE s.id = ?`,
+    ).bind(userId, sessionId).first<{ revision: number; autoDispatch: number; autoProvisionAgents: number; autoResolveConflicts: number; viewerRole: "owner" | "member" }>(),
     resolveAutoAgentProvider(sessionId, database, disabledRunProviders()),
     database.prepare(
+      // Two extra joins for lifetime cost (Agent tile meter): `cost` sums
+      // every priced run and flags a mixed reported/estimated history (an
+      // agent whose model crossed the anthropic/kimi/glm boundary mid-life —
+      // see lib/run-usage.ts); `latest_run` finds the most recent run whose
+      // billed_kind is known, so "incl. in subscription" reflects who pays
+      // NOW, not an average across the agent's history. Both LEFT JOIN so an
+      // agent with no priced runs yet still returns a row (null cost, not a
+      // dropped agent). idx_agent_runs_agent_created covers both.
       `SELECT a.id, a.name, a.role, a.task, a.owner_user_id AS ownerUserId,
               owner.display_name AS ownerName, a.created_by AS createdByUserId,
               a.state, a.kind, a.provider, a.model,
               a.credential_kind AS credentialKind, a.paused_at AS pausedAt,
-              a.created_at AS createdAt, a.updated_at AS updatedAt
+              a.created_at AS createdAt, a.updated_at AS updatedAt,
+              cost.costMicroUsd AS costMicroUsd, cost.costSource AS costSource,
+              latest_run.billed_kind AS billedKind
        FROM floor_agents a
        JOIN users owner ON owner.id = a.owner_user_id
+       LEFT JOIN (
+         SELECT agent_id, SUM(cost_micro_usd) AS costMicroUsd,
+                CASE WHEN COUNT(DISTINCT cost_source) > 1 THEN 'mixed' ELSE MIN(cost_source) END AS costSource
+         FROM agent_runs WHERE cost_micro_usd IS NOT NULL GROUP BY agent_id
+       ) cost ON cost.agent_id = a.id
+       LEFT JOIN agent_runs latest_run ON latest_run.id = (
+         SELECT r2.id FROM agent_runs r2 WHERE r2.agent_id = a.id AND r2.billed_kind IS NOT NULL
+         ORDER BY r2.created_at DESC LIMIT 1
+       )
        WHERE a.session_id = ? AND a.deprovisioned_at IS NULL
        ORDER BY a.created_at, a.id`,
     ).bind(sessionId).all<AgentRecord>(),
@@ -78,11 +107,23 @@ async function readFloorSnapshot(sessionId: string, userId: string, database: D1
        ORDER BY m.created_at, m.id`,
     ).bind(sessionId, userId, userId).all<MessageRecord>(),
     database.prepare(
-      `SELECT q.id, q.agent_id AS agentId, a.name AS agentName, q.position, q.status,
+      `SELECT q.id, q.agent_id AS agentId, a.name AS agentName, a.owner_user_id AS agentOwnerUserId,
+              q.position, q.status,
               q.assigned_by AS assignedBy, q.assigned_reason AS assignedReason, q.intent,
-              q.created_at AS createdAt, q.updated_at AS updatedAt
+              q.created_at AS createdAt, q.updated_at AS updatedAt,
+              rollback_run.id AS rollbackRunId, latest_rollback.status AS rollbackStatus,
+              latest_rollback.failure_reason AS rollbackFailureReason
        FROM floor_queue_items q
        LEFT JOIN floor_agents a ON a.id = q.agent_id
+       LEFT JOIN agent_runs rollback_run ON rollback_run.id = (
+         SELECT candidate.id FROM agent_runs candidate
+         WHERE candidate.queue_item_id = q.id AND candidate.status = 'integrated' AND candidate.kind IS NULL
+         ORDER BY candidate.integrated_at DESC, candidate.id DESC LIMIT 1
+       )
+       LEFT JOIN agent_run_rollbacks latest_rollback ON latest_rollback.id = (
+         SELECT attempt.id FROM agent_run_rollbacks attempt
+         WHERE attempt.run_id = rollback_run.id ORDER BY attempt.created_at DESC, attempt.id DESC LIMIT 1
+       )
        WHERE q.session_id = ? AND q.dismissed_at IS NULL
        ORDER BY q.position, q.created_at, q.id`,
     ).bind(sessionId).all<QueueRecord>(),
@@ -112,6 +153,7 @@ async function readFloorSnapshot(sessionId: string, userId: string, database: D1
   }
 
   const candidateReview = reviewCandidate ? await getRepositoryCandidateReviewData(reviewCandidate.id, database) : null;
+  const candidateRuns = reviewCandidate ? await getAgentRunsForCandidate(reviewCandidate.id, database) : runs;
   return {
     revision: Number(session?.revision ?? 0),
     autoDispatch: Boolean(session?.autoDispatch),
@@ -128,12 +170,28 @@ async function readFloorSnapshot(sessionId: string, userId: string, database: D1
       updatedAt: assignment.updatedAt ?? null,
     })),
     messages: messages.results.map((message) => ({ ...message, recipientUserId: message.recipientUserId ?? null })),
-    queue: queue.results.map((item) => ({ ...item, position: Number(item.position), prompts: promptsByItem.get(item.id) ?? [] })),
+    queue: queue.results.map((item) => {
+      const prompts = promptsByItem.get(item.id) ?? [];
+      const { rollbackRunId, rollbackStatus, rollbackFailureReason, agentOwnerUserId, ...queueItem } = item;
+      const authoredEveryPrompt = prompts.length > 0 && prompts.every((prompt) => prompt.authorUserId === userId);
+      return {
+        ...queueItem,
+        position: Number(item.position),
+        prompts,
+        rollback: rollbackRunId ? {
+          runId: rollbackRunId,
+          status: rollbackStatus ?? null,
+          failureReason: rollbackFailureReason ?? null,
+          canStart: (rollbackStatus == null || rollbackStatus === "failed") &&
+            (session?.viewerRole === "owner" || agentOwnerUserId === userId || authoredEveryPrompt),
+        } : null,
+      };
+    }),
     repository,
     activeCandidate,
     latestPreflight,
     runs,
-    review: buildRunReview(runs, reviewCandidate, candidateReview, promptsByItem, assignments.results, conflicts),
+    review: buildRunReview(candidateRuns, reviewCandidate, candidateReview, promptsByItem, assignments.results, conflicts),
   };
 }
 
@@ -214,7 +272,7 @@ function buildRunReview(
   if (candidate.integrationRunId) warnings.push({ id: `${candidate.id}-integrating`, title: "Candidate update in progress", detail: "A run is integrating or being rolled back. Merging, ending, and deleting are blocked until the candidate update finishes.", severity: "warning" });
   return {
     id: candidate.id,
-    status: candidate.status === "merged" ? "merged" : candidate.pullRequestDraft === false ? "ready" : "draft",
+    status: candidate.status === "merged" ? "merged" : candidate.status === "abandoned" ? "abandoned" : candidate.pullRequestDraft === false ? "ready" : "draft",
     branch: candidate.branchName,
     baseBranch: candidate.baseBranch,
     commitSha: candidate.status === "merged" ? candidate.mergeCommitSha : candidate.candidateSha,

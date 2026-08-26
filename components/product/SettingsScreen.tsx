@@ -17,7 +17,7 @@ import {
   CREDENTIAL_PROVIDERS,
   type ProviderCredentialSummary,
 } from "@/lib/provider-credentials";
-import type { AppUser } from "@/lib/session-types";
+import type { AppUser, UserGitHubInstallationSummary } from "@/lib/session-types";
 import { WaveField } from "@/app/entry-wave";
 import { AppHeader } from "./AppHeader";
 import { ProviderCredentials } from "./ProviderCredentials";
@@ -25,7 +25,7 @@ import { ProviderCredentials } from "./ProviderCredentials";
 type SettingsSection = "profile" | "plan" | "connections" | "preferences" | "danger";
 type Usage = { plan: Plan; planStatus: PlanStatus; effectivePlan: Plan; seconds: number; limitHours: number; limitSeats: number };
 type Billing = { customerId: string | null; subscriptionId: string | null; plan: PaidPlan | null; quantity: number | null; stripeStatus: string | null; currentPeriodEnd: number | null; cancelAtPeriodEnd: boolean };
-type BlockedSession = { id: string; title: string; reason: "repository_state" | "integration_in_progress" };
+type BlockedSession = { id: string; title: string; reason: "integration_in_progress" };
 
 const SETTINGS_SECTIONS: { value: SettingsSection; label: string }[] = [
   { value: "profile", label: "Profile" },
@@ -60,12 +60,13 @@ function SettingsRail({ value, onChange }: { value: SettingsSection; onChange: (
   );
 }
 
-export function SettingsScreen({ user: initialUser, usage, billing, credentials, initialSection, billingNotice, backTo, originPath }: {
+export function SettingsScreen({ user: initialUser, usage, billing, credentials, githubInstallations, initialSection, billingNotice, backTo, originPath }: {
   user: AppUser;
   usage: Usage;
   billing: Billing;
   credentials: ProviderCredentialSummary[];
-  initialSection: "profile" | "plan";
+  githubInstallations: UserGitHubInstallationSummary[];
+  initialSection: "profile" | "plan" | "connections";
   billingNotice: string | null;
   // Where "Account settings" was opened from — resolved server-side in
   // app/home/settings/page.tsx (app/home/settings/origin.ts) so the header link and
@@ -108,7 +109,7 @@ export function SettingsScreen({ user: initialUser, usage, billing, credentials,
           <div className="settings-panel tab-panel" key={section}>
             {section === "profile" && <ProfileSection user={user} onSaved={setUser} />}
             {section === "plan" && <PlanSection usage={usage} billing={billing} billingNotice={billingNotice} originPath={originPath} />}
-            {section === "connections" && <ConnectionsSection initialCredentials={credentials} />}
+            {section === "connections" && <ConnectionsSection initialCredentials={credentials} initialGithubInstallations={githubInstallations} />}
             {section === "preferences" && <PreferencesSection user={user} />}
             {section === "danger" && <DangerZoneSection />}
           </div>
@@ -366,9 +367,58 @@ function PlanSection({ usage, billing, billingNotice, originPath }: { usage: Usa
   );
 }
 
-function ConnectionsSection({ initialCredentials }: { initialCredentials: ProviderCredentialSummary[] }) {
+function ConnectionsSection({ initialCredentials, initialGithubInstallations }: { initialCredentials: ProviderCredentialSummary[]; initialGithubInstallations: UserGitHubInstallationSummary[] }) {
+  const [installations, setInstallations] = useState(initialGithubInstallations);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function connectGitHub() {
+    setBusy("connect");
+    setError(null);
+    const response = await fetch(`${BASE_PATH}/api/account/github/connect`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ purpose: "settings", returnTo: `${BASE_PATH}/home/settings?section=connections` }),
+    });
+    const body = await response.json().catch(() => null) as { installUrl?: string; error?: string } | null;
+    if (!response.ok || !body?.installUrl) {
+      setError(body?.error ?? "Unable to begin GitHub setup.");
+      setBusy(null);
+      return;
+    }
+    window.location.assign(body.installUrl);
+  }
+
+  async function removeGitHub(id: string) {
+    setBusy(id);
+    setError(null);
+    const response = await fetch(`${BASE_PATH}/api/account/github/installations/${encodeURIComponent(id)}`, { method: "DELETE" });
+    if (!response.ok) {
+      const body = await response.json().catch(() => null) as { error?: string } | null;
+      setError(body?.error ?? "Unable to remove GitHub access.");
+    } else {
+      setInstallations((current) => current.filter((installation) => installation.id !== id));
+    }
+    setBusy(null);
+  }
+
   return (
     <>
+      <ul className="settings-category-list">
+        <li className="settings-category-row">
+          <span className="settings-category-name">GitHub</span>
+          <span className="settings-category-detail">Connected installations supply repositories when creating sessions. Removing one affects future selection only; existing session connections remain intact.</span>
+          <button className="button" data-variant="primary" disabled={busy != null} onClick={() => void connectGitHub()}>{busy === "connect" ? "Opening…" : "Add GitHub access"}</button>
+        </li>
+        {installations.map((installation) => (
+          <li className="settings-category-row" key={installation.id}>
+            <span className="settings-category-name">{installation.accountLogin}</span>
+            <span className="settings-category-detail">{installation.accountType} · {installation.status === "active" ? "Connected" : "Access revoked"}</span>
+            <button className="button danger-button" disabled={busy != null} onClick={() => void removeGitHub(installation.id)}>{busy === installation.id ? "Removing…" : "Remove"}</button>
+          </li>
+        ))}
+        {error && <li><p className="form-error" role="alert">{error}</p></li>}
+      </ul>
       <p className="settings-category-detail">
         Connect your own API keys. A run uses the key connected by that agent&rsquo;s owner, then the configured server key;
         if neither is available, the run refuses clearly. Keys are encrypted, shown only by their last four characters,
@@ -415,9 +465,11 @@ function DangerZoneSection() {
 function DeleteAccountDialog({ onClose }: { onClose: () => void }) {
   const { dismiss, dialogProps } = useDialogDismiss(onClose);
   const [confirmText, setConfirmText] = useState("");
+  const [deleteBranches, setDeleteBranches] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [blockedSessions, setBlockedSessions] = useState<BlockedSession[] | null>(null);
+  const [orphanedBranches, setOrphanedBranches] = useState<string[] | null>(null);
   const ready = confirmText.trim() === "DELETE";
 
   async function remove() {
@@ -428,12 +480,18 @@ function DeleteAccountDialog({ onClose }: { onClose: () => void }) {
     const response = await fetch(`${BASE_PATH}/api/account`, {
       method: "DELETE",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ confirm: "DELETE" }),
+      body: JSON.stringify({ confirm: "DELETE", deleteBranches }),
     });
     if (!response.ok) {
       const body = (await response.json().catch(() => null)) as { error?: string; sessions?: BlockedSession[] } | null;
       setError(body?.error ?? "Unable to delete your account.");
       setBlockedSessions(body?.sessions ?? null);
+      setBusy(false);
+      return;
+    }
+    const body = (await response.json().catch(() => null)) as { orphanedBranches?: string[] } | null;
+    if (body?.orphanedBranches && body.orphanedBranches.length > 0) {
+      setOrphanedBranches(body.orphanedBranches);
       setBusy(false);
       return;
     }
@@ -454,28 +512,43 @@ function DeleteAccountDialog({ onClose }: { onClose: () => void }) {
       </div>
       <div className="dialog-body">
         {error && <p className="form-error" role="alert">{error}</p>}
-        {blockedSessions && blockedSessions.length > 0 ? (
+        {orphanedBranches ? (
+          <>
+            <p>Your account was deleted. These candidate branches are still on GitHub — nothing else references them:</p>
+            <ul className="settings-category-list">
+              {orphanedBranches.map((branch) => <li key={branch} className="settings-category-row"><span className="settings-category-name">{branch}</span></li>)}
+            </ul>
+          </>
+        ) : blockedSessions && blockedSessions.length > 0 ? (
           <ul className="settings-category-list">
             {blockedSessions.map((session) => (
               <li key={session.id} className="settings-category-row">
                 <span className="settings-category-name">{session.title}</span>
-                <span className="settings-category-detail">
-                  {session.reason === "integration_in_progress"
-                    ? "This session's candidate branch is still being updated."
-                    : "This session's candidate branch hasn't merged yet — merge or abandon it first."}
-                </span>
+                <span className="settings-category-detail">This session&rsquo;s candidate branch is still being updated.</span>
                 <Link className="button" data-variant="quiet" data-size="sm" href={`/session/${session.id}`}>Open</Link>
               </li>
             ))}
           </ul>
         ) : (
-          <label className="field"><span className="label">Type DELETE to confirm</span><input value={confirmText} onChange={(event) => setConfirmText(event.target.value)} autoFocus /></label>
+          <>
+            <label className="field"><span className="label">Type DELETE to confirm</span><input value={confirmText} onChange={(event) => setConfirmText(event.target.value)} autoFocus /></label>
+            <label className="settings-category-row">
+              <input type="checkbox" checked={deleteBranches} onChange={(event) => setDeleteBranches(event.target.checked)} />
+              <span className="settings-category-detail">Also delete any unmerged openfloor candidate branches on GitHub, where possible</span>
+            </label>
+          </>
         )}
       </div>
       <div className="dialog-foot">
-        <button type="button" className="button" data-variant="quiet" onClick={dismiss} disabled={busy}>Cancel</button>
-        {!(blockedSessions && blockedSessions.length > 0) && (
-          <button type="button" className="button danger-button" onClick={remove} disabled={!ready || busy}>{busy ? <><Spinner />Deleting…</> : "Delete account"}</button>
+        {orphanedBranches ? (
+          <button type="button" className="button" onClick={() => window.location.assign(`${BASE_PATH}/signout`)}>Close</button>
+        ) : (
+          <>
+            <button type="button" className="button" data-variant="quiet" onClick={dismiss} disabled={busy}>Cancel</button>
+            {!(blockedSessions && blockedSessions.length > 0) && (
+              <button type="button" className="button danger-button" onClick={remove} disabled={!ready || busy}>{busy ? <><Spinner />Deleting…</> : "Delete account"}</button>
+            )}
+          </>
         )}
       </div>
     </dialog>

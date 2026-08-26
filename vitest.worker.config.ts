@@ -13,6 +13,8 @@ if (!accountEmailMergeMigration) throw new Error("Expected drizzle/0022_*.sql (t
 const autoAgentMigration = migrations.find((migration) => migration.name.startsWith("0028_"));
 if (!autoAgentMigration) throw new Error("Expected drizzle/0028_*.sql (the auto-agent migration) to exist.");
 const autoAgentDataQueries = autoAgentMigration.queries.filter((query) => query.trimStart().startsWith("UPDATE"));
+const accountGitHubMigration = migrations.find((migration) => migration.name.startsWith("0032_"));
+if (!accountGitHubMigration) throw new Error("Expected drizzle/0032_*.sql (the account GitHub migration) to exist.");
 
 export default defineConfig({
   resolve: { alias: { "@": fileURLToPath(new URL(".", import.meta.url)) } },
@@ -43,6 +45,7 @@ export default defineConfig({
           TEST_MIGRATIONS: JSON.stringify(migrations),
           ACCOUNT_EMAIL_MERGE_QUERIES: JSON.stringify(accountEmailMergeMigration.queries),
           AUTO_AGENT_DATA_MIGRATION_QUERIES: JSON.stringify(autoAgentDataQueries),
+          ACCOUNT_GITHUB_MIGRATION_QUERIES: JSON.stringify(accountGitHubMigration.queries),
         },
       },
     }),

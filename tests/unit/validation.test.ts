@@ -175,12 +175,12 @@ describe("floor input validation", () => {
       repositoryId: " 123 ",
       baseBranch: " main ",
       checkCommands: [" npm test ", " npm run build "],
-    })).toEqual({ repositoryId: "123", baseBranch: "main", checkCommands: ["npm test", "npm run build"] });
+    })).toEqual({ repositoryId: "123", accountInstallationId: null, baseBranch: "main", checkCommands: ["npm test", "npm run build"] });
     expect(parseRepositoryConnectionInput({ repositoryId: "123", baseBranch: "main", checkCommands: [] })).toEqual({
-      repositoryId: "123", baseBranch: "main", checkCommands: [],
+      repositoryId: "123", accountInstallationId: null, baseBranch: "main", checkCommands: [],
     });
     expect(parseRepositoryConnectionInput({ repositoryId: "123", baseBranch: "main" })).toEqual({
-      repositoryId: "123", baseBranch: "main", checkCommands: [],
+      repositoryId: "123", accountInstallationId: null, baseBranch: "main", checkCommands: [],
     });
     expect(parseRepositoryConnectionInput({ repositoryId: "123", baseBranch: "main", checkCommands: ["x".repeat(501)] })).toBeNull();
   });
