@@ -2,7 +2,7 @@
 
 import { useCallback, useState } from "react";
 import { BASE_PATH } from "@/components/basePath";
-import type { CreateFloorAgentInput, FloorParticipant, FloorSnapshot } from "@/lib/floor-types";
+import type { AgentRunRollbackScope, CreateFloorAgentInput, FloorParticipant, FloorSnapshot } from "@/lib/floor-types";
 import type { AppUser, SessionMember } from "@/lib/session-types";
 import { initials } from "./data";
 
@@ -112,6 +112,12 @@ export function usePersistentFloorData(sessionId: string, initialFloor: FloorSna
     cancelRun: (runId: string) => request(`/runs/${encodeURIComponent(runId)}/cancel`, "POST"),
     discardRun: (runId: string) => request(`/runs/${encodeURIComponent(runId)}/discard`, "POST"),
     rollbackRun: (runId: string) => request(`/runs/${encodeURIComponent(runId)}/rollback`, "POST"),
+    rollbackReviewChanges: (input: {
+      scope: AgentRunRollbackScope;
+      subjectId: string;
+      expectedCandidateSha: string;
+      expectedRunIds: string[];
+    }) => request("/review/rollbacks", "POST", input),
     retryRun: (runId: string) => request(`/runs/${encodeURIComponent(runId)}/retry`, "POST"),
     readyReview: () => request("/review/ready", "POST"),
     squashMergeReview: (deleteCandidateBranch: boolean) => request("/review/merge", "POST", { deleteCandidateBranch }),
