@@ -168,11 +168,13 @@ describe("D1 persistent floor", () => {
     // provider crossed the wire, so a caller cannot pick which list applies.
     await expect(updateFloorAgentSettings(room.sessionId, room.owner.id, agentId, { model: "kimi-k3" }, env.DB)).rejects.toBeInstanceOf(FloorTargetError);
     // Same rule for a billing kind the stored provider does not accept.
-    const kimiInput = parseAgentInput({ name: "KimiEdit", role: "Engineer", task: "Work", ownerUserId: room.owner.id, provider: "kimi" });
-    if (!kimiInput) throw new Error("Invalid test agent");
-    const kimiFloor = await createFloorAgent(room.sessionId, room.owner.id, kimiInput, env.DB);
-    const kimiAgentId = kimiFloor!.agents.find((agent) => agent.name === "KimiEdit")!.id;
-    await expect(updateFloorAgentSettings(room.sessionId, room.owner.id, kimiAgentId, { credentialKind: "oauth" }, env.DB)).rejects.toBeInstanceOf(FloorTargetError);
+    // (This used kimi until its Kimi Code plan kind became real on
+    // 2026-08-26; glm remains api_key-only.)
+    const glmInput = parseAgentInput({ name: "GlmEdit", role: "Engineer", task: "Work", ownerUserId: room.owner.id, provider: "glm" });
+    if (!glmInput) throw new Error("Invalid test agent");
+    const glmFloor = await createFloorAgent(room.sessionId, room.owner.id, glmInput, env.DB);
+    const glmAgentId = glmFloor!.agents.find((agent) => agent.name === "GlmEdit")!.id;
+    await expect(updateFloorAgentSettings(room.sessionId, room.owner.id, glmAgentId, { credentialKind: "oauth" }, env.DB)).rejects.toBeInstanceOf(FloorTargetError);
     // Outsider concealment and the system-managed refusal both hold.
     await expect(updateFloorAgentSettings(room.sessionId, room.outsider.id, agentId, { model: null }, env.DB)).resolves.toBeNull();
     const answer = await ensureAnswerAgent(room.sessionId, room.owner.id, "openai", env.DB);

@@ -110,13 +110,14 @@ describe("floor input validation", () => {
     const base = { name: "A", role: "R", task: "T", ownerUserId: "o" };
     expect(parseAgentInput({ ...base, provider: "anthropic", credentialKind: "oauth" })?.credentialKind).toBe("oauth");
     expect(parseAgentInput({ ...base, provider: "openai", credentialKind: "api_key" })?.credentialKind).toBe("api_key");
-    // openai's oauth kind is withheld until §5 ships.
-    expect(parseAgentInput({ ...base, provider: "openai", credentialKind: "oauth" })).toBeNull();
+    // openai's oauth kind went live when Spike D passed (2026-08-26).
+    expect(parseAgentInput({ ...base, provider: "openai", credentialKind: "oauth" })?.credentialKind).toBe("oauth");
     // Omitted and explicit null both mean "the owner's default".
     expect(parseAgentInput({ ...base, provider: "anthropic" })?.credentialKind).toBeNull();
     expect(parseAgentInput({ ...base, provider: "anthropic", credentialKind: null })?.credentialKind).toBeNull();
+    // A Kimi Code plan key is a real kimi kind (2026-08-26 decision-log entry).
+    expect(parseAgentInput({ ...base, provider: "kimi", credentialKind: "oauth" })?.credentialKind).toBe("oauth");
     // A kind the provider does not support, and garbage, are 400s.
-    expect(parseAgentInput({ ...base, provider: "kimi", credentialKind: "oauth" })).toBeNull();
     expect(parseAgentInput({ ...base, provider: "gemini", credentialKind: "oauth" })).toBeNull();
     expect(parseAgentInput({ ...base, provider: "glm", credentialKind: "oauth" })).toBeNull();
     expect(parseAgentInput({ ...base, provider: "anthropic", credentialKind: "subscription" })).toBeNull();

@@ -2,18 +2,24 @@
 // this module is shared by client components and unit tests (same rule as
 // lib/plans.ts). Persistence lives in db/provider-credentials.ts.
 
-// Grok (xAI) is deliberately absent — twice over: its Anthropic-compat
-// endpoint rejects the CLI's system-role messages, and its Responses API
-// rejects the "content": null Codex writes on replayed reasoning items
-// (both 2026-08-24 — see the AGENTS.md decision log), so no runner can
-// serve it today.
+// Grok (xAI) is deliberately absent — three routes closed: its Anthropic-compat
+// endpoint rejects the CLI's system-role messages (2026-08-24, reconfirmed
+// 2026-08-26), its Responses API rejects the "content": null Codex writes on
+// replayed reasoning items (2026-08-24, reconfirmed at codex-sdk 0.149.1 on
+// 2026-08-26, where effort "none" is also vendor-rejected), and the chat wire
+// is hard-refused by the pinned Codex binary itself (`wire_api = "chat"` is
+// no longer supported — verified 2026-08-26). See the AGENTS.md decision log
+// before proposing route four.
 export const CREDENTIAL_PROVIDERS = ["anthropic", "openai", "kimi", "gemini", "glm"] as const;
 export type CredentialProvider = (typeof CREDENTIAL_PROVIDERS)[number];
 
-// A subscription credential (Claude setup token, ChatGPT auth bundle) is
-// stored under the same (user_id, provider) identity as an API key; `kind`
-// says how to use it. The row key is (user_id, provider, kind), so a user can
-// hold both for one provider and each agent names which one pays.
+// A subscription credential (Claude setup token, ChatGPT auth bundle, Kimi
+// Code plan key) is stored under the same (user_id, provider) identity as an
+// API key; `kind` says how to use it. The row key is (user_id, provider,
+// kind), so a user can hold both for one provider and each agent names which
+// one pays. `oauth` is the second-credential slot — "the member's own
+// subscription seat" — not a claim about the token's protocol (a Kimi Code
+// plan key is not an OAuth token in any literal sense).
 export const CREDENTIAL_KINDS = ["api_key", "oauth"] as const;
 export type CredentialKind = (typeof CREDENTIAL_KINDS)[number];
 
@@ -26,13 +32,18 @@ export function parseCredentialKind(value: unknown): CredentialKind | null {
 // subscription token sent to another vendor. Server fallback credentials are
 // always api_key by construction (plain string bindings) — openfloor never
 // operates one person's subscription seat on behalf of others.
-// openai's oauth kind (a ChatGPT auth bundle) is deliberately WITHHELD until
-// the brief's §5 ships (gated on Spike D): the parse shape and the dormant
-// Settings form remain §5-ready, but offering a connection no run can honor
-// would only manufacture 503s. The openai gateway keeps its own oauth-kind
-// refusal as defense in depth for hand-written rows.
+// anthropic: Claude setup tokens, fully spike-verified (2026-08-24).
+// kimi: a Kimi Code plan key, minted in the vendor's plan console — shipped
+// on the vendor's own documented surface without a purchased-plan spike
+// (waitlist blocked the purchase; 2026-08-26 decision-log entry) and
+// validated by production members' runs.
+// openai: a ChatGPT `~/.codex/auth.json` bundle. Withheld on 2026-08-25 while
+// Spike D was unrun; Spike D PASSED on 2026-08-26 and the kind is now live.
+// The gateway substitutes the bundle's access token toward
+// chatgpt.com/backend-api/codex, so the run container never holds the
+// credential at all — see the 2026-08-26 ENG-117 decision-log entry.
 export function credentialKindsForProvider(provider: CredentialProvider): readonly CredentialKind[] {
-  return provider === "anthropic" ? CREDENTIAL_KINDS : ["api_key"];
+  return provider === "anthropic" || provider === "kimi" || provider === "openai" ? CREDENTIAL_KINDS : ["api_key"];
 }
 
 // Deduped: a provider can hold two credential rows (api_key + oauth) — it is
@@ -63,11 +74,15 @@ export function connectedKindsForProvider(
   return accepted.filter((kind) => connected.has(kind));
 }
 
-// "API key" / "Claude subscription" / "ChatGPT subscription" — used by
-// Settings rows and gateway refusal messages.
+// "API key" / "Claude subscription" / "Kimi Code subscription" — used by
+// Settings rows and gateway refusal messages, so each must be a name the
+// member recognizes from their invoice.
 export function credentialKindLabel(provider: CredentialProvider, kind: CredentialKind): string {
   if (kind === "api_key") return "API key";
-  return provider === "anthropic" ? "Claude subscription" : provider === "openai" ? "ChatGPT subscription" : "subscription";
+  return provider === "anthropic" ? "Claude subscription"
+    : provider === "openai" ? "ChatGPT subscription"
+    : provider === "kimi" ? "Kimi Code subscription"
+    : "subscription";
 }
 
 // AAD context for lib/credential-crypto.ts. api_key keeps the bare legacy
@@ -129,10 +144,20 @@ export const PROVIDER_KEY_GUIDE: Record<CredentialProvider, { placeholder: strin
 
 // The command that mints a subscription credential on the member's own
 // machine. Rendered with a copy button rather than as prose, because it is
-// meant to be pasted, and only for the kinds that have one.
+// meant to be pasted, and only for the kinds that have one. Kimi has no
+// entry on purpose: a Kimi Code plan key is minted on a console page, not by
+// a CLI — the Settings form branches on this absence.
 export const CREDENTIAL_SETUP_COMMANDS: Partial<Record<`${CredentialProvider}:${CredentialKind}`, string>> = {
   "anthropic:oauth": "claude setup-token",
   "openai:oauth": "codex login",
+};
+
+// Where a subscription credential is minted when it comes from a console page
+// rather than a CLI command — a different console than the provider's PAYG
+// key console in PROVIDER_KEY_GUIDE (Kimi Code keys live on kimi.com, not
+// platform.moonshot.ai).
+export const SUBSCRIPTION_KEY_GUIDE: Partial<Record<CredentialProvider, { consoleUrl: string; consoleLabel: string }>> = {
+  kimi: { consoleUrl: "https://www.kimi.com/code", consoleLabel: "Kimi Code Console" },
 };
 
 // Where a member asks for a provider openfloor does not carry yet.
@@ -185,7 +210,13 @@ export function credentialFingerprint(apiKey: string): string {
 //   retention, so a ZDR-configured org gets a 400 instead of a run.
 //   claude-mythos-5 is invitation-only and deliberately excluded.
 // kimi: bare "kimi-k3" — Moonshot's /v1/models id; the Claude-Code-doc
-//   "kimi-k3[1m]" alias is NOT an API id (404, verified in Spike A).
+//   "kimi-k3[1m]" alias is NOT an API id (404, verified in Spike A). The
+//   plan-surface ids (kimi-for-coding, kimi-for-coding-highspeed, k3-256k)
+//   are banked from the vendor's Kimi Code docs, not an endpoint read (the
+//   plan waitlist blocked a purchase — 2026-08-26 decision-log entry); a
+//   subscription-bound agent must pick one, since the plan base almost
+//   certainly does not serve the PAYG ids. The per-credential mismatch
+//   surfaces as the vendor's own error, the accepted limit above.
 // gemini: curated to ids that actually reach the wire — the pinned CLI
 //   rewrites some newer ids through its own resolution table
 //   (gemini-3.7-flash → gemini-3.5-flash at pin 0.56.0), and the DB model
@@ -198,7 +229,7 @@ export function credentialFingerprint(apiKey: string): string {
 export const PROVIDER_MODELS: Record<CredentialProvider, readonly string[]> = {
   openai: ["gpt-5.6-terra"],
   anthropic: ["claude-opus-5", "claude-fable-5", "claude-opus-4-8", "claude-sonnet-5", "claude-haiku-4-5"],
-  kimi: ["kimi-k3", "kimi-k2.7-code", "kimi-k2.7-code-highspeed", "kimi-k2.6"],
+  kimi: ["kimi-k3", "kimi-k2.7-code", "kimi-k2.7-code-highspeed", "kimi-k2.6", "kimi-for-coding", "kimi-for-coding-highspeed", "k3-256k"],
   gemini: ["gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite"],
   glm: ["glm-5.3", "glm-5.2", "glm-5.1", "glm-5-turbo", "glm-5", "glm-4.7", "glm-4.6", "glm-4.5-air", "glm-4.5"],
 };

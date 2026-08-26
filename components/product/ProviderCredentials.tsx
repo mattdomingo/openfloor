@@ -13,6 +13,7 @@ import {
   PROVIDER_KEY_GUIDE,
   PROVIDER_LOGOS,
   providerLabel,
+  SUBSCRIPTION_KEY_GUIDE,
   type CredentialKind,
   type CredentialProvider,
   type ProviderCredentialSummary,
@@ -102,6 +103,11 @@ function ProviderCredentialRow({ provider, kind, credential, showAgentDefaults, 
   const [expanded, setExpanded] = useState(false);
   const guide = PROVIDER_KEY_GUIDE[provider];
   const setupCommand = CREDENTIAL_SETUP_COMMANDS[`${provider}:${kind}`];
+  // A console-minted subscription credential (no CLI command) is pasted from
+  // the plan's own console — a different page than the PAYG key console —
+  // and the vendor calls it an API key, so the field label follows.
+  const subscriptionGuide = SUBSCRIPTION_KEY_GUIDE[provider] ?? guide;
+  const oauthNoun = setupCommand ? "Setup token" : "API key";
 
   async function connect(event: FormEvent) {
     event.preventDefault();
@@ -205,10 +211,24 @@ function ProviderCredentialRow({ provider, kind, credential, showAgentDefaults, 
                   <p className="settings-category-detail">
                     {bundle
                       ? <>Run this on your machine, then paste the contents of <code>~/.codex/auth.json</code>.</>
-                      : <>Run this on your machine and paste the token it prints.</>}
+                      : setupCommand
+                        ? <>Run this on your machine and paste the token it prints.</>
+                        : <>Create a key in the <a href={subscriptionGuide.consoleUrl} target="_blank" rel="noreferrer noopener">{subscriptionGuide.consoleLabel}</a> — the plan&rsquo;s own console, not the pay-as-you-go key page — and paste it here.</>}
                     {" "}Used only for runs of agents you own; the subscription&rsquo;s rate limits are yours and apply here too.
                     openfloor never uses it for anyone else, and disconnecting is immediate.
                   </p>
+                  {/* Not a caveat — a certainty, and it must be read BEFORE the
+                      paste. Refreshing rotates the refresh token, which kills
+                      whichever copy did not rotate last. openfloor writing its
+                      own copy back cannot prevent that; only the member can, by
+                      logging in again. */}
+                  {bundle && (
+                    <p className="settings-category-detail">
+                      Heads up: openfloor refreshes this credential as it expires, and each refresh invalidates the
+                      copy on your own machine. Expect to run <code>codex login</code> again there at some point after
+                      connecting.
+                    </p>
+                  )}
                   {setupCommand && <CopyCommand command={setupCommand} />}
                 </>
               ) : (
@@ -232,9 +252,9 @@ function ProviderCredentialRow({ provider, kind, credential, showAgentDefaults, 
                 </label>
               ) : (
                 <label className="field">
-                  <span className="label">{kind === "api_key" ? "API key" : "Setup token"}</span>
+                  <span className="label">{kind === "api_key" ? "API key" : oauthNoun}</span>
                   <input
-                    aria-label={`${rowName} ${kind === "api_key" ? "API key" : "setup token"}`}
+                    aria-label={`${rowName} ${kind === "api_key" ? "API key" : oauthNoun.toLowerCase()}`}
                     type="password"
                     value={secret}
                     onChange={(event) => setSecret(event.target.value)}
