@@ -282,7 +282,7 @@ export function HomeScreen({
       setSubmitting(false);
       return;
     }
-    router.push(`/session/${body.session.id}${body.setupStatus === "failed" ? "?repo=required" : ""}`);
+    router.push(`/session/${body.session.id}?${body.setupStatus === "failed" ? "repo=required" : "setup=1"}`);
   }
 
   return (
