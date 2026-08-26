@@ -20,8 +20,12 @@ input, textarea { width: 100%; padding: 11px 12px; border: 1px solid var(--line-
 .onboarding-avatar-preview { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0; }
 
 /* .field input's width:100% outranks .sr-only's, so the hidden picker keeps a
-   full-width absolutely positioned box unless its size is pinned here too. */
-.avatar-file-input { width: 1px; height: 1px; padding: 0; }
+   full-width absolutely positioned box unless its size is pinned here too.
+   The element qualifier is load-bearing: `.field input` is (0,1,1), so a bare
+   `.avatar-file-input` at (0,1,0) loses to it and the input stays 100% wide —
+   which, absolutely positioned inside the card, pushed documentElement past
+   the viewport and made onboarding scroll sideways on a phone. */
+input.avatar-file-input { width: 1px; height: 1px; padding: 0; }
 
 /* Crop window. The square's size is set inline from AvatarCropper's
    WINDOW_SIZE, because avatarCropRect clamps the pan against that exact
