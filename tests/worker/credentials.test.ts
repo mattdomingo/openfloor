@@ -8,13 +8,14 @@ import { POST as postOpenAiGateway } from "@/app/runtime/openai/[...path]/route"
 import { createFloorAgent, updateFloorAgentSettings } from "@/db/floor";
 import {
   deleteProviderCredential,
+  ensureFreshChatGptBundle,
   getRunAgentOwnerCredential,
   listProviderCredentials,
   resolveAutoAgentProvider,
   upsertProviderCredential,
 } from "@/db/provider-credentials";
 import { acceptInvite, createSession, deleteAccount, removeMember, SessionRoutingError, setSessionRoutingSettings, upsertUser } from "@/db/sessions";
-import { encryptCredential } from "@/lib/credential-crypto";
+import { decryptCredential, encryptCredential } from "@/lib/credential-crypto";
 import { credentialAadContext } from "@/lib/provider-credentials";
 import { signRunGatewayToken } from "@/lib/runtime-token";
 import { parseAgentInput } from "@/lib/validation";
@@ -97,6 +98,44 @@ async function runningRun(suffix: string, agentOwner?: "member") {
   if (!agent) throw new Error("Agent was not created");
   const runId = await insertRunRow(sessionId, agent.id, owner.id, "running");
   return { sessionId, owner, member, runId };
+}
+
+/**
+ * A well-formed ChatGPT access token. The gateway reads `exp` to decide whether
+ * to refresh server-side, so this sits far enough out that no test ever trips
+ * the proactive refresh. Nothing here is a credential — the CLI forwards this
+ * string opaquely and only the gateway substitutes the real one.
+ */
+function chatGptToken(daysUntilExpiry = 9): string {
+  const encode = (value: object) =>
+    btoa(JSON.stringify(value)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  return [
+    encode({ alg: "RS256", typ: "JWT" }),
+    encode({ exp: Math.floor(Date.now() / 1000) + daysUntilExpiry * 86_400 }),
+    "not-a-real-signature",
+  ].join(".");
+}
+const LIVE_CHATGPT_TOKEN = chatGptToken();
+
+/**
+ * OpenAI agent with an explicit billing kind, plus a running run. The kind is
+ * set directly because parseAgentInput validates it against
+ * credentialKindsForProvider, and the same UPDATE keeps this helper working
+ * whether or not the withholding line has been widened yet.
+ */
+async function openAiKindAgentRun(
+  sessionId: string,
+  ownerUserId: string,
+  name: string,
+  credentialKind: "api_key" | "oauth",
+): Promise<string> {
+  const input = parseAgentInput({ name, role: "Engineer", task: "Work", ownerUserId, provider: "openai" });
+  if (!input) throw new Error("Invalid test agent");
+  const floor = await createFloorAgent(sessionId, ownerUserId, input, env.DB);
+  const agent = floor?.agents.find((candidate) => candidate.name === name);
+  if (!agent) throw new Error("Agent was not created");
+  await env.DB.prepare("UPDATE floor_agents SET credential_kind = ? WHERE id = ?").bind(credentialKind, agent.id).run();
+  return insertRunRow(sessionId, agent.id, ownerUserId, "running");
 }
 
 /** Agent with an explicit billing kind plus a running run. */
@@ -913,25 +952,163 @@ describe("OpenAI gateway credential resolution", () => {
     delete (env as unknown as Record<string, unknown>).ZAI_API_KEY;
   });
 
-  it("refuses a hand-written openai oauth bundle at resolution — never sending it upstream", async () => {
+  it("sends only the access token of an openai oauth bundle, to the ChatGPT upstream", async () => {
     const { sessionId, member, runId } = await runningRun("openai-oauth", "member");
-    // openai's oauth kind is withheld until §5 ships, so this row can only
-    // exist hand-written. A real pasted bundle is pretty-printed: interior
-    // newlines survive storage by design, so it must never reach a header
-    // value. The resolver's kind check refuses it first; the openai route's
-    // own oauth guard remains behind it as defense in depth.
-    const bundle = JSON.stringify({ tokens: { account_id: "acct-1", access_token: "at", refresh_token: "rt" } }, null, 2);
+    // A real pasted bundle is pretty-printed, so interior newlines survive
+    // storage by design. The gateway extracts tokens.access_token and sends
+    // ONLY that: the bundle itself would leak the refresh token and would
+    // crash Headers.set on those newlines besides.
+    const bundle = JSON.stringify({
+      tokens: { account_id: "acct-chatgpt-1", access_token: LIVE_CHATGPT_TOKEN, refresh_token: "rt-secret" },
+      last_refresh: new Date().toISOString(),
+    }, null, 2);
     await connectKey(member.id, "openai", bundle, "oauth");
     await env.DB.prepare("UPDATE floor_agents SET credential_kind = 'oauth' WHERE session_id = ?").bind(sessionId).run();
-    // Even with a server key available: this is not a missing credential,
-    // it is an unusable-by-design one — no silent payer switch.
+    const fetchSpy = vi.fn(async () => new Response("{}", { status: 200, headers: { "content-type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchSpy);
+    const request = gatewayRequest(await signedRunToken(runId, sessionId));
+    request.headers.set("content-encoding", "zstd");
+    const response = await postOpenAiGateway(request, gatewayParams());
+    expect(response.status).toBe(200);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchSpy.mock.calls[0] as unknown as [string, RequestInit];
+    // A subscription bearer authenticates only against the ChatGPT backend;
+    // api.openai.com answers 401 for it (Spike D).
+    expect(url).toBe("https://chatgpt.com/backend-api/codex/responses");
+    const sent = new Headers(init.headers);
+    expect(sent.get("authorization")).toBe(`Bearer ${LIVE_CHATGPT_TOKEN}`);
+    // The account header is the gateway's to inject: the run holds no bundle.
+    expect(sent.get("chatgpt-account-id")).toBe("acct-chatgpt-1");
+    // The CLI compresses request bodies; dropping this presents compressed
+    // bytes as plain JSON and earns an unrelated-looking upstream 400.
+    expect(sent.get("content-encoding")).toBe("zstd");
+    const headerValues = [...sent.values()].join("\n");
+    expect(headerValues).not.toContain("rt-secret");
+    expect(headerValues).not.toContain("account_id");
+    expect(sent.get("authorization")).not.toContain("\n");
+  });
+
+  it("refuses a malformed stored openai bundle rather than sending garbage upstream", async () => {
+    const { sessionId, member, runId } = await runningRun("openai-oauth-bad", "member");
+    await connectKey(member.id, "openai", "{ not json at all", "oauth");
+    await env.DB.prepare("UPDATE floor_agents SET credential_kind = 'oauth' WHERE session_id = ?").bind(sessionId).run();
+    // Even with a server key available — an unreadable owner credential is not
+    // a missing one, so it refuses rather than switching payer.
     (env as unknown as Record<string, unknown>).OPENAI_API_KEY = "sk-openai-server-key";
     const fetchSpy = vi.fn();
     vi.stubGlobal("fetch", fetchSpy);
     const refused = await postOpenAiGateway(gatewayRequest(await signedRunToken(runId, sessionId)), gatewayParams());
     expect(refused.status).toBe(503);
-    expect(await refused.text()).toContain("No OpenAI credential is available for this run");
+    expect(await refused.text()).toContain("could not be read");
     expect(fetchSpy).not.toHaveBeenCalled();
+    delete (env as unknown as Record<string, unknown>).OPENAI_API_KEY;
+  });
+
+  it("refuses an openai agent whose named subscription is disconnected, with a server key present", async () => {
+    const { sessionId, member, runId } = await runningRun("openai-oauth-missing", "member");
+    // The owner holds an API key but the agent names the subscription. The
+    // assertion that matters is that it REFUSED rather than quietly billing
+    // openfloor's server key or the owner's other credential.
+    await connectKey(member.id, "openai", "sk-openai-member-other", "api_key");
+    await env.DB.prepare("UPDATE floor_agents SET credential_kind = 'oauth' WHERE session_id = ?").bind(sessionId).run();
+    (env as unknown as Record<string, unknown>).OPENAI_API_KEY = "sk-openai-server-key";
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+    const refused = await postOpenAiGateway(gatewayRequest(await signedRunToken(runId, sessionId)), gatewayParams());
+    expect(refused.status).toBe(503);
+    expect(await refused.text()).toContain("which is not connected");
+    expect(fetchSpy).not.toHaveBeenCalled();
+    delete (env as unknown as Record<string, unknown>).OPENAI_API_KEY;
+  });
+
+  it("refreshes a near-expiry bundle once, and lets a concurrent loser re-read the winner's", async () => {
+    const { owner } = await room("openai-refresh");
+    // Near expiry, so the gateway refreshes before using it.
+    const stale = JSON.stringify({
+      keep_me: "unknown vendor field",
+      tokens: { account_id: "acct-refresh", access_token: chatGptToken(0), refresh_token: "rt-original" },
+    });
+    await connectKey(owner.id, "openai", stale, "oauth");
+    const before = await env.DB.prepare(
+      "SELECT updated_at AS updatedAt FROM user_provider_credentials WHERE user_id = ? AND provider = 'openai' AND kind = 'oauth'",
+    ).bind(owner.id).first<{ updatedAt: number }>();
+    let exchanges = 0;
+    vi.stubGlobal("fetch", async () => {
+      exchanges += 1;
+      return new Response(JSON.stringify({
+        access_token: chatGptToken(9), refresh_token: `rt-rotated-${exchanges}`, expires_in: 864000,
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    });
+    const resolved = { secret: stale, ownerUserId: owner.id, updatedAt: before!.updatedAt };
+    const winner = await ensureFreshChatGptBundle(resolved, { encryptionKey: ENCRYPTION_SECRET }, env.DB, Date.now());
+    expect(winner?.refreshToken).toBe("rt-rotated-1");
+    // A second dispatch that read the row before the winner's write carries the
+    // same now-stale updated_at. Its conditional update must miss, and it must
+    // adopt the winner's bundle: the vendor rotates on every exchange, so
+    // persisting its own would strand the member on a dead refresh token.
+    const loser = await ensureFreshChatGptBundle(resolved, { encryptionKey: ENCRYPTION_SECRET }, env.DB, Date.now());
+    expect(loser?.refreshToken).toBe("rt-rotated-1");
+    expect(loser?.accessToken).toBe(winner?.accessToken);
+    const stored = await env.DB.prepare(
+      "SELECT ciphertext, updated_at AS updatedAt FROM user_provider_credentials WHERE user_id = ? AND provider = 'openai' AND kind = 'oauth'",
+    ).bind(owner.id).first<{ ciphertext: string; updatedAt: number }>();
+    expect(stored!.updatedAt).not.toBe(before!.updatedAt);
+    const persisted = JSON.parse((await decryptCredential(
+      stored!.ciphertext, ENCRYPTION_SECRET, credentialAadContext(owner.id, "openai", "oauth"),
+    ))!) as { keep_me: string; tokens: { refresh_token: string; account_id: string } };
+    expect(persisted.tokens.refresh_token).toBe("rt-rotated-1");
+    expect(persisted.tokens.account_id).toBe("acct-refresh");
+    // Unknown vendor fields must round-trip; the bundle is stored verbatim.
+    expect(persisted.keep_me).toBe("unknown vendor field");
+  });
+
+  it("leaves a still-fresh bundle alone, and survives a vendor refresh failure", async () => {
+    const { owner } = await room("openai-refresh-skip");
+    const fresh = JSON.stringify({
+      tokens: { account_id: "acct-fresh", access_token: LIVE_CHATGPT_TOKEN, refresh_token: "rt-untouched" },
+      last_refresh: "2020-01-01T00:00:00Z",
+    });
+    await connectKey(owner.id, "openai", fresh, "oauth");
+    const row = await env.DB.prepare(
+      "SELECT updated_at AS updatedAt FROM user_provider_credentials WHERE user_id = ? AND provider = 'openai' AND kind = 'oauth'",
+    ).bind(owner.id).first<{ updatedAt: number }>();
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+    // An ancient last_refresh must NOT trigger anything: Spike D measured that
+    // the vendor's documented file-age trigger does not fire at this pin, so
+    // the decision keys on the token's own exp.
+    const kept = await ensureFreshChatGptBundle(
+      { secret: fresh, ownerUserId: owner.id, updatedAt: row!.updatedAt }, { encryptionKey: ENCRYPTION_SECRET }, env.DB,
+    );
+    expect(kept?.refreshToken).toBe("rt-untouched");
+    expect(fetchSpy).not.toHaveBeenCalled();
+    // A vendor that refuses must not fail the run: the existing token is
+    // usually still good, and a genuinely dead one fails at the vendor.
+    vi.stubGlobal("fetch", async () => new Response("nope", { status: 400 }));
+    const expiring = JSON.stringify({ tokens: { account_id: "acct-fresh", access_token: chatGptToken(0), refresh_token: "rt-untouched" } });
+    const fallback = await ensureFreshChatGptBundle(
+      { secret: expiring, ownerUserId: owner.id, updatedAt: row!.updatedAt }, { encryptionKey: ENCRYPTION_SECRET }, env.DB,
+    );
+    expect(fallback?.refreshToken).toBe("rt-untouched");
+  });
+
+  it("keeps an api_key openai agent on api.openai.com while a sibling agent bills the subscription", async () => {
+    const { sessionId, owner } = await room("openai-two-kinds");
+    await connectKey(owner.id, "openai", "sk-openai-owner-both", "api_key");
+    await connectKey(owner.id, "openai", JSON.stringify({
+      tokens: { account_id: "acct-both", access_token: LIVE_CHATGPT_TOKEN, refresh_token: "rt" },
+    }), "oauth");
+    const keyRun = await openAiKindAgentRun(sessionId, owner.id, "OpenAiKeyAgent", "api_key");
+    const subRun = await openAiKindAgentRun(sessionId, owner.id, "OpenAiSubAgent", "oauth");
+    const fetchSpy = vi.fn(async () => new Response("{}", { status: 200, headers: { "content-type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchSpy);
+    await postOpenAiGateway(gatewayRequest(await signedRunToken(keyRun, sessionId)), gatewayParams());
+    await postOpenAiGateway(gatewayRequest(await signedRunToken(subRun, sessionId)), gatewayParams());
+    const calls = fetchSpy.mock.calls as unknown as [string, RequestInit][];
+    expect(calls[0][0]).toBe("https://api.openai.com/v1/responses");
+    expect(new Headers(calls[0][1].headers).get("authorization")).toBe("Bearer sk-openai-owner-both");
+    expect(calls[1][0]).toBe("https://chatgpt.com/backend-api/codex/responses");
+    expect(new Headers(calls[1][1].headers).get("authorization")).toBe(`Bearer ${LIVE_CHATGPT_TOKEN}`);
   });
 
   it("keeps the existing rejection paths", async () => {
