@@ -88,6 +88,36 @@ input, textarea { width: 100%; padding: 11px 12px; border: 1px solid var(--line-
 .session-card-foot .button[data-size="sm"] { min-height: 26px; padding: 2px 10px; font-size: var(--text-xs); }
 
 /* The house select: trigger + styled listbox instead of the OS widget. */
+/* Rendered prose (components/session/Markdown.tsx). Sized to sit inside a chat
+   bubble or a review pane rather than a document: no outer margins, and wide
+   content scrolls inside its own box so a table or a long code line never
+   makes the panel scroll sideways. */
+.markdown { display: grid; gap: var(--space-2); min-width: 0; }
+.markdown p, .markdown ul, .markdown ol, .markdown pre, .markdown blockquote, .markdown hr { margin: 0; }
+/* Markers are restored explicitly: the base reset strips list-style from every
+   ul/ol, which is right for the app's own menus and wrong for prose. */
+.markdown ul, .markdown ol { display: grid; gap: 2px; padding-left: var(--space-5); }
+.markdown ul { list-style: disc; }
+.markdown ol { list-style: decimal; }
+.markdown li { list-style: inherit; }
+/* GFM task items bring their own checkbox, so they drop the bullet — and the
+   checkbox has to opt out of the global `input { width: 100% }`. */
+.markdown li:has(> input[type="checkbox"]) { list-style: none; }
+.markdown input[type="checkbox"] { width: auto; margin-right: 6px; vertical-align: middle; }
+.markdown h1, .markdown h2, .markdown h3, .markdown h4, .markdown h5, .markdown h6 { margin: 0; font-weight: 700; }
+.markdown h1 { font-size: var(--text-lg); }
+.markdown h2 { font-size: var(--text-md); }
+.markdown h3, .markdown h4, .markdown h5, .markdown h6 { font-size: var(--text-sm); }
+.markdown code { padding: 1px 4px; border-radius: var(--radius-sm); background: var(--surface-sunken); font-size: .92em; }
+.markdown pre { padding: var(--space-3); border-radius: var(--radius-sm); background: var(--surface-sunken); overflow-x: auto; }
+.markdown pre code { padding: 0; background: none; }
+.markdown blockquote { padding-left: var(--space-3); border-left: 2px solid var(--line-strong); color: var(--text-secondary); }
+/* display: block so the table itself is the scroll container. */
+.markdown table { display: block; width: max-content; max-width: 100%; overflow-x: auto; border-collapse: collapse; font-size: var(--text-sm); }
+.markdown th, .markdown td { padding: 4px var(--space-2); border: 1px solid var(--line-soft); text-align: left; }
+.markdown hr { border: 0; border-top: 1px solid var(--line-soft); }
+.markdown a { color: var(--accent); }
+
 .select-menu { position: relative; min-width: 0; }
 .select-menu-trigger { display: inline-flex; align-items: center; gap: var(--space-2); max-width: 100%; padding: 6px var(--space-3); border: 1px solid var(--line-soft); border-radius: var(--radius-sm); background: var(--surface-raised); color: var(--text-primary); font: inherit; font-size: var(--text-sm); cursor: pointer; }
 .select-menu-trigger:hover, .select-menu-trigger[aria-expanded="true"] { border-color: var(--line-strong); }
