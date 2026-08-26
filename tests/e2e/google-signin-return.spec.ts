@@ -19,7 +19,6 @@ test("returning through a different login method reaches the same session, not a
   await firstLogin.getByRole("button", { name: "New session" }).click();
   await firstLogin.getByLabel("Session title").fill("Session from the first login");
   await firstLogin.getByRole("button", { name: "Create session" }).click();
-  await firstLogin.getByRole("button", { name: "Set up later" }).click();
   await expect(firstLogin).toHaveURL(/\/session\/[0-9a-f-]+$/);
   const sessionUrl = firstLogin.url();
   await firstLoginContext.close();
@@ -44,7 +43,6 @@ test("a genuine stranger with a different email still cannot open the session", 
   await owner.getByRole("button", { name: "New session" }).click();
   await owner.getByLabel("Session title").fill("Private to the owner");
   await owner.getByRole("button", { name: "Create session" }).click();
-  await owner.getByRole("button", { name: "Set up later" }).click();
   await expect(owner).toHaveURL(/\/session\/[0-9a-f-]+$/);
   const sessionUrl = owner.url();
   await ownerContext.close();

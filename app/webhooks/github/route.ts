@@ -1,4 +1,5 @@
 import { getGitHubAppConfig } from "@/db";
+import { setUserGitHubInstallationStatus } from "@/db/github-installations";
 import {
   findRepositoryWebhookTargets,
   recordGitHubWebhookDelivery,
@@ -43,6 +44,11 @@ export async function POST(request: Request) {
   const repositoryId = body.repository?.id == null ? null : String(body.repository.id);
   const fresh = await recordGitHubWebhookDelivery(deliveryId, event, body.action ?? null, installationId, repositoryId);
   if (!fresh) return Response.json({ accepted: true, event, duplicate: true }, { status: 202 });
+  if (event === "installation" && ["deleted", "suspend"].includes(body.action ?? "")) {
+    await setUserGitHubInstallationStatus(installationId, "revoked");
+  } else if (event === "installation" && ["created", "unsuspend", "new_permissions_accepted"].includes(body.action ?? "")) {
+    await setUserGitHubInstallationStatus(installationId, "active");
+  }
   const targets = await findRepositoryWebhookTargets(installationId, repositoryId);
   for (const target of targets) {
     let revision: number;

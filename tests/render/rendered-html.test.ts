@@ -1,6 +1,7 @@
 import { env } from "cloudflare:workers";
 import { SELF } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
+import { completeTestOnboarding, testRepositorySelection } from "./github-fixture";
 
 const BASE_PATH = "";
 
@@ -72,22 +73,12 @@ describe("server rendering", () => {
   });
 
   it("renders an authenticated floor with no seeded product data", async () => {
-    const onboardingForm = new FormData();
-    onboardingForm.set("firstName", "Render");
-    onboardingForm.set("lastName", "Owner");
-    onboardingForm.set("plan", "free");
-    onboardingForm.set("returnTo", "/home");
-    const onboarded = await SELF.fetch("http://localhost/api/account/onboarding", {
-      method: "POST",
-      headers: authenticatedHeaders,
-      body: onboardingForm,
-    });
-    expect(onboarded.status).toBe(200);
+    await completeTestOnboarding(authenticatedHeaders, "Render", "Owner");
 
     const created = await SELF.fetch("http://localhost/api/sessions", {
       method: "POST",
       headers: { ...authenticatedHeaders, "content-type": "application/json", accept: "application/json" },
-      body: JSON.stringify({ title: "Empty floor" }),
+      body: JSON.stringify({ title: "Empty floor", ...await testRepositorySelection(authenticatedHeaders) }),
     });
     expect(created.status).toBe(201);
     const { session } = await created.json() as { session: { id: string } };
@@ -95,25 +86,6 @@ describe("server rendering", () => {
       .bind("render-owner").first<{ id: string }>();
     if (!owner) throw new Error("Render owner was not persisted");
     const now = Date.now();
-    const connectionId = crypto.randomUUID();
-    const candidateId = crypto.randomUUID();
-    await env.DB.batch([
-      env.DB.prepare(
-        `INSERT INTO repository_connections
-           (id, session_id, installation_id, repository_id, repository_node_id, repository_owner,
-            repository_name, repository_full_name, repository_private, default_branch, base_branch,
-            status, connected_by, connected_at, updated_at)
-         VALUES (?, ?, 'render-installation', 'render-repository', 'render-node', 'openfloor-test',
-                 'empty-floor', 'openfloor-test/empty-floor', 1, 'main', 'main', 'ready', ?, ?, ?)`,
-      ).bind(connectionId, session.id, owner.id, now, now),
-      env.DB.prepare(
-        `INSERT INTO repository_candidates
-           (id, session_id, connection_id, branch_name, base_branch, base_sha, candidate_sha,
-            status, created_by, created_at, updated_at)
-         VALUES (?, ?, ?, 'openfloor/render/candidate/empty', 'main', 'render-sha', 'render-sha',
-                 'active', ?, ?, ?)`,
-      ).bind(candidateId, session.id, connectionId, owner.id, now, now),
-    ]);
     const response = await SELF.fetch(`http://localhost/session/${session.id}/floor`, { headers: authenticatedHeaders });
     expect(response.status).toBe(200);
     const html = await response.text();
@@ -152,36 +124,29 @@ async function onboardedUser(providerUserId: string, firstName: string, lastName
     "x-openfloor-dev-user-email": email,
     "x-openfloor-dev-user-name": `${firstName} ${lastName}`,
   };
-  const form = new FormData();
-  form.set("firstName", firstName);
-  form.set("lastName", lastName);
-  form.set("plan", "free");
-  form.set("returnTo", "/home");
-  const onboarded = await SELF.fetch("http://localhost/api/account/onboarding", { method: "POST", headers, body: form });
-  expect(onboarded.status).toBe(200);
+  await completeTestOnboarding(headers, firstName, lastName);
   const row = await env.DB.prepare("SELECT id FROM users WHERE chatgpt_user_id = ?").bind(providerUserId).first<{ id: string }>();
   if (!row) throw new Error("Onboarded user was not persisted");
   return { userId: row.id, headers };
 }
 
 describe("session lobby setup rendering", () => {
-  it("opens owner creation setup, while the repository gate and member visits stay focused", async () => {
+  it("opens a ready lobby without the retired setup dialog", async () => {
     const owner = await onboardedUser("setup-render-owner", "Setup", "Owner");
     const created = await SELF.fetch("http://localhost/api/sessions", {
       method: "POST",
       headers: { ...owner.headers, "content-type": "application/json", accept: "application/json" },
-      body: JSON.stringify({ title: "Setup rendering", objective: "Prepare the floor" }),
+      body: JSON.stringify({ title: "Setup rendering", objective: "Prepare the floor", ...await testRepositorySelection(owner.headers) }),
     });
     expect(created.status).toBe(201);
     const { session } = await created.json() as { session: { id: string } };
 
     const setupHtml = await (await SELF.fetch(`http://localhost/session/${session.id}?setup=1`, { headers: owner.headers })).text();
-    expect(setupHtml).toContain("Session setup · Step");
-    expect(setupHtml).toContain("Connect the workspace");
-    expect(setupHtml).toContain("02 Model keys");
+    expect(setupHtml).toContain("Floor ready");
+    expect(setupHtml).not.toContain("Session setup · Step");
 
     const gateHtml = await (await SELF.fetch(`http://localhost/session/${session.id}?repo=required&setup=1`, { headers: owner.headers })).text();
-    expect(gateHtml).toContain("Connect a repository to enter the agent floor");
+    expect(gateHtml).toContain("Floor ready");
     expect(gateHtml).not.toContain("Session setup · Step");
 
     const member = await onboardedUser("setup-render-member", "Setup", "Member");
@@ -206,7 +171,7 @@ describe("returning through a different login method", () => {
     const created = await SELF.fetch("http://localhost/api/sessions", {
       method: "POST",
       headers: { ...owner.headers, "content-type": "application/json", accept: "application/json" },
-      body: JSON.stringify({ title: "Reopened by Google" }),
+      body: JSON.stringify({ title: "Reopened by Google", ...await testRepositorySelection(owner.headers) }),
     });
     expect(created.status).toBe(201);
     const { session } = await created.json() as { session: { id: string } };
@@ -235,7 +200,7 @@ describe("returning through a different login method", () => {
     const created = await SELF.fetch("http://localhost/api/sessions", {
       method: "POST",
       headers: { ...owner.headers, "content-type": "application/json", accept: "application/json" },
-      body: JSON.stringify({ title: "Not shared" }),
+      body: JSON.stringify({ title: "Not shared", ...await testRepositorySelection(owner.headers) }),
     });
     const { session } = await created.json() as { session: { id: string } };
 
@@ -286,7 +251,7 @@ describe("plan-limits UI", () => {
     const response = await SELF.fetch("http://localhost/api/sessions", {
       method: "POST",
       headers: { ...headers, "content-type": "application/json", accept: "application/json" },
-      body: JSON.stringify({ title: "Should be refused" }),
+      body: JSON.stringify({ title: "Should be refused", ...await testRepositorySelection(headers) }),
     });
     expect(response.status).toBe(403);
     const body = await response.json() as { error?: string; code?: string };
@@ -341,7 +306,7 @@ describe("settings page", () => {
     const created = await SELF.fetch("http://localhost/api/sessions", {
       method: "POST",
       headers: { ...owner.headers, "content-type": "application/json", accept: "application/json" },
-      body: JSON.stringify({ title: "Origin room" }),
+      body: JSON.stringify({ title: "Origin room", ...await testRepositorySelection(owner.headers) }),
     });
     const { session } = await created.json() as { session: { id: string } };
     const originPath = `/session/${session.id}`;
@@ -431,7 +396,7 @@ describe("plan-selection onboarding", () => {
     const owner = await onboardedUser("invite-plan-owner", "Invite", "Owner");
     const created = await SELF.fetch("http://localhost/api/sessions", {
       method: "POST", headers: { ...owner.headers, "content-type": "application/json" },
-      body: JSON.stringify({ title: "Invite plan room" }),
+      body: JSON.stringify({ title: "Invite plan room", ...await testRepositorySelection(owner.headers) }),
     });
     const payload = await created.json() as { inviteUrl: string };
     const invitePath = new URL(payload.inviteUrl).pathname;
@@ -447,13 +412,7 @@ describe("plan-selection onboarding", () => {
     expect(html).toContain("Your invite includes Free");
     expect(html).toContain("This invite includes a Free openfloor account");
 
-    const form = new FormData();
-    form.set("firstName", "Invite");
-    form.set("lastName", "New");
-    form.set("returnTo", invitePath);
-    const completed = await SELF.fetch("http://localhost/api/account/onboarding", { method: "POST", headers, body: form });
-    expect(completed.status).toBe(200);
-    expect(await completed.json()).toEqual({ url: invitePath });
+    await completeTestOnboarding(headers, "Invite", "New", invitePath);
     expect((await SELF.fetch(`http://localhost${invitePath}`, { headers })).status).toBe(200);
   });
 });

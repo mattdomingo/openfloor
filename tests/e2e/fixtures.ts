@@ -10,8 +10,11 @@ export function identityHeaders(id: string, email: string, name: string) {
 
 export async function authenticatedContext(browser: Browser, id: string, email: string, firstName: string, lastName: string): Promise<BrowserContext> {
   const context = await browser.newContext({ extraHTTPHeaders: identityHeaders(id, email, `${firstName} ${lastName}`) });
-  // Every protected page redirects to /onboarding until first/last name are set, so
-  // complete it here rather than in each test.
+  await context.request.patch("/api/account/onboarding", { multipart: { firstName, lastName, githubHandle: "" } });
+  const begun = await context.request.post("/api/account/github/connect", { data: { purpose: "onboarding", returnTo: "/home" } });
+  const { installUrl } = await begun.json() as { installUrl: string };
+  const callback = await context.request.get(installUrl, { maxRedirects: 0 });
+  if (callback.status() !== 303) throw new Error(`Test GitHub callback failed with ${callback.status()}`);
   await context.request.post("/api/account/onboarding", { multipart: { firstName, lastName, plan: "free", returnTo: "/home" } });
   return context;
 }

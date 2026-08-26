@@ -119,7 +119,8 @@ export type RepositoryCandidate = {
   cleanupStatus: "pending" | "complete" | "partial" | null;
   cleanupCompletedAt: number | null;
   branchDeletedAt: number | null;
-  status: "creating" | "active" | "merged" | "creation_failed";
+  abandonedAt: number | null;
+  status: "creating" | "active" | "merged" | "abandoned" | "creation_failed";
   createdBy: string;
   createdAt: number;
   updatedAt: number;
@@ -191,4 +192,17 @@ export type GitHubRepositoryOption = {
   fullName: string;
   private: boolean;
   defaultBranch: string;
+};
+
+export type UserGitHubInstallationSummary = {
+  id: string;
+  accountLogin: string;
+  accountType: string;
+  status: "active" | "revoked";
+  connectedAt: number;
+  updatedAt: number;
+};
+
+export type AccountGitHubRepositoryOption = GitHubRepositoryOption & {
+  accountInstallationId: string;
 };

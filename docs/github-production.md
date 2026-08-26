@@ -1,6 +1,6 @@
 # Production GitHub App rollout
 
-openfloor connects the production application to a GitHub App, keeps one real candidate branch, and runs Codex plus required checks in Cloudflare Sandbox. Every passing result is retained on a separate verified run branch, then serialized into the candidate and its single draft pull request. The owner can mark that PR ready and request an exact-head squash merge after GitHub reports clean mergeability and passing checks. During acceptance, install the App only on a real disposable repository.
+openfloor requires each account to install the GitHub App during onboarding, supports multiple personal or organization installations per account, keeps one real candidate branch per session, and runs Codex plus required checks in Cloudflare Sandbox. It stores installation authority only, never a GitHub OAuth or user token. Every passing result is retained on a separate verified run branch, then serialized into the candidate and its single draft pull request. The owner can mark that PR ready and request an exact-head squash merge after GitHub reports clean mergeability and passing checks. During acceptance, install the App only on a real disposable repository.
 
 ## Production host and Cloudflare Access
 
@@ -49,7 +49,7 @@ Repository permissions:
 
 Subscribe to `installation`, `installation_repositories`, `repository`, `push`, `pull_request`, `check_run`, `check_suite`, and `status` events. Phase 2 authenticates and deduplicates deliveries, updates access and repository identity, and invalidates repository/review state for pushes, pull requests, checks, and statuses.
 
-Generate and download a private key. Create a disposable repository with at least one commit on its default branch, then install the App on only that repository during phased acceptance.
+Generate and download a private key. Create a disposable repository with at least one commit on its default branch, then install the App during onboarding. The callback must return to the initiating signed-in account; Settings → Connections can add or remove further account installations. Removal only removes future repository-selection access, while a GitHub-side uninstall or suspension revokes affected live session state through the signed webhook.
 
 ## Configure secrets
 

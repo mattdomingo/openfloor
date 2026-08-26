@@ -19,6 +19,21 @@ const RENDER_TEST_LOGIN_HTML = `<!doctype html><html><body>
 </body></html>`;
 const RENDER_TEST_LOGIN_LOCATION =
   `${RENDER_TEST_TEAM_DOMAIN}/cdn-cgi/access/verify-code/app.opnflr.com?kid=render-fixture&meta=render-fixture&nonce=render-fixture-nonce`;
+const RENDER_TEST_GITHUB_DATA = JSON.stringify({
+  installationId: "render-installation",
+  accountLogin: "openfloor-render",
+  accountType: "Organization",
+  repositories: [{
+    id: "render-repository",
+    nodeId: "R_render_repository",
+    owner: "openfloor-render",
+    name: "repository",
+    fullName: "openfloor-render/repository",
+    private: true,
+    defaultBranch: "main",
+    branches: ["main"],
+  }],
+});
 
 export default defineConfig({
   plugins: [
@@ -32,6 +47,12 @@ export default defineConfig({
         durableObjects: { SESSION_PRESENCE: "SessionPresence" },
         bindings: {
           INVITE_SIGNING_SECRET: "render-test-secret",
+          GITHUB_APP_ID: "test-app",
+          GITHUB_APP_SLUG: "openfloor-test",
+          GITHUB_APP_PRIVATE_KEY: "test-private-key",
+          GITHUB_STATE_SECRET: "render-test-github-state-secret",
+          GITHUB_WEBHOOK_SECRET: "render-test-github-webhook-secret",
+          OPENFLOOR_TEST_GITHUB_DATA: RENDER_TEST_GITHUB_DATA,
           OPENFLOOR_TEST_ALLOW_IDENTITY_HEADERS: "true",
           CF_ACCESS_TEAM_DOMAIN: "https://openfloor-render-test.cloudflareaccess.com",
           CREDENTIAL_ENCRYPTION_KEY: "render-test-credential-encryption-key",

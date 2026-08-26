@@ -70,6 +70,17 @@ export function effectiveSeatLimit(
     : PLAN_LIMITS[effective].seats;
 }
 
+// The hour limit that actually gates a session, as opposed to PLAN_LIMITS'
+// static catalog entry: an *effective* free plan whose email already spent
+// its allowance (see users.freeAllowanceUsedAt in db/schema.ts) gets zero
+// hours instead of the standard 2h/month, so delete-and-resignup with the
+// same address can't reclaim it. A paid plan is unaffected regardless of
+// history — only a lapse back to free re-applies the zero.
+export function planHourLimit(plan: Plan, freeAllowanceUsed: boolean): number {
+  if (plan === "free" && freeAllowanceUsed) return 0;
+  return PLAN_LIMITS[plan].hours;
+}
+
 export function isPaidPlan(value: unknown): value is PaidPlan {
   return value === "pro" || value === "max";
 }
