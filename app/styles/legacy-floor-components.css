@@ -3581,18 +3581,21 @@
 .queue-chip[data-kind="status"][data-status="checking"],
 .queue-chip[data-kind="status"][data-status="publishing"],
 .queue-chip[data-kind="status"][data-status="published"],
-.queue-chip[data-kind="status"][data-status="integrating"] {
+.queue-chip[data-kind="status"][data-status="integrating"],
+.queue-chip[data-kind="status"][data-status="rolling_back"] {
   background: var(--status-review-soft);
   color: var(--status-review);
 }
 
 .queue-chip[data-kind="status"][data-status="conflicted"],
-.queue-chip[data-kind="status"][data-status="failed"] {
+.queue-chip[data-kind="status"][data-status="failed"],
+.queue-chip[data-kind="status"][data-status="rollback_failed"] {
   background: var(--status-blocked-soft);
   color: var(--status-blocked);
 }
 
 .queue-chip[data-kind="status"][data-status="integrated"],
+.queue-chip[data-kind="status"][data-status="rolled_back"],
 .queue-chip[data-kind="status"][data-status="cancelled"],
 .queue-chip[data-kind="status"][data-status="discarded"],
 .queue-chip[data-kind="status"][data-status="answered"] {

@@ -93,6 +93,8 @@ export type AgentRunStatus = "provisioning" | "running" | "checking" | "ready" |
 // agent_runs.kind in db/schema.ts for the full invariant.
 export type AgentRunKind = "reply" | null;
 
+export type AgentRunRollbackStatus = "requested" | "running" | "completed" | "failed";
+
 export type RunActivityKind = "reasoning" | "command" | "file_edit" | "agent_message" | "tool_call" | "error" | "truncated";
 
 export type RunActivityEvent = {
@@ -160,6 +162,14 @@ export type AgentRun = {
   updatedAt: number;
   purpose: "task" | "conflict_resolution";
   conflictCaseId: string | null;
+  rollbackId: string | null;
+  rollbackStatus: AgentRunRollbackStatus | null;
+  rollbackExpectedCandidateSha: string | null;
+  rollbackCommitSha: string | null;
+  rollbackFailureReason: string | null;
+  rollbackBy: string | null;
+  rollbackRequestedAt: number | null;
+  rollbackCompletedAt: number | null;
   checks: AgentRunCheck[];
   files: AgentRunFile[];
 };

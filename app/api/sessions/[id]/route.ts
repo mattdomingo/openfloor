@@ -36,7 +36,7 @@ export async function DELETE(_request: Request, { params }: { params: Promise<{ 
   if (result === "missing") return Response.json({ error: "Session not found" }, { status: 404 });
   if (result === "forbidden") return Response.json({ error: "Only the owner can delete this session" }, { status: 403 });
   if (result === "repository_state") return Response.json({ error: "This session's candidate branch hasn't merged yet — merge or abandon it before deleting" }, { status: 409 });
-  if ("blocked" in result) return Response.json({ error: "A run is still integrating into this candidate", runId: result.runId }, { status: 409 });
+  if ("blocked" in result) return Response.json({ error: "The candidate is still being updated", runId: result.runId }, { status: 409 });
   // members.changed makes open tabs refetch, hit the 404, and leave for /home.
   await notifyMembersChanged(sessionId);
   if (result.candidateBranchAlive) {

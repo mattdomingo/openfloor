@@ -110,6 +110,7 @@ export function usePersistentFloorData(sessionId: string, initialFloor: FloorSna
       request(`/conflicts/${encodeURIComponent(caseId)}/answers`, "POST", { answers }),
     cancelRun: (runId: string) => request(`/runs/${encodeURIComponent(runId)}/cancel`, "POST"),
     discardRun: (runId: string) => request(`/runs/${encodeURIComponent(runId)}/discard`, "POST"),
+    rollbackRun: (runId: string) => request(`/runs/${encodeURIComponent(runId)}/rollback`, "POST"),
     retryRun: (runId: string) => request(`/runs/${encodeURIComponent(runId)}/retry`, "POST"),
     readyReview: () => request("/review/ready", "POST"),
     squashMergeReview: (deleteCandidateBranch: boolean) => request("/review/merge", "POST", { deleteCandidateBranch }),

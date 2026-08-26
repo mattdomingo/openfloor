@@ -440,7 +440,7 @@ function DeleteAccountDialog({ onClose }: { onClose: () => void }) {
                 <span className="settings-category-name">{session.title}</span>
                 <span className="settings-category-detail">
                   {session.reason === "integration_in_progress"
-                    ? "A run is still integrating into this session's candidate branch."
+                    ? "This session's candidate branch is still being updated."
                     : "This session's candidate branch hasn't merged yet — merge or abandon it first."}
                 </span>
                 <Link className="button" data-variant="quiet" data-size="sm" href={`/session/${session.id}`}>Open</Link>
