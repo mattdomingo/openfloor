@@ -544,25 +544,21 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await owner.getByRole("button", { name: "Squash merge" }).click();
   await owner.getByRole("dialog", { name: "Squash merge this candidate?" })
     .getByRole("button", { name: "Merge, delete branch" }).click();
-  await expect(owner.getByText("merged", { exact: true }).first()).toBeVisible();
-  await expect(owner.getByLabel("Branch cleanup").getByText("complete", { exact: true })).toBeVisible();
-  await expect(owner.getByRole("button", { name: "Squash merge" })).toHaveCount(0);
 
-  await owner.getByRole("button", { name: "Workspace" }).click();
-  await expect(owner.getByText(/because the candidate branch was merged.*read-only/i)).toBeVisible();
-
-  await member.reload();
-  await expect(member.getByRole("region", { name: "Agent floor" }).getByRole("tab", { name: "Lumen" })).toBeVisible();
-  await expect(member.locator(".queue-item").getByText("Document the next backend contract", { exact: true })).toBeVisible();
-
-  await owner.getByRole("link", { name: "Release coordination" }).click();
-  await member.getByRole("link", { name: "Release coordination" }).click();
+  // Merging the candidate branch ends the session for everyone, and the
+  // session.ended broadcast (sent server-side before the merge route even
+  // returns) races ahead of the merge response — the owner is forced back
+  // to this lobby rather than seeing an in-place "merged" confirmation on
+  // the Review screen first.
   await expect(owner).toHaveURL(/\/session\/[0-9a-f-]+$/);
-  await expect(member).toHaveURL(/\/session\/[0-9a-f-]+$/);
+  await expect(owner.getByRole("heading", { name: "Release coordination" })).toBeVisible();
+  await expect(owner.getByText(/because the candidate branch was merged/i)).toBeVisible();
 
   await member.reload();
+  await expect(member).toHaveURL(/\/session\/[0-9a-f-]+$/);
   await expect(member.getByRole("heading", { name: "Release coordination" })).toBeVisible();
   await expect(member.locator(".session-hero").getByText("Coordinate the restored agent floor")).toBeVisible();
+  await expect(member.getByText(/because the candidate branch was merged/i)).toBeVisible();
 
   await member.close();
   await expect(owner.locator("li", { hasText: "Member E." }).getByText("Offline", { exact: true })).toBeVisible();

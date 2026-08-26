@@ -68,10 +68,11 @@ export class SessionPresence extends DurableObject<PresenceEnv> {
       if (typeof body.endedAt !== "number" || (body.reason !== "owner" && body.reason !== "merged")) {
         return new Response("Invalid session end", { status: 400 });
       }
-      // Sockets stay open on purpose: ended sessions remain readable, and the
-      // server-side write guard is the enforcement. Metering stops here,
+      // Sockets stay open on purpose: clients react to session.ended by
+      // navigating to the lobby, which stays readable, and the server-side
+      // write guard is the enforcement either way. Metering stops here,
       // though — an ended session must not keep booking hours to the owner
-      // while people linger reading it.
+      // while a client is mid-navigation.
       await this.stopMetering();
       this.broadcast({ type: "session.ended", endedAt: body.endedAt, reason: body.reason });
       return new Response(null, { status: 204 });

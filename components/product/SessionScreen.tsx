@@ -81,7 +81,7 @@ export function SessionScreen({
     setCandidate(initialCandidate);
   }
   const repositoryReady = isRepositoryReadyForFloor(repository, candidate);
-  const floorAccessible = endedAt != null || repositoryReady;
+  const floorAccessible = endedAt == null && repositoryReady;
   const [repoGateOpen, setRepoGateOpen] = useState(repoGateRequested && !repositoryReady);
   const [setupOpen, setSetupOpen] = useState(
     session.role === "owner" && endedAt == null && !repoGateRequested && setupRequested,
@@ -233,7 +233,9 @@ export function SessionScreen({
         </div>
         <div className="session-hero-actions">
           <div className="connection-state" data-state={connection.status === "live" ? "connected" : connection.status}><span aria-hidden="true" />{connection.status === "live" ? `${onlineCount} online` : connection.status}</div>
-          <Link className="button" data-variant="primary" data-size="lg" href={`/session/${session.id}/floor`} onClick={enterAgentFloor} aria-haspopup={floorAccessible ? undefined : "dialog"}>Enter agent floor</Link>
+          {endedAt == null && (
+            <Link className="button" data-variant="primary" data-size="lg" href={`/session/${session.id}/floor`} onClick={enterAgentFloor} aria-haspopup={floorAccessible ? undefined : "dialog"}>Enter agent floor</Link>
+          )}
         </div>
       </section>
 
@@ -244,11 +246,11 @@ export function SessionScreen({
         )}
         {endedAt != null && (
           <section className="lobby-ended" aria-label="Session ended">
-            <p className="eyebrow">Read only</p>
+            <p className="eyebrow">Ended</p>
             <p>
               {session.endedReason === "merged"
                 ? <>This session ended <LocalDateTime timestamp={endedAt} mode="date" /> because the candidate branch was merged.</>
-                : <>This session ended <LocalDateTime timestamp={endedAt} mode="date" />.</>} The floor remains readable and the invite link is revoked.
+                : <>This session ended <LocalDateTime timestamp={endedAt} mode="date" />.</>} The floor is closed and the invite link is revoked. This lobby stays readable.
             </p>
           </section>
         )}
@@ -337,7 +339,7 @@ export function SessionScreen({
 
         {(session.role !== "owner" || endedAt == null) && (
           <section className="lobby-bottom-controls">
-            <div><p className="eyebrow">Session controls</p><p>{session.role === "owner" ? "Ending makes the floor read-only and revokes the invite. Nothing is deleted." : "Leaving removes this session from your home and ends your live connection."}</p></div>
+            <div><p className="eyebrow">Session controls</p><p>{session.role === "owner" ? "Ending closes the floor, returns everyone to this lobby, and revokes the invite. Nothing is deleted." : "Leaving removes this session from your home and ends your live connection."}</p></div>
             {session.role === "owner" ? <button className="button danger-button" onClick={() => setEnding(true)}>End session</button> : <button className="button danger-button" onClick={leave}>Leave session</button>}
           </section>
         )}
@@ -593,7 +595,7 @@ function EndSessionDialog({ sessionId, onClose }: { sessionId: string; onClose: 
   return (
     <dialog className="dialog" {...dialogProps} aria-labelledby="end-session-title">
       <div className="dialog-head">
-        <div className="dialog-title"><h2 id="end-session-title">End this session?</h2><p>The floor becomes read-only for everyone and the invite link stops working. Nothing is deleted.</p></div>
+        <div className="dialog-title"><h2 id="end-session-title">End this session?</h2><p>Everyone is returned to this lobby, the floor closes, and the invite link stops working. Nothing is deleted.</p></div>
       </div>
       {error && <div className="dialog-body"><p className="form-error" role="alert">{error}</p></div>}
       <div className="dialog-foot">

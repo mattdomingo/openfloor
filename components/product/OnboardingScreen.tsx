@@ -43,7 +43,7 @@ export function OnboardingScreen({
   const [step, setStep] = useState<OnboardingStep>(githubConnected ? 2 : 1);
   const [firstName, setFirstName] = useState(savedFirstName ?? initial.firstName);
   const [lastName, setLastName] = useState(savedLastName ?? initial.lastName);
-  const [githubHandle, setGithubHandle] = useState(savedGithubHandle ?? "");
+  const githubHandle = savedGithubHandle ?? "";
   const [plan, setPlan] = useState<OnboardingPlan | null>(inviteSignup ? "free" : null);
   const [quantity, setQuantity] = useState(3);
   const [avatarFile, setAvatarFile] = useState<File | null>(null);
@@ -232,8 +232,6 @@ export function OnboardingScreen({
                 <label className="field"><span className="label">First name</span><input value={firstName} onChange={(event) => { setFirstName(event.target.value); setProfileError(null); }} maxLength={50} required autoComplete="given-name" /></label>
                 <label className="field"><span className="label">Last name</span><input value={lastName} onChange={(event) => { setLastName(event.target.value); setProfileError(null); }} maxLength={50} required autoComplete="family-name" /></label>
               </div>
-
-              <label className="field"><span className="label">GitHub handle <em>optional</em></span><input value={githubHandle} onChange={(event) => setGithubHandle(event.target.value)} maxLength={39} placeholder="octocat" autoComplete="off" /></label>
 
               {profileError && <p className="form-error" role="alert">{profileError}</p>}
               <div className="form-actions"><button type="submit" className="button" data-variant="primary" data-size="lg" disabled={submitting}>{submitting ? "Saving…" : "Continue"}</button></div>

@@ -8,6 +8,7 @@ import {
   deleteAccount,
   deleteSession,
   ENDED_SESSION_RETENTION_MS,
+  endMergedSession,
   endSession,
   getActiveInviteId,
   getInvitePreview,
@@ -1034,6 +1035,44 @@ describe("D1 session persistence", () => {
     // candidate back so the caller can choose its fate (ENG-83).
     await expect(endSession(created.session.id, owner.id, "owner", env.DB)).resolves.toEqual({ endedAt: expect.any(Number), reason: "owner" });
     await expect(deleteSession(created.session.id, owner.id, env.DB)).resolves.toEqual({ blocked: "candidate_live", branch, sha: "a".repeat(40) });
+  });
+
+  it("endMergedSession ends a session even while a run holds the integration lock", async () => {
+    const owner = await upsertUser(identity("merged-integrating-owner", "Owner"), env.DB);
+    const created = await createSession(owner.id, { title: "External merge room", objective: null }, env.DB);
+    const saved = await saveRepositoryConnection(created.session.id, owner.id, null, "installation-merged-integrating", {
+      id: "repository-merged-integrating", nodeId: "R_merged_integrating", owner: "openfloor-test", name: "merged-integrating",
+      fullName: "openfloor-test/merged-integrating", private: true, defaultBranch: "main",
+    }, "main", env.DB);
+    const candidateId = crypto.randomUUID();
+    const branch = `openfloor/${created.session.id.slice(0, 8)}/candidate/${candidateId.slice(0, 8)}`;
+    await reserveRepositoryCandidate(created.session.id, owner.id, saved!.id, candidateId, "External merge room", "", branch, "main", "a".repeat(40), env.DB);
+    await activateRepositoryCandidate(created.session.id, candidateId, "a".repeat(40), env.DB);
+    const parsed = parseAgentInput({ name: "Builder", role: "Engineer", task: "Implement the request", ownerUserId: owner.id });
+    if (!parsed) throw new Error("Invalid agent fixture");
+    let floor = await createFloorAgent(created.session.id, owner.id, parsed, env.DB);
+    floor = await createFloorQueueItem(created.session.id, owner.id, { prompt: "Add a real file", agentId: floor!.agents[0].id }, env.DB);
+    const run = await createAgentRun(created.session.id, floor!.queue[0].id, owner.id, "task", env.DB);
+    await markRunRunning(run.id, "process-merged", env.DB);
+    await markRunChecking(run.id, "thread-merged", "Implemented", env.DB);
+    await finishAgentRun(run.id, "ready", "Ready locally", env.DB);
+    const publishedSha = "e".repeat(40);
+    await markRunPublishing(run.id, { bundleKey: `runs/${run.id}/result.bundle`, bundleSizeBytes: 100, localCommitSha: "f".repeat(40) }, env.DB);
+    await finishRunPublished(run.id, publishedSha, publishedSha, env.DB);
+    await beginRunIntegration(run.id, env.DB);
+
+    // The GitHub merge already happened — it must end the session even
+    // though a run still holds the candidate's integration lock, unlike
+    // endSession which refuses in that state.
+    await expect(endSession(created.session.id, owner.id, "owner", env.DB)).resolves.toEqual({ blocked: "integration_in_progress", runId: run.id });
+    await expect(endMergedSession(created.session.id, env.DB)).resolves.toEqual({ endedAt: expect.any(Number) });
+    const row = await env.DB.prepare("SELECT ended_at AS endedAt, ended_reason AS endedReason FROM sessions WHERE id = ?").bind(created.session.id).first<{ endedAt: number | null; endedReason: string | null }>();
+    expect(row?.endedAt).not.toBeNull();
+    expect(row?.endedReason).toBe("merged");
+
+    // Idempotent: an already-ended session returns null rather than
+    // re-writing ended_at, matching a replayed webhook delivery.
+    await expect(endMergedSession(created.session.id, env.DB)).resolves.toBeNull();
   });
 
   it("rolls back one integrated prompt for its engineer or agent owner while preserving run audit", async () => {

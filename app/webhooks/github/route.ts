@@ -9,8 +9,9 @@ import {
   updateRepositoryIdentity,
   updateRepositoryPushState,
 } from "@/db/repositories";
+import { endMergedSession } from "@/db/sessions";
 import { verifyGitHubWebhookSignature } from "@/lib/github-state";
-import { notifyFloorChanged } from "@/lib/presence-server";
+import { notifyFloorChanged, notifySessionEnded } from "@/lib/presence-server";
 
 const MAX_WEBHOOK_BYTES = 1_000_000;
 
@@ -74,16 +75,26 @@ export async function POST(request: Request) {
         target.sessionId, body.ref, body.after, target.baseBranch, target.candidateBranch, target.candidateSha, target.integrationRunId,
       );
     } else if (event === "pull_request" && body.pull_request?.head?.ref && body.pull_request.number && body.pull_request.node_id && body.pull_request.html_url) {
+      const headRef = body.pull_request.head.ref;
+      const merged = body.pull_request.merged === true;
       revision = await updateRepositoryPullRequestState(target.sessionId, {
         number: body.pull_request.number,
         nodeId: body.pull_request.node_id,
         url: body.pull_request.html_url,
         state: body.pull_request.state === "closed" ? "closed" : "open",
         draft: body.pull_request.draft !== false,
-        merged: body.pull_request.merged === true,
+        merged,
         mergeCommitSha: body.pull_request.merge_commit_sha ?? null,
-        headRef: body.pull_request.head.ref,
+        headRef,
       });
+      // Merging the candidate branch ends the session's lifecycle, same as
+      // the app's own squash-merge route — whichever path merges it first.
+      // No branch cleanup here: this only marks the session ended, leaving
+      // cleanup_status 'pending' as updateRepositoryPullRequestState set it.
+      if (merged && headRef === target.candidateBranch) {
+        const ended = await endMergedSession(target.sessionId);
+        if (ended) await notifySessionEnded(target.sessionId, ended.endedAt, "merged");
+      }
     } else {
       revision = await touchRepositoryReview(target.sessionId);
     }
