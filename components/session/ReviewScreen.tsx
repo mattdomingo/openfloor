@@ -17,13 +17,14 @@ type PendingAction = { type: "merge"; deleteCandidateBranch: boolean } | { type:
 type Selection = { kind: "changed"; id: string } | { kind: "repo"; path: string };
 const DISCONNECTED_STATUSES = new Set(["disconnected", "revoked", "inaccessible"]);
 
-export function ReviewScreen({ sessionId, revision, review, repository, repositoryTree, selectedConflictCaseId, owner, busy, blockingRunId, onRequestRollback, onReady, onMerge, onDeleteBranch, onAbandon, onCancelRun, onResolveConflict, onAnswerConflict, teamChat, onSendTeamMessage, participants, currentUserId }: {
+export function ReviewScreen({ sessionId, revision, review, repository, repositoryTree, selectedConflictCaseId, promptRequest, owner, busy, blockingRunId, onRequestRollback, onReady, onMerge, onDeleteBranch, onAbandon, onCancelRun, onResolveConflict, onAnswerConflict, teamChat, onSendTeamMessage, participants, currentUserId }: {
   sessionId: string;
   revision: number;
   review: FloorReviewSnapshot | null;
   repository: RepositoryConnection | null;
   repositoryTree: RepositorySource;
   selectedConflictCaseId: string | null;
+  promptRequest: { runId: string; status: "active" | "rolled_back" } | null;
   owner: boolean;
   busy: boolean;
   blockingRunId: string | null;
@@ -41,19 +42,37 @@ export function ReviewScreen({ sessionId, revision, review, repository, reposito
   currentUserId: string;
 }) {
   const repositoryBrowsable = repository != null && !DISCONNECTED_STATUSES.has(repository.status);
-  const [mode, setMode] = useState<"files" | "prompts">("files");
+  // ReviewScreen fully unmounts whenever Workspace switches back to
+  // "workspace" (see the screen === "review" ? ... conditional there), so
+  // these seed straight from an incoming promptRequest rather than only
+  // reacting to it after mount.
+  const [mode, setMode] = useState<"files" | "prompts">(promptRequest ? "prompts" : "files");
   const [selection, setSelection] = useState<Selection | null>(null);
   const [tabOverride, setTabOverride] = useState<"changed" | "all" | null>(null);
-  const [contributionStatus, setContributionStatus] = useState<"active" | "rolled_back">("active");
+  const [contributionStatus, setContributionStatus] = useState<"active" | "rolled_back">(promptRequest?.status ?? "active");
   const [engineerFilter, setEngineerFilter] = useState<string | null>(null);
   const [agentFilter, setAgentFilter] = useState<string | null>(null);
-  const [selectedPromptRunId, setSelectedPromptRunId] = useState<string | null>(null);
+  const [selectedPromptRunId, setSelectedPromptRunId] = useState<string | null>(promptRequest?.runId ?? null);
   const [expandedDirs, setExpandedDirs] = useState<ReadonlySet<string>>(new Set());
   const [mergeConfirmOpen, setMergeConfirmOpen] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [abandonConfirmOpen, setAbandonConfirmOpen] = useState(false);
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
   const [retrying, setRetrying] = useState(false);
+  const [handledPromptRequest, setHandledPromptRequest] = useState(promptRequest);
+
+  // A click from the queue passes a fresh promptRequest object each time —
+  // jump into Prompts mode for it even if the viewer had switched away, but
+  // only once per request so their own subsequent clicks around the screen
+  // aren't fought (React's documented "adjust state during render" pattern).
+  if (promptRequest !== handledPromptRequest) {
+    setHandledPromptRequest(promptRequest);
+    if (promptRequest) {
+      setMode("prompts");
+      setContributionStatus(promptRequest.status);
+      setSelectedPromptRunId(promptRequest.runId);
+    }
+  }
 
   const hasChangedFiles = Boolean(review && review.files.length > 0);
   const effectiveSelectedConflictCaseId = selectedConflictCaseId ?? review?.conflicts.find((conflict) => conflict.status === "awaiting_input" || conflict.status === "failed" || conflict.status === "pending")?.id ?? null;
