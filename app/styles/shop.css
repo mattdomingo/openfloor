@@ -864,7 +864,7 @@
 }
 .onboarding-shell .onboarding-progress li {
   display: grid;
-  grid-template-columns: auto 1fr;
+  grid-template-columns: auto minmax(0, 1fr);
   gap: 8px;
   padding-top: 9px;
   border-top: 2px solid var(--rule);
@@ -876,6 +876,10 @@
 .onboarding-shell .onboarding-progress li[aria-current="step"] { border-color: var(--accent-ink); color: var(--ink); }
 .onboarding-shell .onboarding-progress li[data-complete="true"] { border-color: var(--ready-ink); }
 .onboarding-shell .onboarding-progress span { color: var(--accent-ink); }
+/* "Connections" is the one step label wider than its 2x2 grid cell at the
+   390px viewport the e2e suite pins — break it mid-word there rather than
+   overflow the page, since none of the other three labels ever need it. */
+.onboarding-shell .onboarding-progress strong { overflow-wrap: anywhere; }
 .onboarding-shell .onboarding-form { min-width: 0; }
 .onboarding-shell .onboarding-step {
   display: grid;
@@ -972,6 +976,14 @@
 .onboarding-shell .form-actions { align-items: center; justify-content: flex-end; gap: 18px; padding-top: 4px; }
 .onboarding-shell .form-error { margin: 0; font-size: 13px; }
 
+.onboarding-shell .settings-category-row { border-color: var(--rule); border-radius: var(--radius-sm); background: var(--shop-2); }
+.onboarding-shell .settings-category-name { color: var(--ink); }
+.onboarding-shell .settings-category-detail { color: var(--muted); }
+.onboarding-shell .provider-credential-row form { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 10px; }
+.onboarding-shell .provider-credential-row input { background: var(--sheet); }
+.onboarding-shell .provider-credential-row .form-actions { align-self: end; }
+.onboarding-shell .provider-credential-row .form-error { grid-column: 1 / -1; }
+
 @media (max-width: 800px) {
   .onboarding-shell .onboarding-card { grid-template-columns: 1fr; }
   .onboarding-shell .onboarding-intro { grid-row: auto; border-right: 0; border-bottom: 1px solid var(--edge); }
@@ -992,6 +1004,7 @@
   .onboarding-shell .seat-picker > div { width: 100%; justify-content: flex-end; }
   .onboarding-shell .onboarding-plan-actions { align-items: stretch; flex-direction: column-reverse; }
   .onboarding-shell .onboarding-plan-actions .button { justify-content: center; }
+  .onboarding-shell .provider-credential-row form { grid-template-columns: 1fr; }
 }
 
 /* ── Session lobby ───────────────────────────────────────────────────── */

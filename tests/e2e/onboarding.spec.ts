@@ -31,6 +31,9 @@ test("a direct user keeps profile state across steps and completes Free onboardi
   await page.getByRole("button", { name: "Connect GitHub" }).click();
   await expect(page.getByText("GitHub access connected.")).toBeVisible();
   await page.getByRole("button", { name: "Continue", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Connect AI providers" })).toBeFocused();
+  await expect(page.getByText("Anthropic")).toBeVisible();
+  await page.getByRole("button", { name: "Continue", exact: true }).click();
   await page.getByRole("button", { name: /^Free/ }).click();
   await expect.poll(() => page.locator(".onboarding-plan-actions:visible").evaluate((element) => getComputedStyle(element).flexDirection)).toBe("column-reverse");
   await page.getByRole("button", { name: "Finish setup" }).click();
@@ -46,6 +49,7 @@ test("paid plan selection exposes seat controls bounded by its catalog", async (
   await page.goto("/onboarding");
   await page.getByRole("button", { name: "Continue", exact: true }).click();
   await page.getByRole("button", { name: "Connect GitHub" }).click();
+  await page.getByRole("button", { name: "Continue", exact: true }).click();
   await page.getByRole("button", { name: "Continue", exact: true }).click();
   await page.getByRole("button", { name: /^Pro/ }).click();
   await expect(page.getByText("Seats per session: 3")).toBeVisible();
@@ -81,6 +85,7 @@ test("a valid invite locks onboarding to Free and still requires explicit member
   await expect(invitee).toHaveURL(/\/onboarding\?return_to=/);
   await invitee.getByRole("button", { name: "Continue", exact: true }).click();
   await invitee.getByRole("button", { name: "Connect GitHub" }).click();
+  await invitee.getByRole("button", { name: "Continue", exact: true }).click();
   await invitee.getByRole("button", { name: "Continue", exact: true }).click();
   await expect(invitee.getByRole("heading", { name: "Your invite includes Free" })).toBeFocused();
   await expect(invitee.getByText("This invite includes a Free openfloor account.")).toBeVisible();

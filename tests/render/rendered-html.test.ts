@@ -355,6 +355,8 @@ describe("plan-selection onboarding", () => {
     expect(html).toContain("Account setup progress");
     expect(html).toContain('aria-current="step"');
     expect(html).toContain("Create your profile");
+    expect(html).toContain("Connect AI providers");
+    expect(html).toContain("Anthropic");
     expect(html).toContain("Choose your plan");
     expect(html).toMatch(/\$<!-- -->30<!-- -->\/seat\/month|\$30\/seat\/month/);
     expect(html).toMatch(/\$<!-- -->50<!-- -->\/seat\/month|\$50\/seat\/month/);
