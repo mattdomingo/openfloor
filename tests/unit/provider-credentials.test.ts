@@ -16,6 +16,7 @@ import {
   usesClaudeRunner,
 } from "@/lib/provider-credentials";
 import { validateProviderApiKey, validateProviderOauthSecret } from "@/lib/provider-validation";
+import { MODEL_PRICING } from "@/lib/model-pricing";
 
 describe("provider parsing and labels", () => {
   it("accepts only known providers", () => {
@@ -80,6 +81,18 @@ describe("per-provider run models", () => {
     for (const provider of CREDENTIAL_PROVIDERS) {
       expect(PROVIDER_MODELS[provider].length).toBeGreaterThan(0);
       expect(PROVIDER_MODELS[provider][0]).toBe(DEFAULT_PROVIDER_MODELS[provider]);
+    }
+  });
+
+  // Anti-drift: every model a run can actually select must be priceable
+  // (lib/model-pricing.ts), or the cost tile silently shows "—" for it
+  // forever. A model added to PROVIDER_MODELS without a matching price entry
+  // is caught here, not in production.
+  it("prices every model in the allowlist", () => {
+    for (const provider of CREDENTIAL_PROVIDERS) {
+      for (const model of PROVIDER_MODELS[provider]) {
+        expect(MODEL_PRICING[model], `${provider} model "${model}" has no MODEL_PRICING entry`).toBeDefined();
+      }
     }
   });
 });
