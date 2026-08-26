@@ -46,11 +46,11 @@ export async function getMergeConflictCases(sessionId: string, database = getDb(
     byCase.set(caseId, list);
   }
   const promptRows = await database.prepare(
-    `SELECT mc.id AS caseId, p.id, u.display_name AS authorName, p.text
+    `SELECT mc.id AS caseId, p.id, p.author_user_id AS authorUserId, u.display_name AS authorName, p.text
      FROM merge_conflict_cases mc JOIN agent_runs source ON source.id = mc.source_run_id
      JOIN floor_queue_prompts p ON p.queue_item_id = source.queue_item_id JOIN users u ON u.id = p.author_user_id
      WHERE mc.session_id = ? ORDER BY p.created_at, p.id`,
-  ).bind(sessionId).all<{ caseId: string; id: string; authorName: string; text: string }>();
+  ).bind(sessionId).all<{ caseId: string; id: string; authorUserId: string; authorName: string; text: string }>();
   const promptsByCase = new Map<string, MergeConflictCase["prompts"]>();
   for (const { caseId, ...prompt } of promptRows.results) {
     const list = promptsByCase.get(caseId) ?? [];
@@ -378,7 +378,17 @@ export async function answerConflictQuestions(
   answers: Array<{ questionId: string; answer: string }>,
   database = getDb(),
 ): Promise<"answered" | "stale" | "missing"> {
-  if (!(await getActiveMembershipRole(sessionId, userId, database))) return "missing";
+  const role = await getActiveMembershipRole(sessionId, userId, database);
+  if (!role) return "missing";
+  if (role !== "owner") {
+    const authored = await database.prepare(
+      `SELECT 1 AS allowed FROM merge_conflict_cases mc
+       JOIN agent_runs source ON source.id = mc.source_run_id
+       JOIN floor_queue_prompts p ON p.queue_item_id = source.queue_item_id
+       WHERE mc.id = ? AND mc.session_id = ? AND p.author_user_id = ? LIMIT 1`,
+    ).bind(caseId, sessionId, userId).first<{ allowed: number }>();
+    if (!authored) return "missing";
+  }
   const current = await database.prepare(
     `SELECT q.id FROM merge_conflict_questions q JOIN merge_conflict_cases mc ON mc.id = q.case_id
      WHERE mc.id = ? AND mc.session_id = ? AND mc.status = 'awaiting_input' AND q.answer IS NULL

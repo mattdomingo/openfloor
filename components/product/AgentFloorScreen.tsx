@@ -23,6 +23,7 @@ export function AgentFloorScreen({
   agentRunEnabled,
   enabledProviders,
   providerCredentials,
+  lowHoursRemaining,
 }: {
   user: AppUser;
   session: SessionSummary;
@@ -31,6 +32,7 @@ export function AgentFloorScreen({
   agentRunEnabled: boolean;
   enabledProviders: CredentialProvider[];
   providerCredentials: ProviderCredentialSummary[];
+  lowHoursRemaining: number | null;
 }) {
   const router = useRouter();
   const [session, setSession] = useState(initialSession);
@@ -158,5 +160,5 @@ export function AgentFloorScreen({
     send(update);
   }, [send]);
 
-  return <Workspace user={user} session={session} members={visibleMembers} floorData={floorData} activity={activity} repositoryTree={repositoryTree} typingDrafts={typingDrafts} onTypingUpdate={sendTypingUpdate} onSaveObjective={saveObjective} agentRunEnabled={agentRunEnabled} enabledProviders={enabledProviders} providerCredentials={providerCredentials} presenceConnected={presenceConnected} quotaExhausted={quotaExhausted} />;
+  return <Workspace user={user} session={session} members={visibleMembers} floorData={floorData} activity={activity} repositoryTree={repositoryTree} typingDrafts={typingDrafts} onTypingUpdate={sendTypingUpdate} onSaveObjective={saveObjective} agentRunEnabled={agentRunEnabled} enabledProviders={enabledProviders} providerCredentials={providerCredentials} presenceConnected={presenceConnected} quotaExhausted={quotaExhausted} lowHoursRemaining={lowHoursRemaining} />;
 }

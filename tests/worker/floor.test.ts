@@ -6,7 +6,9 @@ import {
   createFloorQueueItem,
   deleteFloorAgent,
   deleteFloorQueueItem,
+  deprovisionIdleGeneratedAgents,
   ensureAnswerAgent,
+  ensureWorkerAgent,
   FloorConflictError,
   FloorTargetError,
   getFloorSnapshot,
@@ -50,21 +52,26 @@ function agentInput(ownerUserId: string, name = "Lumen") {
     "this agent has an active run" fixture for the lifecycle tests below. */
 async function insertRun(sessionId: string, agentId: string, userId: string, queueItemId: string, status = "failed"): Promise<string> {
   const now = Date.now();
-  const connectionId = crypto.randomUUID();
-  await env.DB.prepare(
-    `INSERT INTO repository_connections (id, session_id, installation_id, repository_id, repository_node_id, repository_owner, repository_name, repository_full_name, repository_private, default_branch, base_branch, status, connected_by, connected_at, updated_at)
-     VALUES (?, ?, 'inst', 'repo', 'node', 'owner', 'name', 'owner/name', 1, 'main', 'main', 'ready', ?, ?, ?)`,
-  ).bind(connectionId, sessionId, userId, now, now).run();
-  const candidateId = crypto.randomUUID();
-  await env.DB.prepare(
-    `INSERT INTO repository_candidates (id, session_id, connection_id, branch_name, base_branch, base_sha, status, created_by, created_at, updated_at)
-     VALUES (?, ?, ?, 'candidate', 'main', 'sha-base', 'active', ?, ?, ?)`,
-  ).bind(candidateId, sessionId, connectionId, userId, now, now).run();
+  let candidate = await env.DB.prepare("SELECT id FROM repository_candidates WHERE session_id = ? AND status = 'active'")
+    .bind(sessionId).first<{ id: string }>();
+  if (!candidate) {
+    const connectionId = crypto.randomUUID();
+    await env.DB.prepare(
+      `INSERT INTO repository_connections (id, session_id, installation_id, repository_id, repository_node_id, repository_owner, repository_name, repository_full_name, repository_private, default_branch, base_branch, status, connected_by, connected_at, updated_at)
+       VALUES (?, ?, 'inst', 'repo', 'node', 'owner', 'name', 'owner/name', 1, 'main', 'main', 'ready', ?, ?, ?)`,
+    ).bind(connectionId, sessionId, userId, now, now).run();
+    const candidateId = crypto.randomUUID();
+    await env.DB.prepare(
+      `INSERT INTO repository_candidates (id, session_id, connection_id, branch_name, base_branch, base_sha, status, created_by, created_at, updated_at)
+       VALUES (?, ?, ?, 'candidate', 'main', 'sha-base', 'active', ?, ?, ?)`,
+    ).bind(candidateId, sessionId, connectionId, userId, now, now).run();
+    candidate = { id: candidateId };
+  }
   const runId = crypto.randomUUID();
   await env.DB.prepare(
     `INSERT INTO agent_runs (id, session_id, queue_item_id, agent_id, candidate_id, candidate_sha, attempt, status, model, sandbox_id, created_by, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, 'sha-run', 1, ?, 'test-model', 'sandbox', ?, ?, ?)`,
-  ).bind(runId, sessionId, queueItemId, agentId, candidateId, status, userId, now, now).run();
+  ).bind(runId, sessionId, queueItemId, agentId, candidate.id, status, userId, now, now).run();
   return runId;
 }
 
@@ -219,11 +226,12 @@ describe("D1 persistent floor", () => {
     await expect(createFloorMessage(room.sessionId, room.owner.id, { text: "Bad DM", recipientUserId: room.outsider.id }, env.DB)).rejects.toBeInstanceOf(FloorTargetError);
   });
 
-  it("pauses and resumes a persistent agent for any member; refuses a system-managed agent, a mismatched state, or an outsider", async () => {
+  it("pauses and resumes persistent agents and generated workers for any member, but refuses Concierge", async () => {
     const room = await floorRoom("pause");
     let floor = await createFloorAgent(room.sessionId, room.owner.id, agentInput(room.owner.id), env.DB);
     const agentId = floor!.agents[0].id;
     const answer = await ensureAnswerAgent(room.sessionId, room.owner.id, "openai", env.DB);
+    const worker = await ensureWorkerAgent(room.sessionId, room.owner.id, "openai", "Generated work", env.DB);
 
     floor = await pauseFloorAgent(room.sessionId, room.member.id, agentId, true, env.DB);
     expect(floor!.agents.find((agent) => agent.id === agentId)?.pausedAt).not.toBeNull();
@@ -234,6 +242,10 @@ describe("D1 persistent floor", () => {
     await expect(pauseFloorAgent(room.sessionId, room.member.id, agentId, false, env.DB)).rejects.toBeInstanceOf(FloorConflictError);
 
     await expect(pauseFloorAgent(room.sessionId, room.owner.id, answer.id, true, env.DB)).rejects.toBeInstanceOf(FloorConflictError);
+    floor = await pauseFloorAgent(room.sessionId, room.member.id, worker.id, true, env.DB);
+    expect(floor!.agents.find((agent) => agent.id === worker.id)?.pausedAt).not.toBeNull();
+    floor = await pauseFloorAgent(room.sessionId, room.owner.id, worker.id, false, env.DB);
+    expect(floor!.agents.find((agent) => agent.id === worker.id)?.pausedAt).toBeNull();
     await expect(pauseFloorAgent(room.sessionId, room.outsider.id, agentId, true, env.DB)).resolves.toBeNull();
 
     await endSession(room.sessionId, room.owner.id, "owner", env.DB);
@@ -270,6 +282,36 @@ describe("D1 persistent floor", () => {
     await expect(stopFloorAgent(ownerStopRoom.sessionId, ownerStopRoom.outsider.id, ownerAgentId, env.DB)).resolves.toBeNull();
   });
 
+  it("applies worker Stop cancellation authorization and preserves paused workers until Auto agents is disabled", async () => {
+    const memberRoom = await floorRoom("worker-stop-member");
+    const memberWorker = await ensureWorkerAgent(memberRoom.sessionId, memberRoom.owner.id, "openai", "Generated work", env.DB);
+    let floor = await createFloorQueueItem(memberRoom.sessionId, memberRoom.owner.id, { prompt: "Do work", agentId: memberWorker.id }, env.DB);
+    const memberRunId = await insertRun(memberRoom.sessionId, memberWorker.id, memberRoom.owner.id, floor!.queue[0].id, "running");
+    floor = await stopFloorAgent(memberRoom.sessionId, memberRoom.member.id, memberWorker.id, env.DB);
+    expect(floor!.agents.find((agent) => agent.id === memberWorker.id)?.pausedAt).not.toBeNull();
+    expect((await env.DB.prepare("SELECT status FROM agent_runs WHERE id = ?").bind(memberRunId).first<{ status: string }>())?.status).toBe("running");
+
+    const ownerRoom = await floorRoom("worker-stop-owner");
+    const ownerWorker = await ensureWorkerAgent(ownerRoom.sessionId, ownerRoom.owner.id, "openai", "Generated work", env.DB);
+    floor = await createFloorQueueItem(ownerRoom.sessionId, ownerRoom.owner.id, { prompt: "Do work", agentId: ownerWorker.id }, env.DB);
+    const ownerRunId = await insertRun(ownerRoom.sessionId, ownerWorker.id, ownerRoom.owner.id, floor!.queue[0].id, "running");
+    await stopFloorAgent(ownerRoom.sessionId, ownerRoom.owner.id, ownerWorker.id, env.DB);
+    expect((await env.DB.prepare("SELECT status FROM agent_runs WHERE id = ?").bind(ownerRunId).first<{ status: string }>())?.status).toBe("cancel_requested");
+
+    await env.DB.prepare("UPDATE agent_runs SET status = 'cancelled' WHERE id = ?").bind(ownerRunId).run();
+    await env.DB.prepare("UPDATE floor_queue_items SET status = 'cancelled' WHERE session_id = ?").bind(ownerRoom.sessionId).run();
+    await deprovisionIdleGeneratedAgents(ownerRoom.sessionId, true, env.DB);
+    let stored = await env.DB.prepare("SELECT paused_at AS pausedAt, deprovisioned_at AS deprovisionedAt FROM floor_agents WHERE id = ?")
+      .bind(ownerWorker.id).first<{ pausedAt: number | null; deprovisionedAt: number | null }>();
+    expect(stored?.pausedAt).not.toBeNull();
+    expect(stored?.deprovisionedAt).toBeNull();
+    await deprovisionIdleGeneratedAgents(ownerRoom.sessionId, false, env.DB);
+    stored = await env.DB.prepare("SELECT paused_at AS pausedAt, deprovisioned_at AS deprovisionedAt FROM floor_agents WHERE id = ?")
+      .bind(ownerWorker.id).first<{ pausedAt: number | null; deprovisionedAt: number | null }>();
+    expect(stored?.pausedAt).toBeNull();
+    expect(stored?.deprovisionedAt).not.toBeNull();
+  });
+
   it("deletes an idle persistent agent and unassigns its queued items; refuses while a run is active or on a system-managed agent", async () => {
     const room = await floorRoom("delete-agent");
     let floor = await createFloorAgent(room.sessionId, room.owner.id, agentInput(room.owner.id), env.DB);
@@ -288,17 +330,20 @@ describe("D1 persistent floor", () => {
 
     await expect(deleteFloorAgent(room.sessionId, room.owner.id, agentId, env.DB)).rejects.toBeInstanceOf(FloorConflictError);
     const answer = await ensureAnswerAgent(room.sessionId, room.owner.id, "openai", env.DB);
+    const worker = await ensureWorkerAgent(room.sessionId, room.owner.id, "openai", "Generated work", env.DB);
     await expect(deleteFloorAgent(room.sessionId, room.owner.id, answer.id, env.DB)).rejects.toBeInstanceOf(FloorConflictError);
+    await expect(deleteFloorAgent(room.sessionId, room.owner.id, worker.id, env.DB)).rejects.toBeInstanceOf(FloorConflictError);
     await expect(deleteFloorAgent(room.sessionId, room.outsider.id, agentId, env.DB)).resolves.toBeNull();
   });
 
-  it("bulk pause/resume/stop are owner-only and only ever touch persistent agents", async () => {
+  it("bulk pause/resume/stop are owner-only, include workers, and exclude Concierge", async () => {
     const room = await floorRoom("bulk");
     let floor = await createFloorAgent(room.sessionId, room.owner.id, agentInput(room.owner.id, "First"), env.DB);
     const firstId = floor!.agents[0].id;
     floor = await createFloorAgent(room.sessionId, room.owner.id, agentInput(room.owner.id, "Second"), env.DB);
     const secondId = floor!.agents.find((agent) => agent.name === "Second")!.id;
     const answer = await ensureAnswerAgent(room.sessionId, room.owner.id, "openai", env.DB);
+    const worker = await ensureWorkerAgent(room.sessionId, room.owner.id, "openai", "Generated work", env.DB);
 
     await expect(pauseAllFloorAgents(room.sessionId, room.member.id, env.DB)).resolves.toBeNull();
 
@@ -306,19 +351,26 @@ describe("D1 persistent floor", () => {
     expect(floor!.agents.find((agent) => agent.id === firstId)?.pausedAt).not.toBeNull();
     expect(floor!.agents.find((agent) => agent.id === secondId)?.pausedAt).not.toBeNull();
     expect(floor!.agents.find((agent) => agent.id === answer.id)?.pausedAt).toBeNull();
+    expect(floor!.agents.find((agent) => agent.id === worker.id)?.pausedAt).not.toBeNull();
 
     floor = await resumeAllFloorAgents(room.sessionId, room.owner.id, env.DB);
     expect(floor!.agents.find((agent) => agent.id === firstId)?.pausedAt).toBeNull();
     expect(floor!.agents.find((agent) => agent.id === secondId)?.pausedAt).toBeNull();
+    expect(floor!.agents.find((agent) => agent.id === worker.id)?.pausedAt).toBeNull();
 
     floor = await createFloorQueueItem(room.sessionId, room.owner.id, { prompt: "Active work", agentId: firstId }, env.DB);
     const activeItemId = floor!.queue.find((item) => item.agentId === firstId)!.id;
     const runId = await insertRun(room.sessionId, firstId, room.owner.id, activeItemId, "running");
+    floor = await createFloorQueueItem(room.sessionId, room.owner.id, { prompt: "Generated active work", agentId: worker.id }, env.DB);
+    const workerItemId = floor!.queue.find((item) => item.agentId === worker.id)!.id;
+    const workerRunId = await insertRun(room.sessionId, worker.id, room.owner.id, workerItemId, "running");
 
     floor = await stopAllFloorAgents(room.sessionId, room.owner.id, env.DB);
     expect(floor!.agents.find((agent) => agent.id === firstId)?.pausedAt).not.toBeNull();
     expect(floor!.agents.find((agent) => agent.id === secondId)?.pausedAt).not.toBeNull();
     const run = await env.DB.prepare("SELECT status FROM agent_runs WHERE id = ?").bind(runId).first<{ status: string }>();
     expect(run?.status).toBe("cancel_requested");
+    const workerRun = await env.DB.prepare("SELECT status FROM agent_runs WHERE id = ?").bind(workerRunId).first<{ status: string }>();
+    expect(workerRun?.status).toBe("cancel_requested");
   });
 });

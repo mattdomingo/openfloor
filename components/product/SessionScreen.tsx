@@ -39,6 +39,7 @@ export function SessionScreen({
   githubSetup,
   repoGateRequested,
   setupRequested,
+  lowHoursRemaining,
 }: {
   user: AppUser;
   session: SessionSummary;
@@ -55,6 +56,12 @@ export function SessionScreen({
   githubSetup: boolean;
   repoGateRequested: boolean;
   setupRequested: boolean;
+  /* Seconds of plan time left, read once on the server and only when the
+     owner is already inside the warning band. It ages while the page stays
+     open, which is fine in one direction: the number only ever overstates
+     what is left, and hitting zero closes the socket and swaps in the
+     exhausted banner. */
+  lowHoursRemaining: number | null;
 }) {
   const router = useRouter();
   const [members, setMembers] = useState(initialMembers);
@@ -250,6 +257,9 @@ export function SessionScreen({
 
       <div className="lobby-body">
         {connection.status === "quota-exhausted" && endedAt == null && <QuotaNotice sessionId={session.id} role={session.role} />}
+        {connection.status !== "quota-exhausted" && endedAt == null && lowHoursRemaining != null && (
+          <QuotaNotice sessionId={session.id} role={session.role} remainingSeconds={lowHoursRemaining} />
+        )}
         {endedAt != null && (
           <section className="lobby-ended" aria-label="Session ended">
             <p className="eyebrow">Read only</p>

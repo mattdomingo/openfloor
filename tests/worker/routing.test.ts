@@ -515,27 +515,36 @@ describe("agent router tick", () => {
     expect(recorded.find((decision) => decision.queueItemId === itemId && decision.decision === "assigned")?.reason).toContain("Question");
   });
 
-  it("routes a noise prompt (ping) to the same answer agent across the session, created only once", async () => {
+  it("allocates concurrent Concierge agents, retires both after replies, and reuses them later", async () => {
     const room = await routingRoom("noise");
     const first = await createFloorQueueItem(room.sessionId, room.member.id, { prompt: "ping", agentId: null }, env.DB);
     const firstItemId = first!.queue[0].id;
+    const second = await createFloorQueueItem(room.sessionId, room.member.id, { prompt: "thanks!", agentId: null }, env.DB);
+    const secondItemId = second!.queue.find((entry) => entry.id !== firstItemId)!.id;
     const firstStub = startRunStub();
     await runRoutingTick(room.sessionId, "enqueue", firstStub.deps, env.DB);
     const firstItem = await queueItem(firstItemId);
     expect(firstItem?.intent).toBe("noise");
-    const answerAgentId = firstItem!.agentId!;
-
-    const second = await createFloorQueueItem(room.sessionId, room.member.id, { prompt: "thanks!", agentId: null }, env.DB);
-    const secondItemId = second!.queue.find((entry) => entry.id !== firstItemId)!.id;
-    const secondStub = startRunStub();
-    await runRoutingTick(room.sessionId, "enqueue", secondStub.deps, env.DB);
     const secondItem = await queueItem(secondItemId);
     expect(secondItem?.intent).toBe("noise");
-    expect(secondItem?.agentId).toBe(answerAgentId);
+    expect(secondItem?.agentId).not.toBe(firstItem?.agentId);
+    expect(firstStub.kinds).toHaveLength(2);
 
+    const runs = await env.DB.prepare("SELECT id FROM agent_runs WHERE queue_item_id IN (?, ?) ORDER BY id")
+      .bind(firstItemId, secondItemId).all<{ id: string }>();
+    for (const run of runs.results) await finishAgentReply(run.id, "ready", "Done", "Answered", null, env.DB);
+    await runRoutingTick(room.sessionId, "run_completed", startRunStub().deps, env.DB);
+    const retired = await env.DB.prepare("SELECT id FROM floor_agents WHERE session_id = ? AND kind = 'answer' AND deprovisioned_at IS NOT NULL")
+      .bind(room.sessionId).all<{ id: string }>();
+    expect(retired.results).toHaveLength(2);
+
+    const third = await createFloorQueueItem(room.sessionId, room.member.id, { prompt: "hello", agentId: null }, env.DB);
+    const thirdItemId = third!.queue.find((entry) => ![firstItemId, secondItemId].includes(entry.id))!.id;
+    await runRoutingTick(room.sessionId, "enqueue", startRunStub().deps, env.DB);
+    expect(retired.results.map((agent) => agent.id)).toContain((await queueItem(thirdItemId))?.agentId);
     const answerAgents = await env.DB.prepare("SELECT COUNT(*) AS count FROM floor_agents WHERE session_id = ? AND kind = 'answer'")
       .bind(room.sessionId).first<{ count: number }>();
-    expect(Number(answerAgents?.count)).toBe(1);
+    expect(Number(answerAgents?.count)).toBe(2);
   });
 
   it("keeps a targeted question with its named agent instead of the concierge, and still dispatches a reply", async () => {

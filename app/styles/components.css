@@ -18,6 +18,45 @@ input, textarea { width: 100%; padding: 11px 12px; border: 1px solid var(--line-
 .onboarding-avatar-picker { display: flex; align-items: center; gap: var(--space-4); }
 .onboarding-avatar-picker .avatar { width: 64px; height: 64px; font-size: var(--text-lg); overflow: hidden; }
 .onboarding-avatar-preview { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0; }
+
+/* .field input's width:100% outranks .sr-only's, so the hidden picker keeps a
+   full-width absolutely positioned box unless its size is pinned here too. */
+.avatar-file-input { width: 1px; height: 1px; padding: 0; }
+
+/* Crop window. The square's size is set inline from AvatarCropper's
+   WINDOW_SIZE, because avatarCropRect clamps the pan against that exact
+   number — changing one without the other lets the picture slide off. */
+.avatar-crop-window {
+  position: relative;
+  margin-inline: auto;
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface-panel);
+  cursor: grab;
+  /* Without this the browser claims the drag for panning/scrolling on touch. */
+  touch-action: none;
+  user-select: none;
+}
+.avatar-crop-window:active { cursor: grabbing; }
+.avatar-crop-window img { position: absolute; max-width: none; }
+/* closest-side so 100% is half the square's width — the default
+   farthest-corner would put the circle's edge at half the diagonal and
+   overflow the window. */
+.avatar-crop-mask {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(circle closest-side at 50% 50%, transparent calc(100% - 1px), color-mix(in srgb, var(--surface-panel) 78%, transparent) 100%);
+}
+.avatar-crop-mask::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text-primary) 26%, transparent);
+}
+.avatar-crop-zoom { margin-top: var(--space-4); }
 .onboarding-avatar-preview[data-loaded="true"] { opacity: 1; }
 .plan-picker { border: 0; padding: 0; margin: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-3); }
 .plan-picker legend { grid-column: 1 / -1; margin-bottom: var(--space-2); font-weight: 700; }
@@ -41,14 +80,53 @@ input, textarea { width: 100%; padding: 11px 12px; border: 1px solid var(--line-
 .session-card-foot { align-self: end; margin-top: var(--space-6); color: var(--text-tertiary); font-size: var(--text-xs); }
 .role-pill, .member-role { padding: 3px 8px; border: 1px solid var(--line-soft); border-radius: var(--radius-pill); color: var(--text-secondary); font-size: 10px; font-weight: 750; text-transform: uppercase; }
 .session-card-pills { display: inline-flex; gap: var(--space-2); }
+.session-card { position: relative; }
 .session-card-link { min-width: 0; color: inherit; text-decoration: none; }
 .session-card-link:hover strong { color: var(--accent); }
+/* Whole-tile target: the title anchor keeps the accessible name and the
+   keyboard/middle-click behaviour, and this stretches its hit area over the
+   card. The explicit z-index is load-bearing — the shop skin gives the
+   updated/objective/meta rows position: relative, so a z-index of auto would
+   leave the overlay painted underneath them and only the title clickable.
+   .session-card-tools sits one layer higher again so the grip and the actions
+   menu stay reachable. */
+.session-card-link::after { content: ""; position: absolute; inset: 0; z-index: 1; border-radius: var(--radius-md); }
 .session-group-heading { margin-top: var(--space-6); font: 400 19px var(--font-serif); color: var(--text-secondary); }
 .session-group-heading + .session-grid { margin-top: var(--space-3); }
 .session-card-foot-end { display: inline-flex; align-items: center; gap: var(--space-3); }
 .session-card-foot .button[data-size="sm"] { min-height: 26px; padding: 2px 10px; font-size: var(--text-xs); }
 
 /* The house select: trigger + styled listbox instead of the OS widget. */
+/* Rendered prose (components/session/Markdown.tsx). Sized to sit inside a chat
+   bubble or a review pane rather than a document: no outer margins, and wide
+   content scrolls inside its own box so a table or a long code line never
+   makes the panel scroll sideways. */
+.markdown { display: grid; gap: var(--space-2); min-width: 0; }
+.markdown p, .markdown ul, .markdown ol, .markdown pre, .markdown blockquote, .markdown hr { margin: 0; }
+/* Markers are restored explicitly: the base reset strips list-style from every
+   ul/ol, which is right for the app's own menus and wrong for prose. */
+.markdown ul, .markdown ol { display: grid; gap: 2px; padding-left: var(--space-5); }
+.markdown ul { list-style: disc; }
+.markdown ol { list-style: decimal; }
+.markdown li { list-style: inherit; }
+/* GFM task items bring their own checkbox, so they drop the bullet — and the
+   checkbox has to opt out of the global `input { width: 100% }`. */
+.markdown li:has(> input[type="checkbox"]) { list-style: none; }
+.markdown input[type="checkbox"] { width: auto; margin-right: 6px; vertical-align: middle; }
+.markdown h1, .markdown h2, .markdown h3, .markdown h4, .markdown h5, .markdown h6 { margin: 0; font-weight: 700; }
+.markdown h1 { font-size: var(--text-lg); }
+.markdown h2 { font-size: var(--text-md); }
+.markdown h3, .markdown h4, .markdown h5, .markdown h6 { font-size: var(--text-sm); }
+.markdown code { padding: 1px 4px; border-radius: var(--radius-sm); background: var(--surface-sunken); font-size: .92em; }
+.markdown pre { padding: var(--space-3); border-radius: var(--radius-sm); background: var(--surface-sunken); overflow-x: auto; }
+.markdown pre code { padding: 0; background: none; }
+.markdown blockquote { padding-left: var(--space-3); border-left: 2px solid var(--line-strong); color: var(--text-secondary); }
+/* display: block so the table itself is the scroll container. */
+.markdown table { display: block; width: max-content; max-width: 100%; overflow-x: auto; border-collapse: collapse; font-size: var(--text-sm); }
+.markdown th, .markdown td { padding: 4px var(--space-2); border: 1px solid var(--line-soft); text-align: left; }
+.markdown hr { border: 0; border-top: 1px solid var(--line-soft); }
+.markdown a { color: var(--accent); }
+
 .select-menu { position: relative; min-width: 0; }
 .select-menu-trigger { display: inline-flex; align-items: center; gap: var(--space-2); max-width: 100%; padding: 6px var(--space-3); border: 1px solid var(--line-soft); border-radius: var(--radius-sm); background: var(--surface-raised); color: var(--text-primary); font: inherit; font-size: var(--text-sm); cursor: pointer; }
 .select-menu-trigger:hover, .select-menu-trigger[aria-expanded="true"] { border-color: var(--line-strong); }
@@ -61,6 +139,13 @@ input, textarea { width: 100%; padding: 11px 12px; border: 1px solid var(--line-
    ancestors; data-flip mirrors the computed direction for the animation. */
 .select-menu-list[data-flip="true"] { transform-origin: bottom left; }
 .select-menu-list li { display: grid; gap: 2px; padding: 7px var(--space-3); border-radius: var(--radius-sm); font-size: var(--text-sm); cursor: pointer; white-space: nowrap; }
+/* Searchable variant: the popover keeps the .select-menu-list chrome (so every
+   shell skin still applies) but scrolling moves to the option list, leaving the
+   filter box pinned above it. */
+.select-menu-panel { display: grid; gap: var(--space-1); max-height: none; overflow: visible; }
+.select-menu-panel .select-menu-options { display: grid; max-height: 240px; overflow-y: auto; margin: 0; padding: 0; list-style: none; }
+.select-menu-search { padding: 6px var(--space-2); border: 1px solid var(--line-soft); border-radius: var(--radius-sm); background: var(--surface-panel); color: var(--text-primary); font: inherit; font-size: var(--text-sm); }
+.select-menu-empty { padding: 7px var(--space-3); color: var(--text-tertiary); font-size: var(--text-sm); }
 .select-menu-list li small { color: var(--text-tertiary); }
 .select-menu-list li[data-active="true"] { background: var(--surface-sunken); }
 .select-menu-list li[data-selected="true"] { background: var(--accent-soft); color: var(--accent); }
@@ -144,6 +229,7 @@ input, textarea { width: 100%; padding: 11px 12px; border: 1px solid var(--line-
 }
 .repository-log-output { max-height: 320px; overflow: auto; margin-top: var(--space-3); padding: var(--space-3); border-radius: var(--radius-sm); background: var(--surface-sunken); color: var(--text-primary); white-space: pre-wrap; word-break: break-word; font-family: var(--font-mono); font-size: var(--text-xs); }
 .queue-run-row { display: flex; align-items: center; justify-content: flex-end; gap: .45rem; margin-top: .6rem; }
+.queue-run-row .queue-chip[data-status="answered"] { margin-right: auto; }
 .queue-run-branch { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-tertiary); font-size: .68rem; }
 .repository-form { display: grid; gap: var(--space-4); margin-top: var(--space-4); }
 .repository-form label, .repository-form .repository-field { display: grid; gap: var(--space-2); color: var(--text-secondary); font-size: var(--text-sm); }

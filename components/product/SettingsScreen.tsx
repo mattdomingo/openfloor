@@ -1,17 +1,18 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { AvatarCropper, AvatarFileButton } from "@/components/product/AvatarCropper";
 import { BASE_PATH } from "@/components/basePath";
 import { DoNotDisturbToggle } from "@/components/DoNotDisturbToggle";
 import { Avatar, useDialogDismiss } from "@/components/session/primitives";
 import { ThemeToggle } from "@/components/ThemeToggle";
-import { ACCEPTED_AVATAR_TYPE_LIST, ACCEPTED_AVATAR_TYPES, MAX_AVATAR_BYTES } from "@/lib/avatar-constraints";
+import { ACCEPTED_AVATAR_TYPES, MAX_AVATAR_BYTES } from "@/lib/avatar-constraints";
 import { formatDuration } from "@/lib/date-format";
 import { LocalDateTime } from "@/components/LocalDateTime";
 import { initialsFromParts } from "@/lib/display-name";
-import { PAID_PLAN_CATALOG, planLabel, planLimitsSummary, type PaidPlan, type Plan, type PlanStatus } from "@/lib/plans";
+import { lowHoursRemaining, PAID_PLAN_CATALOG, planLabel, planLimitsSummary, type PaidPlan, type Plan, type PlanStatus } from "@/lib/plans";
 import {
   CREDENTIAL_PROVIDERS,
   type ProviderCredentialSummary,
@@ -124,12 +125,20 @@ function ProfileSection({ user, onSaved }: { user: AppUser; onSaved: (user: AppU
   const [githubHandle, setGithubHandle] = useState(user.githubHandle ?? "");
   const [avatarFile, setAvatarFile] = useState<File | null>(null);
   const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
+  const [cropSource, setCropSource] = useState<File | null>(null);
   const [removeAvatar, setRemoveAvatar] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const ready = firstName.trim().length > 0 && lastName.trim().length > 0;
   const showRemove = removeAvatar ? false : avatarPreview ? false : user.avatarKey != null;
+
+  // Revokes the previous preview whenever it is replaced, and the last one on
+  // unmount — same shape as OnboardingScreen's picker, which matters more here
+  // because re-cropping can mint several object URLs in one visit.
+  useEffect(() => () => {
+    if (avatarPreview) URL.revokeObjectURL(avatarPreview);
+  }, [avatarPreview]);
 
   function pickAvatar(file: File | undefined) {
     if (!file) return;
@@ -143,9 +152,16 @@ function ProfileSection({ user, onSaved }: { user: AppUser; onSaved: (user: AppU
     }
     setError(null);
     setSaved(false);
+    setCropSource(file);
+  }
+
+  // The cropper hands back the framed square, so what is previewed here is
+  // exactly what gets uploaded.
+  function applyCrop(cropped: File) {
+    setCropSource(null);
     setRemoveAvatar(false);
-    setAvatarFile(file);
-    setAvatarPreview(URL.createObjectURL(file));
+    setAvatarFile(cropped);
+    setAvatarPreview(URL.createObjectURL(cropped));
   }
 
   function pickRemoveAvatar() {
@@ -153,6 +169,7 @@ function ProfileSection({ user, onSaved }: { user: AppUser; onSaved: (user: AppU
     setSaved(false);
     setAvatarFile(null);
     setAvatarPreview(null);
+    setCropSource(null);
     setRemoveAvatar(true);
   }
 
@@ -187,7 +204,7 @@ function ProfileSection({ user, onSaved }: { user: AppUser; onSaved: (user: AppU
   return (
     <>
       <form className="create-card" onSubmit={submit}>
-        <label className="field">
+        <div className="field">
           <span className="label">Profile picture <em>optional</em></span>
           <div className="onboarding-avatar-picker">
             <Avatar
@@ -197,12 +214,12 @@ function ProfileSection({ user, onSaved }: { user: AppUser; onSaved: (user: AppU
               tone="you"
               previewSrc={avatarPreview ?? undefined}
             />
-            <input type="file" accept={ACCEPTED_AVATAR_TYPE_LIST.join(",")} onChange={(event) => pickAvatar(event.target.files?.[0])} />
+            <AvatarFileButton hasPicture={Boolean(avatarPreview) || (!removeAvatar && user.avatarKey != null)} onPick={pickAvatar} />
             {showRemove && (
               <button type="button" className="button" data-variant="quiet" data-size="sm" onClick={pickRemoveAvatar}>Remove picture</button>
             )}
           </div>
-        </label>
+        </div>
 
         <div className="field-grid">
           <label className="field"><span className="label">First name</span><input value={firstName} onChange={(event) => setFirstName(event.target.value)} maxLength={50} required /></label>
@@ -215,6 +232,8 @@ function ProfileSection({ user, onSaved }: { user: AppUser; onSaved: (user: AppU
         {saved && !error && <p className="notice" role="status">Saved.</p>}
         <div className="form-actions"><button className="button" data-variant="primary" disabled={!ready || submitting}>{submitting ? "Saving…" : "Save changes"}</button></div>
       </form>
+
+      {cropSource && <AvatarCropper file={cropSource} onCancel={() => setCropSource(null)} onCropped={applyCrop} />}
 
       <ul className="settings-category-list">
         <li className="settings-category-row">
@@ -231,6 +250,7 @@ function ProfileSection({ user, onSaved }: { user: AppUser; onSaved: (user: AppU
 
 function PlanSection({ usage, billing, billingNotice, originPath }: { usage: Usage; billing: Billing; billingNotice: string | null; originPath: string | null }) {
   const limitSeconds = usage.limitHours * 3600;
+  const lowHours = lowHoursRemaining(usage.seconds, usage.limitHours);
   const limitedHours = Number.isFinite(usage.limitHours);
   const limitedSeats = Number.isFinite(usage.limitSeats);
   const [selectedPlan, setSelectedPlan] = useState<PaidPlan>(billing.plan ?? "pro");
@@ -303,6 +323,7 @@ function PlanSection({ usage, billing, billingNotice, originPath }: { usage: Usa
           {limitedHours
             ? `${formatDuration(usage.seconds)} of ${usage.limitHours}h used this month (UTC)`
             : `${formatDuration(usage.seconds)} used this month (UTC) · unlimited`}
+          {lowHours != null && <strong className="usage-low">{` · ${formatDuration(lowHours)} left`}</strong>}
         </span>
       </li>
 

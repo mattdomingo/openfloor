@@ -1,19 +1,50 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, MouseEvent as ReactMouseEvent, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { DragEvent as ReactDragEvent, FormEvent, MouseEvent as ReactMouseEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useRouter } from "next/navigation";
 import { BASE_PATH } from "@/components/basePath";
 import { LocalDateTime } from "@/components/LocalDateTime";
 import { formatDuration } from "@/lib/date-format";
-import { HoverTip, useDialogDismiss, useHoverTip } from "@/components/session/primitives";
-import { planLabel, type Plan, type PlanStatus } from "@/lib/plans";
+import { HoverTip, Icon, useDialogDismiss, useHoverTip } from "@/components/session/primitives";
+import { lowHoursRemaining, planLabel, type Plan, type PlanStatus } from "@/lib/plans";
+import { mergeVisibleOrder, parseSessionOrder, sortByStoredOrder } from "@/lib/session-order";
 import type { AppUser, SessionSummary } from "@/lib/session-types";
 import { WaveField } from "@/app/entry-wave";
 import { AppHeader } from "./AppHeader";
 
 // How far a tile is willing to lean toward the cursor, in pixels.
 const CARD_MAGNET_REACH = 7;
+
+/* Tile order is a per-device preference — nobody else sees your arrangement,
+   so it stays local UI state (AGENTS.md's third state class, alongside panel
+   order on the floor) rather than becoming a D1 column. Stored as one id
+   list covering every tab, so a card keeps its place when it is archived and
+   comes back. Same useSyncExternalStore shape as ThemeToggle, which keeps
+   the server render (no stored order) and hydration in step. */
+const ORDER_STORAGE_KEY = "openfloor:session-order";
+const ORDER_CHANGE_EVENT = "openfloor:session-order-change";
+
+function subscribeToOrder(callback: () => void) {
+  window.addEventListener("storage", callback);
+  window.addEventListener(ORDER_CHANGE_EVENT, callback);
+  return () => {
+    window.removeEventListener("storage", callback);
+    window.removeEventListener(ORDER_CHANGE_EVENT, callback);
+  };
+}
+
+// The raw string is the snapshot, not a parsed array: useSyncExternalStore
+// compares snapshots by identity, and a fresh array every call would loop.
+function readStoredOrder(): string {
+  return localStorage.getItem(ORDER_STORAGE_KEY) ?? "";
+}
+
+function writeOrder(ids: string[]) {
+  localStorage.setItem(ORDER_STORAGE_KEY, JSON.stringify(ids));
+  window.dispatchEvent(new Event(ORDER_CHANGE_EVENT));
+}
+
 
 function handleCardPointerMove(event: ReactMouseEvent<HTMLElement>) {
   const card = event.currentTarget;
@@ -155,9 +186,11 @@ export function HomeScreen({
     if (stored) sessionStorage.removeItem("openfloor:removed-notice");
     return stored;
   });
-  const activeSessions = sessions.filter((session) => session.archivedAt == null && session.endedAt == null);
-  const archivedSessions = sessions.filter((session) => session.archivedAt != null);
-  const endedSessions = sessions.filter((session) => session.archivedAt == null && session.endedAt != null);
+  const storedOrder = useSyncExternalStore(subscribeToOrder, readStoredOrder, () => "");
+  const orderedSessions = useMemo(() => sortByStoredOrder(sessions, parseSessionOrder(storedOrder)), [sessions, storedOrder]);
+  const activeSessions = orderedSessions.filter((session) => session.archivedAt == null && session.endedAt == null);
+  const archivedSessions = orderedSessions.filter((session) => session.archivedAt != null);
+  const endedSessions = orderedSessions.filter((session) => session.archivedAt == null && session.endedAt != null);
   const tabSessions = tab === "archived" ? archivedSessions : tab === "ended" ? endedSessions : activeSessions;
   // Hours are metered per session and summed onto one monthly total, so two
   // live owned sessions burn the month at twice wall-clock — worth calling
@@ -165,6 +198,7 @@ export function HomeScreen({
   // (and documented) behavior.
   const liveOwnedSessions = sessions.filter((session) => session.role === "owner" && session.endedAt == null).length;
   const quotaExhausted = Number.isFinite(usage.limitHours) && usage.seconds >= usage.limitHours * 3600;
+  const lowHours = lowHoursRemaining(usage.seconds, usage.limitHours);
   const usageLimitSeconds = usage.limitHours * 3600;
   const usagePercent = Number.isFinite(usage.limitHours) ? Math.min(100, Math.round((usage.seconds / usageLimitSeconds) * 100)) : null;
   // What the Usage tab shows is the inverse of usagePercent — remaining
@@ -179,6 +213,10 @@ export function HomeScreen({
     ? `${formatDuration(usage.seconds)} of ${usage.limitHours}h session time used this month (UTC)`
     : `${formatDuration(usage.seconds)} session time used this month (UTC)`;
   const usageLiveLine = `${liveOwnedSessions} live sessions, all counting toward your usage`;
+
+  function applyVisibleOrder(nextVisible: string[]) {
+    writeOrder(mergeVisibleOrder(orderedSessions.map((session) => session.id), nextVisible));
+  }
 
   async function setArchived(session: SessionSummary, archived: boolean) {
     const response = await fetch(`${BASE_PATH}/api/sessions/${session.id}/${archived ? "archive" : "unarchive"}`, { method: "POST" });
@@ -232,6 +270,14 @@ export function HomeScreen({
                 <Link href="/home/settings?section=plan">Upgrade for more session hours</Link>.
               </p>
             )}
+            {lowHours != null && (
+              /* The same advisory tone one step earlier: nothing is blocked
+                 yet, but the ceiling is close enough to plan around. */
+              <p className="notice" data-tone="attention" role="status">
+                {`${formatDuration(lowHours)} of your ${planLabel(usage.effectivePlan)} plan's ${usage.limitHours}h of monthly session time is left. `}
+                <Link href="/home/settings?section=plan">Upgrade for more session hours</Link>.
+              </p>
+            )}
           </div>
         </div>
 
@@ -275,14 +321,14 @@ export function HomeScreen({
               </div>
             </div>
           ) : tab === "active" ? (
-            <SessionGrid sessions={activeSessions} archived={false} showCreateTile onCreateNew={() => setCreating(true)} onDelete={setPendingDelete} onSetArchived={setArchived} limitSeats={usage.limitSeats} />
+            <SessionGrid sessions={activeSessions} archived={false} showCreateTile onCreateNew={() => setCreating(true)} onDelete={setPendingDelete} onSetArchived={setArchived} limitSeats={usage.limitSeats} onReorder={applyVisibleOrder} />
           ) : tabSessions.length === 0 ? (
             <div className="empty-state">
               <strong>Nothing here</strong>
               <p>{tab === "archived" ? "Archive a session from Active or Ended to tuck it out of your own view." : "Sessions the owner ends will show up here."}</p>
             </div>
           ) : (
-            <SessionGrid sessions={tabSessions} archived={tab === "archived"} onDelete={setPendingDelete} onSetArchived={setArchived} limitSeats={usage.limitSeats} />
+            <SessionGrid sessions={tabSessions} archived={tab === "archived"} onDelete={setPendingDelete} onSetArchived={setArchived} limitSeats={usage.limitSeats} onReorder={applyVisibleOrder} />
           )}
         </div>
       </section>
@@ -299,6 +345,7 @@ function SessionGrid({
   limitSeats,
   showCreateTile,
   onCreateNew,
+  onReorder,
 }: {
   sessions: SessionSummary[];
   archived: boolean;
@@ -307,12 +354,65 @@ function SessionGrid({
   limitSeats: number;
   showCreateTile?: boolean;
   onCreateNew?: () => void;
+  onReorder: (nextVisible: string[]) => void;
 }) {
+  const [draggedId, setDraggedId] = useState<string | null>(null);
+  const [dragOverId, setDragOverId] = useState<string | null>(null);
+  const ids = sessions.map((session) => session.id);
+
+  // Dropping on a card puts the dragged one in that card's place, the same
+  // "insert before the target" rule the prompt queue uses.
+  function moveBefore(fromId: string, toId: string) {
+    if (fromId === toId) return;
+    const next = ids.filter((id) => id !== fromId);
+    next.splice(next.indexOf(toId), 0, fromId);
+    onReorder(next);
+  }
+
+  // The keyboard path, driven from the same grip: one step per press.
+  function nudge(id: string, delta: number) {
+    const from = ids.indexOf(id);
+    const to = from + delta;
+    if (from < 0 || to < 0 || to >= ids.length) return;
+    const next = [...ids];
+    next.splice(to, 0, ...next.splice(from, 1));
+    onReorder(next);
+  }
+
   return (
     <div className="session-grid">
       {showCreateTile && onCreateNew && <NewSessionTile onClick={onCreateNew} />}
-      {sessions.map((session) => (
-        <SessionCard key={session.id} session={session} archived={archived} onDelete={onDelete} onSetArchived={onSetArchived} limitSeats={limitSeats} />
+      {sessions.map((session, index) => (
+        <SessionCard
+          key={session.id}
+          session={session}
+          archived={archived}
+          onDelete={onDelete}
+          onSetArchived={onSetArchived}
+          limitSeats={limitSeats}
+          position={index + 1}
+          total={sessions.length}
+          dragging={draggedId === session.id}
+          dropTarget={dragOverId === session.id}
+          onDragStart={() => setDraggedId(session.id)}
+          onDragEnd={() => { setDraggedId(null); setDragOverId(null); }}
+          onDragOver={(event) => {
+            if (!draggedId) return;
+            // Only a preventDefault'd dragover marks this a valid drop target.
+            event.preventDefault();
+            if (draggedId !== session.id) setDragOverId(session.id);
+          }}
+          onDragLeave={(event) => {
+            if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+            setDragOverId((current) => (current === session.id ? null : current));
+          }}
+          onDrop={() => {
+            setDragOverId(null);
+            if (draggedId) moveBefore(draggedId, session.id);
+            setDraggedId(null);
+          }}
+          onNudge={(delta) => nudge(session.id, delta)}
+        />
       ))}
     </div>
   );
@@ -354,34 +454,101 @@ function SessionCard({
   onDelete,
   onSetArchived,
   limitSeats,
+  position,
+  total,
+  dragging,
+  dropTarget,
+  onDragStart,
+  onDragEnd,
+  onDragOver,
+  onDragLeave,
+  onDrop,
+  onNudge,
 }: {
   session: SessionSummary;
   archived: boolean;
   onDelete: (session: SessionSummary) => void;
   onSetArchived: (session: SessionSummary, archived: boolean) => void;
   limitSeats: number;
+  position: number;
+  total: number;
+  dragging: boolean;
+  dropTarget: boolean;
+  onDragStart: () => void;
+  onDragEnd: () => void;
+  onDragOver: (event: ReactDragEvent<HTMLDivElement>) => void;
+  onDragLeave: (event: ReactDragEvent<HTMLDivElement>) => void;
+  onDrop: () => void;
+  onNudge: (delta: number) => void;
 }) {
   // Title, then when it last changed (a quiet caption, not competing with
   // the meta strip below), then the objective — clamped, the full text is
   // a hover away only when it's actually cut off — then the foot strip,
   // now down to just the two facts that matter together: who and how much.
   const tip = useHoverTip();
+  const cardRef = useRef<HTMLDivElement>(null);
+  const [actionsOpen, setActionsOpen] = useState(false);
+  const handleActionsOpenChange = useCallback((open: boolean) => {
+    cardRef.current?.style.setProperty("--tilt-x", "0px");
+    cardRef.current?.style.setProperty("--tilt-y", "0px");
+    setActionsOpen(open);
+  }, []);
   const { ref: descriptionRef, truncated: descriptionTruncated } = useIsTruncated<HTMLParagraphElement>();
+  // draggable has to be true before the gesture starts, so the grip arms it on
+  // pointer down and the card disarms it again once the drag is over. Arming
+  // the whole card unconditionally would make every text selection a drag.
+  const [armed, setArmed] = useState(false);
   const seatsOrMembers =
     session.role === "owner" && Number.isFinite(limitSeats)
       ? `${session.memberCount} of ${limitSeats} seats`
       : `${session.memberCount} ${session.memberCount === 1 ? "member" : "members"}`;
   return (
-    <div className="session-card" onMouseMove={handleCardPointerMove} onMouseLeave={handleCardPointerLeave}>
+    <div
+      ref={cardRef}
+      className="session-card"
+      data-actions-open={actionsOpen ? "true" : undefined}
+      data-dragging={dragging ? "true" : undefined}
+      data-drop-target={dropTarget ? "true" : undefined}
+      draggable={armed}
+      onDragStart={onDragStart}
+      onDragEnd={() => { setArmed(false); onDragEnd(); }}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+      onMouseMove={(event) => { if (!actionsOpen) handleCardPointerMove(event); }}
+      onMouseLeave={handleCardPointerLeave}
+    >
       <div className="session-card-head">
-        {/* The link stays on the title text so tests and readers keep one obvious target. */}
-        <Link className="session-card-link" href={`/session/${session.id}`}><strong>{session.title}</strong></Link>
-        <SessionActionsMenu session={session} archived={archived} onDelete={onDelete} onSetArchived={onSetArchived} />
+        {/* The anchor is still the title, but its ::after (shop.css) stretches
+            over the whole card, so anywhere that isn't the grip or the actions
+            menu opens the session. The objective's hover tip therefore hangs
+            off the link rather than the paragraph it describes — the paragraph
+            sits under that overlay and would never see a pointer event. */}
+        <Link className="session-card-link" href={`/session/${session.id}`} draggable={false} {...(descriptionTruncated ? tip.handlers : {})}><strong>{session.title}</strong></Link>
+        <span className="session-card-tools">
+          <button
+            type="button"
+            className="session-card-grip"
+            aria-label={`Reorder ${session.title}. Position ${position} of ${total}. Drag, or use the left and right arrow keys.`}
+            onPointerDown={() => setArmed(true)}
+            onPointerUp={() => setArmed(false)}
+            onPointerCancel={() => setArmed(false)}
+            onKeyDown={(event) => {
+              const delta = event.key === "ArrowLeft" ? -1 : event.key === "ArrowRight" ? 1 : 0;
+              if (delta === 0) return;
+              event.preventDefault();
+              onNudge(delta);
+            }}
+          >
+            <Icon name="grip" />
+          </button>
+          <SessionActionsMenu session={session} archived={archived} onDelete={onDelete} onSetArchived={onSetArchived} onOpenChange={handleActionsOpenChange} />
+        </span>
       </div>
       <p className="session-card-updated">Updated <LocalDateTime timestamp={session.updatedAt} mode="date" /></p>
       {session.objective ? (
         <>
-          <p className="session-card-desc" ref={descriptionRef} {...(descriptionTruncated ? tip.handlers : {})}>{session.objective}</p>
+          <p className="session-card-desc" ref={descriptionRef}>{session.objective}</p>
           {descriptionTruncated && <HoverTip position={tip.position}>{session.objective}</HoverTip>}
         </>
       ) : (
@@ -407,22 +574,28 @@ function SessionActionsMenu({
   archived,
   onDelete,
   onSetArchived,
+  onOpenChange,
 }: {
   session: SessionSummary;
   archived: boolean;
   onDelete: (session: SessionSummary) => void;
   onSetArchived: (session: SessionSummary, archived: boolean) => void;
+  onOpenChange: (open: boolean) => void;
 }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
+  const setMenuOpen = useCallback((next: boolean) => {
+    setOpen(next);
+    onOpenChange(next);
+  }, [onOpenChange]);
 
   useEffect(() => {
     if (!open) return;
     function onPointerDown(event: PointerEvent) {
-      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+      if (!rootRef.current?.contains(event.target as Node)) setMenuOpen(false);
     }
     function onKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") setOpen(false);
+      if (event.key === "Escape") setMenuOpen(false);
     }
     document.addEventListener("pointerdown", onPointerDown);
     document.addEventListener("keydown", onKeyDown);
@@ -430,16 +603,16 @@ function SessionActionsMenu({
       document.removeEventListener("pointerdown", onPointerDown);
       document.removeEventListener("keydown", onKeyDown);
     };
-  }, [open]);
+  }, [open, setMenuOpen]);
 
   return (
     <div className="session-card-menu" data-open={open ? "true" : "false"} ref={rootRef}>
-      <button type="button" className="session-card-menu-trigger" aria-haspopup="true" aria-expanded={open} aria-label="Session actions" onClick={() => setOpen((value) => !value)}>
+      <button type="button" className="session-card-menu-trigger" aria-haspopup="true" aria-expanded={open} aria-label="Session actions" onClick={() => setMenuOpen(!open)}>
         <span aria-hidden="true" /><span aria-hidden="true" /><span aria-hidden="true" />
       </button>
       <span className="session-card-menu-actions" inert={!open}>
-        <button type="button" className="button" data-variant="quiet" data-size="sm" onClick={() => { onSetArchived(session, !archived); setOpen(false); }}>{archived ? "Unarchive" : "Archive"}</button>
-        {session.role === "owner" && <button type="button" className="button danger-button" data-size="sm" onClick={() => { onDelete(session); setOpen(false); }}>Delete</button>}
+        <button type="button" className="button" data-variant="quiet" data-size="sm" onClick={() => { onSetArchived(session, !archived); setMenuOpen(false); }}>{archived ? "Unarchive" : "Archive"}</button>
+        {session.role === "owner" && <button type="button" className="button danger-button" data-size="sm" onClick={() => { onDelete(session); setMenuOpen(false); }}>Delete</button>}
       </span>
     </div>
   );

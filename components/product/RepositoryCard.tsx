@@ -364,6 +364,7 @@ export function RepositoryCard({
               value={repositoryId}
               onChange={(next) => void chooseRepository(next)}
               disabled={busy}
+              searchable
               options={repositories.map((item) => ({ value: item.id, label: item.fullName }))}
             />
           </div>
@@ -374,6 +375,7 @@ export function RepositoryCard({
               value={baseBranch}
               onChange={setBaseBranch}
               disabled={busy || branches.length === 0}
+              searchable
               options={branches.map((branch) => ({ value: branch, label: branch }))}
             />
           </div>

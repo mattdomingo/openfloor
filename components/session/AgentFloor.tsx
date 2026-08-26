@@ -4,7 +4,7 @@ import { useLayoutEffect, useRef, useState } from "react";
 import { AGENT_PROVIDER_LABELS, type CredentialProvider, type ProviderCredentialSummary } from "@/lib/provider-credentials";
 import type { AgentRun, CreateFloorAgentInput, FloorAgent, FloorAgentSettingsPatch, FloorParticipant, FloorQueueItem } from "@/lib/floor-types";
 import type { AgentLayout } from "./data";
-import { agentReplyText, agentTone, canRollbackRun } from "./data";
+import { agentTone, canRollbackRun } from "./data";
 import { HoverTip, Icon, useHoverTip } from "./primitives";
 import { Panel, type PanelChrome } from "./Rail";
 import { AgentCard, AgentSpotlight } from "./AgentCard";
@@ -171,13 +171,9 @@ export function AgentFloor({ chrome, sessionId, agents, runs, activity, selected
       {agents.length === 0 ? (
         <div className="floor-empty"><strong>No agents yet</strong><p>Create an agent when the session has work to assign.</p><button type="button" className="button" data-variant="primary" onClick={() => setCreating(true)}>Create agent</button></div>
       ) : agentLayout === "all" ? (
-        // Reserves headroom above the grid only while at least one tile has
-        // a reply bubble to pop up over it — the bubble is absolutely
-        // positioned and would otherwise clip against the panel's own
-        // scroll box (.panel-body) on the top row.
-        <div className="agent-grid" data-has-reply={agents.some((agent) => agentReplyText(runs.find((run) => run.agentId === agent.id) ?? null)) ? "true" : "false"}>{agents.map((agent, index) => { const latestRun = runs.find((run) => run.agentId === agent.id) ?? null; return <AgentCard key={agent.id} agent={agent} tone={agentTone(agent.id, index)} latestRun={latestRun} activityEvents={latestRun ? activity.eventsFor(latestRun.id) : []} selected={selected?.id === agent.id} onFocus={() => focusAgent(agent.id)} onHistory={() => setHistoryAgentId(agent.id)} onPause={onPauseAgent} onStop={onStopAgent} onDelete={onDeleteAgent} />; })}</div>
+        <div className="agent-grid">{agents.map((agent, index) => { const latestRun = runs.find((run) => run.agentId === agent.id) ?? null; return <AgentCard key={agent.id} agent={agent} tone={agentTone(agent.id, index)} latestRun={latestRun} activityEvents={latestRun ? activity.eventsFor(latestRun.id) : []} selected={selected?.id === agent.id} owner={owner} onFocus={() => focusAgent(agent.id)} onHistory={() => setHistoryAgentId(agent.id)} onPause={onPauseAgent} onStop={onStopAgent} onDelete={onDeleteAgent} />; })}</div>
       ) : selected ? (
-        <AgentSpotlight agent={selected} tone={agentTone(selected.id, agents.findIndex((agent) => agent.id === selected.id))} sessionId={sessionId} latestRun={selectedLatestRun} activity={activity} canRollback={canRollbackRun({ run: selectedLatestRun, item: queue.find((item) => item.id === selectedLatestRun?.queueItemId), agent: selected, currentUserId, sessionOwner: owner })} busy={agentControlsBusy} onRollback={onRollback} onHistory={() => setHistoryAgentId(selected.id)} onUpdateSettings={onUpdateSettings} onPause={onPauseAgent} onStop={onStopAgent} onDelete={onDeleteAgent} />
+        <AgentSpotlight agent={selected} tone={agentTone(selected.id, agents.findIndex((agent) => agent.id === selected.id))} sessionId={sessionId} latestRun={selectedLatestRun} activity={activity} canRollback={canRollbackRun({ run: selectedLatestRun, item: queue.find((item) => item.id === selectedLatestRun?.queueItemId), agent: selected, currentUserId, sessionOwner: owner })} busy={agentControlsBusy} owner={owner} onRollback={onRollback} onHistory={() => setHistoryAgentId(selected.id)} onUpdateSettings={onUpdateSettings} onPause={onPauseAgent} onStop={onStopAgent} onDelete={onDeleteAgent} />
       ) : null}
     </Panel>
     {creating && <CreateAgentDialog participants={participants} currentUserId={currentUserId} enabledProviders={enabledProviders} onClose={() => { setCreating(false); createButtonRef.current?.focus(); }} onCreate={onCreateAgent} />}
