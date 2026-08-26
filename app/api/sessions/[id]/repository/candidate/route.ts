@@ -7,7 +7,9 @@ import {
   reserveRepositoryCandidate,
   setRepositoryAvailability,
 } from "@/db/repositories";
+import { getFloorSnapshot } from "@/db/floor";
 import { getSessionForMember } from "@/db/sessions";
+import { abandonSessionCandidate } from "@/lib/candidate-abandon";
 import { activeOwnerErrorResponse, mutationErrorResponse } from "@/lib/floor-api";
 import { createRepositoryBranch, getInstallationRepository, getRepositoryRefSha, GitHubApiError } from "@/lib/github";
 import { notifyFloorChanged } from "@/lib/presence-server";
@@ -75,4 +77,37 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     }
     throw error;
   }
+}
+
+/* Owner-initiated abandonment of the session's live candidate — makes the
+   "merge or abandon it first" copy on session/account deletion true, and is
+   also reachable directly from Review as a standalone action. */
+export async function DELETE(request: Request, { params }: { params: Promise<{ id: string }> }) {
+  const user = await requireApiUser();
+  if (isApiError(user)) return user;
+  const sessionId = (await params).id;
+  const ownerError = await activeOwnerErrorResponse(sessionId, user.id);
+  if (ownerError) return ownerError;
+  const inputText = await request.text();
+  let deleteBranch = false;
+  if (inputText.trim()) {
+    try {
+      const body = JSON.parse(inputText) as { deleteBranch?: unknown } | null;
+      deleteBranch = Boolean(body?.deleteBranch);
+    } catch {
+      return Response.json({ error: "Invalid JSON body" }, { status: 400 });
+    }
+  }
+  const result = await abandonSessionCandidate(sessionId, user.id, { deleteBranch });
+  if (result.outcome === "no_candidate") return Response.json({ error: "There is no candidate to abandon" }, { status: 409 });
+  if (result.outcome === "blocked") {
+    return Response.json({ error: "The candidate is still being updated", runId: result.runId }, { status: 409 });
+  }
+  await notifyFloorChanged(sessionId, result.revision, ["repository", "review"]);
+  const floor = await getFloorSnapshot(sessionId, user.id);
+  if (!floor) return Response.json({ error: "Session not found" }, { status: 404 });
+  if (deleteBranch && !result.branchDeleted) {
+    return Response.json({ floor, warning: "The candidate branch is still on GitHub — it was not deleted." });
+  }
+  return Response.json({ floor });
 }

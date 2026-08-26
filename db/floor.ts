@@ -214,7 +214,7 @@ function buildRunReview(
   if (candidate.integrationRunId) warnings.push({ id: `${candidate.id}-integrating`, title: "Candidate update in progress", detail: "A run is integrating or being rolled back. Merging, ending, and deleting are blocked until the candidate update finishes.", severity: "warning" });
   return {
     id: candidate.id,
-    status: candidate.status === "merged" ? "merged" : candidate.pullRequestDraft === false ? "ready" : "draft",
+    status: candidate.status === "merged" ? "merged" : candidate.status === "abandoned" ? "abandoned" : candidate.pullRequestDraft === false ? "ready" : "draft",
     branch: candidate.branchName,
     baseBranch: candidate.baseBranch,
     commitSha: candidate.status === "merged" ? candidate.mergeCommitSha : candidate.candidateSha,

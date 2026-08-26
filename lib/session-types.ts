@@ -119,7 +119,8 @@ export type RepositoryCandidate = {
   cleanupStatus: "pending" | "complete" | "partial" | null;
   cleanupCompletedAt: number | null;
   branchDeletedAt: number | null;
-  status: "creating" | "active" | "merged" | "creation_failed";
+  abandonedAt: number | null;
+  status: "creating" | "active" | "merged" | "abandoned" | "creation_failed";
   createdBy: string;
   createdAt: number;
   updatedAt: number;

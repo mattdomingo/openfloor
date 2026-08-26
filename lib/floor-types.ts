@@ -232,7 +232,7 @@ export type ReviewContributor = {
 
 export type FloorReviewSnapshot = {
   id: string;
-  status: "draft" | "ready" | "merged";
+  status: "draft" | "ready" | "merged" | "abandoned";
   branch: string;
   baseBranch: string;
   commitSha: string | null;
