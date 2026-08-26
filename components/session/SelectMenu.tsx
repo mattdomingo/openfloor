@@ -26,6 +26,11 @@ export function SelectMenu({
 }) {
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
+  // Viewport coordinates for the open list. The list renders in-tree (so
+  // themed ancestor selectors keep matching) but position: fixed, because an
+  // absolutely positioned list clips inside every overflow ancestor — panel
+  // chip rows, lobby cards, and .dialog's overflow: hidden all cut it off.
+  const [placement, setPlacement] = useState<{ top?: number; bottom?: number; left: number; minWidth: number; up: boolean } | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const listId = useId();
@@ -36,12 +41,39 @@ export function SelectMenu({
     function onPointerDown(event: PointerEvent) {
       if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
     }
+    // Fixed coordinates go stale the moment anything scrolls or resizes, so
+    // close like a native select instead of chasing the anchor. Capture
+    // phase catches inner scroll containers; scrolling the open list itself
+    // stays exempt.
+    function onScrollOrResize(event: Event) {
+      if (event.target instanceof Node && rootRef.current?.contains(event.target)) return;
+      setOpen(false);
+    }
     document.addEventListener("pointerdown", onPointerDown);
-    return () => document.removeEventListener("pointerdown", onPointerDown);
+    window.addEventListener("scroll", onScrollOrResize, true);
+    window.addEventListener("resize", onScrollOrResize);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("scroll", onScrollOrResize, true);
+      window.removeEventListener("resize", onScrollOrResize);
+    };
   }, [open]);
 
   function openMenu() {
     if (options.length === 0) return;
+    const trigger = triggerRef.current;
+    if (trigger) {
+      const rect = trigger.getBoundingClientRect();
+      const minWidth = Math.max(rect.width, 170);
+      const left = Math.max(8, Math.min(rect.left, window.innerWidth - minWidth - 8));
+      // 240px list max-height + gap: flip upward when the space below cannot
+      // hold the list but the space above can (or the caller pinned "up").
+      const spaceBelow = window.innerHeight - rect.bottom;
+      const up = align === "up" || (spaceBelow < 250 && rect.top > spaceBelow);
+      setPlacement(up
+        ? { bottom: window.innerHeight - rect.top + 4, left, minWidth, up }
+        : { top: rect.bottom + 4, left, minWidth, up });
+    }
     setActiveIndex(Math.max(0, options.findIndex((option) => option.value === value)));
     setOpen(true);
   }
@@ -102,7 +134,20 @@ export function SelectMenu({
         <Icon name="chevronDown" size={10} />
       </button>
       {open && (
-        <ul className="select-menu-list" id={listId} role="listbox" aria-label={label}>
+        <ul
+          className="select-menu-list"
+          id={listId}
+          role="listbox"
+          aria-label={label}
+          data-flip={placement?.up ? "true" : "false"}
+          style={placement ? {
+            position: "fixed",
+            top: placement.top ?? "auto",
+            bottom: placement.bottom ?? "auto",
+            left: placement.left,
+            minWidth: placement.minWidth,
+          } : undefined}
+        >
           {options.map((option, index) => (
             <li
               key={option.value}

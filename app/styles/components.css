@@ -56,6 +56,10 @@ input, textarea { width: 100%; padding: 11px 12px; border: 1px solid var(--line-
 .select-menu-trigger > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .select-menu-list { position: absolute; z-index: 30; top: calc(100% + var(--space-1)); left: 0; min-width: max(100%, 170px); max-height: 240px; overflow-y: auto; margin: 0; padding: var(--space-1); list-style: none; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--surface-raised); box-shadow: var(--elevation-2); animation: popover-rise var(--dur-float) var(--ease-out); transform-origin: top left; }
 .select-menu[data-align="up"] .select-menu-list { top: auto; bottom: calc(100% + var(--space-1)); transform-origin: bottom left; }
+/* The component measures the trigger and inlines fixed viewport coordinates
+   (overriding the absolute fallback above) so the list escapes overflow
+   ancestors; data-flip mirrors the computed direction for the animation. */
+.select-menu-list[data-flip="true"] { transform-origin: bottom left; }
 .select-menu-list li { display: grid; gap: 2px; padding: 7px var(--space-3); border-radius: var(--radius-sm); font-size: var(--text-sm); cursor: pointer; white-space: nowrap; }
 .select-menu-list li small { color: var(--text-tertiary); }
 .select-menu-list li[data-active="true"] { background: var(--surface-sunken); }

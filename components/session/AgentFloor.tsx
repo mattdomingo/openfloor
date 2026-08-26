@@ -85,9 +85,12 @@ export function AgentFloor({ chrome, sessionId, agents, runs, activity, selected
   const [historyAgentId, setHistoryAgentId] = useState<string | null>(null);
   const createButtonRef = useRef<HTMLButtonElement>(null);
   const historyAgent = agents.find((agent) => agent.id === historyAgentId) ?? null;
-  const providerOptions: SelectMenuOption[] = providerCredentials
-    .filter((credential) => enabledProviders.includes(credential.provider))
-    .map((credential) => ({ value: credential.provider, label: AGENT_PROVIDER_LABELS[credential.provider] }));
+  // Deduped: a provider can hold two credential rows (api_key + oauth) —
+  // it is still one provider, not two "Claude" options with the same value
+  // (which also collide as React keys in the listbox).
+  const providerOptions: SelectMenuOption[] = [...new Set(providerCredentials.map((credential) => credential.provider))]
+    .filter((provider) => enabledProviders.includes(provider))
+    .map((provider) => ({ value: provider, label: AGENT_PROVIDER_LABELS[provider] }));
   if (providerOptions.length > 1) providerOptions.unshift({ value: "", label: "Choose provider" });
 
   function focusAgent(id: string) {

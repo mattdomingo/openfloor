@@ -421,8 +421,12 @@ function SessionSetupDialog({
   const [autoAgentProvider, setAutoAgentProvider] = useState(session.autoAgentProvider);
   const [providerBusy, setProviderBusy] = useState(false);
   const [providerError, setProviderError] = useState<string | null>(null);
-  const connectedProviders = credentials
-    .map((credential) => credential.provider)
+  // Deduped: since credential kinds became first-class a provider can hold
+  // two rows (api_key + oauth) — one provider, one option, or the length
+  // checks below misread a fully-connected provider as "selection required"
+  // and the dropdown shows the same provider twice (the client twin of
+  // resolveAutoAgentProvider's SELECT DISTINCT).
+  const connectedProviders = [...new Set(credentials.map((credential) => credential.provider))]
     .filter((provider) => enabledProviders.includes(provider));
   const configuredProvider = autoAgentProvider && connectedProviders.includes(autoAgentProvider) ? autoAgentProvider : null;
   const providerState = configuredProvider
