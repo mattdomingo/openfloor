@@ -349,6 +349,35 @@ describe("agent router tick", () => {
     expect((await queueItem(codexItemId))?.status).toBe("running");
   });
 
+  // Regression guard for the trap this feature introduces: budget_exhausted
+  // is a per-owner, per-credential condition (lib/agent-run-start.ts's
+  // checkProviderBudget), NOT a session-wide precondition like "not_ready" or
+  // "disabled". db/routing.ts must skip the exhausted item and keep
+  // dispatching the rest of the queue, exactly like the gated-provider case
+  // above — never hold the whole floor over one owner's one exhausted budget.
+  it("skips a budget_exhausted item without holding, so the rest of the queue keeps dispatching", async () => {
+    const room = await routingRoom("budget-exhausted");
+    const overBudgetAgentId = await addAgent(room.sessionId, room.owner.id, "OverBudget", "Researcher", "Research the domain model");
+    const okAgentId = await addAgent(room.sessionId, room.owner.id, "Ok", "Engineer", "Implement backend changes");
+    const first = await createFloorQueueItem(room.sessionId, room.owner.id, { prompt: "Over-budget work item", agentId: overBudgetAgentId }, env.DB);
+    const overBudgetItemId = first?.queue.find((item) => item.agentId === overBudgetAgentId)?.id;
+    const second = await createFloorQueueItem(room.sessionId, room.owner.id, { prompt: "Ok work item", agentId: okAgentId }, env.DB);
+    const okItemId = second?.queue.find((item) => item.agentId === okAgentId)?.id;
+    if (!overBudgetItemId || !okItemId) throw new Error("Queue items were not created");
+
+    const stub = startRunStub([{ ok: false, kind: "budget_exhausted", message: "This agent's owner has reached their monthly Anthropic API key budget." }]);
+    const outcome = await runRoutingTick(room.sessionId, "enqueue", stub.deps, env.DB);
+    expect(outcome.held).toBe(false);
+    expect(stub.calls.map((call) => call.queueItemId)).toEqual([overBudgetItemId, okItemId]);
+    const recorded = await decisions(room.sessionId);
+    const skipped = recorded.find((decision) => decision.queueItemId === overBudgetItemId);
+    expect(skipped?.decision).toBe("skipped");
+    expect(skipped?.reason).toContain("budget");
+    expect(recorded.find((decision) => decision.queueItemId === okItemId)?.decision).toBe("dispatched");
+    expect((await queueItem(overBudgetItemId))?.status).toBe("queued");
+    expect((await queueItem(okItemId))?.status).toBe("running");
+  });
+
   it("dispatches gated providers normally once the gate opens", async () => {
     const room = await routingRoom("mixed-open");
     const claudeAgentId = await addAgent(room.sessionId, room.owner.id, "Claude", "Researcher", "Research the domain model");
