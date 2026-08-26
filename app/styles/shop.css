@@ -656,8 +656,13 @@
   box-shadow: none;
   max-width: 560px;
 }
-.shop-shell .create-card label { font: 500 10px var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
-.shop-shell .create-card label em { color: var(--steel); text-transform: none; letter-spacing: normal; font-family: var(--sans); }
+/* Captions are usually the <label> itself; the profile-picture group is a
+   <div class="field"> instead, because a <label> there would claim the
+   "Change picture" button as its control and rename it. */
+.shop-shell .create-card label,
+.shop-shell .create-card .field > .label { font: 500 10px var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
+.shop-shell .create-card label em,
+.shop-shell .create-card .field > .label em { color: var(--steel); text-transform: none; letter-spacing: normal; font-family: var(--sans); }
 .shop-shell input,
 .shop-shell textarea {
   border-radius: var(--radius-sm);
