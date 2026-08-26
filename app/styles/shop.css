@@ -191,8 +191,8 @@
    reuses the same keyframe, so a tab or settings-rail switch settles in
    exactly the same way as a full navigation. */
 @keyframes shop-settle {
-  from { opacity: 0; transform: translateY(10px); }
-  to { opacity: 1; transform: translateY(0); }
+  from { opacity: 0; translate: 0 10px; }
+  to { opacity: 1; translate: 0 0; }
 }
 /* The one bold move: the hairline under the heading and tab strip draws in
    left-to-right, echoing the floor-bracket glyphs (shop-tab-indicator,
