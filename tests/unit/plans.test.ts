@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { currentMonth, effectivePlan, effectiveSeatLimit, lowHoursRemaining, PAID_PLAN_CATALOG, PLAN_LIMITS, planLimitsSummary, validPaidSeatQuantity, type Plan, type PlanStatus } from "@/lib/plans";
+import { currentMonth, effectivePlan, effectiveSeatLimit, lowHoursRemaining, PAID_PLAN_CATALOG, planHourLimit, PLAN_LIMITS, planLimitsSummary, validPaidSeatQuantity, type Plan, type PlanStatus } from "@/lib/plans";
 
 describe("PLAN_LIMITS", () => {
   it("gives each plan the documented seat and hour caps", () => {
@@ -89,6 +89,19 @@ describe("paid seat pricing", () => {
 
   it("@opnflr.com accounts get unlimited seats even on a free/lapsed row", () => {
     expect(effectiveSeatLimit("free", "inactive", null, "tester@opnflr.com")).toBe(Infinity);
+  });
+});
+
+describe("planHourLimit", () => {
+  it("zeroes the free plan's hours once its email already spent them, and only the free plan", () => {
+    expect(planHourLimit("free", true)).toBe(0);
+    expect(planHourLimit("free", false)).toBe(PLAN_LIMITS.free.hours);
+  });
+
+  it("leaves every paid or enterprise plan's hours untouched by the flag", () => {
+    expect(planHourLimit("pro", true)).toBe(PLAN_LIMITS.pro.hours);
+    expect(planHourLimit("max", true)).toBe(PLAN_LIMITS.max.hours);
+    expect(planHourLimit("enterprise", true)).toBe(Infinity);
   });
 });
 

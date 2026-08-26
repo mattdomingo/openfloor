@@ -11,11 +11,11 @@ import { Markdown } from "./Markdown";
 import { TeamChat } from "./TeamChat";
 import type { RepositorySource } from "./useRepositoryTree";
 
-type PendingAction = { type: "merge"; deleteCandidateBranch: boolean } | { type: "deleteBranch" };
+type PendingAction = { type: "merge"; deleteCandidateBranch: boolean } | { type: "deleteBranch" } | { type: "abandon"; deleteBranch: boolean };
 type Selection = { kind: "changed"; id: string } | { kind: "repo"; path: string };
 const DISCONNECTED_STATUSES = new Set(["disconnected", "revoked", "inaccessible"]);
 
-export function ReviewScreen({ review, repository, repositoryTree, selectedConflictCaseId, owner, busy, blockingRunId, onReady, onMerge, onDeleteBranch, onCancelRun, onResolveConflict, onAnswerConflict, teamChat, onSendTeamMessage, participants, currentUserId }: {
+export function ReviewScreen({ review, repository, repositoryTree, selectedConflictCaseId, owner, busy, blockingRunId, onReady, onMerge, onDeleteBranch, onAbandon, onCancelRun, onResolveConflict, onAnswerConflict, teamChat, onSendTeamMessage, participants, currentUserId }: {
   review: FloorReviewSnapshot | null;
   repository: RepositoryConnection | null;
   repositoryTree: RepositorySource;
@@ -26,6 +26,7 @@ export function ReviewScreen({ review, repository, repositoryTree, selectedConfl
   onReady: () => Promise<void>;
   onMerge: (deleteCandidateBranch: boolean) => Promise<boolean>;
   onDeleteBranch: () => Promise<boolean>;
+  onAbandon: (deleteBranch: boolean) => Promise<boolean>;
   onCancelRun: (runId: string) => Promise<void>;
   onResolveConflict: (caseId: string) => Promise<boolean>;
   onAnswerConflict: (caseId: string, answers: Array<{ questionId: string; answer: string }>) => Promise<boolean>;
@@ -40,6 +41,7 @@ export function ReviewScreen({ review, repository, repositoryTree, selectedConfl
   const [expandedDirs, setExpandedDirs] = useState<ReadonlySet<string>>(new Set());
   const [mergeConfirmOpen, setMergeConfirmOpen] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [abandonConfirmOpen, setAbandonConfirmOpen] = useState(false);
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
   const [retrying, setRetrying] = useState(false);
 
@@ -104,13 +106,21 @@ export function ReviewScreen({ review, repository, repositoryTree, selectedConfl
     await onDeleteBranch();
   }
 
+  async function runAbandon(deleteBranch: boolean) {
+    setAbandonConfirmOpen(false);
+    setPendingAction({ type: "abandon", deleteBranch });
+    await onAbandon(deleteBranch);
+  }
+
   async function cancelBlockingRunAndRetry() {
     if (!blockingRunId || !pendingAction) return;
     setRetrying(true);
     await onCancelRun(blockingRunId);
     for (let attempt = 0; attempt < 5; attempt += 1) {
       await new Promise((resolve) => window.setTimeout(resolve, 2000));
-      const ok = pendingAction.type === "merge" ? await onMerge(pendingAction.deleteCandidateBranch) : await onDeleteBranch();
+      const ok = pendingAction.type === "merge" ? await onMerge(pendingAction.deleteCandidateBranch)
+        : pendingAction.type === "abandon" ? await onAbandon(pendingAction.deleteBranch)
+        : await onDeleteBranch();
       if (ok) break;
     }
     setRetrying(false);
@@ -161,13 +171,16 @@ export function ReviewScreen({ review, repository, repositoryTree, selectedConfl
   const deletions = review.files.reduce((total, file) => total + file.deletions, 0);
   const commitLabel = review.commitSha ? review.commitSha.slice(0, 8) : "Not committed";
   const canMerge = review.status === "ready" && review.pullRequest?.state === "open" && review.pullRequest.mergeable === true && review.pullRequest.mergeableState === "clean" && review.githubChecksPassing === true && !review.integrationRunId;
+  const isMerged = review.status === "merged";
+  const isAbandoned = review.status === "abandoned";
   return <section className="review-screen" aria-label="Review candidate">
-    <header className="review-hero"><div className="review-hero-copy"><h2 className="review-title">Review</h2><div className="review-branch-summary"><span className="label">Candidate branch</span><h3><Icon name="branch" size={16} />{review.branch}</h3><p>{review.pullRequest ? <a href={review.pullRequest.url} target="_blank" rel="noreferrer">{review.pullRequest.draft ? "Draft " : ""}PR #{review.pullRequest.number} · {review.pullRequest.merged ? "merged" : review.pullRequest.state}</a> : "Waiting for the candidate pull request."}</p></div></div><div className="review-hero-facts"><div><span className="label">Commit</span><strong className="value" title={review.commitSha ?? undefined}>{commitLabel}</strong></div><div><span className="label">Base</span><strong className="value">{review.baseBranch}</strong></div><div><span className="label">Diff</span><strong><span className="add">+{additions}</span> <span className="del">−{deletions}</span></strong></div><div><span className="label">Status</span><strong>{review.status}</strong></div><div><span className="label">Mergeability</span><strong>{review.pullRequest?.mergeable == null ? "unknown" : review.pullRequest.mergeable ? review.pullRequest.mergeableState ?? "mergeable" : "blocked"}</strong></div><div><span className="label">GitHub checks</span><strong>{review.githubChecksPassing == null ? "not synchronized" : review.githubChecksPassing ? "passing" : "blocked"}</strong></div></div>{owner && review.pullRequest && review.status !== "merged" && <div className="review-actions"><button type="button" className="button" disabled={busy} onClick={() => void onReady()}>{review.status === "draft" ? "Ready for review" : "Refresh GitHub status"}</button><button type="button" className="button primary-button" disabled={busy || !canMerge} title={canMerge ? "Squash merge through GitHub" : review.integrationRunId ? "The candidate is still being updated" : "The PR must be ready, mergeable, and passing checks"} onClick={() => setMergeConfirmOpen(true)}>Squash merge</button></div>}</header>
+    <header className="review-hero"><div className="review-hero-copy"><h2 className="review-title">Review</h2><div className="review-branch-summary"><span className="label">Candidate branch</span><h3><Icon name="branch" size={16} />{review.branch}</h3><p>{review.pullRequest ? <a href={review.pullRequest.url} target="_blank" rel="noreferrer">{review.pullRequest.draft ? "Draft " : ""}PR #{review.pullRequest.number} · {review.pullRequest.merged ? "merged" : review.pullRequest.state}</a> : "Waiting for the candidate pull request."}</p></div></div><div className="review-hero-facts"><div><span className="label">Commit</span><strong className="value" title={review.commitSha ?? undefined}>{commitLabel}</strong></div><div><span className="label">Base</span><strong className="value">{review.baseBranch}</strong></div><div><span className="label">Diff</span><strong><span className="add">+{additions}</span> <span className="del">−{deletions}</span></strong></div><div><span className="label">Status</span><strong>{review.status}</strong></div><div><span className="label">Mergeability</span><strong>{review.pullRequest?.mergeable == null ? "unknown" : review.pullRequest.mergeable ? review.pullRequest.mergeableState ?? "mergeable" : "blocked"}</strong></div><div><span className="label">GitHub checks</span><strong>{review.githubChecksPassing == null ? "not synchronized" : review.githubChecksPassing ? "passing" : "blocked"}</strong></div></div>{owner && !isMerged && !isAbandoned && <div className="review-actions">{review.pullRequest && <button type="button" className="button" disabled={busy} onClick={() => void onReady()}>{review.status === "draft" ? "Ready for review" : "Refresh GitHub status"}</button>}{review.pullRequest && <button type="button" className="button primary-button" disabled={busy || !canMerge} title={canMerge ? "Squash merge through GitHub" : review.integrationRunId ? "The candidate is still being updated" : "The PR must be ready, mergeable, and passing checks"} onClick={() => setMergeConfirmOpen(true)}>Squash merge</button>}<button type="button" className="button danger-button" disabled={busy} title={review.integrationRunId ? "The candidate is still being updated" : "Retire this candidate without merging"} onClick={() => setAbandonConfirmOpen(true)}>Abandon candidate</button></div>}</header>
     <div className="review-grid">{filesPane}{centerPane}
-      <aside className="review-side"><ConflictCases conflicts={review.conflicts} selectedCaseId={selectedConflictCaseId} owner={owner} currentUserId={currentUserId} busy={busy} onResolve={onResolveConflict} onAnswer={onAnswerConflict} /><section className="review-pane" aria-label="Integration warnings"><div className="review-pane-head"><h3>Integration</h3><span>{review.warnings.length}</span></div>{review.warnings.length === 0 ? <p className="review-empty">No integration warnings.</p> : <ul className="review-warning-list">{review.warnings.map((warning) => <li key={warning.id} data-severity={warning.severity}><strong>{warning.title}</strong><p>{warning.detail}</p></li>)}</ul>}</section><section className="review-pane" aria-label="Checks"><div className="review-pane-head"><h3>Checks</h3><span>{review.checks.length}</span></div>{review.checks.length === 0 ? <p className="review-empty">No checks reported by GitHub or openfloor.</p> : <ul className="review-check-list">{review.checks.map((check) => <li key={check.id}><span className="check-mark" aria-label={check.state}>{check.state === "passed" ? "✓" : check.state === "failed" ? "!" : "…"}</span><div><strong>{check.name}</strong>{check.detail && <span>{check.detail}</span>}</div></li>)}</ul>}</section>{review.status === "merged" && <section className="review-pane" aria-label="Branch cleanup"><div className="review-pane-head"><h3>Branch cleanup</h3><span>{review.cleanupStatus ?? "pending"}</span></div><p className="review-empty">{review.cleanupStatus === "complete" ? "Recorded candidate and run branches were deleted after exact-SHA verification." : "Any branch that did not match its recorded SHA was preserved."}</p>{owner && !review.branchDeletedAt && <div className="review-actions"><button type="button" className="button danger-button" disabled={busy || retrying} onClick={() => setDeleteConfirmOpen(true)}>Delete candidate branch</button></div>}</section>}{teamChatPane}</aside>
+      <aside className="review-side"><ConflictCases conflicts={review.conflicts} selectedCaseId={selectedConflictCaseId} owner={owner} currentUserId={currentUserId} busy={busy} onResolve={onResolveConflict} onAnswer={onAnswerConflict} /><section className="review-pane" aria-label="Integration warnings"><div className="review-pane-head"><h3>Integration</h3><span>{review.warnings.length}</span></div>{review.warnings.length === 0 ? <p className="review-empty">No integration warnings.</p> : <ul className="review-warning-list">{review.warnings.map((warning) => <li key={warning.id} data-severity={warning.severity}><strong>{warning.title}</strong><p>{warning.detail}</p></li>)}</ul>}</section><section className="review-pane" aria-label="Checks"><div className="review-pane-head"><h3>Checks</h3><span>{review.checks.length}</span></div>{review.checks.length === 0 ? <p className="review-empty">No checks reported by GitHub or openfloor.</p> : <ul className="review-check-list">{review.checks.map((check) => <li key={check.id}><span className="check-mark" aria-label={check.state}>{check.state === "passed" ? "✓" : check.state === "failed" ? "!" : "…"}</span><div><strong>{check.name}</strong>{check.detail && <span>{check.detail}</span>}</div></li>)}</ul>}</section>{(isMerged || isAbandoned) && <section className="review-pane" aria-label="Branch cleanup"><div className="review-pane-head"><h3>Branch cleanup</h3><span>{review.cleanupStatus ?? "pending"}</span></div><p className="review-empty">{isAbandoned && !review.cleanupStatus ? "This candidate was abandoned without attempting to delete its branch." : review.cleanupStatus === "complete" ? "Recorded candidate and run branches were deleted after exact-SHA verification." : "Any branch that did not match its recorded SHA was preserved."}</p>{owner && !review.branchDeletedAt && <div className="review-actions"><button type="button" className="button danger-button" disabled={busy || retrying} onClick={() => isMerged ? setDeleteConfirmOpen(true) : void runAbandon(true)}>Delete candidate branch</button></div>}</section>}{teamChatPane}</aside>
     </div>
     {mergeConfirmOpen && <MergeConfirmDialog busy={busy} onClose={() => setMergeConfirmOpen(false)} onConfirm={runMerge} />}
     {deleteConfirmOpen && <DeleteBranchConfirmDialog branch={review.branch} busy={busy} onClose={() => setDeleteConfirmOpen(false)} onConfirm={runDeleteBranch} />}
+    {abandonConfirmOpen && <AbandonConfirmDialog branch={review.branch} busy={busy} onClose={() => setAbandonConfirmOpen(false)} onConfirm={runAbandon} />}
     {blockingRunId && pendingAction && <IntegrationBlockedDialog retrying={retrying} onClose={() => setPendingAction(null)} onConfirm={cancelBlockingRunAndRetry} />}
   </section>;
 }
@@ -325,6 +338,22 @@ function DeleteBranchConfirmDialog({ branch, busy, onClose, onConfirm }: { branc
       <div className="dialog-foot">
         <button type="button" className="button" data-variant="quiet" onClick={dismiss} disabled={busy}>Cancel</button>
         <button type="button" className="button danger-button" onClick={() => void onConfirm()} disabled={busy}>Delete branch</button>
+      </div>
+    </dialog>
+  );
+}
+
+function AbandonConfirmDialog({ branch, busy, onClose, onConfirm }: { branch: string; busy: boolean; onClose: () => void; onConfirm: (deleteBranch: boolean) => Promise<void> }) {
+  const { dismiss, dialogProps } = useDialogDismiss(onClose);
+  return (
+    <dialog className="dialog" {...dialogProps} aria-labelledby="abandon-confirm-title">
+      <div className="dialog-head">
+        <div className="dialog-title"><h2 id="abandon-confirm-title">Abandon “{branch}”?</h2><p>This retires the candidate without merging so a new one can be created. Decide what happens to the branch itself — this cannot be undone.</p></div>
+      </div>
+      <div className="dialog-foot">
+        <button type="button" className="button" data-variant="quiet" onClick={dismiss} disabled={busy}>Cancel</button>
+        <button type="button" className="button" onClick={() => void onConfirm(false)} disabled={busy}>Abandon, keep branch</button>
+        <button type="button" className="button danger-button" onClick={() => void onConfirm(true)} disabled={busy}>Abandon, delete branch</button>
       </div>
     </dialog>
   );

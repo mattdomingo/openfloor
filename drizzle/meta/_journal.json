@@ -232,6 +232,13 @@
       "when": 1787758498316,
       "tag": "0032_thick_hiroim",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "6",
+      "when": 1787768092553,
+      "tag": "0033_wonderful_blur",
+      "breakpoints": true
     }
   ]
 }

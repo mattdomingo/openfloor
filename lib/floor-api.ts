@@ -1,5 +1,5 @@
 import { FloorConflictError, FloorTargetError } from "@/db/floor";
-import { getActiveMembershipRole, getOwnerHourQuota, PLAN_LIMITS, SessionEndedError, SessionRoutingError } from "@/db/sessions";
+import { getActiveMembershipRole, getOwnerHourQuota, SessionEndedError, SessionRoutingError } from "@/db/sessions";
 import { getDb } from "@/db";
 import type { FloorDomain, FloorSnapshot } from "./floor-types";
 import { notifyFloorChanged } from "./presence-server";
@@ -44,7 +44,13 @@ export async function quotaExhaustedErrorResponse(sessionId: string): Promise<Re
   const quota = await getOwnerHourQuota(sessionId, getDb());
   if (!quota) throw new Error(`getOwnerHourQuota returned no row for session ${sessionId}`);
   if (quota.endedAt != null) return null;
-  if (quota.seconds < PLAN_LIMITS[quota.plan].hours * 3600) return null;
+  if (quota.seconds < quota.limitHours * 3600) return null;
+  if (quota.limitHours === 0) {
+    return Response.json(
+      { error: "This email already used its free openfloor hours. Choose a plan to continue.", code: "free_allowance_used" },
+      { status: 403 },
+    );
+  }
   return Response.json(
     { error: "Your plan's monthly session hours are used up.", code: "quota_exhausted" },
     { status: 403 },

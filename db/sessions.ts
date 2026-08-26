@@ -1,8 +1,9 @@
+import { hashAccountEmail } from "@/lib/account-email-hash";
 import { displayNameFrom } from "@/lib/display-name";
 import type { AuthenticatedIdentity } from "@/lib/identity";
-import { currentMonth, effectivePlan, effectiveSeatLimit, PLAN_LIMITS, type Plan, type PlanStatus } from "@/lib/plans";
+import { currentMonth, effectivePlan, effectiveSeatLimit, planHourLimit, PLAN_LIMITS, type Plan, type PlanStatus } from "@/lib/plans";
 import type { AppUser, RemovedSessionMember, SessionMember, SessionRole, SessionSummary } from "@/lib/session-types";
-import { getDb, type D1DatabaseLike } from "./index";
+import { getDb, getInviteSigningSecret, type D1DatabaseLike } from "./index";
 import type { CredentialProvider } from "@/lib/provider-credentials";
 
 // Re-exported so existing importers (worker/presence.ts, tests) don't need
@@ -106,21 +107,33 @@ export async function upsertUser(identity: AuthenticatedIdentity, database = get
     .first<AppUserRow>();
   if (byEmail) return normalizeAppUser(byEmail);
 
-  // Neither matched — a genuinely new account. ON CONFLICT(email) rather
-  // than a plain INSERT closes the race between two concurrent first logins
-  // for the same address via different methods (e.g. two tabs, one
-  // finishing a Google login and one finishing an email-code login at the
-  // same moment): the loser's insert becomes an update onto the row the
-  // winner just created instead of throwing on idx_users_email.
+  // Neither matched — a genuinely new account. Before creating it, check
+  // whether this address was scrubbed off a deleted account: deleteAccount
+  // stores an HMAC of the departing email as prior_email_hash so a
+  // delete-and-resignup loop with the same address can't keep reclaiming
+  // the free plan's hour allowance (see lib/plans.ts's planHourLimit and
+  // lib/account-email-hash.ts). Non-unique index, so any match is enough.
+  const priorHash = await hashAccountEmail(identity.email, getInviteSigningSecret());
+  const priorlyDeleted = await database.prepare("SELECT 1 AS present FROM users WHERE prior_email_hash = ? LIMIT 1").bind(priorHash).first<{ present: number }>();
+  const freeAllowanceUsedAt = priorlyDeleted ? now : null;
+
+  // ON CONFLICT(email) rather than a plain INSERT closes the race between
+  // two concurrent first logins for the same address via different methods
+  // (e.g. two tabs, one finishing a Google login and one finishing an
+  // email-code login at the same moment): the loser's insert becomes an
+  // update onto the row the winner just created instead of throwing on
+  // idx_users_email. free_allowance_used_at is deliberately absent from
+  // that DO UPDATE — the winning INSERT already set it correctly for this
+  // same email, and the loser must not clobber it.
   const createdId = crypto.randomUUID();
   const created = await database
     .prepare(
-      `INSERT INTO users (id, chatgpt_user_id, email, display_name, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?)
+      `INSERT INTO users (id, chatgpt_user_id, email, display_name, created_at, updated_at, free_allowance_used_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(email) DO UPDATE SET chatgpt_user_id = excluded.chatgpt_user_id, updated_at = excluded.updated_at
        RETURNING ${APP_USER_COLUMNS}`,
     )
-    .bind(createdId, identity.providerUserId, identity.email, identity.displayName, now, now)
+    .bind(createdId, identity.providerUserId, identity.email, identity.displayName, now, now, freeAllowanceUsedAt)
     .first<AppUserRow>();
 
   if (!created) throw new Error("Unable to create or update the current user.");
@@ -871,23 +884,38 @@ export async function deleteSession(
   sessionId: string,
   userId: string,
   database = getDb(),
-): Promise<"forbidden" | "missing" | "repository_state" | { blocked: "integration_in_progress"; runId: string } | { deleted: true; candidateBranchAlive: boolean }> {
+): Promise<
+  | "forbidden" | "missing"
+  | { blocked: "integration_in_progress"; runId: string }
+  // A still-live candidate no longer refuses deletion outright — the caller
+  // (app/api/sessions/[id]/route.ts) abandons it first via
+  // lib/candidate-abandon.ts's abandonSessionCandidate, choosing whether to
+  // delete the branch on GitHub or leave it orphaned, then calls this again.
+  // This shape is what lets the delete dialog present that choice instead
+  // of a dead end (ENG-83) — see AGENTS.md's repository_candidates entry.
+  | { blocked: "candidate_live"; branch: string; sha: string | null }
+  | { deleted: true; candidateBranchAlive: boolean }
+> {
   // Plain guard on purpose: deleting must work on ended sessions too.
   const role = await getMembershipRole(sessionId, userId, database);
   if (!role) return "missing";
   if (role !== "owner") return "forbidden";
   const blocking = await getBlockingIntegrationRunId(sessionId, database);
   if (blocking) return { blocked: "integration_in_progress", runId: blocking };
-  // A session results in at most one candidate branch; only an unmerged one
-  // (still creating/active) represents live work that would be lost. A
-  // merged candidate — its branch deleted or not — never blocks deletion.
+  // A session results in at most one live candidate branch at a time; only
+  // an unmerged, unabandoned one (still creating/active) represents live
+  // work the owner hasn't decided the fate of yet. A merged or abandoned
+  // candidate — its branch deleted or not — never blocks deletion.
   const liveCandidate = await database
-    .prepare("SELECT 1 AS present FROM repository_candidates WHERE session_id = ? AND status IN ('creating', 'active') AND merged_at IS NULL")
+    .prepare("SELECT branch_name AS branch, candidate_sha AS sha FROM repository_candidates WHERE session_id = ? AND status IN ('creating', 'active') AND merged_at IS NULL AND abandoned_at IS NULL")
     .bind(sessionId)
-    .first<{ present: number }>();
-  if (liveCandidate) return "repository_state";
+    .first<{ branch: string; sha: string | null }>();
+  if (liveCandidate) return { blocked: "candidate_live", branch: liveCandidate.branch, sha: liveCandidate.sha };
+  // Reported to the owner as a post-delete warning: a merged or
+  // owner-abandoned candidate whose branch was never (or not yet)
+  // verified-deleted on GitHub survives the session's D1 cascade.
   const survivingBranch = await database
-    .prepare("SELECT 1 AS present FROM repository_candidates WHERE session_id = ? AND merged_at IS NOT NULL AND branch_deleted_at IS NULL")
+    .prepare("SELECT 1 AS present FROM repository_candidates WHERE session_id = ? AND (merged_at IS NOT NULL OR abandoned_at IS NOT NULL) AND branch_deleted_at IS NULL")
     .bind(sessionId)
     .first<{ present: number }>();
   const result = await database.prepare("DELETE FROM sessions WHERE id = ?").bind(sessionId).run();
@@ -895,7 +923,13 @@ export async function deleteSession(
   return { deleted: true, candidateBranchAlive: Boolean(survivingBranch) };
 }
 
-export type DeleteAccountBlockedSession = { id: string; title: string; reason: "repository_state" | "integration_in_progress" };
+// Repository state (a live candidate) no longer blocks account deletion —
+// app/api/account/route.ts abandons any live candidates first, the same way
+// session deletion does (see deleteSession's "candidate_live" shape above).
+// An in-progress GitHub integration still blocks: a Workflow is actively
+// pushing under a D1 lease, and deleting its rows mid-flight would strand a
+// real push. See the 2026-08-26 decision-log entry.
+export type DeleteAccountBlockedSession = { id: string; title: string; reason: "integration_in_progress" };
 
 export async function getAccountDeletionBlockers(
   userId: string,
@@ -912,17 +946,30 @@ export async function getAccountDeletionBlockers(
   const blocked: DeleteAccountBlockedSession[] = [];
   for (const session of owned.results) {
     const blocking = await getBlockingIntegrationRunId(session.id, database);
-    if (blocking) {
-      blocked.push({ id: session.id, title: session.title, reason: "integration_in_progress" });
-      continue;
-    }
-    const liveCandidate = await database
-      .prepare("SELECT 1 AS present FROM repository_candidates WHERE session_id = ? AND status IN ('creating', 'active') AND merged_at IS NULL")
-      .bind(session.id)
-      .first<{ present: number }>();
-    if (liveCandidate) blocked.push({ id: session.id, title: session.title, reason: "repository_state" });
+    if (blocking) blocked.push({ id: session.id, title: session.title, reason: "integration_in_progress" });
   }
   return { ownedSessionIds: owned.results.map((session) => session.id), blocked };
+}
+
+export type OwnedSessionLiveCandidate = { sessionId: string; branch: string; sha: string | null };
+
+// The branches app/api/account/route.ts must abandon (and optionally try to
+// delete on GitHub) before deleteAccount's D1 batch cascades their
+// repository_candidates rows away along with the sessions that own them.
+export async function listOwnedSessionsWithLiveCandidate(
+  userId: string,
+  database = getDb(),
+): Promise<OwnedSessionLiveCandidate[]> {
+  const result = await database
+    .prepare(
+      `SELECT c.session_id AS sessionId, c.branch_name AS branch, c.candidate_sha AS sha
+       FROM repository_candidates c
+       JOIN session_members sm ON sm.session_id = c.session_id AND sm.user_id = ? AND sm.role = 'owner'
+       WHERE c.status IN ('creating', 'active') AND c.merged_at IS NULL AND c.abandoned_at IS NULL`,
+    )
+    .bind(userId)
+    .all<OwnedSessionLiveCandidate>();
+  return result.results;
 }
 
 /* Account deletion cannot be a hard `DELETE FROM users`: ~12 columns
@@ -945,6 +992,12 @@ export async function deleteAccount(
   // silently losing that work.
   const { ownedSessionIds, blocked } = await getAccountDeletionBlockers(userId, database);
   if (blocked.length > 0) return { blocked: "sessions", sessions: blocked };
+
+  // Read before the scrub below destroys the only copy: prior_email_hash is
+  // how upsertUser recognizes this address on a future sign-in and denies
+  // it the free allowance a second time. See lib/account-email-hash.ts.
+  const current = await database.prepare("SELECT email FROM users WHERE id = ?").bind(userId).first<{ email: string }>();
+  const priorEmailHash = current ? await hashAccountEmail(current.email, getInviteSigningSecret()) : null;
 
   const now = Date.now();
   await database.batch([
@@ -973,10 +1026,11 @@ export async function deleteAccount(
            plan_status = 'canceled',
            seat_limit = NULL,
            deleted_at = ?,
+           prior_email_hash = ?,
            updated_at = ?
          WHERE id = ?`,
       )
-      .bind(now, now, userId),
+      .bind(now, priorEmailHash, now, userId),
   ]);
   return { deleted: true };
 }
@@ -1008,10 +1062,11 @@ export async function authorizePresence(
 export async function getOwnerHourQuota(
   sessionId: string,
   database = getDb(),
-): Promise<{ ownerId: string; plan: Plan; seconds: number; endedAt: number | null } | null> {
+): Promise<{ ownerId: string; plan: Plan; seconds: number; limitHours: number; endedAt: number | null } | null> {
   const row = await database
     .prepare(
       `SELECT o.user_id AS ownerId, u.plan AS plan, u.plan_status AS planStatus, u.email AS email,
+              u.free_allowance_used_at AS freeAllowanceUsedAt,
               COALESCE(um.seconds, 0) AS seconds, s.ended_at AS endedAt
        FROM session_members o
        JOIN sessions s ON s.id = o.session_id
@@ -1020,9 +1075,10 @@ export async function getOwnerHourQuota(
        WHERE o.session_id = ? AND o.role = 'owner' AND o.removed_at IS NULL`,
     )
     .bind(currentMonth(), sessionId)
-    .first<{ ownerId: string; plan: Plan; planStatus: PlanStatus; email: string | null; seconds: number; endedAt: number | null }>();
+    .first<{ ownerId: string; plan: Plan; planStatus: PlanStatus; email: string | null; freeAllowanceUsedAt: number | null; seconds: number; endedAt: number | null }>();
   if (!row) return null;
-  return { ownerId: row.ownerId, plan: effectivePlan(row.plan, row.planStatus, row.email), seconds: row.seconds, endedAt: row.endedAt };
+  const plan = effectivePlan(row.plan, row.planStatus, row.email);
+  return { ownerId: row.ownerId, plan, seconds: row.seconds, limitHours: planHourLimit(plan, row.freeAllowanceUsedAt != null), endedAt: row.endedAt };
 }
 
 export async function getUsageForUser(
@@ -1038,13 +1094,14 @@ export async function getUsageForUser(
 }> {
   const row = await database
     .prepare(
-      `SELECT u.plan AS plan, u.plan_status AS planStatus, u.seat_limit AS seatLimit, u.email AS email, COALESCE(um.seconds, 0) AS seconds
+      `SELECT u.plan AS plan, u.plan_status AS planStatus, u.seat_limit AS seatLimit, u.email AS email,
+              u.free_allowance_used_at AS freeAllowanceUsedAt, COALESCE(um.seconds, 0) AS seconds
        FROM users u
        LEFT JOIN usage_months um ON um.owner_user_id = u.id AND um.month = ?
        WHERE u.id = ?`,
     )
     .bind(currentMonth(), userId)
-    .first<{ plan: Plan; planStatus: PlanStatus; seatLimit: number | null; email: string | null; seconds: number }>();
+    .first<{ plan: Plan; planStatus: PlanStatus; seatLimit: number | null; email: string | null; freeAllowanceUsedAt: number | null; seconds: number }>();
   const plan = row?.plan ?? "free";
   const planStatus = row?.planStatus ?? "inactive";
   const effective = effectivePlan(plan, planStatus, row?.email);
@@ -1053,7 +1110,7 @@ export async function getUsageForUser(
     planStatus,
     effectivePlan: effective,
     seconds: row?.seconds ?? 0,
-    limitHours: PLAN_LIMITS[effective].hours,
+    limitHours: planHourLimit(effective, row?.freeAllowanceUsedAt != null),
     limitSeats: effectiveSeatLimit(plan, planStatus, row?.seatLimit ?? null, row?.email),
   };
 }
