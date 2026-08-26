@@ -519,6 +519,33 @@ export async function endSession(
   if (role !== "owner") return "forbidden";
   const blocking = await getBlockingIntegrationRunId(sessionId, database);
   if (blocking) return { blocked: "integration_in_progress", runId: blocking };
+  return writeSessionEnded(sessionId, reason, database);
+}
+
+/* Ends a session merged externally on GitHub, not through the app's own
+   merge route — there is no app actor to authorize against, and the
+   GitHub merge is a fact already committed rather than a request that can
+   be refused, so this deliberately skips both the membership check and the
+   integration guard that endSession applies. Returns null when the session
+   is missing or already ended, making a webhook replay a no-op. */
+export async function endMergedSession(
+  sessionId: string,
+  database = getDb(),
+): Promise<{ endedAt: number } | null> {
+  const session = await database
+    .prepare("SELECT ended_at AS endedAt FROM sessions WHERE id = ?")
+    .bind(sessionId)
+    .first<{ endedAt: number | null }>();
+  if (!session || session.endedAt != null) return null;
+  const result = await writeSessionEnded(sessionId, "merged", database);
+  return { endedAt: result.endedAt };
+}
+
+async function writeSessionEnded(
+  sessionId: string,
+  reason: "owner" | "merged",
+  database: D1DatabaseLike,
+): Promise<{ endedAt: number; reason: "owner" | "merged" }> {
   const now = Date.now();
   await database.batch([
     database

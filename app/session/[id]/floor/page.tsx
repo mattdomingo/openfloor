@@ -26,7 +26,11 @@ export default async function AgentFloorPage({ params }: { params: Promise<{ id:
     getOwnerHourQuota(id),
   ]);
   if (!session || !members || !floor) notFound();
-  if (session.endedAt == null && !isRepositoryReadyForFloor(repository, candidate)) {
+  // An ended session is lobby-only — the floor closes rather than going
+  // read-only in place, so the lobby's own ended panel is the one place
+  // that explains why.
+  if (session.endedAt != null) redirect(`/session/${encodeURIComponent(id)}`);
+  if (!isRepositoryReadyForFloor(repository, candidate)) {
     redirect(`/session/${encodeURIComponent(id)}?repo=required`);
   }
   const agentRunEnabled = (env as unknown as { AGENT_RUN_ENABLED?: string }).AGENT_RUN_ENABLED === "true";
