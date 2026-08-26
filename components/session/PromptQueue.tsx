@@ -55,7 +55,7 @@ export function PromptQueue({ chrome, items, runs, agents, owner, runEnabled, bu
   const scoped = scope === "mine" ? items.filter((item) => item.prompts.some((prompt) => prompt.authorUserId === currentUserId)) : items;
   const isDone = (item: FloorQueueItem) => {
     const run = runs.find((candidate) => candidate.queueItemId === item.id);
-    return runStatusToken(run) === "integrated" || runStatusToken(run) === "rolled_back" || item.status === "cancelled";
+    return runStatusToken(run) === "integrated" || runStatusToken(run) === "rolled_back" || runStatusToken(run) === "answered" || item.status === "cancelled";
   };
   const visible = [...scoped].sort((a, b) => Number(isDone(a)) - Number(isDone(b)));
 
@@ -93,7 +93,7 @@ export function PromptQueue({ chrome, items, runs, agents, owner, runEnabled, bu
         currentUserId,
         sessionOwner: owner,
       });
-      return <li key={item.id} className="queue-item" data-done={(statusValue === "integrated" || statusValue === "rolled_back" || statusValue === "cancelled") ? "true" : undefined} data-attention={(statusValue === "failed" || statusValue === "rollback_failed") ? "true" : undefined} data-manual={manual ? "true" : undefined} data-dragging={draggedItemId === item.id ? "true" : undefined} data-drop-target={dragOverId === item.id ? "true" : undefined} draggable={manual}
+      return <li key={item.id} className="queue-item" data-done={(statusValue === "integrated" || statusValue === "rolled_back" || statusValue === "cancelled" || statusValue === "answered") ? "true" : undefined} data-attention={(statusValue === "failed" || statusValue === "rollback_failed") ? "true" : undefined} data-manual={manual ? "true" : undefined} data-dragging={draggedItemId === item.id ? "true" : undefined} data-drop-target={dragOverId === item.id ? "true" : undefined} draggable={manual}
         onDragStart={manual ? () => onItemDragStart(item.id) : undefined}
         onDragEnd={manual ? () => { setDragOverId(null); onItemDragEnd(); } : undefined}
         onDragOver={manual ? (event) => { event.preventDefault(); if (draggedItemId && draggedItemId !== item.id) setDragOverId(item.id); } : undefined}

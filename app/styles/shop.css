@@ -525,6 +525,9 @@
 .shop-shell .session-card:focus-within {
   box-shadow: 0 14px 32px rgba(0, 0, 0, .16);
 }
+.shop-shell .session-card[data-actions-open="true"] {
+  transform: translate(0, 0);
+}
 .shop-shell .session-card-head strong {
   font: 700 20px var(--sans);
   letter-spacing: -.018em;
@@ -688,8 +691,13 @@
   box-shadow: none;
   max-width: 560px;
 }
-.shop-shell .create-card label { font: 500 10px var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
-.shop-shell .create-card label em { color: var(--steel); text-transform: none; letter-spacing: normal; font-family: var(--sans); }
+/* Captions are usually the <label> itself; the profile-picture group is a
+   <div class="field"> instead, because a <label> there would claim the
+   "Change picture" button as its control and rename it. */
+.shop-shell .create-card label,
+.shop-shell .create-card .field > .label { font: 500 10px var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
+.shop-shell .create-card label em,
+.shop-shell .create-card .field > .label em { color: var(--steel); text-transform: none; letter-spacing: normal; font-family: var(--sans); }
 .shop-shell input,
 .shop-shell textarea {
   border-radius: var(--radius-sm);

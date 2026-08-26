@@ -209,7 +209,7 @@ export type MergeConflictCase = {
   automaticAttempts: number;
   failureReason: string | null;
   questions: MergeConflictQuestion[];
-  prompts: Array<{ id: string; authorName: string; text: string }>;
+  prompts: Array<{ id: string; authorUserId: string; authorName: string; text: string }>;
   attempts: Array<{
     runId: string;
     launchKind: "automatic" | "manual" | "answer";
