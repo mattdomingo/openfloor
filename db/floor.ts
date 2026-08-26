@@ -295,8 +295,9 @@ export async function ensureAnswerAgent(
   ownerUserId: string,
   provider: import("@/lib/provider-credentials").CredentialProvider,
   database: D1DatabaseLike = getDb(),
+  unavailableAgentIds: readonly string[] = [],
 ): Promise<{ id: string; name: string; changed: boolean }> {
-  return provisionGeneratedAgent(sessionId, ownerUserId, provider, "answer", ANSWER_AGENT_TASK, database);
+  return provisionGeneratedAgent(sessionId, ownerUserId, provider, "answer", ANSWER_AGENT_TASK, database, unavailableAgentIds);
 }
 
 export async function ensureWorkerAgent(
@@ -316,10 +317,14 @@ async function provisionGeneratedAgent(
   kind: "answer" | "worker",
   task: string,
   database: D1DatabaseLike,
+  unavailableAgentIds: readonly string[] = [],
 ): Promise<{ id: string; name: string; changed: boolean }> {
+  const availabilityClause = unavailableAgentIds.length > 0
+    ? ` AND id NOT IN (${unavailableAgentIds.map(() => "?").join(", ")})`
+    : "";
   const active = await database.prepare(
-    "SELECT id, name FROM floor_agents WHERE session_id = ? AND kind = ? AND deprovisioned_at IS NULL ORDER BY created_at, id LIMIT 1",
-  ).bind(sessionId, kind).first<{ id: string; name: string }>();
+    `SELECT id, name FROM floor_agents WHERE session_id = ? AND kind = ? AND deprovisioned_at IS NULL${availabilityClause} ORDER BY created_at, id LIMIT 1`,
+  ).bind(sessionId, kind, ...unavailableAgentIds).first<{ id: string; name: string }>();
   if (active && kind === "answer") return { id: active.id, name: active.name, changed: false };
 
   const reusable = await database.prepare(
@@ -373,6 +378,11 @@ export async function deprovisionIdleGeneratedAgents(
          AND agent_id IN (SELECT id FROM floor_agents WHERE session_id = ? AND kind IN ('answer', 'worker') AND deprovisioned_at IS NULL)`,
     ).bind(now, sessionId, sessionId).run();
     changed = Number(unassigned.meta?.changes ?? 0) > 0;
+    const resetWorkers = await database.prepare(
+      `UPDATE floor_agents SET paused_at = NULL, updated_at = ?
+       WHERE session_id = ? AND kind = 'worker' AND paused_at IS NOT NULL`,
+    ).bind(now, sessionId).run();
+    changed = changed || Number(resetWorkers.meta?.changes ?? 0) > 0;
   }
   const protectedQueueStatuses = autoProvisionEnabled
     ? "('queued', 'running', 'blocked', 'paused')"
@@ -380,9 +390,10 @@ export async function deprovisionIdleGeneratedAgents(
   const retired = await database.prepare(
     `UPDATE floor_agents AS a SET deprovisioned_at = ?, updated_at = ?
      WHERE a.session_id = ? AND a.kind IN ('answer', 'worker') AND a.deprovisioned_at IS NULL
+       AND (? = 0 OR a.kind != 'worker' OR a.paused_at IS NULL)
        AND NOT EXISTS (SELECT 1 FROM floor_queue_items q WHERE q.agent_id = a.id AND q.status IN ${protectedQueueStatuses})
        AND NOT EXISTS (SELECT 1 FROM agent_runs r WHERE r.agent_id = a.id AND r.status IN ('provisioning', 'running', 'checking', 'cancel_requested', 'publishing', 'published', 'integrating'))`,
-  ).bind(now, now, sessionId).run();
+  ).bind(now, now, sessionId, autoProvisionEnabled ? 1 : 0).run();
   return changed || Number(retired.meta?.changes ?? 0) > 0;
 }
 
@@ -461,12 +472,11 @@ const CANCELLABLE_RUN_STATUSES = "('provisioning', 'running', 'checking', 'integ
 const AGENT_ACTIVE_RUN_STATUSES = "('provisioning', 'running', 'checking', 'cancel_requested', 'integrating')";
 
 /**
- * Manual start/pause for a persistent agent. Any session member may call
+ * Manual start/pause for a persistent agent or generated worker. Any session member may call
  * this — unlike run cancellation, pausing never touches an in-flight run,
  * it only blocks the router from assigning/dispatching new work to this
  * agent (db/routing.ts filters `paused_at IS NULL`). System-managed
- * (kind IS NOT NULL) agents are router-controlled and excluded here, same
- * as updateFloorAgentSettings above.
+ * Concierge agents remain router-controlled and excluded here.
  */
 export async function pauseFloorAgent(
   sessionId: string,
@@ -479,13 +489,13 @@ export async function pauseFloorAgent(
   const now = Date.now();
   const result = await database.prepare(
     `UPDATE floor_agents SET paused_at = ?, updated_at = ?
-     WHERE id = ? AND session_id = ? AND kind IS NULL AND deprovisioned_at IS NULL
+     WHERE id = ? AND session_id = ? AND (kind IS NULL OR kind = 'worker') AND deprovisioned_at IS NULL
        AND paused_at IS ${paused ? "NULL" : "NOT NULL"}
        AND EXISTS (SELECT 1 FROM sessions WHERE id = ? AND ended_at IS NULL)`,
   ).bind(paused ? now : null, now, agentId, sessionId, sessionId).run();
   if (Number(result.meta?.changes ?? 0) === 0) {
     if (!(await getActiveMembershipRole(sessionId, userId, database))) return null;
-    throw new FloorConflictError(paused ? "This agent is already paused, system-managed, or removed." : "This agent is not paused.");
+    throw new FloorConflictError(paused ? "This agent is already paused, is a Concierge, or was removed." : "This agent is not paused.");
   }
   await bumpFloorRevision(database, sessionId, now).run();
   return readFloorSnapshot(sessionId, userId, database);
@@ -511,7 +521,7 @@ export async function stopFloorAgent(
   const now = Date.now();
   const result = await database.prepare(
     `UPDATE floor_agents SET paused_at = COALESCE(paused_at, ?), updated_at = ?
-     WHERE id = ? AND session_id = ? AND kind IS NULL AND deprovisioned_at IS NULL
+     WHERE id = ? AND session_id = ? AND (kind IS NULL OR kind = 'worker') AND deprovisioned_at IS NULL
        AND EXISTS (SELECT 1 FROM sessions WHERE id = ? AND ended_at IS NULL)`,
   ).bind(now, now, agentId, sessionId, sessionId).run();
   if (Number(result.meta?.changes ?? 0) === 0) {
@@ -572,7 +582,7 @@ export async function pauseAllFloorAgents(sessionId: string, userId: string, dat
   await database.batch([
     database.prepare(
       `UPDATE floor_agents SET paused_at = ?, updated_at = ?
-       WHERE session_id = ? AND kind IS NULL AND deprovisioned_at IS NULL AND paused_at IS NULL
+       WHERE session_id = ? AND (kind IS NULL OR kind = 'worker') AND deprovisioned_at IS NULL AND paused_at IS NULL
          AND EXISTS (SELECT 1 FROM sessions WHERE id = ? AND ended_at IS NULL)`,
     ).bind(now, now, sessionId, sessionId),
     bumpFloorRevision(database, sessionId, now),
@@ -586,7 +596,7 @@ export async function resumeAllFloorAgents(sessionId: string, userId: string, da
   await database.batch([
     database.prepare(
       `UPDATE floor_agents SET paused_at = NULL, updated_at = ?
-       WHERE session_id = ? AND kind IS NULL AND deprovisioned_at IS NULL AND paused_at IS NOT NULL
+       WHERE session_id = ? AND (kind IS NULL OR kind = 'worker') AND deprovisioned_at IS NULL AND paused_at IS NOT NULL
          AND EXISTS (SELECT 1 FROM sessions WHERE id = ? AND ended_at IS NULL)`,
     ).bind(now, sessionId, sessionId),
     bumpFloorRevision(database, sessionId, now),
@@ -594,7 +604,7 @@ export async function resumeAllFloorAgents(sessionId: string, userId: string, da
   return readFloorSnapshot(sessionId, userId, database);
 }
 
-/** Bulk Stop: pauses every persistent agent and cancels every run it has
+/** Bulk Stop: pauses every persistent agent and generated worker and cancels every run it has
  * active, reusing requestAgentRunCancellation per run — a strict superset
  * of individual Stop, no new authorization surface. */
 export async function stopAllFloorAgents(sessionId: string, userId: string, database = getDb()): Promise<FloorSnapshot | null> {
@@ -602,12 +612,12 @@ export async function stopAllFloorAgents(sessionId: string, userId: string, data
   const now = Date.now();
   await database.prepare(
     `UPDATE floor_agents SET paused_at = ?, updated_at = ?
-     WHERE session_id = ? AND kind IS NULL AND deprovisioned_at IS NULL AND paused_at IS NULL
+     WHERE session_id = ? AND (kind IS NULL OR kind = 'worker') AND deprovisioned_at IS NULL AND paused_at IS NULL
        AND EXISTS (SELECT 1 FROM sessions WHERE id = ? AND ended_at IS NULL)`,
   ).bind(now, now, sessionId, sessionId).run();
   const activeRuns = await database.prepare(
     `SELECT r.id FROM agent_runs r JOIN floor_agents a ON a.id = r.agent_id
-     WHERE r.session_id = ? AND a.kind IS NULL AND r.status IN ${CANCELLABLE_RUN_STATUSES}`,
+     WHERE r.session_id = ? AND (a.kind IS NULL OR a.kind = 'worker') AND r.status IN ${CANCELLABLE_RUN_STATUSES}`,
   ).bind(sessionId).all<{ id: string }>();
   for (const run of activeRuns.results) await requestAgentRunCancellation(sessionId, run.id, userId, database);
   await bumpFloorRevision(database, sessionId, now).run();

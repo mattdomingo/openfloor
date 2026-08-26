@@ -4,8 +4,9 @@ import { FormEvent, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { WaveField } from "@/app/entry-wave";
 import { BASE_PATH } from "@/components/basePath";
+import { AvatarCropper, AvatarFileButton } from "@/components/product/AvatarCropper";
 import { Avatar, Spinner } from "@/components/session/primitives";
-import { ACCEPTED_AVATAR_TYPE_LIST, ACCEPTED_AVATAR_TYPES, MAX_AVATAR_BYTES } from "@/lib/avatar-constraints";
+import { ACCEPTED_AVATAR_TYPES, MAX_AVATAR_BYTES } from "@/lib/avatar-constraints";
 import { initialsFromParts } from "@/lib/display-name";
 import { PAID_PLAN_CATALOG, PLAN_LIMITS, planLimitsSummary, type PaidPlan } from "@/lib/plans";
 import { Brand } from "./Brand";
@@ -40,6 +41,7 @@ export function OnboardingScreen({
   const [quantity, setQuantity] = useState(3);
   const [avatarFile, setAvatarFile] = useState<File | null>(null);
   const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
+  const [cropSource, setCropSource] = useState<File | null>(null);
   const [profileError, setProfileError] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -75,8 +77,15 @@ export function OnboardingScreen({
       return;
     }
     setProfileError(null);
-    setAvatarFile(file);
-    setAvatarPreview(URL.createObjectURL(file));
+    setCropSource(file);
+  }
+
+  // The cropper hands back the framed square, so what is previewed here is
+  // exactly what gets uploaded.
+  function applyCrop(cropped: File) {
+    setCropSource(null);
+    setAvatarFile(cropped);
+    setAvatarPreview(URL.createObjectURL(cropped));
   }
 
   function continueToPlan() {
@@ -153,13 +162,14 @@ export function OnboardingScreen({
                 <p>Use the name your teammates will recognize. You can update these details later in Settings.</p>
               </div>
 
-              <label className="field onboarding-avatar-field">
+              <div className="field onboarding-avatar-field">
                 <span className="label">Profile picture <em>optional</em></span>
                 <div className="onboarding-avatar-picker">
                   <Avatar initials={initialsFromParts(firstName, lastName)} tone="you" previewSrc={avatarPreview ?? undefined} />
-                  <div><input type="file" accept={ACCEPTED_AVATAR_TYPE_LIST.join(",")} onChange={(event) => pickAvatar(event.target.files?.[0])} /><small>PNG, JPEG, or WebP. 5MB maximum.</small></div>
+                  <div><AvatarFileButton hasPicture={Boolean(avatarPreview)} onPick={pickAvatar} /><small>PNG, JPEG, or WebP. 5MB maximum.</small></div>
                 </div>
-              </label>
+              </div>
+              {cropSource && <AvatarCropper file={cropSource} onCancel={() => setCropSource(null)} onCropped={applyCrop} />}
 
               <div className="field-grid">
                 <label className="field"><span className="label">First name</span><input value={firstName} onChange={(event) => { setFirstName(event.target.value); setProfileError(null); }} maxLength={50} required autoComplete="given-name" /></label>

@@ -236,20 +236,6 @@ export async function runRoutingTick(
   for (const item of queue) {
     intentByItem.set(item.id, item.intent ?? classifyPrompt((promptsByItem.get(item.id) ?? []).join(" ")));
   }
-  let answerAgentId: string | null = agents.find((agent) => agent.kind === "answer")?.id ?? null;
-  async function resolveAnswerAgent(): Promise<string | null> {
-    if (!canProvision || !generatedProvider) return null;
-    if (!answerAgentId) {
-      const provisioned = await ensureAnswerAgent(sessionId, ownerUserId, generatedProvider, database);
-      answerAgentId = provisioned.id;
-      if (provisioned.changed) {
-        changedQueueOrRuns = true;
-        agents.push({ id: provisioned.id, name: provisioned.name, role: "Session answers", task: "Answer questions about this session and its repository.", provider: generatedProvider, kind: "answer", createdAt: now });
-      }
-    }
-    return answerAgentId;
-  }
-
   // --- Assign phase: give every unassigned queued item an agent. ---
   const unassigned = queue.filter((item) => item.agentId === null);
   const taskAgents = agents.filter((agent) => agent.kind !== "answer");
@@ -267,6 +253,22 @@ export async function runRoutingTick(
         })
         .map((item) => item.agentId!),
     );
+    async function resolveAnswerAgent(): Promise<string | null> {
+      if (!canProvision || !generatedProvider) return null;
+      const available = agents.find((agent) => agent.kind === "answer"
+        && !busyAgents.has(agent.id)
+        && !claimedThisTick.has(agent.id)
+        && !(deps.disabledProviders?.has(agent.provider) ?? false));
+      if (available) return available.id;
+      if (claimedThisTick.size >= routingCapacity) return null;
+      const unavailable = [...new Set([...busyAgents, ...claimedThisTick])];
+      const provisioned = await ensureAnswerAgent(sessionId, ownerUserId, generatedProvider, database, unavailable);
+      if (!agents.some((agent) => agent.id === provisioned.id)) {
+        agents.push({ id: provisioned.id, name: provisioned.name, role: "Session answers", task: "Answer questions about this session and its repository.", provider: generatedProvider, kind: "answer", createdAt: now });
+      }
+      if (provisioned.changed) changedQueueOrRuns = true;
+      return provisioned.id;
+    }
     for (const item of unassigned) {
       const intent = intentByItem.get(item.id) ?? "task";
 
