@@ -7,6 +7,14 @@ const HELD_RETRY_BASE_MS = 10_000;
 const HELD_RETRY_MAX_MS = 600_000;
 const ERROR_RETRY_MS = 60_000;
 
+// The earlier of a computed retry time and a pending TickOutcome.wakeAt
+// (db/routing.ts) — a generated agent idling out its retirement grace window
+// must never wait longer than whatever else the alarm was already going to
+// fire for.
+function nearestWake(candidate: number, wakeAt: number | null): number {
+  return wakeAt !== null ? Math.min(candidate, wakeAt) : candidate;
+}
+
 /**
  * Per-session routing loop. Pokes only record the trigger and schedule an
  * immediate alarm; all work happens in alarm(), which never overlaps with
@@ -40,7 +48,8 @@ export class SessionRouter extends DurableObject {
         const misses = ((await this.ctx.storage.get<number>("misses")) ?? 0) + 1;
         await this.ctx.storage.put("misses", misses);
         await this.ctx.storage.put("trigger", "alarm");
-        await this.ctx.storage.setAlarm(Date.now() + Math.min(HELD_RETRY_BASE_MS * 2 ** (misses - 1), HELD_RETRY_MAX_MS));
+        const heldRetryAt = Date.now() + Math.min(HELD_RETRY_BASE_MS * 2 ** (misses - 1), HELD_RETRY_MAX_MS);
+        await this.ctx.storage.setAlarm(nearestWake(heldRetryAt, outcome.wakeAt));
       } else if (outcome.acted) {
         // A dispatched run may already be terminal (test adapter runs
         // synchronously); one inline follow-up tick picks up freed capacity
@@ -53,8 +62,18 @@ export class SessionRouter extends DurableObject {
           await notifyFloorChanged(sessionId, followUp.revision, ["agents", "queue", "runs"]);
         }
         if (followUp.held || followUp.acted) {
-          await this.ctx.storage.setAlarm(Date.now() + 1_000);
+          await this.ctx.storage.setAlarm(nearestWake(Date.now() + 1_000, followUp.wakeAt));
+        } else if (followUp.wakeAt !== null) {
+          // Quiescent follow-up, but a generated agent is still idling out
+          // its retirement grace window (db/floor.ts) — wake for that alone.
+          await this.ctx.storage.setAlarm(followUp.wakeAt);
         }
+      } else if (outcome.wakeAt !== null) {
+        // Quiescent, but a generated agent is idling out its retirement
+        // grace window — wake for that alone, or the linger would depend on
+        // an unrelated poke and could last indefinitely on a quiet floor.
+        await this.ctx.storage.delete("misses");
+        await this.ctx.storage.setAlarm(outcome.wakeAt);
       } else {
         // Quiescent: no alarm scheduled; the next poke re-wakes us.
         await this.ctx.storage.delete("misses");

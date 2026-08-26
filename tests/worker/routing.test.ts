@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
 import { afterEach, describe, expect, it } from "vitest";
-import { createFloorAgent, createFloorQueueItem, getFloorSnapshot } from "@/db/floor";
+import { createFloorAgent, createFloorQueueItem, GENERATED_AGENT_LINGER_MS, getFloorSnapshot } from "@/db/floor";
 import { classifyPrompt, runRoutingTick, SESSION_RUN_CAP, type RoutingDeps } from "@/db/routing";
 import { finishAgentReply } from "@/db/runs";
 import { acceptInvite, createSession, setSessionAutoDispatch, setSessionRoutingSettings, upsertUser } from "@/db/sessions";
@@ -129,7 +129,7 @@ describe("agent router tick", () => {
     await createFloorQueueItem(room.sessionId, room.owner.id, { prompt: "Fix the auth bug", agentId: null }, env.DB);
     const stub = startRunStub();
     const outcome = await runRoutingTick(room.sessionId, "enqueue", stub.deps, env.DB);
-    expect(outcome).toEqual({ acted: false, held: false, revision: null });
+    expect(outcome).toEqual({ acted: false, held: false, revision: null, wakeAt: null });
     expect(stub.calls).toHaveLength(0);
     expect(await decisions(room.sessionId)).toHaveLength(0);
   });
@@ -428,7 +428,13 @@ describe("agent router tick", () => {
     const workerItem = assigned.results[2];
     await env.DB.prepare("UPDATE agent_runs SET status = 'integrated' WHERE queue_item_id = ?").bind(workerItem.id).run();
     await env.DB.prepare("UPDATE floor_queue_items SET status = 'completed' WHERE id = ?").bind(workerItem.id).run();
-    await runRoutingTick(room.sessionId, "run_completed", startRunStub().deps, env.DB);
+    // Retirement lingers ~GENERATED_AGENT_LINGER_MS after a worker first goes
+    // idle (db/floor.ts) — the first tick only starts that grace clock, so a
+    // second tick with the clock driven past the window is what retires it.
+    const idleAt = Date.now();
+    await runRoutingTick(room.sessionId, "run_completed", startRunStub().deps, env.DB, idleAt);
+    expect((await env.DB.prepare("SELECT deprovisioned_at AS value FROM floor_agents WHERE id = ?").bind(workers.results[0].id).first<{ value: number | null }>())?.value).toBeNull();
+    await runRoutingTick(room.sessionId, "alarm", startRunStub().deps, env.DB, idleAt + GENERATED_AGENT_LINGER_MS + 1);
     expect((await env.DB.prepare("SELECT deprovisioned_at AS value FROM floor_agents WHERE id = ?").bind(workers.results[0].id).first<{ value: number | null }>())?.value).not.toBeNull();
 
     const next = await createFloorQueueItem(room.sessionId, room.owner.id, { prompt: "Implement delta", agentId: null }, env.DB);
@@ -449,10 +455,18 @@ describe("agent router tick", () => {
     const generatedId = (await queueItem(itemId))!.agentId!;
 
     await setSessionRoutingSettings(room.sessionId, room.owner.id, { autoProvisionAgents: false }, env.DB);
-    const outcome = await runRoutingTick(room.sessionId, "toggle", startRunStub().deps, env.DB);
+    // Unassignment is immediate; retirement lingers ~GENERATED_AGENT_LINGER_MS
+    // after the row first goes idle (db/floor.ts), so a second tick with the
+    // clock driven past the window is what actually retires it.
+    const idleAt = Date.now();
+    const outcome = await runRoutingTick(room.sessionId, "toggle", startRunStub().deps, env.DB, idleAt);
     expect(outcome.acted).toBe(true);
     expect(await queueItem(itemId)).toEqual(expect.objectContaining({ agentId: null, assignedBy: null }));
-    const generated = await env.DB.prepare("SELECT deprovisioned_at AS deprovisionedAt FROM floor_agents WHERE id = ?")
+    let generated = await env.DB.prepare("SELECT deprovisioned_at AS deprovisionedAt FROM floor_agents WHERE id = ?")
+      .bind(generatedId).first<{ deprovisionedAt: number | null }>();
+    expect(generated?.deprovisionedAt).toBeNull();
+    await runRoutingTick(room.sessionId, "alarm", startRunStub().deps, env.DB, idleAt + GENERATED_AGENT_LINGER_MS + 1);
+    generated = await env.DB.prepare("SELECT deprovisioned_at AS deprovisionedAt FROM floor_agents WHERE id = ?")
       .bind(generatedId).first<{ deprovisionedAt: number | null }>();
     expect(generated?.deprovisionedAt).not.toBeNull();
     expect((await getFloorSnapshot(room.sessionId, room.owner.id, env.DB))?.agents).toHaveLength(0);
@@ -562,8 +576,17 @@ describe("agent router tick", () => {
     const runs = await env.DB.prepare("SELECT id FROM agent_runs WHERE queue_item_id IN (?, ?) ORDER BY id")
       .bind(firstItemId, secondItemId).all<{ id: string }>();
     for (const run of runs.results) await finishAgentReply(run.id, "ready", "Done", "Answered", null, env.DB);
-    await runRoutingTick(room.sessionId, "run_completed", startRunStub().deps, env.DB);
-    const retired = await env.DB.prepare("SELECT id FROM floor_agents WHERE session_id = ? AND kind = 'answer' AND deprovisioned_at IS NOT NULL")
+    // Retirement lingers ~GENERATED_AGENT_LINGER_MS after a Concierge first
+    // goes idle (db/floor.ts) — the first tick only starts that grace clock,
+    // so a reply's speech bubble is never yanked off the floor mid-read; a
+    // second tick with the clock driven past the window retires it.
+    const idleAt = Date.now();
+    await runRoutingTick(room.sessionId, "run_completed", startRunStub().deps, env.DB, idleAt);
+    let retired = await env.DB.prepare("SELECT id FROM floor_agents WHERE session_id = ? AND kind = 'answer' AND deprovisioned_at IS NOT NULL")
+      .bind(room.sessionId).all<{ id: string }>();
+    expect(retired.results).toHaveLength(0);
+    await runRoutingTick(room.sessionId, "alarm", startRunStub().deps, env.DB, idleAt + GENERATED_AGENT_LINGER_MS + 1);
+    retired = await env.DB.prepare("SELECT id FROM floor_agents WHERE session_id = ? AND kind = 'answer' AND deprovisioned_at IS NOT NULL")
       .bind(room.sessionId).all<{ id: string }>();
     expect(retired.results).toHaveLength(2);
 

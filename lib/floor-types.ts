@@ -89,6 +89,18 @@ export type FloorQueuePrompt = {
 // this column existed, or not yet visited by a routing tick; treat as "task".
 export type PromptIntent = "task" | "question" | "noise";
 
+// A question/noise item's reply text, kept on the queue item itself (sourced
+// from its own most recent reply run) rather than only reachable by matching
+// FloorSnapshot.runs by queueItemId — that array is capped at 20 rows and the
+// answering agent (often a retiring Concierge) may no longer be on the floor.
+export type QueueItemAnswer = {
+  runId: string;
+  agentId: string | null;
+  agentName: string;
+  text: string;
+  createdAt: number;
+};
+
 export type FloorQueueItem = {
   id: string;
   agentId: string | null;
@@ -99,6 +111,7 @@ export type FloorQueueItem = {
   assignedReason: string | null;
   intent: PromptIntent | null;
   rollback: QueueRollbackDescriptor | null;
+  answer: QueueItemAnswer | null;
   prompts: FloorQueuePrompt[];
   createdAt: number;
   updatedAt: number;

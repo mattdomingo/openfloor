@@ -267,6 +267,13 @@ export const floorAgents = sqliteTable(
     // deleting their run history.
     kind: text("kind", { enum: ["answer", "worker"] }),
     deprovisionedAt: integer("deprovisioned_at"),
+    // Set the instant a generated agent (kind IS NOT NULL) first becomes
+    // eligible for retirement; cleared the moment it's reactivated or
+    // reassigned. deprovisionIdleGeneratedAgents (db/floor.ts) only retires a
+    // row once idleSince is this old — a short grace window so a Concierge's
+    // reply stays visible on the floor instead of vanishing on the very next
+    // routing tick. Unused for persistent agents (kind IS NULL).
+    idleSince: integer("idle_since"),
     // Manual owner/member lifecycle control for a persistent agent
     // (kind IS NULL only — system-managed agents are router-controlled via
     // deprovisionedAt above and never touch this column). Non-null blocks

@@ -95,6 +95,10 @@ export function queueItemDestination(item: FloorQueueItem, run: AgentRun | null 
   if (item.rollback) return { kind: "review", runId: item.rollback.runId, status: item.rollback.status === "completed" ? "rolled_back" : "active" };
   if (run?.status === "integrated") return { kind: "review", runId: run.id, status: "active" };
   if (run) return { kind: "detail" };
+  // item.answer is the same durable source as item.rollback above — a
+  // question item stays clickable to its own answer even once the run has
+  // aged out of getAgentRuns' 20-row window and no longer shows up as `run`.
+  if (item.answer) return { kind: "detail" };
   return null;
 }
 

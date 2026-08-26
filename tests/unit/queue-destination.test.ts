@@ -13,6 +13,7 @@ function makeItem(overrides: Partial<FloorQueueItem> = {}): FloorQueueItem {
     assignedReason: null,
     intent: "task",
     rollback: null,
+    answer: null,
     prompts: [],
     createdAt: 0,
     updatedAt: 0,
@@ -119,5 +120,13 @@ describe("queueItemDestination", () => {
   it("is not clickable for a paused item with no run and no assigned agent", () => {
     const item = makeItem({ status: "paused", agentId: null });
     expect(queueItemDestination(item, undefined)).toBeNull();
+  });
+
+  it("opens inline detail for an answered item once its reply run has aged out of the runs window", () => {
+    const item = makeItem({
+      status: "completed",
+      answer: { runId: "run-old", agentId: "agent-2", agentName: "Concierge", text: "Here is the answer.", createdAt: 0 },
+    });
+    expect(queueItemDestination(item, undefined)).toEqual({ kind: "detail" });
   });
 });
