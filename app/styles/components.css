@@ -80,8 +80,17 @@ input, textarea { width: 100%; padding: 11px 12px; border: 1px solid var(--line-
 .session-card-foot { align-self: end; margin-top: var(--space-6); color: var(--text-tertiary); font-size: var(--text-xs); }
 .role-pill, .member-role { padding: 3px 8px; border: 1px solid var(--line-soft); border-radius: var(--radius-pill); color: var(--text-secondary); font-size: 10px; font-weight: 750; text-transform: uppercase; }
 .session-card-pills { display: inline-flex; gap: var(--space-2); }
+.session-card { position: relative; }
 .session-card-link { min-width: 0; color: inherit; text-decoration: none; }
 .session-card-link:hover strong { color: var(--accent); }
+/* Whole-tile target: the title anchor keeps the accessible name and the
+   keyboard/middle-click behaviour, and this stretches its hit area over the
+   card. The explicit z-index is load-bearing — the shop skin gives the
+   updated/objective/meta rows position: relative, so a z-index of auto would
+   leave the overlay painted underneath them and only the title clickable.
+   .session-card-tools sits one layer higher again so the grip and the actions
+   menu stay reachable. */
+.session-card-link::after { content: ""; position: absolute; inset: 0; z-index: 1; border-radius: var(--radius-md); }
 .session-group-heading { margin-top: var(--space-6); font: 400 19px var(--font-serif); color: var(--text-secondary); }
 .session-group-heading + .session-grid { margin-top: var(--space-3); }
 .session-card-foot-end { display: inline-flex; align-items: center; gap: var(--space-3); }
