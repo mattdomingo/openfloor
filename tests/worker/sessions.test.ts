@@ -85,7 +85,16 @@ import {
   requestAgentRunCancellation,
 } from "@/db/runs";
 import { parseAgentInput } from "@/lib/validation";
-import { beginAgentRunRollback, createAgentRunRollback, failAgentRunRollback, finishAgentRunRollback } from "@/db/rollbacks";
+import {
+  beginAgentRunRollback,
+  beginAgentRunRollbackGroup,
+  createAgentRunRollback,
+  createAgentRunRollbackGroup,
+  failAgentRunRollback,
+  failAgentRunRollbackGroup,
+  finishAgentRunRollback,
+  finishAgentRunRollbackGroup,
+} from "@/db/rollbacks";
 import { getSessionContext } from "@/db/session-context";
 import {
   consumeGitHubAccountConnectionState,
@@ -93,6 +102,7 @@ import {
   listUserGitHubInstallations,
   removeUserGitHubInstallation,
 } from "@/db/github-installations";
+import { getReviewContribution, listReviewContributions, resolveReviewRollbackImpact } from "@/db/review-contributions";
 
 function identity(id: string, name: string) {
   return { providerUserId: `chatgpt-${id}`, email: `${id}@example.com`, displayName: name, fullName: name };
@@ -1143,6 +1153,138 @@ describe("D1 session persistence", () => {
     expect(after?.review?.files).toEqual([]);
     expect((await getSessionContext(created.session.id, undefined, env.DB))?.integratedRuns).toEqual([]);
     await expect(createAgentRunRollback(created.session.id, run.id, owner.id, env.DB)).rejects.toThrow("already rolled back");
+  });
+
+  it("paginates candidate contributions and atomically rolls back owner-selected groups", async () => {
+    const owner = await upsertUser(identity("group-rollback-owner", "Group Owner"), env.DB);
+    const engineer = await upsertUser(identity("group-rollback-engineer", "Engineer One"), env.DB);
+    const collaborator = await upsertUser(identity("group-rollback-collaborator", "Engineer Two"), env.DB);
+    const outsider = await upsertUser(identity("group-rollback-outsider", "Outside Member"), env.DB);
+    const created = await createSession(owner.id, { title: "Atomic rollback room", objective: "Review every contribution" }, env.DB);
+    await acceptInvite(created.inviteId, engineer.id, env.DB);
+    await acceptInvite(created.inviteId, collaborator.id, env.DB);
+    await acceptInvite(created.inviteId, outsider.id, env.DB);
+    const saved = await saveRepositoryConnection(created.session.id, owner.id, null, "installation-group-rollback", {
+      id: "repository-group-rollback", nodeId: "R_group_rollback", owner: "openfloor-test", name: "group-rollback",
+      fullName: "openfloor-test/group-rollback", private: true, defaultBranch: "main",
+    }, "main", ["npm test"], env.DB);
+    const candidateId = crypto.randomUUID();
+    const initialSha = "a".repeat(40);
+    await reserveRepositoryCandidate(
+      created.session.id,
+      owner.id,
+      saved!.id,
+      candidateId,
+      "Atomic rollback room",
+      "",
+      `openfloor/${created.session.id.slice(0, 8)}/candidate/${candidateId.slice(0, 8)}`,
+      "main",
+      initialSha,
+      env.DB,
+    );
+    await activateRepositoryCandidate(created.session.id, candidateId, initialSha, env.DB);
+    const parsed = parseAgentInput({ name: "Group Builder", role: "Engineer", task: "Implement grouped prompts", ownerUserId: owner.id });
+    if (!parsed) throw new Error("Invalid group rollback agent fixture");
+    let floor = await createFloorAgent(created.session.id, owner.id, parsed, env.DB);
+    const agentId = floor!.agents[0].id;
+    const runIds: string[] = [];
+    const baseTime = Date.now() - 100_000;
+    for (let index = 0; index < 22; index += 1) {
+      floor = await createFloorQueueItem(created.session.id, engineer.id, { prompt: `Contribution ${index}`, agentId }, env.DB);
+      const queueItem = floor!.queue.find((item) => item.prompts.some((prompt) => prompt.text === `Contribution ${index}`));
+      if (!queueItem) throw new Error("Missing group rollback queue fixture");
+      if (index === 5) {
+        await env.DB.prepare(
+          `INSERT INTO floor_queue_prompts (id, queue_item_id, author_user_id, text, created_at)
+           VALUES (?, ?, ?, ?, ?)`,
+        ).bind(crypto.randomUUID(), queueItem.id, collaborator.id, "Shared contribution", baseTime + index).run();
+      }
+      const run = await createAgentRun(created.session.id, queueItem.id, owner.id, "task", env.DB);
+      const integratedSha = index.toString(16).padStart(40, "0");
+      await env.DB.batch([
+        env.DB.prepare(
+          `UPDATE agent_runs SET status = 'integrated', integrated_candidate_sha = ?, integrated_at = ?, completed_at = ?, updated_at = ? WHERE id = ?`,
+        ).bind(integratedSha, baseTime + index, baseTime + index, baseTime + index, run.id),
+        env.DB.prepare("UPDATE floor_queue_items SET status = 'completed', updated_at = ? WHERE id = ?")
+          .bind(baseTime + index, queueItem.id),
+        env.DB.prepare(
+          `INSERT INTO agent_run_files (id, run_id, path, change_kind, additions, deletions, summary, diff_preview, created_at)
+           VALUES (?, ?, ?, 'update', 1, 0, ?, ?, ?)`,
+        ).bind(crypto.randomUUID(), run.id, `src/contribution-${index}.ts`, `Contribution ${index}`, `+export const contribution${index} = true;`, baseTime + index),
+      ]);
+      runIds.push(run.id);
+    }
+
+    const firstPage = await listReviewContributions(created.session.id, engineer.id, { status: "active", limit: 20 }, env.DB);
+    expect(firstPage?.items).toHaveLength(20);
+    expect(firstPage?.nextCursor).not.toBeNull();
+    const secondPage = await listReviewContributions(created.session.id, engineer.id, { status: "active", limit: 20, cursor: firstPage!.nextCursor }, env.DB);
+    expect(secondPage?.items).toHaveLength(2);
+    expect(new Set([...firstPage!.items, ...secondPage!.items].map((item) => item.runId)).size).toBe(22);
+    expect(await listReviewContributions(created.session.id, "not-a-member", { status: "active" }, env.DB)).toBeNull();
+    expect(await getReviewContribution(created.session.id, runIds[0], "not-a-member", env.DB)).toBeNull();
+
+    const engineerImpact = await resolveReviewRollbackImpact(created.session.id, owner.id, "engineer", engineer.id, env.DB);
+    expect(engineerImpact?.targets).toHaveLength(21);
+    expect(engineerImpact?.excluded).toEqual([
+      expect.objectContaining({ runId: runIds[5], exclusionReason: "Merged with prompts from another engineer" }),
+    ]);
+    await expect(resolveReviewRollbackImpact(created.session.id, engineer.id, "engineer", engineer.id, env.DB)).resolves.toBeNull();
+    await expect(resolveReviewRollbackImpact(created.session.id, outsider.id, "prompt", runIds[5], env.DB)).resolves.toBeNull();
+    expect((await resolveReviewRollbackImpact(created.session.id, owner.id, "agent", agentId, env.DB))?.targets).toHaveLength(22);
+    await expect(createAgentRunRollbackGroup(created.session.id, owner.id, {
+      scope: "engineer",
+      subjectId: engineer.id,
+      expectedCandidateSha: "b".repeat(40),
+      expectedRunIds: engineerImpact!.targets.map((target) => target.runId),
+    }, env.DB)).rejects.toThrow("contributions changed");
+    await expect(createAgentRunRollbackGroup(created.session.id, owner.id, {
+      scope: "engineer",
+      subjectId: engineer.id,
+      expectedCandidateSha: engineerImpact!.expectedCandidateSha,
+      expectedRunIds: engineerImpact!.targets.slice(1).map((target) => target.runId),
+    }, env.DB)).rejects.toThrow("contributions changed");
+
+    const group = await createAgentRunRollbackGroup(created.session.id, owner.id, {
+      scope: "engineer",
+      subjectId: engineer.id,
+      expectedCandidateSha: engineerImpact!.expectedCandidateSha,
+      expectedRunIds: engineerImpact!.targets.map((target) => target.runId),
+    }, env.DB);
+    const context = await beginAgentRunRollbackGroup(group!.groupId, env.DB);
+    expect(context.targets.map((target) => target.integratedAt)).toEqual([...context.targets.map((target) => target.integratedAt)].sort((a, b) => b - a));
+    await failAgentRunRollbackGroup(group!.groupId, "Required rollback check failed: npm test", env.DB);
+    const failedChildren = await env.DB.prepare(
+      `SELECT DISTINCT rb.status, rb.failure_reason AS failureReason
+       FROM agent_run_rollbacks rb JOIN agent_run_rollback_group_items item ON item.rollback_id = rb.id
+       WHERE item.group_id = ?`,
+    ).bind(group!.groupId).all<{ status: string; failureReason: string }>();
+    expect(failedChildren.results).toEqual([{ status: "failed", failureReason: "Required rollback check failed: npm test" }]);
+
+    const retryImpact = await resolveReviewRollbackImpact(created.session.id, owner.id, "prompt", runIds[0], env.DB);
+    const retry = await createAgentRunRollbackGroup(created.session.id, owner.id, {
+      scope: "prompt",
+      subjectId: runIds[0],
+      expectedCandidateSha: retryImpact!.expectedCandidateSha,
+      expectedRunIds: [runIds[0]],
+    }, env.DB);
+    await beginAgentRunRollbackGroup(retry!.groupId, env.DB);
+    const rollbackSha = "f".repeat(40);
+    await finishAgentRunRollbackGroup(retry!.groupId, rollbackSha, env.DB);
+    const completed = await env.DB.prepare(
+      `SELECT g.status AS groupStatus, rb.status AS childStatus, g.rollback_commit_sha AS groupSha, rb.rollback_commit_sha AS childSha
+       FROM agent_run_rollback_groups g JOIN agent_run_rollback_group_items item ON item.group_id = g.id
+       JOIN agent_run_rollbacks rb ON rb.id = item.rollback_id WHERE g.id = ?`,
+    ).bind(retry!.groupId).first<{ groupStatus: string; childStatus: string; groupSha: string; childSha: string }>();
+    expect(completed).toEqual({ groupStatus: "completed", childStatus: "completed", groupSha: rollbackSha, childSha: rollbackSha });
+    const preservedAttempts = await env.DB.prepare("SELECT status FROM agent_run_rollbacks WHERE run_id = ? ORDER BY created_at, id")
+      .bind(runIds[0]).all<{ status: string }>();
+    expect(preservedAttempts.results.map((attempt) => attempt.status).sort()).toEqual(["completed", "failed"]);
+    expect((await listReviewContributions(created.session.id, owner.id, { status: "active", limit: 100 }, env.DB))?.items).toHaveLength(21);
+    expect((await listReviewContributions(created.session.id, owner.id, { status: "rolled_back" }, env.DB))?.items)
+      .toEqual([expect.objectContaining({ runId: runIds[0], rollbackStatus: "completed" })]);
+    expect((await getFloorSnapshot(created.session.id, owner.id, env.DB))?.queue.find((item) => item.rollback?.runId === runIds[0])?.rollback)
+      .toEqual(expect.objectContaining({ status: "completed", canStart: false }));
   });
 });
 

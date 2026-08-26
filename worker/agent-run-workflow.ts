@@ -52,7 +52,14 @@ import {
   recordConflictPaths,
   recordIntegrationConflict,
 } from "../db/conflicts";
-import { beginAgentRunRollback, failAgentRunRollback, finishAgentRunRollback } from "../db/rollbacks";
+import {
+  beginAgentRunRollback,
+  beginAgentRunRollbackGroup,
+  failAgentRunRollback,
+  failAgentRunRollbackGroup,
+  finishAgentRunRollback,
+  finishAgentRunRollbackGroup,
+} from "../db/rollbacks";
 import { githubGitAuthorization } from "../lib/github-git-auth";
 
 type R2BucketLike = { put(key: string, value: string, options?: unknown): Promise<unknown> };
@@ -67,7 +74,10 @@ export interface AgentRunWorkflowEnv {
   CREDENTIAL_ENCRYPTION_KEY?: string;
 }
 
-type Params = { runId: string; action?: "run" } | { runId: string; action: "rollback"; rollbackId: string };
+type Params =
+  | { runId: string; action?: "run" }
+  | { runId: string; action: "rollback"; rollbackId: string }
+  | { runId: string; action: "rollback_group"; rollbackGroupId: string };
 const COMMAND_TIMEOUT_MS = 10 * 60 * 1000;
 const MAX_LOG_BYTES = 500_000;
 const MAX_DIFF_BYTES = 2_000_000;
@@ -92,6 +102,9 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
     const runId = event.payload.runId;
     if (event.payload.action === "rollback") {
       return this.rollback(runId, event.payload.rollbackId, event.instanceId, step);
+    }
+    if (event.payload.action === "rollback_group") {
+      return this.rollback(runId, event.payload.rollbackGroupId, event.instanceId, step, true);
     }
     const context = await step.do("load run", async () => {
       const value = await getRunExecutionContext(runId, this.env.DB);
@@ -693,7 +706,7 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
     if (update) await notifyFloorChanged(update.sessionId, update.revision, ["queue", "runs", "review"]);
   }
 
-  private async rollback(runId: string, rollbackId: string, instanceId: string, step: WorkflowStep): Promise<{ status: string }> {
+  private async rollback(runId: string, rollbackId: string, instanceId: string, step: WorkflowStep, grouped = false): Promise<{ status: string }> {
     const sandbox = getSandbox(this.env.SANDBOX, `rollback-${instanceId}`, {
       keepAlive: true,
       enableDefaultSession: false,
@@ -708,7 +721,13 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
     });
     let pushedSha: string | null = null;
     try {
-      const context = await step.do("claim candidate rollback", async () => beginAgentRunRollback(rollbackId, this.env.DB));
+      const rawContext = await step.do("claim candidate rollback", async () => grouped
+        ? beginAgentRunRollbackGroup(rollbackId, this.env.DB)
+        : beginAgentRunRollback(rollbackId, this.env.DB));
+      const context = "targets" in rawContext ? rawContext : {
+        ...rawContext,
+        targets: [{ rollbackId: rawContext.id, runId: rawContext.runId, targetCommitSha: rawContext.targetCommitSha, integratedAt: rawContext.createdAt }],
+      };
       const config = getGitHubAppConfig();
       const repository: GitHubRepositoryOption = {
         id: context.repositoryId,
@@ -728,13 +747,20 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
            git init -q && git remote add origin "$OPENFLOOR_REPOSITORY_URL" &&
            git -c credential.helper= -c "http.extraHeader=$OPENFLOOR_GIT_AUTHORIZATION" fetch --no-tags --depth=1 origin "$OPENFLOOR_EXPECTED_SHA" &&
            git update-ref refs/openfloor/current FETCH_HEAD &&
-           git -c credential.helper= -c "http.extraHeader=$OPENFLOOR_GIT_AUTHORIZATION" fetch --no-tags --depth=2 origin "$OPENFLOOR_TARGET_SHA" &&
-           git update-ref refs/openfloor/target FETCH_HEAD && git checkout -q --detach refs/openfloor/current &&
+           target_index=0 && for target_sha in $OPENFLOOR_TARGET_SHAS; do
+             git -c credential.helper= -c "http.extraHeader=$OPENFLOOR_GIT_AUTHORIZATION" fetch --no-tags --depth=2 origin "$target_sha" || exit $?;
+             git update-ref "refs/openfloor/target-$target_index" FETCH_HEAD || exit $?;
+             target_index=$((target_index + 1));
+           done && git checkout -q --detach refs/openfloor/current &&
            git config user.name "OpenFloor Rollback" && git config user.email "rollback@opnflr.com" &&
-           parent_count="$(git cat-file -p refs/openfloor/target | awk '$1 == "parent" { count += 1 } END { print count + 0 }')" &&
-           if [ "$parent_count" = "1" ]; then git revert --no-commit refs/openfloor/target;
-           elif [ "$parent_count" = "2" ]; then git revert --no-commit -m 1 refs/openfloor/target;
-           else echo "unsupported parent count" >&2; exit 64; fi &&
+           target_index=0 && for target_sha in $OPENFLOOR_TARGET_SHAS; do
+             target_ref="refs/openfloor/target-$target_index";
+             parent_count="$(git cat-file -p "$target_ref" | awk '$1 == "parent" { count += 1 } END { print count + 0 }')";
+             if [ "$parent_count" = "1" ]; then git revert --no-commit "$target_ref" || exit $?;
+             elif [ "$parent_count" = "2" ]; then git revert --no-commit -m 1 "$target_ref" || exit $?;
+             else echo "unsupported parent count" >&2; exit 64; fi;
+             target_index=$((target_index + 1));
+           done &&
            GIT_AUTHOR_DATE="$OPENFLOOR_COMMIT_DATE" GIT_COMMITTER_DATE="$OPENFLOOR_COMMIT_DATE" git commit -q -m "$OPENFLOOR_COMMIT_MESSAGE" &&
            git rev-parse HEAD`,
           {
@@ -743,9 +769,11 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
               OPENFLOOR_REPOSITORY_URL: `https://github.com/${context.repositoryOwner}/${context.repositoryName}.git`,
               OPENFLOOR_GIT_AUTHORIZATION: githubGitAuthorization(token),
               OPENFLOOR_EXPECTED_SHA: context.expectedCandidateSha,
-              OPENFLOOR_TARGET_SHA: context.targetCommitSha,
+              OPENFLOOR_TARGET_SHAS: context.targets.map((target) => target.targetCommitSha).join(" "),
               OPENFLOOR_COMMIT_DATE: new Date(context.createdAt).toISOString(),
-              OPENFLOOR_COMMIT_MESSAGE: `Rollback openfloor run ${runId.slice(0, 8)}`,
+              OPENFLOOR_COMMIT_MESSAGE: context.targets.length === 1
+                ? `Rollback openfloor run ${context.targets[0].runId.slice(0, 8)}`
+                : `Rollback ${context.targets.length} openfloor prompt groups`,
             },
           },
         );
@@ -803,8 +831,10 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
       });
 
       const update = await step.do("record candidate rollback", { retries: { limit: 6, delay: "5 seconds", backoff: "exponential" } }, async () =>
-        finishAgentRunRollback(rollbackId, pushedSha!, this.env.DB));
-      if (update) await notifyFloorChanged(update.sessionId, update.revision, ["repository", "runs", "review"]);
+        grouped
+          ? finishAgentRunRollbackGroup(rollbackId, pushedSha!, this.env.DB)
+          : finishAgentRunRollback(rollbackId, pushedSha!, this.env.DB));
+      if (update) await notifyFloorChanged(update.sessionId, update.revision, ["repository", "queue", "runs", "review"]);
       return { status: "rolled_back" };
     } catch (error) {
       // Once GitHub advanced, retaining the D1 lease is safer than recording a
@@ -813,8 +843,10 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
       // blocked candidate operation for operator recovery.
       if (pushedSha) throw error;
       const reason = error instanceof Error ? error.message : "Candidate rollback failed";
-      const update = await step.do("record rollback failure", async () => failAgentRunRollback(rollbackId, reason, this.env.DB));
-      if (update) await notifyFloorChanged(update.sessionId, update.revision, ["repository", "runs", "review"]);
+      const update = await step.do("record rollback failure", async () => grouped
+        ? failAgentRunRollbackGroup(rollbackId, reason, this.env.DB)
+        : failAgentRunRollback(rollbackId, reason, this.env.DB));
+      if (update) await notifyFloorChanged(update.sessionId, update.revision, ["repository", "queue", "runs", "review"]);
       return { status: "failed" };
     } finally {
       try {

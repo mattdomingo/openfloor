@@ -634,6 +634,33 @@ export const agentRuns = sqliteTable(
 // new candidate commit and records the attempt here instead of rewriting the
 // run row or deleting its branch. The candidate's existing integration_run_id
 // is the shared candidate-operation lease while a rollback is active.
+export const agentRunRollbackGroups = sqliteTable(
+  "agent_run_rollback_groups",
+  {
+    id: text("id").primaryKey(),
+    sessionId: text("session_id").notNull().references(() => sessions.id, { onDelete: "cascade" }),
+    candidateId: text("candidate_id").notNull().references(() => repositoryCandidates.id, { onDelete: "cascade" }),
+    leaseRunId: text("lease_run_id").notNull().references(() => agentRuns.id, { onDelete: "cascade" }),
+    scope: text("scope", { enum: ["prompt", "engineer", "agent"] }).notNull(),
+    subjectId: text("subject_id").notNull(),
+    expectedCandidateSha: text("expected_candidate_sha").notNull(),
+    rollbackCommitSha: text("rollback_commit_sha"),
+    status: text("status", { enum: ["requested", "running", "completed", "failed"] }).notNull(),
+    failureReason: text("failure_reason"),
+    createdBy: text("created_by").notNull().references(() => users.id),
+    createdAt: integer("created_at").notNull(),
+    startedAt: integer("started_at"),
+    completedAt: integer("completed_at"),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [
+    index("idx_agent_run_rollback_groups_session_created").on(table.sessionId, table.createdAt),
+    index("idx_agent_run_rollback_groups_candidate_status").on(table.candidateId, table.status),
+    check("agent_run_rollback_groups_scope_check", sql`${table.scope} in ('prompt', 'engineer', 'agent')`),
+    check("agent_run_rollback_groups_status_check", sql`${table.status} in ('requested', 'running', 'completed', 'failed')`),
+  ],
+);
+
 export const agentRunRollbacks = sqliteTable(
   "agent_run_rollbacks",
   {
@@ -658,6 +685,21 @@ export const agentRunRollbacks = sqliteTable(
     uniqueIndex("idx_agent_run_rollbacks_one_completed").on(table.runId)
       .where(sql`${table.status} = 'completed'`),
     check("agent_run_rollbacks_status_check", sql`${table.status} in ('requested', 'running', 'completed', 'failed')`),
+  ],
+);
+
+// Separate join preserves the already-live agent_run_rollbacks shape and its
+// uniqueness indexes. One group may atomically complete several ordinary
+// per-run rollback attempts with one candidate commit.
+export const agentRunRollbackGroupItems = sqliteTable(
+  "agent_run_rollback_group_items",
+  {
+    groupId: text("group_id").notNull().references(() => agentRunRollbackGroups.id, { onDelete: "cascade" }),
+    rollbackId: text("rollback_id").notNull().references(() => agentRunRollbacks.id, { onDelete: "cascade" }),
+  },
+  (table) => [
+    primaryKey({ columns: [table.groupId, table.rollbackId] }),
+    uniqueIndex("idx_agent_run_rollback_group_items_rollback").on(table.rollbackId),
   ],
 );
 
