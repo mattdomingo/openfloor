@@ -100,12 +100,14 @@ describe("D1 persistent floor", () => {
     expect(second?.agents.find((agent) => agent.name === "Codex")?.provider).toBe("openai");
   });
 
-  it("exposes an agent's stored billing choice in the floor snapshot", async () => {
+  it("exposes an agent's stored billing choice and persists a chosen model", async () => {
     const room = await floorRoom("billing-visible");
-    const input = parseAgentInput({ name: "Sub", role: "Researcher", task: "Research", ownerUserId: room.owner.id, provider: "anthropic", credentialKind: "oauth" });
+    const input = parseAgentInput({ name: "Sub", role: "Researcher", task: "Research", ownerUserId: room.owner.id, provider: "anthropic", credentialKind: "oauth", model: "claude-sonnet-5" });
     if (!input) throw new Error("Invalid test agent");
     const floor = await createFloorAgent(room.sessionId, room.owner.id, input, env.DB);
-    expect(floor?.agents.find((agent) => agent.name === "Sub")?.credentialKind).toBe("oauth");
+    const agent = floor?.agents.find((candidate) => candidate.name === "Sub");
+    expect(agent?.credentialKind).toBe("oauth");
+    expect(agent?.model).toBe("claude-sonnet-5");
   });
 
   it("persists unassigned and targeted prompts and ordering", async () => {

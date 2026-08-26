@@ -2,6 +2,7 @@ import {
   credentialKindsForProvider,
   parseCredentialKind,
   parseCredentialProvider,
+  PROVIDER_MODELS,
   type CredentialKind,
   type CredentialProvider,
 } from "./provider-credentials";
@@ -16,6 +17,7 @@ export type AgentInput = {
   ownerUserId: string;
   provider: CredentialProvider;
   credentialKind: CredentialKind | null;
+  model: string | null;
 };
 export type AgentTaskInput = { task: string };
 export type AgentPauseInput = { paused: boolean };
@@ -87,7 +89,15 @@ export function parseAgentInput(value: unknown): AgentInput | null {
     if (!kind || !credentialKindsForProvider(provider).includes(kind)) return null;
     credentialKind = kind;
   }
-  return { name, nameKey: normalizeAgentName(name), role, task, ownerUserId, provider, credentialKind };
+  // Optional model, valid only among the provider's closed allowlist so an
+  // unknown id 400s here instead of 404ing at the vendor mid-run;
+  // omitted/null means "the provider's default".
+  let model: string | null = null;
+  if (input.model !== undefined && input.model !== null) {
+    if (typeof input.model !== "string" || !PROVIDER_MODELS[provider].includes(input.model)) return null;
+    model = input.model;
+  }
+  return { name, nameKey: normalizeAgentName(name), role, task, ownerUserId, provider, credentialKind, model };
 }
 
 export function parseAgentTaskInput(value: unknown): AgentTaskInput | null {

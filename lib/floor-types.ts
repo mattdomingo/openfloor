@@ -32,7 +32,7 @@ export type FloorAgent = {
   kind: FloorAgentKind;
   // Which agent provider runs for this agent execute on, and an optional
   // model override (null = the provider's default). The create-agent dialog
-  // writes the selected provider; model selection is a later milestone.
+  // writes both, the model from PROVIDER_MODELS' closed per-provider list.
   provider: CredentialProvider;
   model: string | null;
   // Which of the owner's credential kinds this agent's runs bill (null = the
@@ -285,4 +285,7 @@ export type CreateFloorAgentInput = {
   // Omitted/null means "the owner's default"; the dialog offers the choice
   // only for providers that accept more than one kind.
   credentialKind?: CredentialKind | null;
+  // Omitted/null means "the provider's default"; must be one of
+  // PROVIDER_MODELS[provider], enforced server-side in parseAgentInput.
+  model?: string | null;
 };

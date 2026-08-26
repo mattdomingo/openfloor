@@ -8,6 +8,7 @@ import {
   parseCredentialKind,
   parseCredentialProvider,
   providerLabel,
+  PROVIDER_MODELS,
   type CredentialKind,
   type CredentialProvider,
 } from "@/lib/provider-credentials";
@@ -34,11 +35,18 @@ export function CreateAgentDialog({
   const [role, setRole] = useState("");
   const [task, setTask] = useState("");
   const [ownerUserId, setOwnerUserId] = useState(currentUserId);
-  const [provider, setProvider] = useState<CredentialProvider>("openai");
+  // ponytail: the Provider select renders only when more than one provider is
+  // enabled, so this initial value has to be right on its own — with exactly
+  // one enabled provider a bare "openai" literal could never be corrected and
+  // the POST would 503 at the rollout gate.
+  const [provider, setProvider] = useState<CredentialProvider>(enabledProviders[0] ?? "openai");
   // null = "the owner's default" (api_key when connected). Offered only for
   // providers with more than one credential kind; switching provider resets
   // it so a kind can never outlive a provider that does not accept it.
   const [credentialKind, setCredentialKind] = useState<CredentialKind | null>(null);
+  // null = "the provider's default". Re-keys off the provider exactly like
+  // Billing above, so a model id can never be posted to another provider.
+  const [model, setModel] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const ready = name.trim().length > 0 && role.trim().length > 0 && task.trim().length > 0 && ownerUserId.length > 0;
 
@@ -48,7 +56,7 @@ export function CreateAgentDialog({
     event.preventDefault();
     if (!ready || submitting) return;
     setSubmitting(true);
-    const created = await onCreate({ name, role, task, ownerUserId, provider, credentialKind });
+    const created = await onCreate({ name, role, task, ownerUserId, provider, credentialKind, model });
     setSubmitting(false);
     if (created) dismiss();
   }
@@ -85,6 +93,7 @@ export function CreateAgentDialog({
                 onChange={(value) => {
                   setProvider(parseCredentialProvider(value) ?? "openai");
                   setCredentialKind(null);
+                  setModel(null);
                 }}
                 options={enabledProviders.map((option) => ({
                   value: option,
@@ -93,6 +102,18 @@ export function CreateAgentDialog({
               />
             </div>
           )}
+          <div className="field">
+            <span className="label">Model</span>
+            <SelectMenu
+              label="Agent model"
+              value={model ?? "default"}
+              onChange={(value) => setModel(value === "default" ? null : value)}
+              options={[
+                { value: "default", label: "Provider default" },
+                ...PROVIDER_MODELS[provider].map((id) => ({ value: id, label: id })),
+              ]}
+            />
+          </div>
           {credentialKindsForProvider(provider).length > 1 && (
             <div className="field">
               <span className="label">Billing</span>

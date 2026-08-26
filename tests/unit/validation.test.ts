@@ -90,6 +90,7 @@ describe("floor input validation", () => {
       ownerUserId: "owner",
       provider: "openai",
       credentialKind: null,
+      model: null,
     });
     expect(normalizeAgentName("  LUMEN   Agent ")).toBe("lumen agent");
   });
@@ -119,6 +120,18 @@ describe("floor input validation", () => {
     expect(parseAgentInput({ ...base, provider: "glm", credentialKind: "oauth" })).toBeNull();
     expect(parseAgentInput({ ...base, provider: "anthropic", credentialKind: "subscription" })).toBeNull();
     expect(parseAgentInput({ ...base, provider: "anthropic", credentialKind: 7 })).toBeNull();
+  });
+
+  it("accepts a model only from the provider's closed allowlist", () => {
+    const base = { name: "A", role: "R", task: "T", ownerUserId: "o" };
+    expect(parseAgentInput({ ...base, provider: "anthropic", model: "claude-sonnet-5" })?.model).toBe("claude-sonnet-5");
+    // The right id under the wrong provider is a 400, never a vendor 404 mid-run.
+    expect(parseAgentInput({ ...base, provider: "kimi", model: "claude-opus-5" })).toBeNull();
+    expect(parseAgentInput({ ...base, provider: "anthropic", model: "claude-opus-5-20260101" })).toBeNull();
+    expect(parseAgentInput({ ...base, provider: "anthropic", model: 7 })).toBeNull();
+    // Omitted and explicit null both mean "the provider's default".
+    expect(parseAgentInput({ ...base })?.model).toBeNull();
+    expect(parseAgentInput({ ...base, model: null })?.model).toBeNull();
   });
 
   it("validates assignments, messages, prompts, and ordering", () => {
