@@ -1,32 +1,39 @@
 "use client";
 
 import { FormEvent, useEffect, useId, useRef, useState } from "react";
+import Link from "next/link";
 import type { CreateFloorAgentInput, FloorParticipant } from "@/lib/floor-types";
 import {
   AGENT_PROVIDER_LABELS,
-  credentialKindsForProvider,
+  connectedKindsForProvider,
+  connectedProviders,
   parseCredentialKind,
   parseCredentialProvider,
   providerLabel,
   PROVIDER_MODELS,
   type CredentialKind,
   type CredentialProvider,
+  type ProviderCredentialSummary,
 } from "@/lib/provider-credentials";
 import { Icon, useDialogDismiss } from "./primitives";
 import { SelectMenu } from "./SelectMenu";
 
 export function CreateAgentDialog({
+  sessionId,
   onCreate,
   onClose,
   participants,
   currentUserId,
   enabledProviders,
+  providerCredentials,
 }: {
+  sessionId: string;
   onCreate: (input: CreateFloorAgentInput) => Promise<boolean>;
   onClose: () => void;
   participants: FloorParticipant[];
   currentUserId: string;
   enabledProviders: CredentialProvider[];
+  providerCredentials: ProviderCredentialSummary[];
 }) {
   const titleId = useId();
   const { dismiss, dialogProps } = useDialogDismiss(onClose);
@@ -35,26 +42,29 @@ export function CreateAgentDialog({
   const [role, setRole] = useState("");
   const [task, setTask] = useState("");
   const [ownerUserId, setOwnerUserId] = useState(currentUserId);
-  // ponytail: the Provider select renders only when more than one provider is
-  // enabled, so this initial value has to be right on its own — with exactly
-  // one enabled provider a bare "openai" literal could never be corrected and
-  // the POST would 503 at the rollout gate.
-  const [provider, setProvider] = useState<CredentialProvider>(enabledProviders[0] ?? "openai");
+  // Only the current user's own connected keys — an agent's owner pays for
+  // its runs, but the create dialog only ever creates agents billed against
+  // whoever is using it right now, never a teammate's key by proxy.
+  const available = connectedProviders(providerCredentials, enabledProviders);
+  // The Provider select renders only when more than one option exists, so
+  // this initial value has to be right on its own: null means "no connected
+  // provider" and disables Create outright (there is no server fallback key).
+  const [provider, setProvider] = useState<CredentialProvider | null>(available[0] ?? null);
   // null = "the owner's default" (api_key when connected). Offered only for
-  // providers with more than one credential kind; switching provider resets
-  // it so a kind can never outlive a provider that does not accept it.
+  // providers with more than one connected credential kind; switching provider
+  // resets it so a kind can never outlive a provider that does not accept it.
   const [credentialKind, setCredentialKind] = useState<CredentialKind | null>(null);
   // null = "the provider's default". Re-keys off the provider exactly like
   // Billing above, so a model id can never be posted to another provider.
   const [model, setModel] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const ready = name.trim().length > 0 && role.trim().length > 0 && task.trim().length > 0 && ownerUserId.length > 0;
+  const ready = name.trim().length > 0 && role.trim().length > 0 && task.trim().length > 0 && ownerUserId.length > 0 && provider !== null;
 
   useEffect(() => { nameRef.current?.focus(); }, []);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
-    if (!ready || submitting) return;
+    if (!ready || submitting || !provider) return;
     setSubmitting(true);
     const created = await onCreate({ name, role, task, ownerUserId, provider, credentialKind, model });
     setSubmitting(false);
@@ -84,50 +94,64 @@ export function CreateAgentDialog({
               options={participants.map((person) => ({ value: person.id, label: `${person.name}${person.isCurrentUser ? " (You)" : ""}` }))}
             />
           </div>
-          {enabledProviders.length > 1 && (
-            <div className="field">
-              <span className="label">Provider</span>
-              <SelectMenu
-                label="Agent provider"
-                value={provider}
-                onChange={(value) => {
-                  setProvider(parseCredentialProvider(value) ?? "openai");
-                  setCredentialKind(null);
-                  setModel(null);
-                }}
-                options={enabledProviders.map((option) => ({
-                  value: option,
-                  label: `${AGENT_PROVIDER_LABELS[option]} (${providerLabel(option)})`,
-                }))}
-              />
-            </div>
-          )}
-          <div className="field">
-            <span className="label">Model</span>
-            <SelectMenu
-              label="Agent model"
-              value={model ?? "default"}
-              onChange={(value) => setModel(value === "default" ? null : value)}
-              options={[
-                { value: "default", label: "Provider default" },
-                ...PROVIDER_MODELS[provider].map((id) => ({ value: id, label: id })),
-              ]}
-            />
-          </div>
-          {credentialKindsForProvider(provider).length > 1 && (
-            <div className="field">
-              <span className="label">Billing</span>
-              <SelectMenu
-                label="Agent billing credential"
-                value={credentialKind ?? "default"}
-                onChange={(value) => setCredentialKind(parseCredentialKind(value))}
-                options={[
-                  { value: "default", label: "Owner's default" },
-                  { value: "oauth", label: "Subscription" },
-                  { value: "api_key", label: "API key" },
-                ]}
-              />
-            </div>
+          {available.length === 0 ? (
+            <p className="notice" data-tone="attention" role="status">
+              {"No provider keys are connected. Connect one to create an agent. "}
+              <Link href={`/home/settings?section=connections&from=${encodeURIComponent(`/session/${sessionId}`)}`}>
+                Connect a provider
+              </Link>
+              .
+            </p>
+          ) : (
+            <>
+              {available.length > 1 && (
+                <div className="field">
+                  <span className="label">Provider</span>
+                  <SelectMenu
+                    label="Agent provider"
+                    value={provider ?? ""}
+                    onChange={(value) => {
+                      setProvider(parseCredentialProvider(value));
+                      setCredentialKind(null);
+                      setModel(null);
+                    }}
+                    options={available.map((option) => ({
+                      value: option,
+                      label: `${AGENT_PROVIDER_LABELS[option]} (${providerLabel(option)})`,
+                    }))}
+                  />
+                </div>
+              )}
+              {provider && (
+                <div className="field">
+                  <span className="label">Model</span>
+                  <SelectMenu
+                    label="Agent model"
+                    value={model ?? "default"}
+                    onChange={(value) => setModel(value === "default" ? null : value)}
+                    options={[
+                      { value: "default", label: "Provider default" },
+                      ...PROVIDER_MODELS[provider].map((id) => ({ value: id, label: id })),
+                    ]}
+                  />
+                </div>
+              )}
+              {provider && connectedKindsForProvider(providerCredentials, provider).length > 1 && (
+                <div className="field">
+                  <span className="label">Billing</span>
+                  <SelectMenu
+                    label="Agent billing credential"
+                    value={credentialKind ?? "default"}
+                    onChange={(value) => setCredentialKind(parseCredentialKind(value))}
+                    options={[
+                      { value: "default", label: "Owner's default" },
+                      { value: "oauth", label: "Subscription" },
+                      { value: "api_key", label: "API key" },
+                    ]}
+                  />
+                </div>
+              )}
+            </>
           )}
         </div>
         <div className="dialog-foot">

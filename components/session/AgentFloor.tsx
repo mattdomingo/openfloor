@@ -173,7 +173,7 @@ export function AgentFloor({ chrome, sessionId, agents, runs, activity, selected
         <AgentSpotlight agent={selected} tone={agentTone(selected.id, agents.findIndex((agent) => agent.id === selected.id))} sessionId={sessionId} latestRun={selectedLatestRun} activity={activity} canRollback={canRollbackRun({ run: selectedLatestRun, item: queue.find((item) => item.id === selectedLatestRun?.queueItemId), agent: selected, currentUserId, sessionOwner: owner })} busy={agentControlsBusy} owner={owner} onRollback={onRollback} onHistory={() => setHistoryAgentId(selected.id)} onUpdateSettings={onUpdateSettings} onPause={onPauseAgent} onStop={onStopAgent} onDelete={onDeleteAgent} />
       ) : null}
     </Panel>
-    {creating && <CreateAgentDialog participants={participants} currentUserId={currentUserId} enabledProviders={enabledProviders} onClose={() => { setCreating(false); createButtonRef.current?.focus(); }} onCreate={onCreateAgent} />}
+    {creating && <CreateAgentDialog sessionId={sessionId} participants={participants} currentUserId={currentUserId} enabledProviders={enabledProviders} providerCredentials={providerCredentials} onClose={() => { setCreating(false); createButtonRef.current?.focus(); }} onCreate={onCreateAgent} />}
     {historyAgent && <AgentChatHistory agent={historyAgent} queue={queue} onClose={() => setHistoryAgentId(null)} />}
   </>;
 }
