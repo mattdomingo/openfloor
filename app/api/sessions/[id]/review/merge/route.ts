@@ -35,7 +35,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   }
   if (!context) return Response.json({ error: "Session not found" }, { status: 404 });
   if (context.integrationRunId) {
-    return Response.json({ error: "A run is still integrating into this candidate", runId: context.integrationRunId }, { status: 409 });
+    return Response.json({ error: "The candidate is still being updated", runId: context.integrationRunId }, { status: 409 });
   }
   if (context.candidateStatus !== "active" || context.connectionStatus !== "ready" || !context.candidateSha ||
       context.remoteCandidateSha !== context.candidateSha || !context.pullRequestNumber) {
@@ -82,7 +82,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       return Response.json({ error: "The merge succeeded but the session could not be ended" }, { status: 500 });
     }
     if ("blocked" in ended) {
-      return Response.json({ error: "A run is still integrating into this candidate", runId: ended.runId }, { status: 409 });
+      return Response.json({ error: "The candidate is still being updated", runId: ended.runId }, { status: 409 });
     }
     await notifySessionEnded(sessionId, ended.endedAt, ended.reason);
     const floor = await getFloorSnapshot(sessionId, user.id);

@@ -83,6 +83,8 @@ import {
   requestAgentRunCancellation,
 } from "@/db/runs";
 import { parseAgentInput } from "@/lib/validation";
+import { beginAgentRunRollback, createAgentRunRollback, failAgentRunRollback, finishAgentRunRollback } from "@/db/rollbacks";
+import { getSessionContext } from "@/db/session-context";
 
 function identity(id: string, name: string) {
   return { providerUserId: `chatgpt-${id}`, email: `${id}@example.com`, displayName: name, fullName: name };
@@ -891,6 +893,80 @@ describe("D1 session persistence", () => {
     // refuses because the candidate itself remains live and unmerged.
     await expect(endSession(created.session.id, owner.id, "owner", env.DB)).resolves.toEqual({ endedAt: expect.any(Number), reason: "owner" });
     await expect(deleteSession(created.session.id, owner.id, env.DB)).resolves.toBe("repository_state");
+  });
+
+  it("rolls back one integrated prompt for its engineer or agent owner while preserving run audit", async () => {
+    const owner = await upsertUser(identity("rollback-owner", "Rollback Owner"), env.DB);
+    const agentOwner = await upsertUser(identity("rollback-agent-owner", "Agent Owner"), env.DB);
+    const engineer = await upsertUser(identity("rollback-engineer", "Prompt Engineer"), env.DB);
+    const other = await upsertUser(identity("rollback-other", "Other Member"), env.DB);
+    const created = await createSession(owner.id, { title: "Rollback room", objective: "Undo one integrated prompt" }, env.DB);
+    await acceptInvite(created.inviteId, agentOwner.id, env.DB);
+    await acceptInvite(created.inviteId, engineer.id, env.DB);
+    await acceptInvite(created.inviteId, other.id, env.DB);
+    const saved = await saveRepositoryConnection(created.session.id, owner.id, null, "installation-rollback", {
+      id: "repository-rollback", nodeId: "R_rollback", owner: "openfloor-test", name: "rollback",
+      fullName: "openfloor-test/rollback", private: true, defaultBranch: "main",
+    }, "main", ["npm test"], env.DB);
+    const candidateId = crypto.randomUUID();
+    const branch = `openfloor/${created.session.id.slice(0, 8)}/candidate/${candidateId.slice(0, 8)}`;
+    const initialSha = "1".repeat(40);
+    await reserveRepositoryCandidate(created.session.id, owner.id, saved!.id, candidateId, "Rollback room", "", branch, "main", initialSha, env.DB);
+    await activateRepositoryCandidate(created.session.id, candidateId, initialSha, env.DB);
+    const parsed = parseAgentInput({ name: "Reverter", role: "Engineer", task: "Implement prompts", ownerUserId: agentOwner.id });
+    if (!parsed) throw new Error("Invalid rollback agent fixture");
+    let floor = await createFloorAgent(created.session.id, owner.id, parsed, env.DB);
+    floor = await createFloorQueueItem(created.session.id, engineer.id, { prompt: "Add the reversible change", agentId: floor!.agents[0].id }, env.DB);
+    const run = await createAgentRun(created.session.id, floor!.queue[0].id, owner.id, "task", env.DB);
+    const context = await getRunExecutionContext(run.id, env.DB);
+    await markRunRunning(run.id, "rollback-process", env.DB);
+    await markRunChecking(run.id, "rollback-thread", "Implemented reversible change", env.DB);
+    await replaceRunFiles(run.id, [{ path: "src/reversible.ts", changeKind: "add", additions: 1, deletions: 0, summary: null, diffPreview: "+export const reversible = true;" }], env.DB);
+    await markRunCheckRunning(run.id, context!.checks[0].id, env.DB);
+    await finishRunCheck(run.id, context!.checks[0].id, { status: "passed", exitCode: 0, durationMs: 1, outputExcerpt: "ok", logKey: "rollback-check.log" }, env.DB);
+    await finishAgentRun(run.id, "ready", "Ready", env.DB);
+    const publishedSha = "2".repeat(40);
+    await markRunPublishing(run.id, { bundleKey: "rollback.bundle", bundleSizeBytes: 10, localCommitSha: publishedSha }, env.DB);
+    await finishRunPublished(run.id, publishedSha, publishedSha, env.DB);
+    await beginRunIntegration(run.id, env.DB);
+    const integratedSha = "3".repeat(40);
+    await finishRunIntegrated(run.id, integratedSha, { number: 4, nodeId: "PR_rollback", url: "https://github.com/openfloor-test/rollback/pull/4", state: "open", draft: true }, env.DB);
+
+    await expect(createAgentRunRollback(created.session.id, run.id, other.id, env.DB)).resolves.toBeNull();
+    const engineerAttempt = await createAgentRunRollback(created.session.id, run.id, engineer.id, env.DB);
+    expect(engineerAttempt).not.toBeNull();
+    await beginAgentRunRollback(engineerAttempt!.rollbackId, env.DB);
+    await failAgentRunRollback(engineerAttempt!.rollbackId, "Rollback conflicts with later candidate changes", env.DB);
+    expect((await getFloorSnapshot(created.session.id, engineer.id, env.DB))?.runs[0]).toEqual(expect.objectContaining({
+      status: "integrated", rollbackStatus: "failed", rollbackFailureReason: "Rollback conflicts with later candidate changes",
+    }));
+
+    const agentOwnerAttempt = await createAgentRunRollback(created.session.id, run.id, agentOwner.id, env.DB);
+    expect(agentOwnerAttempt).not.toBeNull();
+    await beginAgentRunRollback(agentOwnerAttempt!.rollbackId, env.DB);
+    const rollbackSha = "4".repeat(40);
+    const revisionBeforeStaleFinish = (await getFloorSnapshot(created.session.id, owner.id, env.DB))!.revision;
+    await env.DB.prepare("UPDATE repository_candidates SET integration_run_id = 'another-operation' WHERE id = ?")
+      .bind(candidateId).run();
+    await expect(finishAgentRunRollback(agentOwnerAttempt!.rollbackId, rollbackSha, env.DB))
+      .rejects.toThrow("candidate changed");
+    const afterStaleFinish = await getFloorSnapshot(created.session.id, owner.id, env.DB);
+    expect(afterStaleFinish?.revision).toBe(revisionBeforeStaleFinish);
+    expect(afterStaleFinish?.runs[0]).toEqual(expect.objectContaining({ rollbackStatus: "running" }));
+    expect(afterStaleFinish?.review?.files).toHaveLength(1);
+
+    await env.DB.prepare("UPDATE repository_candidates SET integration_run_id = ? WHERE id = ?")
+      .bind(run.id, candidateId).run();
+    await finishAgentRunRollback(agentOwnerAttempt!.rollbackId, rollbackSha, env.DB);
+    const after = await getFloorSnapshot(created.session.id, owner.id, env.DB);
+    expect(after?.runs[0]).toEqual(expect.objectContaining({
+      id: run.id, status: "integrated", integratedCandidateSha: integratedSha,
+      rollbackStatus: "completed", rollbackExpectedCandidateSha: integratedSha, rollbackCommitSha: rollbackSha,
+    }));
+    expect(after?.activeCandidate).toEqual(expect.objectContaining({ candidateSha: rollbackSha }));
+    expect(after?.review?.files).toEqual([]);
+    expect((await getSessionContext(created.session.id, undefined, env.DB))?.integratedRuns).toEqual([]);
+    await expect(createAgentRunRollback(created.session.id, run.id, owner.id, env.DB)).rejects.toThrow("already rolled back");
   });
 });
 

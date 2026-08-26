@@ -395,6 +395,25 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await expect(owner.getByRole("link", { name: /Draft PR #1/ })).toHaveCount(1);
   await owner.getByRole("button", { name: "Workspace" }).click();
 
+  // A non-owner engineer can roll back the integrated change produced from
+  // their own prompt. The immutable run stays visible, while the candidate
+  // advances to a new inverse commit and Review drops that run's file.
+  await member.getByRole("combobox", { name: "Queue target" }).click();
+  await member.getByRole("option", { name: "Lumen" }).click();
+  await member.getByLabel("Prompt to add to the queue").fill("Create a member rollback change");
+  await member.getByRole("button", { name: "Add to queue" }).click();
+  const ownerRollbackItem = owner.locator("li.queue-item", { hasText: "Create a member rollback change" });
+  const memberRollbackItem = member.locator("li.queue-item", { hasText: "Create a member rollback change" });
+  await ownerRollbackItem.getByRole("button", { name: "Run", exact: true }).click();
+  await expect(memberRollbackItem.getByText("integrated", { exact: true })).toBeVisible();
+  await expect(memberRollbackItem.getByRole("button", { name: "Rollback changes" })).toBeVisible();
+  await memberRollbackItem.getByRole("button", { name: "Rollback changes" }).click();
+  await expect(memberRollbackItem.getByText("rolled back", { exact: true })).toBeVisible();
+  await expect(ownerRollbackItem.getByText("rolled back", { exact: true })).toBeVisible();
+  await owner.getByRole("button", { name: "Review" }).click();
+  await expect(owner.getByText("member-change.ts", { exact: true })).toHaveCount(0);
+  await owner.getByRole("button", { name: "Workspace" }).click();
+
   await owner.getByRole("combobox", { name: "Queue target" }).click();
   await owner.getByRole("option", { name: "Lumen" }).click();
   await owner.getByLabel("Prompt to add to the queue").fill("Create a deliberate integration conflict");

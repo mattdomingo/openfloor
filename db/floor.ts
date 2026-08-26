@@ -176,7 +176,8 @@ function buildRunReview(
   if (!candidate) return null;
   const candidateRuns = runs.filter((item) => item.candidateId === candidate.id && item.files.length > 0);
   if (candidateRuns.length === 0 && !candidate.pullRequestNumber) return null;
-  const reviewRuns = candidate.pullRequestNumber ? candidateRuns.filter((run) => run.status === "integrated") : candidateRuns;
+  const reviewRuns = (candidate.pullRequestNumber ? candidateRuns.filter((run) => run.status === "integrated") : candidateRuns)
+    .filter((run) => run.rollbackStatus !== "completed");
   const memberNames = new Map(members.map((member) => [member.userId, member.userName]));
   const contributors = contributorsByPath(reviewRuns, promptsByItem, memberNames);
   const files = githubReview?.files.length ? githubReview.files.map((file) => ({
@@ -210,7 +211,7 @@ function buildRunReview(
   if (candidate.behindBase && candidate.status === "active") warnings.push({ id: `${candidate.id}-behind`, title: "Base branch advanced", detail: "Synchronize and resolve the candidate before merging.", severity: "warning" });
   if (candidate.githubChecksPassing === false) warnings.push({ id: `${candidate.id}-checks`, title: "GitHub checks are not passing", detail: "All reported GitHub checks must pass before squash merge.", severity: "warning" });
   if (candidate.cleanupStatus === "partial") warnings.push({ id: `${candidate.id}-cleanup`, title: "Branch cleanup incomplete", detail: "At least one openfloor branch changed externally and was preserved.", severity: "warning" });
-  if (candidate.integrationRunId) warnings.push({ id: `${candidate.id}-integrating`, title: "Integration in progress", detail: "A run is still integrating into this candidate. Merging, ending, and deleting are blocked until it finishes or is cancelled.", severity: "warning" });
+  if (candidate.integrationRunId) warnings.push({ id: `${candidate.id}-integrating`, title: "Candidate update in progress", detail: "A run is integrating or being rolled back. Merging, ending, and deleting are blocked until the candidate update finishes.", severity: "warning" });
   return {
     id: candidate.id,
     status: candidate.status === "merged" ? "merged" : candidate.pullRequestDraft === false ? "ready" : "draft",

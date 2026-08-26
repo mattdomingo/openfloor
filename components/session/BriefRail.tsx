@@ -1,8 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import type { FloorAgent, FloorAssignment, FloorMessage, FloorParticipant, FloorQueueItem } from "@/lib/floor-types";
+import type { AgentRun, FloorAgent, FloorAssignment, FloorMessage, FloorParticipant, FloorQueueItem } from "@/lib/floor-types";
 import type { ChatThread, TeamPanelView } from "./data";
+import { canRollbackRun } from "./data";
 import { Avatar, Icon, SegmentedControl } from "./primitives";
 import { Panel, type PanelChrome } from "./Rail";
 import { TeamChat } from "./TeamChat";
@@ -12,6 +13,10 @@ type BriefRailProps = {
   assignments: FloorAssignment[];
   agents: FloorAgent[];
   queue: FloorQueueItem[];
+  runs: AgentRun[];
+  busy: boolean;
+  sessionOwner: boolean;
+  onRollback: (runId: string) => Promise<void>;
   onAssignmentChange: (id: string, task: string | null) => Promise<boolean>;
   view: TeamPanelView;
   onViewChange: (view: TeamPanelView) => void;
@@ -62,6 +67,12 @@ export function BriefRail(props: BriefRailProps) {
                 participant={props.participants.find((person) => person.id === assignment.userId)}
                 agents={props.agents.filter((agent) => agent.ownerUserId === assignment.userId)}
                 prompts={props.queue.flatMap((item) => item.prompts.map((prompt) => ({ item, prompt }))).filter(({ prompt }) => prompt.authorUserId === assignment.userId)}
+                runs={props.runs}
+                allAgents={props.agents}
+                currentUserId={props.currentUserId}
+                sessionOwner={props.sessionOwner}
+                busy={props.busy}
+                onRollback={props.onRollback}
                 onSave={props.onAssignmentChange}
               />
             ))}
@@ -72,11 +83,17 @@ export function BriefRail(props: BriefRailProps) {
   );
 }
 
-function OwnerCard({ assignment, participant, agents, prompts, onSave }: {
+function OwnerCard({ assignment, participant, agents, prompts, runs, allAgents, currentUserId, sessionOwner, busy, onRollback, onSave }: {
   assignment: FloorAssignment;
   participant?: FloorParticipant;
   agents: FloorAgent[];
   prompts: Array<{ item: FloorQueueItem; prompt: FloorQueueItem["prompts"][number] }>;
+  runs: AgentRun[];
+  allAgents: FloorAgent[];
+  currentUserId: string;
+  sessionOwner: boolean;
+  busy: boolean;
+  onRollback: (runId: string) => Promise<void>;
   onSave: (id: string, task: string | null) => Promise<boolean>;
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -114,6 +131,11 @@ function OwnerCard({ assignment, participant, agents, prompts, onSave }: {
                   <li key={prompt.id}>
                     <div className="owner-prompt-head"><span className="value">To {item.agentName ?? "Unassigned"}</span></div>
                     <p>{prompt.text}</p>
+                    {prompt.id === item.prompts[0]?.id && (() => {
+                      const run = runs.find((candidate) => candidate.queueItemId === item.id);
+                      const allowed = canRollbackRun({ run, item, agent: allAgents.find((agent) => agent.id === run?.agentId), currentUserId, sessionOwner });
+                      return allowed && run ? <button type="button" className="button danger-button" data-size="sm" disabled={busy} onClick={() => void onRollback(run.id)}>{run.rollbackStatus === "failed" ? "Retry rollback" : "Rollback changes"}</button> : null;
+                    })()}
                   </li>
                 ))}
               </ul>

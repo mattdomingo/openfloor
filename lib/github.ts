@@ -193,6 +193,28 @@ export async function createRepositoryBranch(
   return body.object?.sha ?? sha;
 }
 
+/** Test-adapter counterpart of the rollback workflow's expected-SHA push. */
+export async function updateTestRepositoryBranchIfMatches(
+  config: GitHubAppConfig,
+  installationId: string,
+  repository: GitHubRepositoryOption,
+  branch: string,
+  expectedSha: string,
+  nextSha: string,
+): Promise<boolean> {
+  if (!config.testData) throw new GitHubApiError("Test repository updates require test adapter data", 500);
+  if (!branch.startsWith("openfloor/") || !/^[a-z0-9/_-]+$/.test(branch)) {
+    throw new GitHubApiError("openfloor generated an invalid branch", 500);
+  }
+  const match = config.testData.repositories.find((item) => item.id === repository.id);
+  if (!match || installationId !== config.testData.installationId) throw new GitHubApiError("Repository is not available", 404);
+  const key = `${installationId}:${repository.id}:${branch}`;
+  const current = testRefs.get(key) ?? match.branchShas?.[branch] ?? (match.branches.includes(branch) ? "1".repeat(40) : null);
+  if (current !== expectedSha) return false;
+  testRefs.set(key, nextSha);
+  return true;
+}
+
 export function setTestRepositoryMergeConflict(repositoryId: string, headSha: string): void {
   testMergeConflicts.add(`${repositoryId}:${headSha}`);
 }

@@ -38,7 +38,7 @@ const agentRunTestData = process.env.OPENFLOOR_TEST_AGENT_RUN_DATA ?? JSON.strin
   resolverConflictFirstAttemptPrompts: ["candidate movement conflict"],
   resolverFailFirstAttemptPrompts: ["resolver check failure"],
   changedPath: "src/agent-change.ts",
-  pathByPrompt: { "second published": "src/second-change.ts" },
+  pathByPrompt: { "second published": "src/second-change.ts", "member rollback": "src/member-change.ts" },
 });
 const migration = spawnSync(
   "npx",

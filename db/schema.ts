@@ -570,6 +570,37 @@ export const agentRuns = sqliteTable(
   ],
 );
 
+// An integrated run stays immutable audit history. Rolling it back creates a
+// new candidate commit and records the attempt here instead of rewriting the
+// run row or deleting its branch. The candidate's existing integration_run_id
+// is the shared candidate-operation lease while a rollback is active.
+export const agentRunRollbacks = sqliteTable(
+  "agent_run_rollbacks",
+  {
+    id: text("id").primaryKey(),
+    runId: text("run_id").notNull().references(() => agentRuns.id, { onDelete: "cascade" }),
+    sessionId: text("session_id").notNull().references(() => sessions.id, { onDelete: "cascade" }),
+    candidateId: text("candidate_id").notNull().references(() => repositoryCandidates.id, { onDelete: "cascade" }),
+    expectedCandidateSha: text("expected_candidate_sha").notNull(),
+    rollbackCommitSha: text("rollback_commit_sha"),
+    status: text("status", { enum: ["requested", "running", "completed", "failed"] }).notNull(),
+    failureReason: text("failure_reason"),
+    createdBy: text("created_by").notNull().references(() => users.id),
+    createdAt: integer("created_at").notNull(),
+    startedAt: integer("started_at"),
+    completedAt: integer("completed_at"),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [
+    index("idx_agent_run_rollbacks_session_created").on(table.sessionId, table.createdAt),
+    uniqueIndex("idx_agent_run_rollbacks_one_active").on(table.runId)
+      .where(sql`${table.status} in ('requested', 'running')`),
+    uniqueIndex("idx_agent_run_rollbacks_one_completed").on(table.runId)
+      .where(sql`${table.status} = 'completed'`),
+    check("agent_run_rollbacks_status_check", sql`${table.status} in ('requested', 'running', 'completed', 'failed')`),
+  ],
+);
+
 export const agentRunEvents = sqliteTable(
   "agent_run_events",
   {
