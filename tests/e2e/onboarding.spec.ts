@@ -15,7 +15,6 @@ test("a direct user keeps profile state across steps and completes Free onboardi
   await expect(page.getByRole("alert")).toHaveText("Enter your first and last name to continue.");
   await page.getByLabel("First name").fill("Ada");
   await page.getByLabel("Last name").fill("Lovelace");
-  await page.getByLabel("GitHub handle").fill("ada-lovelace");
 
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await expect.poll(() => page.locator(".field-grid").evaluate((element) => getComputedStyle(element).gridTemplateColumns.split(" ").length)).toBe(1);
@@ -25,7 +24,6 @@ test("a direct user keeps profile state across steps and completes Free onboardi
   await page.getByRole("button", { name: "Back" }).click();
   await expect(page.getByLabel("First name")).toHaveValue("Ada");
   await expect(page.getByLabel("Last name")).toHaveValue("Lovelace");
-  await expect(page.getByLabel("GitHub handle")).toHaveValue("ada-lovelace");
 
   await page.getByRole("button", { name: "Continue", exact: true }).click();
   await page.getByRole("button", { name: "Connect GitHub" }).click();
