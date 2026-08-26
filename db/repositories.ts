@@ -657,6 +657,12 @@ export async function markCandidateAbandoned(
       `UPDATE repository_candidates SET abandoned_at = ?, updated_at = ?
        WHERE id = ? AND session_id = ? AND status IN ('creating', 'active') AND merged_at IS NULL AND abandoned_at IS NULL`,
     ).bind(now, now, candidateId, sessionId),
+    // Drop the connection back to 'connected' so a fresh candidate can be
+    // reserved (repository/candidate route's POST guard requires exactly
+    // that status) — abandonment always leaves the session without a live
+    // candidate, so 'ready' (which means "has one") would otherwise be a
+    // stale claim that blocks the next reservation.
+    database.prepare("UPDATE repository_connections SET status = 'connected', updated_at = ? WHERE session_id = ? AND status = 'ready'").bind(now, sessionId),
     database.prepare("UPDATE sessions SET floor_revision = floor_revision + 1, updated_at = ? WHERE id = ?").bind(now, sessionId),
   ]);
   return getFloorRevision(sessionId, database);

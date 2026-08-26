@@ -204,11 +204,14 @@
    neighbours down. Doubled class so it wins over the single-column
    .settings-category-list grid above; shell-agnostic, like the row rules
    below, because this also renders inside the session setup dialog. */
+/* No align-items: start here on purpose — every collapsed tile stretches to
+   the row's tallest neighbour (including the dashed request tile below), so
+   a grid row of providers reads as one even strip instead of a jagged one.
+   An expanded tile still escapes that via grid-column: 1 / -1 below. */
 .provider-credential-list.provider-credential-list {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
   gap: 10px;
-  align-items: start;
 }
 .provider-credential-row[data-expanded="true"] { grid-column: 1 / -1; }
 
@@ -238,11 +241,16 @@
 }
 .provider-credential-command code { flex: 1 1 auto; min-width: 0; overflow-x: auto; font: 500 12.5px var(--mono); }
 
-/* Last cell of the grid: how to ask for a provider that isn't carried yet. */
+/* Last cell of the grid: how to ask for a provider that isn't carried yet.
+   No fixed height — it stretches to match the tallest collapsed provider
+   tile beside it (see .provider-credential-list's align-items above), and
+   align-content: space-between keeps its copy pinned to the top and the
+   button to the bottom instead of both huddling in the middle of that
+   extra height. */
 .provider-credential-request {
   display: grid;
   gap: 10px;
-  align-content: start;
+  align-content: space-between;
   padding: 18px 20px;
   border: 1px dashed var(--edge);
   border-radius: var(--radius-md);
@@ -257,6 +265,7 @@
    this row renders both in Settings and inside the session setup dialog. */
 .provider-credential-row.provider-credential-row {
   display: block;
+  height: 100%;
   padding: 0;
   overflow: hidden;
 }
@@ -269,6 +278,7 @@
   align-items: center;
   gap: 3px 12px;
   width: 100%;
+  height: 100%;
   padding: 14px 16px;
   border: 0;
   background: none;

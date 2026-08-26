@@ -1,20 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useState } from "react";
 import { BASE_PATH } from "@/components/basePath";
-import { SelectMenu } from "@/components/session/SelectMenu";
 import type {
-  AccountGitHubRepositoryOption,
-  GitHubRepositoryOption,
   RepositoryCandidate,
   RepositoryConnection,
   RepositoryConnectionStatus,
-  RepositoryPreflight,
   SessionRole,
 } from "@/lib/session-types";
-
-type RepositoryOption = GitHubRepositoryOption | AccountGitHubRepositoryOption;
-type OptionsResponse = { repositories: RepositoryOption[]; branches: string[]; error?: string };
 
 const connectionStatusLabel: Record<RepositoryConnectionStatus, string> = {
   connected: "Connected",
@@ -25,10 +18,9 @@ const connectionStatusLabel: Record<RepositoryConnectionStatus, string> = {
   disconnected: "Disconnected",
 };
 
-// For enum-ish statuses that are readable once the underscores go.
-function humanize(status: string) {
-  return status.replaceAll("_", " ");
-}
+// Statuses where the repository connection itself needs attention in Account
+// Settings — nothing this card can fix by talking to the candidate endpoint.
+const NEEDS_RECONNECT: ReadonlySet<RepositoryConnectionStatus> = new Set(["revoked", "inaccessible", "disconnected"]);
 
 async function readResponse<T extends { error?: string }>(response: Response): Promise<Partial<T>> {
   const text = await response.text();
@@ -40,6 +32,13 @@ async function readResponse<T extends { error?: string }>(response: Response): P
   }
 }
 
+// The repository itself is chosen once, on the Home create-session form —
+// createSessionWithRepository provisions both the connection and a reserved
+// candidate synchronously, before this card ever renders. So this card no
+// longer offers repository selection, disconnect, or repository-level sync;
+// it shows what was chosen, lets the owner rename the still-untouched
+// candidate branch, and offers the one recovery path candidate provisioning
+// can actually fail into (retry creating the candidate).
 export function RepositoryCard({
   sessionId,
   sessionTitle,
@@ -47,9 +46,6 @@ export function RepositoryCard({
   role,
   initialRepository,
   initialCandidate,
-  initialPreflight,
-  preflightEnabled,
-  beginSetup,
   onStateChange,
 }: {
   sessionId: string;
@@ -58,295 +54,156 @@ export function RepositoryCard({
   role: SessionRole;
   initialRepository: RepositoryConnection | null;
   initialCandidate: RepositoryCandidate | null;
-  initialPreflight: RepositoryPreflight | null;
-  preflightEnabled: boolean;
-  beginSetup: boolean;
   onStateChange?: (state: { repository: RepositoryConnection | null; candidate: RepositoryCandidate | null }) => void;
 }) {
   const [repository, setRepository] = useState(initialRepository);
   const [candidate, setCandidate] = useState(initialCandidate);
-  const [preflight, setPreflight] = useState(initialPreflight);
-  const [logs, setLogs] = useState<string | null>(null);
-  const [editing, setEditing] = useState(beginSetup);
-  const [repositories, setRepositories] = useState<RepositoryOption[]>([]);
-  const [branches, setBranches] = useState<string[]>([]);
-  const [repositoryId, setRepositoryId] = useState(initialRepository?.repositoryId ?? "");
-  const [baseBranch, setBaseBranch] = useState(initialRepository?.baseBranch ?? "");
-  const [busy, setBusy] = useState(beginSetup);
+  const [syncedRepository, setSyncedRepository] = useState(initialRepository);
+  const [syncedCandidate, setSyncedCandidate] = useState(initialCandidate);
+  if (syncedRepository !== initialRepository || syncedCandidate !== initialCandidate) {
+    setSyncedRepository(initialRepository);
+    setSyncedCandidate(initialCandidate);
+    setRepository(initialRepository);
+    setCandidate(initialCandidate);
+  }
+  // The name draft resyncs whenever the candidate identity changes (a fresh
+  // candidate after create/rename) but not on every render, so mid-edit
+  // keystrokes survive incidental re-renders of the parent.
+  const [nameDraft, setNameDraft] = useState(initialCandidate?.name ?? "");
+  const [nameDraftCandidateId, setNameDraftCandidateId] = useState(initialCandidate?.id ?? null);
+  if ((candidate?.id ?? null) !== nameDraftCandidateId) {
+    setNameDraftCandidateId(candidate?.id ?? null);
+    setNameDraft(candidate?.name ?? "");
+  }
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
-  const selectedRepository = useMemo(
-    () => repositories.find((item) => item.id === repositoryId) ?? null,
-    [repositories, repositoryId],
+  // Renaming reuses the branch's own name-derived slug (lib/repository-refs.ts),
+  // so it's only safe while nothing has been committed to the branch yet.
+  const canRenameCandidate = Boolean(
+    candidate && candidate.candidateSha === candidate.baseSha && candidate.integrationRunId == null,
   );
+  const trimmedDraft = nameDraft.trim();
 
-  useEffect(() => {
-    const timer = window.setTimeout(() => {
-      setRepository(initialRepository);
-      setCandidate(initialCandidate);
-      setPreflight(initialPreflight);
-    }, 0);
-    return () => window.clearTimeout(timer);
-  }, [initialCandidate, initialPreflight, initialRepository]);
-
-  useEffect(() => {
-    if (!preflight || !["provisioning", "running"].includes(preflight.status)) return;
-    const timer = window.setInterval(() => {
-      void fetch(`${BASE_PATH}/api/sessions/${sessionId}/repository/preflight`, { cache: "no-store" })
-        .then((response) => response.json() as Promise<{ preflight?: RepositoryPreflight }>)
-        .then((body) => { if (body.preflight) setPreflight(body.preflight); });
-    }, 1500);
-    return () => window.clearInterval(timer);
-  }, [preflight, sessionId]);
-
-  const loadOptions = useCallback(async (selectedId?: string) => {
-    const query = selectedId ? `?repositoryId=${encodeURIComponent(selectedId)}` : "";
-    const response = await fetch(`${BASE_PATH}/api/sessions/${sessionId}/repository/options${query}`, { cache: "no-store" });
-    const body = await readResponse<OptionsResponse>(response);
-    if (!response.ok) throw new Error(body.error ?? "Unable to load GitHub repositories");
-    if (!body.repositories || !body.branches) throw new Error(body.error ?? "GitHub repository options are incomplete");
-    setRepositories(body.repositories);
-    setBranches(body.branches);
-    return { repositories: body.repositories, branches: body.branches };
-  }, [sessionId]);
-
-  useEffect(() => {
-    if (!editing || role !== "owner") return;
-    let disposed = false;
-    void (async () => {
-      const initial = await loadOptions();
-      const selected = initial.repositories.find((item) => item.id === repositoryId) ?? initial.repositories[0];
-      if (!selected) throw new Error("The GitHub App installation has no available repositories");
-      if (disposed) return;
-      setRepositoryId(selected.id);
-      const branchOptions = await loadOptions(selected.id);
-      if (disposed) return;
-      if (!baseBranch || !branchOptions.branches.includes(baseBranch)) {
-        setBaseBranch(branchOptions.branches.includes(selected.defaultBranch) ? selected.defaultBranch : branchOptions.branches[0] ?? "");
-      }
-    })()
-      .catch((reason: unknown) => {
-        if (!disposed) setError(reason instanceof Error ? reason.message : "Unable to load GitHub repositories");
-      })
-      .finally(() => {
-        if (!disposed) setBusy(false);
-      });
-    return () => { disposed = true; };
-    // Editing intentionally snapshots the current form values when it opens.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editing, loadOptions, role]);
-
-  async function chooseRepository(nextId: string) {
-    setRepositoryId(nextId);
-    setBusy(true);
-    setError(null);
-    try {
-      const body = await loadOptions(nextId);
-      const selected = body.repositories.find((item) => item.id === nextId);
-      setBaseBranch(selected?.defaultBranch ?? body.branches[0] ?? "");
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Unable to load repository branches");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function save() {
-    setBusy(true);
-    setError(null);
-    const method = beginSetup || repository?.status === "disconnected" || !repository ? "POST" : "PATCH";
-    const response = await fetch(`${BASE_PATH}/api/sessions/${sessionId}/repository`, {
-      method,
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        repositoryId,
-        baseBranch,
-        ...(selectedRepository && "accountInstallationId" in selectedRepository
-          ? { accountInstallationId: selectedRepository.accountInstallationId }
-          : {}),
-      }),
-    });
-    const body = await readResponse<{
-      repository?: RepositoryConnection;
-      candidate?: RepositoryCandidate | null;
-      setupStatus?: "ready" | "failed";
-      error?: string;
-    }>(response);
-    if (!response.ok || !body.repository) {
-      setError(body.error ?? "Unable to save the repository connection");
-      setBusy(false);
-      return;
-    }
-    setRepository(body.repository);
-    onStateChange?.({ repository: body.repository, candidate });
-    setEditing(false);
-    setBusy(false);
-    setCandidate(body.candidate ?? candidate);
-    onStateChange?.({ repository: body.repository, candidate: body.candidate ?? candidate });
-    setNotice(body.setupStatus === "failed" ? "Repository saved, but candidate setup needs retry." : "GitHub repository ready.");
-  }
-
-  async function disconnect() {
-    setBusy(true);
-    setError(null);
-    const response = await fetch(`${BASE_PATH}/api/sessions/${sessionId}/repository`, { method: "DELETE" });
-    const body = await readResponse<{ repository?: RepositoryConnection; error?: string }>(response);
-    if (!response.ok || !body.repository) {
-      setError(body.error ?? "Unable to disconnect the repository");
-    } else {
-      setRepository(body.repository);
-      onStateChange?.({ repository: body.repository, candidate });
-      setEditing(false);
-      setNotice("Repository disconnected. No GitHub content was changed.");
-    }
-    setBusy(false);
-  }
-
-  async function candidateAction(action: "candidate" | "sync") {
+  async function createCandidate() {
     setBusy(true);
     setError(null);
     setNotice(null);
-    const response = await fetch(`${BASE_PATH}/api/sessions/${sessionId}/repository/${action}`, {
+    const response = await fetch(`${BASE_PATH}/api/sessions/${sessionId}/repository/candidate`, {
       method: "POST",
-      headers: action === "candidate" ? { "content-type": "application/json" } : undefined,
-      body: action === "candidate" ? JSON.stringify({ name: sessionTitle, description: sessionObjective ?? "" }) : undefined,
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: sessionTitle, description: sessionObjective ?? "" }),
     });
     const body = await readResponse<{ repository?: RepositoryConnection; candidate?: RepositoryCandidate; error?: string }>(response);
     if (!response.ok || !body.repository || !body.candidate) {
-      setError(body.error ?? "Unable to update the repository candidate");
+      setError(body.error ?? "Unable to create the candidate branch");
     } else {
       setRepository(body.repository);
       setCandidate(body.candidate);
       onStateChange?.({ repository: body.repository, candidate: body.candidate });
-      setNotice(action === "candidate" ? "Candidate branch ready." : "Repository state synchronized with GitHub.");
+      setNotice("Candidate branch ready.");
     }
     setBusy(false);
   }
 
-  async function verifyRunner() {
+  async function renameBranch() {
+    if (!candidate || !trimmedDraft || trimmedDraft === candidate.name) return;
     setBusy(true);
     setError(null);
-    setLogs(null);
-    const response = await fetch(`${BASE_PATH}/api/sessions/${sessionId}/repository/preflight`, { method: "POST" });
-    const body = await readResponse<{ preflight?: RepositoryPreflight; error?: string }>(response);
-    if (!response.ok || !body.preflight) setError(body.error ?? "Unable to start repository preflight");
-    else setPreflight(body.preflight);
-    setBusy(false);
-  }
-
-  async function openLogs() {
-    if (!preflight) return;
-    setBusy(true);
-    setError(null);
-    const response = await fetch(`${BASE_PATH}/api/sessions/${sessionId}/repository/preflight/${preflight.id}/logs`, { cache: "no-store" });
-    const text = await response.text();
-    if (!response.ok) setError("Unable to load command output");
-    else setLogs(text);
-    setBusy(false);
-  }
-
-  function edit() {
-    setRepositoryId(repository?.repositoryId ?? "");
-    setBaseBranch(repository?.baseBranch ?? "");
-    setBusy(true);
-    setEditing(true);
     setNotice(null);
-    setError(null);
+    const deleteResponse = await fetch(`${BASE_PATH}/api/sessions/${sessionId}/repository/candidate`, {
+      method: "DELETE",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ deleteBranch: true }),
+    });
+    if (!deleteResponse.ok) {
+      const body = await readResponse<{ error?: string }>(deleteResponse);
+      setError(body.error ?? "Unable to rename the candidate branch");
+      setBusy(false);
+      return;
+    }
+    setCandidate(null);
+    onStateChange?.({ repository, candidate: null });
+    const createResponse = await fetch(`${BASE_PATH}/api/sessions/${sessionId}/repository/candidate`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: trimmedDraft, description: candidate.description }),
+    });
+    const body = await readResponse<{ repository?: RepositoryConnection; candidate?: RepositoryCandidate; error?: string }>(createResponse);
+    if (!createResponse.ok || !body.repository || !body.candidate) {
+      // The old branch is already gone; fall back to the "create candidate"
+      // state below rather than leaving the card stuck with nothing.
+      setError(body.error ?? "The old branch was removed, but the renamed candidate could not be created. Retry below.");
+      setBusy(false);
+      return;
+    }
+    setRepository(body.repository);
+    setCandidate(body.candidate);
+    onStateChange?.({ repository: body.repository, candidate: body.candidate });
+    setNotice("Candidate branch renamed.");
+    setBusy(false);
   }
 
   return (
     <section className="action-card repository-card" aria-label="GitHub repository">
       <p className="eyebrow">Repository</p>
       <h2>GitHub connection</h2>
-      {!repository && !editing && (
+      {!repository ? (
+        <p>No repository is connected. <a href={`${BASE_PATH}/home/settings?section=connections`}>Check GitHub access in Account Settings</a>.</p>
+      ) : NEEDS_RECONNECT.has(repository.status) ? (
         <>
-          <p>No repository is connected yet. Select one already authorized in Account Settings.</p>
+          <div className="repository-summary">
+            <strong>{repository.repositoryFullName}</strong>
+            <span data-status={repository.status}>{connectionStatusLabel[repository.status]}</span>
+          </div>
           {role === "owner" ? (
-            <>
-              <p className="form-note">If none appear, add or restore GitHub access under <a href={`${BASE_PATH}/home/settings?section=connections`}>Account Settings</a>.</p>
-              <button className="button" data-variant="primary" onClick={edit} disabled={busy}>Select repository</button>
-            </>
+            <p className="form-note">Reconnect from an active GitHub installation in <a href={`${BASE_PATH}/home/settings?section=connections`}>Account Settings</a>.</p>
           ) : (
-            <p className="repository-checks">Only session owner can select repository.</p>
+            <p className="repository-checks">Only the session owner can manage GitHub access.</p>
           )}
         </>
-      )}
-      {repository && !editing && (
+      ) : (
         <>
           <div className="repository-summary">
             <strong>{repository.repositoryFullName}</strong>
             <span>{repository.repositoryPrivate ? "Private" : "Public"} · base <code>{repository.baseBranch}</code></span>
-            <span data-status={repository.status}>{connectionStatusLabel[repository.status]}</span>
+            {repository.status === "externally_modified" && <span data-status={repository.status}>{connectionStatusLabel[repository.status]}</span>}
           </div>
-          {candidate && (
+          {candidate ? (
             <div className="repository-checks">
-              <span>Active candidate</span>
-              <p><strong>{candidate.name}</strong></p>
-              {candidate.description && <p>{candidate.description}</p>}
-              <p><code>{candidate.branchName}</code></p>
-              <p>Candidate <code>{candidate.candidateSha?.slice(0, 8) ?? "creating"}</code> · base <code>{(candidate.remoteBaseSha ?? candidate.baseSha).slice(0, 8)}</code></p>
-              {candidate.behindBase && <p className="form-note">Candidate is behind the current base branch.</p>}
-              {repository.status === "externally_modified" && <p className="form-note">The candidate branch was modified outside openfloor.</p>}
-            </div>
-          )}
-          {preflight && (
-            <div className="repository-checks" aria-label="Runner verification">
-              <span>Runner verification</span>
-              <p><strong data-status={preflight.status}>{humanize(preflight.status)}</strong>{preflight.summary ? ` · ${preflight.summary}` : ""}</p>
-              <ol>{preflight.checks.map((check) => (
-                <li key={check.id}><code>{check.command}</code> — <span data-status={check.status}>{humanize(check.status)}</span>{check.exitCode == null ? "" : ` (exit ${check.exitCode})`}</li>
-              ))}</ol>
-              {preflight.checks.some((check) => check.hasLog) && <button className="button" onClick={() => void openLogs()} disabled={busy}>Open command output</button>}
-              {logs != null && <pre className="repository-log-output">{logs}</pre>}
-            </div>
-          )}
-          {role === "owner" && (
-            <div className="button-row">
-              {repository.status !== "disconnected" && repository.status !== "revoked" && repository.status !== "inaccessible" ? (
+              <span>Candidate branch</span>
+              {role === "owner" ? (
                 <>
-                  <button className="button" onClick={edit} disabled={busy}>Configure</button>
-                  {!candidate && repository.status === "connected" && <button className="button" data-variant="primary" onClick={() => void candidateAction("candidate")} disabled={busy}>Retry candidate setup</button>}
-                  {candidate && <button className="button" data-variant="primary" onClick={() => void candidateAction("sync")} disabled={busy}>Sync repository</button>}
-                  {preflightEnabled && candidate && repository.status === "ready" && (
-                    <button className="button" onClick={() => void verifyRunner()} disabled={busy || Boolean(preflight && ["provisioning", "running"].includes(preflight.status))}>Verify runner</button>
-                  )}
-                  <button className="button danger-button" onClick={disconnect} disabled={busy}>Disconnect</button>
+                  <div className="button-row">
+                    <label className="field">
+                      <span className="label">Name</span>
+                      <input
+                        value={nameDraft}
+                        onChange={(event) => setNameDraft(event.target.value)}
+                        maxLength={100}
+                        disabled={busy || !canRenameCandidate}
+                      />
+                    </label>
+                    {canRenameCandidate && (
+                      <button className="button" onClick={renameBranch} disabled={busy || !trimmedDraft || trimmedDraft === candidate.name}>
+                        Rename branch
+                      </button>
+                    )}
+                  </div>
+                  {!canRenameCandidate && <p className="form-note">The branch name is fixed once work has started on it.</p>}
                 </>
-              ) : <button className="button" data-variant="primary" onClick={edit} disabled={busy}>Select account repository</button>}
+              ) : (
+                <p><strong>{candidate.name}</strong></p>
+              )}
+              <p><code>{candidate.branchName}</code></p>
             </div>
-          )}
+          ) : repository.status === "connected" && role === "owner" ? (
+            <div className="button-row">
+              <button className="button" data-variant="primary" onClick={createCandidate} disabled={busy}>Create candidate branch</button>
+            </div>
+          ) : null}
         </>
-      )}
-      {editing && role === "owner" && (
-        <div className="repository-form">
-          <div className="repository-field">
-            <span>Repository</span>
-            <SelectMenu
-              label="Connected repository"
-              value={repositoryId}
-              onChange={(next) => void chooseRepository(next)}
-              disabled={busy}
-              searchable
-              options={repositories.map((item) => ({ value: item.id, label: item.fullName }))}
-            />
-          </div>
-          <div className="repository-field">
-            <span>Base branch</span>
-            <SelectMenu
-              label="Repository base branch"
-              value={baseBranch}
-              onChange={setBaseBranch}
-              disabled={busy || branches.length === 0}
-              searchable
-              options={branches.map((branch) => ({ value: branch, label: branch }))}
-            />
-          </div>
-          <div className="button-row">
-            <button className="button" data-variant="primary" onClick={save} disabled={busy || !selectedRepository || !baseBranch}>Save repository</button>
-            {!beginSetup && repository?.status !== "disconnected" && <button className="button" onClick={() => setEditing(false)} disabled={busy}>Cancel</button>}
-          </div>
-        </div>
       )}
       {notice && <p className="notice" role="status">{notice}</p>}
       {error && <p className="form-error" role="alert">{error}</p>}

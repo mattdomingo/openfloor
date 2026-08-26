@@ -775,6 +775,13 @@ describe("D1 session persistence", () => {
     const abandonedRow = await env.DB.prepare("SELECT abandoned_at AS abandonedAt FROM repository_candidates WHERE id = ?").bind(candidateId).first<{ abandonedAt: number | null }>();
     expect(abandonedRow?.abandonedAt).not.toBeNull();
 
+    // The connection drops back from 'ready' to 'connected' — otherwise the
+    // repository/candidate route's POST guard (which requires 'connected')
+    // would refuse the rename/retry flow the simplified repository card
+    // relies on right after an abandon.
+    await expect(getRepositoryConnectionForMember(created.session.id, owner.id, env.DB))
+      .resolves.toEqual(expect.objectContaining({ status: "connected" }));
+
     // The one-live-candidate index is freed: a fresh candidate can be
     // reserved for the same session immediately.
     const nextCandidateId = crypto.randomUUID();
