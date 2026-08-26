@@ -45,6 +45,14 @@ export function HoverTip({ position, children, wrap = false }: { position: { x: 
 /* Native <dialog> unmounts the instant its parent drops it, which cuts off any exit
    transition. This opens the dialog on mount and turns dismissals into a short
    data-closing beat before onClose fires, so the modal-out fade can actually run. */
+/* The busy mark for an action already in flight. Decorative on purpose: every
+   call site keeps its "Saving…" / "Verifying…" text, which is what a screen
+   reader announces — this only gives the eye something moving to rest on
+   while the request is out. */
+export function Spinner() {
+  return <span className="spinner" aria-hidden="true" />;
+}
+
 export function useDialogDismiss(onClose: () => void) {
   const dialogRef = useRef<HTMLDialogElement>(null);
 

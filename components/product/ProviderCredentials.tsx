@@ -2,6 +2,7 @@
 
 import { FormEvent, useState } from "react";
 import { BASE_PATH } from "@/components/basePath";
+import { Spinner } from "@/components/session/primitives";
 import {
   AGENT_PROVIDER_LABELS,
   CONNECTION_REQUEST_EMAIL,
@@ -153,7 +154,7 @@ function ProviderCredentialRow({ provider, kind, credential, showAgentDefaults, 
                 )}
               </span>
               <button type="button" className="button" data-variant="quiet" data-size="sm" onClick={disconnect} disabled={busy}>
-                {busy ? "Disconnecting…" : "Disconnect"}
+                {busy ? <><Spinner />Disconnecting…</> : "Disconnect"}
               </button>
             </>
           ) : (
@@ -205,7 +206,7 @@ function ProviderCredentialRow({ provider, kind, credential, showAgentDefaults, 
               )}
               <div className="form-actions">
                 <button className="button" data-variant="primary" data-size="sm" disabled={!secret.trim() || busy}>
-                  {busy ? (bundle ? "Connecting…" : "Verifying…") : "Connect"}
+                  {busy ? <><Spinner />{bundle ? "Connecting…" : "Verifying…"}</> : "Connect"}
                 </button>
               </div>
             </form>

@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { BASE_PATH } from "@/components/basePath";
 import { LocalDateTime } from "@/components/LocalDateTime";
 import { formatDuration } from "@/lib/date-format";
-import { HoverTip, Icon, useDialogDismiss, useHoverTip } from "@/components/session/primitives";
+import { HoverTip, Icon, Spinner, useDialogDismiss, useHoverTip } from "@/components/session/primitives";
 import { lowHoursRemaining, planLabel, type Plan, type PlanStatus } from "@/lib/plans";
 import { mergeVisibleOrder, parseSessionOrder, sortByStoredOrder } from "@/lib/session-order";
 import type { AppUser, SessionSummary } from "@/lib/session-types";
@@ -288,7 +288,7 @@ export function HomeScreen({
             {error && <p className="form-error" role="alert">{error}</p>}
             <div className="form-actions">
               <button type="button" className="button" data-variant="quiet" onClick={() => setCreating(false)}>Cancel</button>
-              <button className="button" data-variant="primary" disabled={submitting}>{submitting ? "Creating…" : "Create session"}</button>
+              <button className="button" data-variant="primary" disabled={submitting}>{submitting ? <><Spinner />Creating…</> : "Create session"}</button>
             </div>
           </form>
         )}

@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { WaveField } from "@/app/entry-wave";
 import { BASE_PATH } from "@/components/basePath";
 import { AvatarCropper, AvatarFileButton } from "@/components/product/AvatarCropper";
-import { Avatar } from "@/components/session/primitives";
+import { Avatar, Spinner } from "@/components/session/primitives";
 import { ACCEPTED_AVATAR_TYPES, MAX_AVATAR_BYTES } from "@/lib/avatar-constraints";
 import { initialsFromParts } from "@/lib/display-name";
 import { PAID_PLAN_CATALOG, PLAN_LIMITS, planLimitsSummary, type PaidPlan } from "@/lib/plans";
@@ -228,7 +228,7 @@ export function OnboardingScreen({
               {submitError && <p className="form-error" role="alert">{submitError}</p>}
               <div className="form-actions onboarding-plan-actions">
                 <button type="button" className="button" data-variant="quiet" disabled={submitting} onClick={() => setStep(1)}>Back</button>
-                <button type="submit" className="button" data-variant="primary" data-size="lg" disabled={!ready || submitting}>{submitting ? "Saving…" : plan === "free" ? "Finish setup" : "Continue to payment"}</button>
+                <button type="submit" className="button" data-variant="primary" data-size="lg" disabled={!ready || submitting}>{submitting ? <><Spinner />Saving…</> : plan === "free" ? "Finish setup" : "Continue to payment"}</button>
               </div>
             </section>
           </form>
