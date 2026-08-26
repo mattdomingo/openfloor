@@ -57,7 +57,7 @@ export function ProviderCredentials({
         )),
       )}
       <li className="provider-credential-request">
-        <p>Need a provider that isn&rsquo;t here? Tell us which one and we&rsquo;ll look at adding it.</p>
+        <p>Need a provider that isn&rsquo;t here?</p>
         <a className="button" data-variant="quiet" data-size="sm" href={`mailto:${CONNECTION_REQUEST_EMAIL}?subject=${encodeURIComponent("openfloor: model connection request")}`}>
           Request a provider
         </a>

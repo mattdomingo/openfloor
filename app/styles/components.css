@@ -245,25 +245,13 @@ input, textarea { width: 100%; padding: 11px 12px; border: 1px solid var(--line-
 .repository-summary span[data-status="connected"], .repository-summary span[data-status="ready"] { color: var(--status-running); }
 .repository-summary span[data-status="revoked"], .repository-summary span[data-status="inaccessible"], .repository-summary span[data-status="externally_modified"] { color: var(--status-blocked); }
 .repository-summary span[data-status="disconnected"] { color: var(--text-tertiary); }
-.repository-checks [data-status="provisioning"], .repository-checks [data-status="pending"], .repository-checks [data-status="cancelled"] { color: var(--status-waiting); }
-.repository-checks [data-status="running"] { color: var(--status-review); }
-.repository-checks [data-status="passed"] { color: var(--status-running); }
-.repository-checks [data-status="failed"] { color: var(--status-blocked); }
-.repository-checks [data-status="timed_out"] { color: var(--status-attention); }
 .repository-summary code, .repository-checks code { font-family: var(--font-mono); font-size: var(--text-xs); }
 .repository-checks { margin-bottom: var(--space-4); color: var(--text-secondary); font-size: var(--text-sm); }
-.repository-checks ol { display: grid; gap: 5px; margin: var(--space-2) 0 0; padding-left: var(--space-5); }
 .repo-gate-checklist { display: grid; gap: var(--space-3); margin: 0 0 var(--space-4); padding: 0; list-style: none; }
 .repo-gate-checklist li { display: flex; align-items: center; gap: var(--space-3); color: var(--text-secondary); font-size: var(--text-sm); }
 .repo-gate-checklist li span:first-child { display: grid; flex: none; place-items: center; width: 20px; height: 20px; border-radius: 50%; border: 1px solid var(--line-strong); color: var(--text-tertiary); font-size: var(--text-xs); }
 .repo-gate-checklist li[data-done="true"] { color: var(--text-primary); }
 .repo-gate-checklist li[data-done="true"] span:first-child { border-color: var(--status-running); background: var(--status-running-soft); color: var(--status-running); }
-.repository-card-slot[data-highlighted="true"] { animation: repo-card-highlight 2.2s var(--ease-standard); border-radius: var(--radius-md); }
-@keyframes repo-card-highlight {
-  0%, 100% { box-shadow: none; }
-  15%, 60% { box-shadow: 0 0 0 3px var(--status-attention-soft), 0 0 0 1px var(--status-attention); }
-}
-.repository-log-output { max-height: 320px; overflow: auto; margin-top: var(--space-3); padding: var(--space-3); border-radius: var(--radius-sm); background: var(--surface-sunken); color: var(--text-primary); white-space: pre-wrap; word-break: break-word; font-family: var(--font-mono); font-size: var(--text-xs); }
 .queue-run-row { display: flex; align-items: center; justify-content: flex-end; gap: .45rem; margin-top: .6rem; }
 .queue-run-row .queue-chip[data-status="answered"] { margin-right: auto; }
 .queue-run-branch { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-tertiary); font-size: .68rem; }

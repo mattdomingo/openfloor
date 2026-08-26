@@ -144,6 +144,17 @@ describe("session lobby setup rendering", () => {
     const setupHtml = await (await SELF.fetch(`http://localhost/session/${session.id}?setup=1`, { headers: owner.headers })).text();
     expect(setupHtml).toContain("Floor ready");
     expect(setupHtml).toContain("Session setup · Step");
+    // No hero "Setup" button — the dialog is the only entry point, opened by
+    // ?setup=1 right after creation or by the repository gate.
+    expect(setupHtml).not.toMatch(/<button[^>]*>Setup<\/button>/);
+    // Step 1 no longer offers repository selection, sync, or disconnect —
+    // those all happened at session creation.
+    expect(setupHtml).not.toContain("Sync repository");
+    expect(setupHtml).not.toContain(">Disconnect<");
+    expect(setupHtml).not.toContain(">Configure<");
+    // Step 2 is AI-provider-only; the generated-agent provider picker moved
+    // to the floor toolbar.
+    expect(setupHtml).not.toContain("Generated-agent provider");
 
     const gateHtml = await (await SELF.fetch(`http://localhost/session/${session.id}?repo=required&setup=1`, { headers: owner.headers })).text();
     expect(gateHtml).toContain("Floor ready");
@@ -155,6 +166,24 @@ describe("session lobby setup rendering", () => {
     const memberHtml = await (await SELF.fetch(`http://localhost/session/${session.id}?setup=1`, { headers: member.headers })).text();
     expect(memberHtml).not.toContain("Session setup · Step");
     expect(memberHtml).toContain("Member access");
+  });
+
+  it("shows the AI connection tile alongside GitHub, skills, and tools in Prepare the workspace", async () => {
+    const owner = await onboardedUser("workspace-tiles-owner", "Workspace", "Owner");
+    const created = await SELF.fetch("http://localhost/api/sessions", {
+      method: "POST",
+      headers: { ...owner.headers, "content-type": "application/json", accept: "application/json" },
+      body: JSON.stringify({ title: "Workspace tiles", objective: null, ...await testRepositorySelection(owner.headers) }),
+    });
+    expect(created.status).toBe(201);
+    const { session } = await created.json() as { session: { id: string } };
+
+    const lobbyHtml = await (await SELF.fetch(`http://localhost/session/${session.id}`, { headers: owner.headers })).text();
+    expect(lobbyHtml).toContain("Prepare the workspace");
+    expect(lobbyHtml).toContain("AI connection");
+    expect(lobbyHtml).toContain("Imported skills");
+    expect(lobbyHtml).toContain("Connected tools");
+    expect(lobbyHtml).not.toMatch(/<button[^>]*>Setup<\/button>/);
   });
 });
 
