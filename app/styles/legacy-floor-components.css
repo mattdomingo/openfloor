@@ -1330,7 +1330,8 @@
 
 .agent-foot > span:last-child,
 .agent-head-trailing,
-.agent-state {
+.agent-state,
+.agent-cost {
   flex: none;
   white-space: nowrap;
 }

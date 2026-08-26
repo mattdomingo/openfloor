@@ -49,13 +49,32 @@ async function readFloorSnapshot(sessionId: string, userId: string, database: D1
     database.prepare("SELECT floor_revision AS revision, auto_dispatch AS autoDispatch, auto_provision_agents AS autoProvisionAgents, auto_resolve_conflicts AS autoResolveConflicts FROM sessions WHERE id = ?").bind(sessionId).first<{ revision: number; autoDispatch: number; autoProvisionAgents: number; autoResolveConflicts: number }>(),
     resolveAutoAgentProvider(sessionId, database, disabledRunProviders()),
     database.prepare(
+      // Two extra joins for lifetime cost (Agent tile meter): `cost` sums
+      // every priced run and flags a mixed reported/estimated history (an
+      // agent whose model crossed the anthropic/kimi/glm boundary mid-life —
+      // see lib/run-usage.ts); `latest_run` finds the most recent run whose
+      // billed_kind is known, so "incl. in subscription" reflects who pays
+      // NOW, not an average across the agent's history. Both LEFT JOIN so an
+      // agent with no priced runs yet still returns a row (null cost, not a
+      // dropped agent). idx_agent_runs_agent_created covers both.
       `SELECT a.id, a.name, a.role, a.task, a.owner_user_id AS ownerUserId,
               owner.display_name AS ownerName, a.created_by AS createdByUserId,
               a.state, a.kind, a.provider, a.model,
               a.credential_kind AS credentialKind, a.paused_at AS pausedAt,
-              a.created_at AS createdAt, a.updated_at AS updatedAt
+              a.created_at AS createdAt, a.updated_at AS updatedAt,
+              cost.costMicroUsd AS costMicroUsd, cost.costSource AS costSource,
+              latest_run.billed_kind AS billedKind
        FROM floor_agents a
        JOIN users owner ON owner.id = a.owner_user_id
+       LEFT JOIN (
+         SELECT agent_id, SUM(cost_micro_usd) AS costMicroUsd,
+                CASE WHEN COUNT(DISTINCT cost_source) > 1 THEN 'mixed' ELSE MIN(cost_source) END AS costSource
+         FROM agent_runs WHERE cost_micro_usd IS NOT NULL GROUP BY agent_id
+       ) cost ON cost.agent_id = a.id
+       LEFT JOIN agent_runs latest_run ON latest_run.id = (
+         SELECT r2.id FROM agent_runs r2 WHERE r2.agent_id = a.id AND r2.billed_kind IS NOT NULL
+         ORDER BY r2.created_at DESC LIMIT 1
+       )
        WHERE a.session_id = ? AND a.deprovisioned_at IS NULL
        ORDER BY a.created_at, a.id`,
     ).bind(sessionId).all<AgentRecord>(),

@@ -98,6 +98,37 @@ describe("D1 persistent floor", () => {
     await expect(createFloorAgent(room.sessionId, room.outsider.id, agentInput(room.owner.id, "Hidden"), env.DB)).resolves.toBeNull();
   });
 
+  it("sums lifetime cost across runs, flags a mixed cost source, and reports the most recent billed_kind", async () => {
+    const room = await floorRoom("cost-aggregate");
+    const floor = await createFloorAgent(room.sessionId, room.member.id, agentInput(room.owner.id), env.DB);
+    const agentId = floor!.agents[0].id;
+    const firstQueueFloor = await createFloorQueueItem(room.sessionId, room.member.id, { prompt: "Work 1", agentId }, env.DB);
+    const firstQueueItemId = firstQueueFloor!.queue[0].id;
+
+    // No priced run yet: null, not zero.
+    const empty = await getFloorSnapshot(room.sessionId, room.owner.id, env.DB);
+    expect(empty?.agents[0]).toEqual(expect.objectContaining({ costMicroUsd: null, costSource: null, billedKind: null }));
+
+    const firstRunId = await insertRun(room.sessionId, agentId, room.owner.id, firstQueueItemId, "ready");
+    await env.DB.prepare("UPDATE agent_runs SET cost_micro_usd = 10000, cost_source = 'reported', billed_kind = 'api_key', created_at = ? WHERE id = ?")
+      .bind(Date.now() - 1000, firstRunId).run();
+
+    const afterFirst = await getFloorSnapshot(room.sessionId, room.owner.id, env.DB);
+    expect(afterFirst?.agents[0]).toEqual(expect.objectContaining({ costMicroUsd: 10000, costSource: "reported", billedKind: "api_key" }));
+
+    // A later run through kimi/glm (estimated) mixes the agent's history and
+    // becomes the most recent billed_kind — even though it names a
+    // DIFFERENT credential kind than the first run.
+    const secondQueueFloor = await createFloorQueueItem(room.sessionId, room.member.id, { prompt: "Work 2", agentId }, env.DB);
+    const secondQueueItemId = secondQueueFloor!.queue.find((item) => item.id !== firstQueueItemId)!.id;
+    const secondRunId = await insertRun(room.sessionId, agentId, room.owner.id, secondQueueItemId, "ready");
+    await env.DB.prepare("UPDATE agent_runs SET cost_micro_usd = 5000, cost_source = 'estimated', billed_kind = 'oauth', created_at = ? WHERE id = ?")
+      .bind(Date.now(), secondRunId).run();
+
+    const afterSecond = await getFloorSnapshot(room.sessionId, room.owner.id, env.DB);
+    expect(afterSecond?.agents[0]).toEqual(expect.objectContaining({ costMicroUsd: 15000, costSource: "mixed", billedKind: "oauth" }));
+  });
+
   it("persists a chosen provider and defaults the rest to openai", async () => {
     const room = await floorRoom("providers");
     const claudeInput = parseAgentInput({ name: "Claude", role: "Researcher", task: "Research", ownerUserId: room.owner.id, provider: "anthropic" });
