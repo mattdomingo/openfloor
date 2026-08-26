@@ -340,6 +340,37 @@ export async function failRepositoryCandidate(candidateId: string, database = ge
     .bind(Date.now(), candidateId).run();
 }
 
+export async function getLatestFailedRepositoryCandidateForOwner(
+  sessionId: string,
+  userId: string,
+  database = getDb(),
+): Promise<Pick<RepositoryCandidate, "id" | "connectionId" | "name" | "description" | "branchName" | "baseBranch" | "baseSha"> | null> {
+  if ((await getActiveMembershipRole(sessionId, userId, database)) !== "owner") return null;
+  return database.prepare(
+    `SELECT id, connection_id AS connectionId, name, description, branch_name AS branchName,
+            base_branch AS baseBranch, base_sha AS baseSha
+     FROM repository_candidates
+     WHERE session_id = ? AND status = 'creation_failed' AND merged_at IS NULL
+     ORDER BY created_at DESC LIMIT 1`,
+  ).bind(sessionId).first<Pick<RepositoryCandidate, "id" | "connectionId" | "name" | "description" | "branchName" | "baseBranch" | "baseSha">>();
+}
+
+export async function reactivateFailedRepositoryCandidate(
+  sessionId: string,
+  candidateId: string,
+  database = getDb(),
+): Promise<boolean> {
+  const result = await database.prepare(
+    `UPDATE repository_candidates SET status = 'creating', updated_at = ?
+     WHERE id = ? AND session_id = ? AND status = 'creation_failed'
+       AND NOT EXISTS (
+         SELECT 1 FROM repository_candidates active
+         WHERE active.session_id = ? AND active.status IN ('creating', 'active') AND active.merged_at IS NULL
+       )`,
+  ).bind(Date.now(), candidateId, sessionId, sessionId).run();
+  return result.success && Number(result.meta?.changes ?? 0) === 1;
+}
+
 export async function reconcileRepositoryCandidate(
   sessionId: string,
   metadata: GitHubRepositoryOption,

@@ -21,7 +21,8 @@ export const users = sqliteTable(
     // TypeScript-only value effectivePlan returns, never stored here — that
     // keeps this an ADD-COLUMN-only migration (see 0019) instead of a table
     // recreate, which would cascade-delete session_members/session_invites/
-    // github_connection_states (all ON DELETE CASCADE on users.id).
+    // github_connection_states, github_account_connection_states, and
+    // user_github_installations (all ON DELETE CASCADE on users.id).
     plan: text("plan", { enum: ["pro", "max", "enterprise"] }).notNull().default("pro"),
     // Whether `plan` is currently paid for. Only "active" grants its plan's
     // limits; inactive (never purchased), past_due, and canceled all
@@ -338,6 +339,47 @@ export const githubConnectionStates = sqliteTable(
   (table) => [
     index("idx_github_connection_states_session_user").on(table.sessionId, table.userId, table.createdAt),
     index("idx_github_connection_states_expiry").on(table.expiresAt),
+  ],
+);
+
+// Account-level GitHub App access used for onboarding and future repository
+// selection. Session repository rows keep their own installation id, so
+// removing one of these associations never silently breaks existing rooms.
+export const userGithubInstallations = sqliteTable(
+  "user_github_installations",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    installationId: text("installation_id").notNull(),
+    accountLogin: text("account_login").notNull(),
+    accountType: text("account_type").notNull(),
+    status: text("status", { enum: ["active", "revoked"] }).notNull(),
+    connectedAt: integer("connected_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("idx_user_github_installations_user_installation").on(table.userId, table.installationId),
+    index("idx_user_github_installations_user_status").on(table.userId, table.status),
+    index("idx_user_github_installations_installation").on(table.installationId),
+    check("user_github_installations_status_check", sql`${table.status} in ('active', 'revoked')`),
+  ],
+);
+
+export const githubAccountConnectionStates = sqliteTable(
+  "github_account_connection_states",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    purpose: text("purpose", { enum: ["onboarding", "settings"] }).notNull(),
+    returnTo: text("return_to").notNull(),
+    createdAt: integer("created_at").notNull(),
+    expiresAt: integer("expires_at").notNull(),
+    usedAt: integer("used_at"),
+  },
+  (table) => [
+    index("idx_github_account_states_user").on(table.userId, table.createdAt),
+    index("idx_github_account_states_expiry").on(table.expiresAt),
+    check("github_account_states_purpose_check", sql`${table.purpose} in ('onboarding', 'settings')`),
   ],
 );
 

@@ -7,9 +7,10 @@ import { BASE_PATH } from "@/components/basePath";
 import { LocalDateTime } from "@/components/LocalDateTime";
 import { formatDuration } from "@/lib/date-format";
 import { HoverTip, Icon, Spinner, useDialogDismiss, useHoverTip } from "@/components/session/primitives";
+import { SelectMenu } from "@/components/session/SelectMenu";
 import { lowHoursRemaining, planLabel, type Plan, type PlanStatus } from "@/lib/plans";
 import { mergeVisibleOrder, parseSessionOrder, sortByStoredOrder } from "@/lib/session-order";
-import type { AppUser, SessionSummary } from "@/lib/session-types";
+import type { AccountGitHubRepositoryOption, AppUser, SessionSummary } from "@/lib/session-types";
 import { WaveField } from "@/app/entry-wave";
 import { AppHeader } from "./AppHeader";
 
@@ -172,6 +173,9 @@ export function HomeScreen({
   const [creating, setCreating] = useState(false);
   const [title, setTitle] = useState("");
   const [objective, setObjective] = useState("");
+  const [repositories, setRepositories] = useState<AccountGitHubRepositoryOption[]>([]);
+  const [repositoryId, setRepositoryId] = useState("");
+  const [repositoriesLoading, setRepositoriesLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<SessionSummary | null>(null);
@@ -188,6 +192,25 @@ export function HomeScreen({
   });
   const storedOrder = useSyncExternalStore(subscribeToOrder, readStoredOrder, () => "");
   const orderedSessions = useMemo(() => sortByStoredOrder(sessions, parseSessionOrder(storedOrder)), [sessions, storedOrder]);
+
+  async function beginCreate() {
+    setCreating(true);
+    setRepositoriesLoading(true);
+    setError(null);
+    try {
+      const response = await fetch(`${BASE_PATH}/api/account/github/repositories`, { cache: "no-store" });
+      const body = await response.json() as { repositories?: AccountGitHubRepositoryOption[]; error?: string };
+      if (!response.ok || !body.repositories) throw new Error(body.error ?? "Unable to load GitHub repositories.");
+      setRepositories(body.repositories);
+      setRepositoryId((current) => body.repositories!.some((repository) => repository.id === current)
+        ? current
+        : body.repositories![0]?.id ?? "");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to load GitHub repositories.");
+    } finally {
+      setRepositoriesLoading(false);
+    }
+  }
   const activeSessions = orderedSessions.filter((session) => session.archivedAt == null && session.endedAt == null);
   const archivedSessions = orderedSessions.filter((session) => session.archivedAt != null);
   const endedSessions = orderedSessions.filter((session) => session.archivedAt == null && session.endedAt != null);
@@ -230,18 +253,29 @@ export function HomeScreen({
     event.preventDefault();
     setError(null);
     setSubmitting(true);
+    const selectedRepository = repositories.find((repository) => repository.id === repositoryId);
+    if (!selectedRepository) {
+      setError("Select a GitHub repository.");
+      setSubmitting(false);
+      return;
+    }
     const response = await fetch(`${BASE_PATH}/api/sessions`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ title, objective }),
+      body: JSON.stringify({
+        title,
+        objective,
+        repositoryId: selectedRepository.id,
+        accountInstallationId: selectedRepository.accountInstallationId,
+      }),
     });
-    const body = (await response.json()) as { session?: SessionSummary; error?: string };
+    const body = (await response.json()) as { session?: SessionSummary; setupStatus?: "ready" | "failed"; error?: string };
     if (!response.ok || !body.session) {
       setError(body.error ?? "Unable to create the session.");
       setSubmitting(false);
       return;
     }
-    router.push(`/session/${body.session.id}?setup=1`);
+    router.push(`/session/${body.session.id}${body.setupStatus === "failed" ? "?repo=required" : ""}`);
   }
 
   return (
@@ -285,10 +319,24 @@ export function HomeScreen({
           <form className="create-card" onSubmit={create}>
             <label><span>Session title</span><input value={title} onChange={(event) => setTitle(event.target.value)} maxLength={100} required autoFocus /></label>
             <label><span>Objective <em>optional</em></span><textarea value={objective} onChange={(event) => setObjective(event.target.value)} maxLength={2000} rows={3} /></label>
+            <label>
+              <span>Repository</span>
+              {repositories.length > 0 ? (
+                <SelectMenu
+                  label="Session repository"
+                  value={repositoryId}
+                  onChange={setRepositoryId}
+                  disabled={repositoriesLoading || submitting}
+                  options={repositories.map((repository) => ({ value: repository.id, label: repository.fullName }))}
+                />
+              ) : repositoriesLoading ? <small>Loading GitHub repositories…</small> : (
+                <small>No repositories available. <Link href="/home/settings?section=connections">Add GitHub access in Account Settings</Link>.</small>
+              )}
+            </label>
             {error && <p className="form-error" role="alert">{error}</p>}
             <div className="form-actions">
               <button type="button" className="button" data-variant="quiet" onClick={() => setCreating(false)}>Cancel</button>
-              <button className="button" data-variant="primary" disabled={submitting}>{submitting ? <><Spinner />Creating…</> : "Create session"}</button>
+              <button className="button" data-variant="primary" disabled={submitting || repositoriesLoading || !repositoryId}>{submitting ? <><Spinner />Creating…</> : "Create session"}</button>
             </div>
           </form>
         )}
@@ -321,7 +369,7 @@ export function HomeScreen({
               </div>
             </div>
           ) : tab === "active" ? (
-            <SessionGrid sessions={activeSessions} archived={false} showCreateTile onCreateNew={() => setCreating(true)} onDelete={setPendingDelete} onSetArchived={setArchived} limitSeats={usage.limitSeats} onReorder={applyVisibleOrder} />
+            <SessionGrid sessions={activeSessions} archived={false} showCreateTile onCreateNew={() => void beginCreate()} onDelete={setPendingDelete} onSetArchived={setArchived} limitSeats={usage.limitSeats} onReorder={applyVisibleOrder} />
           ) : tabSessions.length === 0 ? (
             <div className="empty-state">
               <strong>Nothing here</strong>

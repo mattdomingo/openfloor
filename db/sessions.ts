@@ -294,6 +294,62 @@ export async function createSession(
   };
 }
 
+export async function createSessionWithRepository(
+  userId: string,
+  input: { title: string; objective: string | null },
+  repository: {
+    installationId: string;
+    id: string;
+    nodeId: string;
+    owner: string;
+    name: string;
+    fullName: string;
+    private: boolean;
+    defaultBranch: string;
+  },
+  candidate: { id: string; branchName: string; baseSha: string },
+  sessionId: string,
+  database = getDb(),
+): Promise<{ session: SessionSummary; inviteId: string; connectionId: string }> {
+  const inviteId = crypto.randomUUID();
+  const connectionId = crypto.randomUUID();
+  const now = Date.now();
+  await database.batch([
+    database.prepare(
+      "INSERT INTO sessions (id, title, objective, auto_dispatch, created_at, updated_at, objective_updated_at) VALUES (?, ?, ?, 1, ?, ?, ?)",
+    ).bind(sessionId, input.title, input.objective, now, now, now),
+    database.prepare("INSERT INTO session_members (session_id, user_id, role, joined_at) VALUES (?, ?, 'owner', ?)")
+      .bind(sessionId, userId, now),
+    database.prepare("INSERT INTO session_invites (id, session_id, created_by, created_at) VALUES (?, ?, ?, ?)")
+      .bind(inviteId, sessionId, userId, now),
+    database.prepare(
+      `INSERT INTO repository_connections
+       (id, session_id, installation_id, repository_id, repository_node_id, repository_owner,
+        repository_name, repository_full_name, repository_private, default_branch, base_branch,
+        status, connected_by, connected_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'connected', ?, ?, ?)`,
+    ).bind(connectionId, sessionId, repository.installationId, repository.id, repository.nodeId, repository.owner,
+      repository.name, repository.fullName, repository.private ? 1 : 0, repository.defaultBranch,
+      repository.defaultBranch, userId, now, now),
+    database.prepare(
+      `INSERT INTO repository_candidates
+       (id, session_id, connection_id, name, description, branch_name, base_branch, base_sha,
+        status, created_by, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'creating', ?, ?, ?)`,
+    ).bind(candidate.id, sessionId, connectionId, input.title, input.objective ?? "", candidate.branchName,
+      repository.defaultBranch, candidate.baseSha, userId, now, now),
+  ]);
+  return {
+    session: {
+      id: sessionId, title: input.title, objective: input.objective, role: "owner", memberCount: 1,
+      createdAt: now, updatedAt: now, objectiveUpdatedAt: now, endedAt: null, endedReason: null,
+      archivedAt: null, activeSeconds: 0, lockedAt: null, autoProvisionAgents: true, autoAgentProvider: null,
+    },
+    inviteId,
+    connectionId,
+  };
+}
+
 export async function getSessionForMember(
   sessionId: string,
   userId: string,
@@ -901,6 +957,8 @@ export async function deleteAccount(
     // Encrypted provider credentials: the users row is scrubbed below, not
     // deleted, so the FK cascade never fires — delete them explicitly.
     database.prepare("DELETE FROM user_provider_credentials WHERE user_id = ?").bind(userId),
+    database.prepare("DELETE FROM github_account_connection_states WHERE user_id = ?").bind(userId),
+    database.prepare("DELETE FROM user_github_installations WHERE user_id = ?").bind(userId),
     database
       .prepare(
         `UPDATE users SET

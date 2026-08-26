@@ -17,7 +17,7 @@ import {
   CREDENTIAL_PROVIDERS,
   type ProviderCredentialSummary,
 } from "@/lib/provider-credentials";
-import type { AppUser } from "@/lib/session-types";
+import type { AppUser, UserGitHubInstallationSummary } from "@/lib/session-types";
 import { WaveField } from "@/app/entry-wave";
 import { AppHeader } from "./AppHeader";
 import { ProviderCredentials } from "./ProviderCredentials";
@@ -60,12 +60,13 @@ function SettingsRail({ value, onChange }: { value: SettingsSection; onChange: (
   );
 }
 
-export function SettingsScreen({ user: initialUser, usage, billing, credentials, initialSection, billingNotice, backTo, originPath }: {
+export function SettingsScreen({ user: initialUser, usage, billing, credentials, githubInstallations, initialSection, billingNotice, backTo, originPath }: {
   user: AppUser;
   usage: Usage;
   billing: Billing;
   credentials: ProviderCredentialSummary[];
-  initialSection: "profile" | "plan";
+  githubInstallations: UserGitHubInstallationSummary[];
+  initialSection: "profile" | "plan" | "connections";
   billingNotice: string | null;
   // Where "Account settings" was opened from — resolved server-side in
   // app/home/settings/page.tsx (app/home/settings/origin.ts) so the header link and
@@ -108,7 +109,7 @@ export function SettingsScreen({ user: initialUser, usage, billing, credentials,
           <div className="settings-panel tab-panel" key={section}>
             {section === "profile" && <ProfileSection user={user} onSaved={setUser} />}
             {section === "plan" && <PlanSection usage={usage} billing={billing} billingNotice={billingNotice} originPath={originPath} />}
-            {section === "connections" && <ConnectionsSection initialCredentials={credentials} />}
+            {section === "connections" && <ConnectionsSection initialCredentials={credentials} initialGithubInstallations={githubInstallations} />}
             {section === "preferences" && <PreferencesSection user={user} />}
             {section === "danger" && <DangerZoneSection />}
           </div>
@@ -366,9 +367,58 @@ function PlanSection({ usage, billing, billingNotice, originPath }: { usage: Usa
   );
 }
 
-function ConnectionsSection({ initialCredentials }: { initialCredentials: ProviderCredentialSummary[] }) {
+function ConnectionsSection({ initialCredentials, initialGithubInstallations }: { initialCredentials: ProviderCredentialSummary[]; initialGithubInstallations: UserGitHubInstallationSummary[] }) {
+  const [installations, setInstallations] = useState(initialGithubInstallations);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function connectGitHub() {
+    setBusy("connect");
+    setError(null);
+    const response = await fetch(`${BASE_PATH}/api/account/github/connect`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ purpose: "settings", returnTo: `${BASE_PATH}/home/settings?section=connections` }),
+    });
+    const body = await response.json().catch(() => null) as { installUrl?: string; error?: string } | null;
+    if (!response.ok || !body?.installUrl) {
+      setError(body?.error ?? "Unable to begin GitHub setup.");
+      setBusy(null);
+      return;
+    }
+    window.location.assign(body.installUrl);
+  }
+
+  async function removeGitHub(id: string) {
+    setBusy(id);
+    setError(null);
+    const response = await fetch(`${BASE_PATH}/api/account/github/installations/${encodeURIComponent(id)}`, { method: "DELETE" });
+    if (!response.ok) {
+      const body = await response.json().catch(() => null) as { error?: string } | null;
+      setError(body?.error ?? "Unable to remove GitHub access.");
+    } else {
+      setInstallations((current) => current.filter((installation) => installation.id !== id));
+    }
+    setBusy(null);
+  }
+
   return (
     <>
+      <ul className="settings-category-list">
+        <li className="settings-category-row">
+          <span className="settings-category-name">GitHub</span>
+          <span className="settings-category-detail">Connected installations supply repositories when creating sessions. Removing one affects future selection only; existing session connections remain intact.</span>
+          <button className="button" data-variant="primary" disabled={busy != null} onClick={() => void connectGitHub()}>{busy === "connect" ? "Opening…" : "Add GitHub access"}</button>
+        </li>
+        {installations.map((installation) => (
+          <li className="settings-category-row" key={installation.id}>
+            <span className="settings-category-name">{installation.accountLogin}</span>
+            <span className="settings-category-detail">{installation.accountType} · {installation.status === "active" ? "Connected" : "Access revoked"}</span>
+            <button className="button danger-button" disabled={busy != null} onClick={() => void removeGitHub(installation.id)}>{busy === installation.id ? "Removing…" : "Remove"}</button>
+          </li>
+        ))}
+        {error && <li><p className="form-error" role="alert">{error}</p></li>}
+      </ul>
       <p className="settings-category-detail">
         Connect your own API keys. A run uses the key connected by that agent&rsquo;s owner, then the configured server key;
         if neither is available, the run refuses clearly. Keys are encrypted, shown only by their last four characters,
