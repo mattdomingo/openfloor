@@ -26,14 +26,16 @@ function identity(id: string, name: string) {
 async function seed(suffix: string) {
   const owner = await upsertUser(identity(`${suffix}-owner`, "Owner Example"), env.DB);
   const member = await upsertUser(identity(`${suffix}-member`, "Member Example"), env.DB);
+  const unrelated = await upsertUser(identity(`${suffix}-unrelated`, "Unrelated Member"), env.DB);
   const outsider = await upsertUser(identity(`${suffix}-outsider`, "Outsider Example"), env.DB);
   const created = await createSession(owner.id, { title: `Conflict ${suffix}`, objective: "Preserve both changes" }, env.DB);
   await acceptInvite(created.inviteId, member.id, env.DB);
+  await acceptInvite(created.inviteId, unrelated.id, env.DB);
   const input = parseAgentInput({ name: "Lumen", role: "Engineer", task: "Own integration", ownerUserId: member.id });
   if (!input) throw new Error("Invalid agent fixture");
   const withAgent = await createFloorAgent(created.session.id, owner.id, input, env.DB);
   const agentId = withAgent!.agents[0].id;
-  const withQueue = await createFloorQueueItem(created.session.id, owner.id, { prompt: "Change shared files", agentId }, env.DB);
+  const withQueue = await createFloorQueueItem(created.session.id, member.id, { prompt: "Change shared files", agentId }, env.DB);
   const queueItemId = withQueue!.queue[0].id;
   const now = Date.now();
   const connectionId = crypto.randomUUID();
@@ -68,7 +70,7 @@ async function seed(suffix: string) {
   await env.DB.prepare("UPDATE floor_queue_items SET status = 'blocked' WHERE id = ?").bind(queueItemId).run();
   const recorded = await recordIntegrationConflict(sourceRunId, "GitHub merge conflict", env.DB);
   if (!recorded) throw new Error("Conflict case was not recorded");
-  return { sessionId: created.session.id, owner, member, outsider, agentId, queueItemId, sourceRunId, caseId: recorded.caseId };
+  return { sessionId: created.session.id, owner, member, unrelated, outsider, agentId, queueItemId, sourceRunId, caseId: recorded.caseId };
 }
 
 async function conflictInputToken(runId: string, overrides: Partial<RunGatewayClaims> = {}) {
@@ -118,6 +120,7 @@ describe("durable merge conflicts", () => {
     const conflict = (await getMergeConflictCases(room.sessionId, env.DB))[0];
     const answers = conflict.questions.map((question, index) => ({ questionId: question.id, answer: index === 0 ? "Yes" : "No" }));
     await expect(answerConflictQuestions(room.sessionId, room.caseId, room.outsider.id, answers, env.DB)).resolves.toBe("missing");
+    await expect(answerConflictQuestions(room.sessionId, room.caseId, room.unrelated.id, answers, env.DB)).resolves.toBe("missing");
     const raced = await Promise.all([
       answerConflictQuestions(room.sessionId, room.caseId, room.member.id, answers, env.DB),
       answerConflictQuestions(room.sessionId, room.caseId, room.owner.id, answers, env.DB),

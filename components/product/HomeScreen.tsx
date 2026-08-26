@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, MouseEvent as ReactMouseEvent, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { FormEvent, MouseEvent as ReactMouseEvent, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { BASE_PATH } from "@/components/basePath";
 import { LocalDateTime } from "@/components/LocalDateTime";
@@ -375,17 +375,24 @@ function SessionCard({
   // a hover away only when it's actually cut off — then the foot strip,
   // now down to just the two facts that matter together: who and how much.
   const tip = useHoverTip();
+  const cardRef = useRef<HTMLDivElement>(null);
+  const [actionsOpen, setActionsOpen] = useState(false);
+  const handleActionsOpenChange = useCallback((open: boolean) => {
+    cardRef.current?.style.setProperty("--tilt-x", "0px");
+    cardRef.current?.style.setProperty("--tilt-y", "0px");
+    setActionsOpen(open);
+  }, []);
   const { ref: descriptionRef, truncated: descriptionTruncated } = useIsTruncated<HTMLParagraphElement>();
   const seatsOrMembers =
     session.role === "owner" && Number.isFinite(limitSeats)
       ? `${session.memberCount} of ${limitSeats} seats`
       : `${session.memberCount} ${session.memberCount === 1 ? "member" : "members"}`;
   return (
-    <div className="session-card" onMouseMove={handleCardPointerMove} onMouseLeave={handleCardPointerLeave}>
+    <div ref={cardRef} className="session-card" data-actions-open={actionsOpen ? "true" : undefined} onMouseMove={(event) => { if (!actionsOpen) handleCardPointerMove(event); }} onMouseLeave={handleCardPointerLeave}>
       <div className="session-card-head">
         {/* The link stays on the title text so tests and readers keep one obvious target. */}
         <Link className="session-card-link" href={`/session/${session.id}`}><strong>{session.title}</strong></Link>
-        <SessionActionsMenu session={session} archived={archived} onDelete={onDelete} onSetArchived={onSetArchived} />
+        <SessionActionsMenu session={session} archived={archived} onDelete={onDelete} onSetArchived={onSetArchived} onOpenChange={handleActionsOpenChange} />
       </div>
       <p className="session-card-updated">Updated <LocalDateTime timestamp={session.updatedAt} mode="date" /></p>
       {session.objective ? (
@@ -416,22 +423,28 @@ function SessionActionsMenu({
   archived,
   onDelete,
   onSetArchived,
+  onOpenChange,
 }: {
   session: SessionSummary;
   archived: boolean;
   onDelete: (session: SessionSummary) => void;
   onSetArchived: (session: SessionSummary, archived: boolean) => void;
+  onOpenChange: (open: boolean) => void;
 }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
+  const setMenuOpen = useCallback((next: boolean) => {
+    setOpen(next);
+    onOpenChange(next);
+  }, [onOpenChange]);
 
   useEffect(() => {
     if (!open) return;
     function onPointerDown(event: PointerEvent) {
-      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+      if (!rootRef.current?.contains(event.target as Node)) setMenuOpen(false);
     }
     function onKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") setOpen(false);
+      if (event.key === "Escape") setMenuOpen(false);
     }
     document.addEventListener("pointerdown", onPointerDown);
     document.addEventListener("keydown", onKeyDown);
@@ -439,16 +452,16 @@ function SessionActionsMenu({
       document.removeEventListener("pointerdown", onPointerDown);
       document.removeEventListener("keydown", onKeyDown);
     };
-  }, [open]);
+  }, [open, setMenuOpen]);
 
   return (
     <div className="session-card-menu" data-open={open ? "true" : "false"} ref={rootRef}>
-      <button type="button" className="session-card-menu-trigger" aria-haspopup="true" aria-expanded={open} aria-label="Session actions" onClick={() => setOpen((value) => !value)}>
+      <button type="button" className="session-card-menu-trigger" aria-haspopup="true" aria-expanded={open} aria-label="Session actions" onClick={() => setMenuOpen(!open)}>
         <span aria-hidden="true" /><span aria-hidden="true" /><span aria-hidden="true" />
       </button>
       <span className="session-card-menu-actions" inert={!open}>
-        <button type="button" className="button" data-variant="quiet" data-size="sm" onClick={() => { onSetArchived(session, !archived); setOpen(false); }}>{archived ? "Unarchive" : "Archive"}</button>
-        {session.role === "owner" && <button type="button" className="button danger-button" data-size="sm" onClick={() => { onDelete(session); setOpen(false); }}>Delete</button>}
+        <button type="button" className="button" data-variant="quiet" data-size="sm" onClick={() => { onSetArchived(session, !archived); setMenuOpen(false); }}>{archived ? "Unarchive" : "Archive"}</button>
+        {session.role === "owner" && <button type="button" className="button danger-button" data-size="sm" onClick={() => { onDelete(session); setMenuOpen(false); }}>Delete</button>}
       </span>
     </div>
   );

@@ -122,10 +122,25 @@
 .settings-shell .app-back:focus-visible { color: var(--ink); gap: 11px; }
 .settings-shell .app-back span { max-width: 30ch; }
 
+/* ── Profile form ────────────────────────────────────────────────────── */
+
+/* shop.css writes .create-card for /home's create-session form, which floats
+   on a full-bleed page and so carries its own `var(--gutter)` inset and a
+   560px cap. Here the form is a panel child, and .settings-layout has
+   already applied that gutter — the inherited copy pushed the profile fields
+   in from the left and cut them short of the right, so they never lined up
+   with the Email row directly beneath them. Both edges now come from the
+   panel, same as every .settings-category-row. */
+.settings-shell .create-card {
+  margin-inline: 0;
+  max-width: none;
+}
+
 /* The "N left" tail on the session-time row, in the same amber the attention
    notices use, so the plan section flags a near-empty month without needing a
    banner of its own. */
 .settings-shell .usage-low { color: #b5761f; font-weight: 700; }
+
 
 /* ── Category rows (Profile/Plan/Connections/Preferences/Danger bodies) ── */
 
