@@ -165,8 +165,13 @@ export function HomeScreen({
   // (and documented) behavior.
   const liveOwnedSessions = sessions.filter((session) => session.role === "owner" && session.endedAt == null).length;
   const quotaExhausted = Number.isFinite(usage.limitHours) && usage.seconds >= usage.limitHours * 3600;
+  // A deleted-and-resignedup email on the free plan gets a real 0h limit
+  // (lib/plans.ts's planHourLimit), not "nothing purchased yet" — distinct
+  // from the ordinary used-up-this-month case, so it gets its own copy
+  // instead of a usage bar with nothing to divide by.
+  const freeAllowanceUsedUp = usage.effectivePlan === "free" && usage.limitHours === 0;
   const usageLimitSeconds = usage.limitHours * 3600;
-  const usagePercent = Number.isFinite(usage.limitHours) ? Math.min(100, Math.round((usage.seconds / usageLimitSeconds) * 100)) : null;
+  const usagePercent = !Number.isFinite(usage.limitHours) ? null : freeAllowanceUsedUp ? 100 : Math.min(100, Math.round((usage.seconds / usageLimitSeconds) * 100));
   // What the Usage tab shows is the inverse of usagePercent — remaining
   // capacity, not consumed capacity, so "0%" reads as "none left".
   const usageRemainingPercent = usagePercent != null ? Math.max(0, 100 - usagePercent) : null;
@@ -175,7 +180,9 @@ export function HomeScreen({
   // hydration-boundary comment between adjacent text nodes, which would
   // otherwise split a phrase like "Free plan" across a comment.
   const usagePlanLine = `${planLabel(usage.effectivePlan)} plan`;
-  const usageStatLine = Number.isFinite(usage.limitHours)
+  const usageStatLine = freeAllowanceUsedUp
+    ? "This account's free session hours were already used."
+    : Number.isFinite(usage.limitHours)
     ? `${formatDuration(usage.seconds)} of ${usage.limitHours}h session time used this month (UTC)`
     : `${formatDuration(usage.seconds)} session time used this month (UTC)`;
   const usageLiveLine = `${liveOwnedSessions} live sessions, all counting toward your usage`;
@@ -224,12 +231,14 @@ export function HomeScreen({
                  Workspace.tsx: the 403s on create/dispatch are the
                  enforcement. */
               <p className="notice" data-tone="attention" role="status">
-                {`Your ${planLabel(usage.effectivePlan)} plan's ${usage.limitHours}h of monthly session time is used up. `}
+                {freeAllowanceUsedUp
+                  ? "This account already used its free openfloor hours. "
+                  : `Your ${planLabel(usage.effectivePlan)} plan's ${usage.limitHours}h of monthly session time is used up. `}
                 {/* No `from` here on purpose: tests/render/rendered-html.test.ts:224
                     asserts this literal href, and the settings origin resolver
                     (app/home/settings/origin.ts) already falls back to Sessions/home
                     when `from` is absent — appending it would be redundant. */}
-                <Link href="/home/settings?section=plan">Upgrade for more session hours</Link>.
+                <Link href="/home/settings?section=plan">{freeAllowanceUsedUp ? "Choose a plan to continue" : "Upgrade for more session hours"}</Link>.
               </p>
             )}
           </div>
@@ -267,7 +276,7 @@ export function HomeScreen({
             <div className="usage-tab-content">
               <div className="usage-card">
                 <p className="usage-card-plan">{usagePlanLine}</p>
-                {usagePercent != null && (
+                {usagePercent != null && !freeAllowanceUsedUp && (
                   <progress className="usage-meter" value={Math.min(usage.seconds, usageLimitSeconds)} max={usageLimitSeconds} aria-label={`${usagePercent}% of monthly session time used`} />
                 )}
                 <p className="usage-card-stat">{usageStatLine}</p>

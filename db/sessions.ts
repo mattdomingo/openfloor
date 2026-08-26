@@ -1,8 +1,9 @@
+import { hashAccountEmail } from "@/lib/account-email-hash";
 import { displayNameFrom } from "@/lib/display-name";
 import type { AuthenticatedIdentity } from "@/lib/identity";
-import { currentMonth, effectivePlan, effectiveSeatLimit, PLAN_LIMITS, type Plan, type PlanStatus } from "@/lib/plans";
+import { currentMonth, effectivePlan, effectiveSeatLimit, planHourLimit, PLAN_LIMITS, type Plan, type PlanStatus } from "@/lib/plans";
 import type { AppUser, RemovedSessionMember, SessionMember, SessionRole, SessionSummary } from "@/lib/session-types";
-import { getDb, type D1DatabaseLike } from "./index";
+import { getDb, getInviteSigningSecret, type D1DatabaseLike } from "./index";
 import type { CredentialProvider } from "@/lib/provider-credentials";
 
 // Re-exported so existing importers (worker/presence.ts, tests) don't need
@@ -106,21 +107,33 @@ export async function upsertUser(identity: AuthenticatedIdentity, database = get
     .first<AppUserRow>();
   if (byEmail) return normalizeAppUser(byEmail);
 
-  // Neither matched — a genuinely new account. ON CONFLICT(email) rather
-  // than a plain INSERT closes the race between two concurrent first logins
-  // for the same address via different methods (e.g. two tabs, one
-  // finishing a Google login and one finishing an email-code login at the
-  // same moment): the loser's insert becomes an update onto the row the
-  // winner just created instead of throwing on idx_users_email.
+  // Neither matched — a genuinely new account. Before creating it, check
+  // whether this address was scrubbed off a deleted account: deleteAccount
+  // stores an HMAC of the departing email as prior_email_hash so a
+  // delete-and-resignup loop with the same address can't keep reclaiming
+  // the free plan's hour allowance (see lib/plans.ts's planHourLimit and
+  // lib/account-email-hash.ts). Non-unique index, so any match is enough.
+  const priorHash = await hashAccountEmail(identity.email, getInviteSigningSecret());
+  const priorlyDeleted = await database.prepare("SELECT 1 AS present FROM users WHERE prior_email_hash = ? LIMIT 1").bind(priorHash).first<{ present: number }>();
+  const freeAllowanceUsedAt = priorlyDeleted ? now : null;
+
+  // ON CONFLICT(email) rather than a plain INSERT closes the race between
+  // two concurrent first logins for the same address via different methods
+  // (e.g. two tabs, one finishing a Google login and one finishing an
+  // email-code login at the same moment): the loser's insert becomes an
+  // update onto the row the winner just created instead of throwing on
+  // idx_users_email. free_allowance_used_at is deliberately absent from
+  // that DO UPDATE — the winning INSERT already set it correctly for this
+  // same email, and the loser must not clobber it.
   const createdId = crypto.randomUUID();
   const created = await database
     .prepare(
-      `INSERT INTO users (id, chatgpt_user_id, email, display_name, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?)
+      `INSERT INTO users (id, chatgpt_user_id, email, display_name, created_at, updated_at, free_allowance_used_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(email) DO UPDATE SET chatgpt_user_id = excluded.chatgpt_user_id, updated_at = excluded.updated_at
        RETURNING ${APP_USER_COLUMNS}`,
     )
-    .bind(createdId, identity.providerUserId, identity.email, identity.displayName, now, now)
+    .bind(createdId, identity.providerUserId, identity.email, identity.displayName, now, now, freeAllowanceUsedAt)
     .first<AppUserRow>();
 
   if (!created) throw new Error("Unable to create or update the current user.");
@@ -924,6 +937,12 @@ export async function deleteAccount(
   const { ownedSessionIds, blocked } = await getAccountDeletionBlockers(userId, database);
   if (blocked.length > 0) return { blocked: "sessions", sessions: blocked };
 
+  // Read before the scrub below destroys the only copy: prior_email_hash is
+  // how upsertUser recognizes this address on a future sign-in and denies
+  // it the free allowance a second time. See lib/account-email-hash.ts.
+  const current = await database.prepare("SELECT email FROM users WHERE id = ?").bind(userId).first<{ email: string }>();
+  const priorEmailHash = current ? await hashAccountEmail(current.email, getInviteSigningSecret()) : null;
+
   const now = Date.now();
   await database.batch([
     ...ownedSessionIds.map((sessionId) => database.prepare("DELETE FROM sessions WHERE id = ?").bind(sessionId)),
@@ -949,10 +968,11 @@ export async function deleteAccount(
            plan_status = 'canceled',
            seat_limit = NULL,
            deleted_at = ?,
+           prior_email_hash = ?,
            updated_at = ?
          WHERE id = ?`,
       )
-      .bind(now, now, userId),
+      .bind(now, priorEmailHash, now, userId),
   ]);
   return { deleted: true };
 }
@@ -984,10 +1004,11 @@ export async function authorizePresence(
 export async function getOwnerHourQuota(
   sessionId: string,
   database: D1DatabaseLike,
-): Promise<{ ownerId: string; plan: Plan; seconds: number; endedAt: number | null } | null> {
+): Promise<{ ownerId: string; plan: Plan; seconds: number; limitHours: number; endedAt: number | null } | null> {
   const row = await database
     .prepare(
       `SELECT o.user_id AS ownerId, u.plan AS plan, u.plan_status AS planStatus, u.email AS email,
+              u.free_allowance_used_at AS freeAllowanceUsedAt,
               COALESCE(um.seconds, 0) AS seconds, s.ended_at AS endedAt
        FROM session_members o
        JOIN sessions s ON s.id = o.session_id
@@ -996,9 +1017,10 @@ export async function getOwnerHourQuota(
        WHERE o.session_id = ? AND o.role = 'owner' AND o.removed_at IS NULL`,
     )
     .bind(currentMonth(), sessionId)
-    .first<{ ownerId: string; plan: Plan; planStatus: PlanStatus; email: string | null; seconds: number; endedAt: number | null }>();
+    .first<{ ownerId: string; plan: Plan; planStatus: PlanStatus; email: string | null; freeAllowanceUsedAt: number | null; seconds: number; endedAt: number | null }>();
   if (!row) return null;
-  return { ownerId: row.ownerId, plan: effectivePlan(row.plan, row.planStatus, row.email), seconds: row.seconds, endedAt: row.endedAt };
+  const plan = effectivePlan(row.plan, row.planStatus, row.email);
+  return { ownerId: row.ownerId, plan, seconds: row.seconds, limitHours: planHourLimit(plan, row.freeAllowanceUsedAt != null), endedAt: row.endedAt };
 }
 
 export async function getUsageForUser(
@@ -1014,13 +1036,14 @@ export async function getUsageForUser(
 }> {
   const row = await database
     .prepare(
-      `SELECT u.plan AS plan, u.plan_status AS planStatus, u.seat_limit AS seatLimit, u.email AS email, COALESCE(um.seconds, 0) AS seconds
+      `SELECT u.plan AS plan, u.plan_status AS planStatus, u.seat_limit AS seatLimit, u.email AS email,
+              u.free_allowance_used_at AS freeAllowanceUsedAt, COALESCE(um.seconds, 0) AS seconds
        FROM users u
        LEFT JOIN usage_months um ON um.owner_user_id = u.id AND um.month = ?
        WHERE u.id = ?`,
     )
     .bind(currentMonth(), userId)
-    .first<{ plan: Plan; planStatus: PlanStatus; seatLimit: number | null; email: string | null; seconds: number }>();
+    .first<{ plan: Plan; planStatus: PlanStatus; seatLimit: number | null; email: string | null; freeAllowanceUsedAt: number | null; seconds: number }>();
   const plan = row?.plan ?? "free";
   const planStatus = row?.planStatus ?? "inactive";
   const effective = effectivePlan(plan, planStatus, row?.email);
@@ -1029,7 +1052,7 @@ export async function getUsageForUser(
     planStatus,
     effectivePlan: effective,
     seconds: row?.seconds ?? 0,
-    limitHours: PLAN_LIMITS[effective].hours,
+    limitHours: planHourLimit(effective, row?.freeAllowanceUsedAt != null),
     limitSeats: effectiveSeatLimit(plan, planStatus, row?.seatLimit ?? null, row?.email),
   };
 }

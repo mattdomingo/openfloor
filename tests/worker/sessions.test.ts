@@ -236,6 +236,14 @@ describe("D1 session persistence", () => {
       .bind(deleted.id, currentMonth()).first<{ seconds: number }>();
     expect(usageRow).toEqual({ seconds: 120 });
 
+    // The departing email's hash survives on the tombstone so a future
+    // resignup with the same address can be recognized (see the
+    // free-allowance test below) — never the plaintext email itself.
+    const tombstone = await env.DB.prepare("SELECT prior_email_hash AS hash, email AS email FROM users WHERE id = ?")
+      .bind(deleted.id).first<{ hash: string | null; email: string }>();
+    expect(tombstone?.hash).toMatch(/^[0-9a-f]{64}$/);
+    expect(tombstone?.email).not.toContain("delacct-self@example.com");
+
     // The same Access identity signing in again creates a brand-new row,
     // not a resurrection of the tombstoned one.
     const resurrected = await upsertUser(identity("delacct-self", "Self Again"), env.DB);
@@ -283,6 +291,31 @@ describe("D1 session persistence", () => {
     expect(await getSessionForMember(created.session.id, owner.id, env.DB)).not.toBeNull();
     const stillThere = await env.DB.prepare("SELECT deleted_at AS deletedAt FROM users WHERE id = ?").bind(owner.id).first<{ deletedAt: number | null }>();
     expect(stillThere?.deletedAt).toBeNull();
+  });
+
+  it("a deleted account's email loses its free plan hour allowance on resignup, until it pays", async () => {
+    const first = await upsertUser(identity("free-allowance-reuse", "First"), env.DB);
+    expect((await getUsageForUser(first.id, env.DB)).limitHours).toBe(2);
+
+    await expect(deleteAccount(first.id, env.DB)).resolves.toEqual({ deleted: true });
+
+    const second = await upsertUser(identity("free-allowance-reuse", "Second"), env.DB);
+    expect(second.id).not.toBe(first.id);
+    expect((await getUsageForUser(second.id, env.DB)).limitHours).toBe(0);
+
+    // A paid, active plan is unaffected by the flag.
+    await env.DB.prepare("UPDATE users SET plan = 'pro', plan_status = 'active' WHERE id = ?").bind(second.id).run();
+    expect((await getUsageForUser(second.id, env.DB)).limitHours).toBe(30);
+
+    // A different address was never touched.
+    const unrelated = await upsertUser(identity("free-allowance-untouched", "Unrelated"), env.DB);
+    expect((await getUsageForUser(unrelated.id, env.DB)).limitHours).toBe(2);
+
+    // The @opnflr.com unlimited-testing override still wins regardless.
+    const internal = await upsertUser({ providerUserId: "chatgpt-internal", email: "someone@opnflr.com", displayName: "Internal", fullName: "Internal" }, env.DB);
+    await expect(deleteAccount(internal.id, env.DB)).resolves.toEqual({ deleted: true });
+    const internalAgain = await upsertUser({ providerUserId: "chatgpt-internal", email: "someone@opnflr.com", displayName: "Internal", fullName: "Internal" }, env.DB);
+    expect((await getUsageForUser(internalAgain.id, env.DB)).limitHours).toBe(Infinity);
   });
 
   it("creates and lists only the current user's sessions", async () => {
@@ -1125,6 +1158,16 @@ describe("plan limits", () => {
     await expect(hourQuotaExhausted(user.id, env.DB)).resolves.toBe(true);
     await env.DB.prepare("UPDATE users SET plan_status = 'past_due' WHERE id = ?").bind(user.id).run();
     await expect(hourQuotaExhausted(user.id, env.DB)).resolves.toBe(true);
+
+    // A free_allowance_used_at flag (set only by upsertUser recognizing a
+    // deleted account's prior_email_hash) drops the free limit itself to 0h
+    // — exhausted even with zero seconds booked. Reactivating a paid plan
+    // still lifts it regardless.
+    await env.DB.prepare("UPDATE users SET plan_status = 'inactive', free_allowance_used_at = ? WHERE id = ?").bind(Date.now(), user.id).run();
+    await env.DB.prepare("DELETE FROM usage_months WHERE owner_user_id = ?").bind(user.id).run();
+    await expect(hourQuotaExhausted(user.id, env.DB)).resolves.toBe(true);
+    await env.DB.prepare("UPDATE users SET plan_status = 'active' WHERE id = ?").bind(user.id).run();
+    await expect(hourQuotaExhausted(user.id, env.DB)).resolves.toBe(false);
   });
 
   it("upsertUser does not reset plan or plan_status on re-login", async () => {

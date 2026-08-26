@@ -1,5 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
-import { authorizePresence, currentMonth, getOwnerHourQuota, PLAN_LIMITS } from "../db/sessions";
+import { authorizePresence, currentMonth, getOwnerHourQuota } from "../db/sessions";
 import type { D1DatabaseLike } from "../db";
 import {
   cloudflareAccessIdentity,
@@ -411,13 +411,18 @@ export async function handlePresenceRequest(request: Request, env: PresenceEnv):
     throw new Error(`getOwnerHourQuota returned no row for session ${sessionId}`);
   }
   if (quota.endedAt == null) {
-    if (quota.seconds >= PLAN_LIMITS[quota.plan].hours * 3600) {
+    if (quota.seconds >= quota.limitHours * 3600) {
       // Accept-then-close so the browser sees a close code; a 4xx upgrade
       // failure is opaque to the WebSocket API.
       const rejected = new WebSocketPair();
       const server = rejected[1] as WebSocket & { accept(): void };
       server.accept();
-      server.close(4003, "This session's host has used up their plan's monthly session hours.");
+      server.close(
+        4003,
+        quota.limitHours === 0
+          ? "This session's host already used their free openfloor hours."
+          : "This session's host has used up their plan's monthly session hours.",
+      );
       return new Response(null, { status: 101, webSocket: rejected[0] });
     }
     headers.set("x-openfloor-meter-owner-id", quota.ownerId);

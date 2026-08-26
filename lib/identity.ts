@@ -22,7 +22,7 @@ export type IdentityEnvironment = {
 // `idx_users_email` unique index both depend on every identity constructor
 // here producing the same canonical form for the same mailbox — lowercase,
 // trimmed — or "sign in a different way" silently creates a second account.
-function normalizeEmail(value: string): string {
+export function normalizeEmail(value: string): string {
   return value.trim().toLowerCase();
 }
 
