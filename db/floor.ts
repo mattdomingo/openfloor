@@ -29,11 +29,16 @@ import { disabledRunProviders } from "@/lib/provider-rollout";
 type AgentRecord = FloorAgent;
 type AssignmentRecord = FloorAssignment;
 type MessageRecord = FloorMessage;
-type QueueRecord = Omit<FloorQueueItem, "prompts" | "rollback"> & {
+type QueueRecord = Omit<FloorQueueItem, "prompts" | "rollback" | "answer"> & {
   rollbackRunId: string | null;
   rollbackStatus: AgentRun["rollbackStatus"];
   rollbackFailureReason: string | null;
   agentOwnerUserId: string | null;
+  answerRunId: string | null;
+  answerAgentId: string | null;
+  answerAgentName: string | null;
+  answerText: string | null;
+  answerCreatedAt: number | null;
 };
 type PromptRecord = FloorQueuePrompt & { queueItemId: string };
 
@@ -112,7 +117,10 @@ async function readFloorSnapshot(sessionId: string, userId: string, database: D1
               q.assigned_by AS assignedBy, q.assigned_reason AS assignedReason, q.intent,
               q.created_at AS createdAt, q.updated_at AS updatedAt,
               rollback_run.id AS rollbackRunId, latest_rollback.status AS rollbackStatus,
-              latest_rollback.failure_reason AS rollbackFailureReason
+              latest_rollback.failure_reason AS rollbackFailureReason,
+              reply_run.id AS answerRunId, reply_run.agent_id AS answerAgentId,
+              reply_agent.name AS answerAgentName, reply_run.final_response AS answerText,
+              reply_run.completed_at AS answerCreatedAt
        FROM floor_queue_items q
        LEFT JOIN floor_agents a ON a.id = q.agent_id
        LEFT JOIN agent_runs rollback_run ON rollback_run.id = (
@@ -124,6 +132,12 @@ async function readFloorSnapshot(sessionId: string, userId: string, database: D1
          SELECT attempt.id FROM agent_run_rollbacks attempt
          WHERE attempt.run_id = rollback_run.id ORDER BY attempt.created_at DESC, attempt.id DESC LIMIT 1
        )
+       LEFT JOIN agent_runs reply_run ON reply_run.id = (
+         SELECT candidate.id FROM agent_runs candidate
+         WHERE candidate.queue_item_id = q.id AND candidate.kind = 'reply' AND candidate.final_response IS NOT NULL
+         ORDER BY candidate.created_at DESC, candidate.id DESC LIMIT 1
+       )
+       LEFT JOIN floor_agents reply_agent ON reply_agent.id = reply_run.agent_id
        WHERE q.session_id = ? AND q.dismissed_at IS NULL
        ORDER BY q.position, q.created_at, q.id`,
     ).bind(sessionId).all<QueueRecord>(),
@@ -172,7 +186,7 @@ async function readFloorSnapshot(sessionId: string, userId: string, database: D1
     messages: messages.results.map((message) => ({ ...message, recipientUserId: message.recipientUserId ?? null })),
     queue: queue.results.map((item) => {
       const prompts = promptsByItem.get(item.id) ?? [];
-      const { rollbackRunId, rollbackStatus, rollbackFailureReason, agentOwnerUserId, ...queueItem } = item;
+      const { rollbackRunId, rollbackStatus, rollbackFailureReason, agentOwnerUserId, answerRunId, answerAgentId, answerAgentName, answerText, answerCreatedAt, ...queueItem } = item;
       const authoredEveryPrompt = prompts.length > 0 && prompts.every((prompt) => prompt.authorUserId === userId);
       return {
         ...queueItem,
@@ -184,6 +198,18 @@ async function readFloorSnapshot(sessionId: string, userId: string, database: D1
           failureReason: rollbackFailureReason ?? null,
           canStart: (rollbackStatus == null || rollbackStatus === "failed") &&
             (session?.viewerRole === "owner" || agentOwnerUserId === userId || authoredEveryPrompt),
+        } : null,
+        // Durable answer surface for a question/noise item: sourced from the
+        // queue item's own most recent reply run rather than the runs[]
+        // array PromptQueue also receives, so it survives both the
+        // Concierge retiring (reply_agent carries no deprovisioned_at
+        // filter) and getAgentRuns' 20-row window.
+        answer: answerRunId && answerText ? {
+          runId: answerRunId,
+          agentId: answerAgentId,
+          agentName: answerAgentName ?? "Agent",
+          text: answerText,
+          createdAt: answerCreatedAt ?? item.updatedAt,
         } : null,
       };
     }),
@@ -385,7 +411,7 @@ async function provisionGeneratedAgent(
   if (reusable) {
     const now = Date.now();
     const result = await database.prepare(
-      `UPDATE floor_agents SET owner_user_id = ?, provider = ?, task = ?, deprovisioned_at = NULL, updated_at = ?
+      `UPDATE floor_agents SET owner_user_id = ?, provider = ?, task = ?, deprovisioned_at = NULL, idle_since = NULL, updated_at = ?
        WHERE id = ? AND session_id = ? AND deprovisioned_at IS NOT NULL`,
     ).bind(ownerUserId, provider, task, now, reusable.id, sessionId).run();
     if (Number(result.meta?.changes ?? 0) > 0) return { id: reusable.id, name: reusable.name, changed: true };
@@ -415,13 +441,25 @@ async function provisionGeneratedAgent(
   throw new Error(`Could not create a generated ${kind} agent: no available name.`);
 }
 
-/** Reconcile generated agents after toggles and terminal run transitions. */
+// How long a generated agent (Concierge or worker) lingers, visibly idle on
+// the floor, after finishing its last work before the router retires it.
+// Long enough that a reply's speech bubble (AgentCard.tsx) is never yanked
+// off the floor mid-read; short enough that idle capacity is still reclaimed
+// promptly. See the SessionRouter alarm re-arm this depends on below.
+export const GENERATED_AGENT_LINGER_MS = 10_000;
+
+/**
+ * Reconcile generated agents after toggles and terminal run transitions.
+ * `now` is an explicit parameter (not always `Date.now()`) so a caller — the
+ * SessionRouter alarm loop, or a test — can drive the idle clock without a
+ * real wall-clock wait.
+ */
 export async function deprovisionIdleGeneratedAgents(
   sessionId: string,
   autoProvisionEnabled: boolean,
   database: D1DatabaseLike = getDb(),
-): Promise<boolean> {
-  const now = Date.now();
+  now: number = Date.now(),
+): Promise<{ changed: boolean; nextRetireAt: number | null }> {
   let changed = false;
   if (!autoProvisionEnabled) {
     const unassigned = await database.prepare(
@@ -439,14 +477,47 @@ export async function deprovisionIdleGeneratedAgents(
   const protectedQueueStatuses = autoProvisionEnabled
     ? "('queued', 'running', 'blocked', 'paused')"
     : "('running', 'blocked')";
-  const retired = await database.prepare(
-    `UPDATE floor_agents AS a SET deprovisioned_at = ?, updated_at = ?
-     WHERE a.session_id = ? AND a.kind IN ('answer', 'worker') AND a.deprovisioned_at IS NULL
+  // "Nothing currently keeps this generated row on the floor" — reused by
+  // the stamp/clear/retire statements below so a row's idle clock starts,
+  // resets, and expires off one consistent definition of idle. Carries
+  // exactly one placeholder (the autoProvisionEnabled flag).
+  const eligible = `a.kind IN ('answer', 'worker') AND a.deprovisioned_at IS NULL
        AND (? = 0 OR a.kind != 'worker' OR a.paused_at IS NULL)
        AND NOT EXISTS (SELECT 1 FROM floor_queue_items q WHERE q.agent_id = a.id AND q.status IN ${protectedQueueStatuses})
-       AND NOT EXISTS (SELECT 1 FROM agent_runs r WHERE r.agent_id = a.id AND r.status IN ('provisioning', 'running', 'checking', 'cancel_requested', 'publishing', 'published', 'integrating'))`,
-  ).bind(now, now, sessionId, autoProvisionEnabled ? 1 : 0).run();
-  return changed || Number(retired.meta?.changes ?? 0) > 0;
+       AND NOT EXISTS (SELECT 1 FROM agent_runs r WHERE r.agent_id = a.id AND r.status IN ('provisioning', 'running', 'checking', 'cancel_requested', 'publishing', 'published', 'integrating'))`;
+  const autoProvisionFlag = autoProvisionEnabled ? 1 : 0;
+
+  // 1. Start the grace clock the instant a row first becomes idle.
+  await database.prepare(
+    `UPDATE floor_agents AS a SET idle_since = ?, updated_at = ?
+     WHERE a.session_id = ? AND a.idle_since IS NULL AND ${eligible}`,
+  ).bind(now, now, sessionId, autoProvisionFlag).run();
+
+  // 2. A row that picked up new work before its grace window elapsed is no
+  // longer eligible — reset its clock so the next time it goes idle starts a
+  // fresh window instead of retiring instantly off a stale timestamp.
+  await database.prepare(
+    `UPDATE floor_agents AS a SET idle_since = NULL, updated_at = ?
+     WHERE a.session_id = ? AND a.kind IN ('answer', 'worker') AND a.deprovisioned_at IS NULL
+       AND a.idle_since IS NOT NULL AND NOT (${eligible})`,
+  ).bind(now, sessionId, autoProvisionFlag).run();
+
+  // 3. Retire only once the grace window has actually elapsed.
+  const retired = await database.prepare(
+    `UPDATE floor_agents AS a SET deprovisioned_at = ?, idle_since = NULL, updated_at = ?
+     WHERE a.session_id = ? AND a.idle_since IS NOT NULL AND a.idle_since <= ? AND ${eligible}`,
+  ).bind(now, now, sessionId, now - GENERATED_AGENT_LINGER_MS, autoProvisionFlag).run();
+  changed = changed || Number(retired.meta?.changes ?? 0) > 0;
+
+  // Any row still waiting out its grace window needs a future wake so
+  // retirement actually fires without depending on an unrelated poke.
+  const earliestIdle = await database.prepare(
+    `SELECT MIN(idle_since) AS earliest FROM floor_agents
+     WHERE session_id = ? AND kind IN ('answer', 'worker') AND deprovisioned_at IS NULL AND idle_since IS NOT NULL`,
+  ).bind(sessionId).first<{ earliest: number | null }>();
+  const nextRetireAt = earliestIdle?.earliest != null ? earliestIdle.earliest + GENERATED_AGENT_LINGER_MS : null;
+
+  return { changed, nextRetireAt };
 }
 
 /**

@@ -11,6 +11,7 @@ import {
   ensureWorkerAgent,
   FloorConflictError,
   FloorTargetError,
+  GENERATED_AGENT_LINGER_MS,
   getFloorSnapshot,
   pauseAllFloorAgents,
   pauseFloorAgent,
@@ -334,13 +335,26 @@ describe("D1 persistent floor", () => {
     await env.DB.prepare("UPDATE agent_runs SET status = 'cancelled' WHERE id = ?").bind(ownerRunId).run();
     await env.DB.prepare("UPDATE floor_queue_items SET status = 'cancelled' WHERE session_id = ?").bind(ownerRoom.sessionId).run();
     await deprovisionIdleGeneratedAgents(ownerRoom.sessionId, true, env.DB);
-    let stored = await env.DB.prepare("SELECT paused_at AS pausedAt, deprovisioned_at AS deprovisionedAt FROM floor_agents WHERE id = ?")
-      .bind(ownerWorker.id).first<{ pausedAt: number | null; deprovisionedAt: number | null }>();
+    const readWorker = () => env.DB.prepare("SELECT paused_at AS pausedAt, deprovisioned_at AS deprovisionedAt, idle_since AS idleSince FROM floor_agents WHERE id = ?")
+      .bind(ownerWorker.id).first<{ pausedAt: number | null; deprovisionedAt: number | null; idleSince: number | null }>();
+    let stored = await readWorker();
     expect(stored?.pausedAt).not.toBeNull();
     expect(stored?.deprovisionedAt).toBeNull();
-    await deprovisionIdleGeneratedAgents(ownerRoom.sessionId, false, env.DB);
-    stored = await env.DB.prepare("SELECT paused_at AS pausedAt, deprovisioned_at AS deprovisionedAt FROM floor_agents WHERE id = ?")
-      .bind(ownerWorker.id).first<{ pausedAt: number | null; deprovisionedAt: number | null }>();
+    // Retirement lingers ~GENERATED_AGENT_LINGER_MS after a row first goes
+    // idle (see db/floor.ts) rather than firing on the very next tick, so a
+    // reply's speech bubble is never yanked off the floor mid-read. The
+    // first call only starts the grace clock; retirement needs a `now` that
+    // has actually cleared the window.
+    const idleAt = Date.now();
+    let outcome = await deprovisionIdleGeneratedAgents(ownerRoom.sessionId, false, env.DB, idleAt);
+    expect(outcome.nextRetireAt).toBe(idleAt + GENERATED_AGENT_LINGER_MS);
+    stored = await readWorker();
+    expect(stored?.pausedAt).toBeNull();
+    expect(stored?.deprovisionedAt).toBeNull();
+    expect(stored?.idleSince).toBe(idleAt);
+    outcome = await deprovisionIdleGeneratedAgents(ownerRoom.sessionId, false, env.DB, idleAt + GENERATED_AGENT_LINGER_MS + 1);
+    expect(outcome.changed).toBe(true);
+    stored = await readWorker();
     expect(stored?.pausedAt).toBeNull();
     expect(stored?.deprovisionedAt).not.toBeNull();
   });

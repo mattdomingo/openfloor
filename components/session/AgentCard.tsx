@@ -5,7 +5,7 @@ import type { AgentRun, FloorAgent, FloorAgentSettingsPatch, RunActivityEvent } 
 import { AGENT_PROVIDER_LABELS, credentialKindLabel, credentialKindsForProvider, parseCredentialKind, PROVIDER_MODELS } from "@/lib/provider-credentials";
 import { BASE_PATH } from "@/components/basePath";
 import { LocalDateTime } from "@/components/LocalDateTime";
-import { HoverTip, Icon, useHoverTip } from "./primitives";
+import { Icon } from "./primitives";
 import { SelectMenu } from "./SelectMenu";
 import type { RunActivitySource } from "./useRunActivity";
 import { ACTIVE_RUN_STATUSES, agentReplyText, formatAgentCost, isRunLive, runStatusToken } from "./data";
@@ -48,7 +48,7 @@ export function AgentCard({ agent, tone, latestRun, activityEvents, selected, ow
           <span className="agent-activity-detail">{latestEvent.detail}</span>
         </div>
       )}
-      {reply && <AgentResponseIcon agentName={agent.name} reply={reply} onOpen={onFocus} />}
+      {reply && <AgentReplyBubble agentName={agent.name} reply={reply} onOpen={onFocus} />}
       {controllable && (
         <div className="agent-controls" onClick={(event) => event.stopPropagation()}>
           <button type="button" className="button" data-size="sm" title={paused ? "Resume" : "Pause"} aria-label={paused ? `Resume ${agent.name}` : `Pause ${agent.name}`} onClick={() => onPause(agent.id, !paused)}><Icon name={paused ? "play" : "pause"} size={12} /></button>
@@ -61,12 +61,16 @@ export function AgentCard({ agent, tone, latestRun, activityEvents, selected, ow
   );
 }
 
-function AgentResponseIcon({ agentName, reply, onOpen }: { agentName: string; reply: string; onOpen: () => void }) {
-  const tip = useHoverTip();
-  return <>
-    <button type="button" className="agent-response-icon" aria-label={`${agentName} responded: ${reply}. Open to read in full.`} onClick={(event) => { event.stopPropagation(); onOpen(); }} {...tip.handlers}><Icon name="message" size={13} /></button>
-    <HoverTip position={tip.position} wrap>{reply}</HoverTip>
-  </>;
+// A real speech bubble, not an icon+tooltip: the clamped reply sits directly
+// on the tile so the text is visible without a hover/focus step, with a tail
+// pointing at the agent identity row above it. Click opens the spotlight,
+// where .spotlight-response renders the same text in full.
+function AgentReplyBubble({ agentName, reply, onOpen }: { agentName: string; reply: string; onOpen: () => void }) {
+  return (
+    <button type="button" className="agent-reply-bubble" aria-label={`${agentName} said: ${reply}. Open to read in full.`} onClick={(event) => { event.stopPropagation(); onOpen(); }}>
+      {reply}
+    </button>
+  );
 }
 
 export function AgentSpotlight({ agent, tone, sessionId, latestRun, activity, owner, onHistory, onUpdateSettings, onPause, onStop, onDelete }: { agent: FloorAgent; tone: string; sessionId: string; latestRun: AgentRun | null; activity: RunActivitySource; owner: boolean; onHistory: () => void; onUpdateSettings: (agentId: string, patch: FloorAgentSettingsPatch) => Promise<boolean>; onPause: (agentId: string, paused: boolean) => void; onStop: (agentId: string) => void; onDelete: (agentId: string) => void }) {
