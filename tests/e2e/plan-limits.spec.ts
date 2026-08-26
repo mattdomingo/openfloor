@@ -27,7 +27,6 @@ test("free-tier seat cap refuses a fourth member with the session already full",
   await owner.getByRole("button", { name: "New session" }).click();
   await owner.getByLabel("Session title").fill("Free tier session");
   await owner.getByRole("button", { name: "Create session" }).click();
-  await owner.getByRole("button", { name: "Set up later" }).click();
   await expect(owner).toHaveURL(/\/session\/[0-9a-f-]+$/);
   const inviteUrl = await owner.getByLabel("Active invite link").inputValue();
   const invitePath = new URL(inviteUrl).pathname;

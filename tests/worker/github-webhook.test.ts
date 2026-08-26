@@ -10,6 +10,29 @@ import {
 import { createSession, upsertUser } from "@/db/sessions";
 
 describe("GitHub webhook reconciliation", () => {
+  it("revokes and restores account installation access with installation webhooks", async () => {
+    const owner = await upsertUser({
+      providerUserId: "webhook-account-owner", email: "webhook-account@example.com", displayName: "Webhook Account", fullName: "Webhook Account",
+    }, env.DB);
+    await env.DB.prepare(
+      `INSERT INTO user_github_installations
+       (id, user_id, installation_id, account_login, account_type, status, connected_at, updated_at)
+       VALUES (?, ?, 'installation-account-webhook', 'openfloor', 'Organization', 'active', ?, ?)`,
+    ).bind(crypto.randomUUID(), owner.id, Date.now(), Date.now()).run();
+    for (const [delivery, action, status] of [
+      ["delivery-account-suspend", "suspend", "revoked"],
+      ["delivery-account-unsuspend", "unsuspend", "active"],
+    ] as const) {
+      const body = JSON.stringify({ action, installation: { id: "installation-account-webhook" } });
+      const response = await receiveGitHubWebhook(webhookRequest(body, delivery, await sign(body), "installation"));
+      expect(response.status).toBe(202);
+      const row = await env.DB.prepare(
+        "SELECT status FROM user_github_installations WHERE user_id = ? AND installation_id = 'installation-account-webhook'",
+      ).bind(owner.id).first<{ status: string }>();
+      expect(row?.status).toBe(status);
+    }
+  });
+
   it("rejects invalid signatures and applies a delivery only once", async () => {
     const owner = await upsertUser({
       providerUserId: "webhook-owner", email: "webhook@example.com", displayName: "Webhook Owner", fullName: "Webhook Owner",
@@ -42,10 +65,10 @@ describe("GitHub webhook reconciliation", () => {
   });
 });
 
-function webhookRequest(body: string, delivery: string, signature: string): Request {
+function webhookRequest(body: string, delivery: string, signature: string, event = "push"): Request {
   return new Request("https://app.opnflr.com/webhooks/github", {
     method: "POST",
-    headers: { "content-type": "application/json", "x-github-event": "push", "x-github-delivery": delivery, "x-hub-signature-256": signature },
+    headers: { "content-type": "application/json", "x-github-event": event, "x-github-delivery": delivery, "x-hub-signature-256": signature },
     body,
   });
 }

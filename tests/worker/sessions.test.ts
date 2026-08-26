@@ -85,12 +85,90 @@ import {
 import { parseAgentInput } from "@/lib/validation";
 import { beginAgentRunRollback, createAgentRunRollback, failAgentRunRollback, finishAgentRunRollback } from "@/db/rollbacks";
 import { getSessionContext } from "@/db/session-context";
+import {
+  consumeGitHubAccountConnectionState,
+  createGitHubAccountConnectionState,
+  listUserGitHubInstallations,
+  removeUserGitHubInstallation,
+} from "@/db/github-installations";
 
 function identity(id: string, name: string) {
   return { providerUserId: `chatgpt-${id}`, email: `${id}@example.com`, displayName: name, fullName: name };
 }
 
 describe("D1 session persistence", () => {
+  it("migration 0032 backfills deduplicated active account GitHub installations", async () => {
+    const owner = await upsertUser(identity("github-backfill-owner", "Backfill Owner"), env.DB);
+    const other = await upsertUser(identity("github-backfill-other", "Other Owner"), env.DB);
+    const first = await createSession(owner.id, { title: "First backfill room", objective: null }, env.DB);
+    const second = await createSession(owner.id, { title: "Second backfill room", objective: null }, env.DB);
+    const inaccessible = await createSession(owner.id, { title: "Inaccessible room", objective: null }, env.DB);
+    const otherRoom = await createSession(other.id, { title: "Other backfill room", objective: null }, env.DB);
+    const repository = {
+      id: "repository-backfill", nodeId: "R_backfill", owner: "acme", name: "widgets",
+      fullName: "acme/widgets", private: true, defaultBranch: "main",
+    };
+    await saveRepositoryConnection(first.session.id, owner.id, null, "installation-shared", repository, "main", [], env.DB);
+    await saveRepositoryConnection(second.session.id, owner.id, null, "installation-shared", { ...repository, id: "repository-backfill-two", nodeId: "R_backfill_two", name: "tools", fullName: "acme/tools" }, "main", [], env.DB);
+    await saveRepositoryConnection(inaccessible.session.id, owner.id, null, "installation-inaccessible", { ...repository, id: "repository-inaccessible", nodeId: "R_inaccessible" }, "main", [], env.DB);
+    await saveRepositoryConnection(otherRoom.session.id, other.id, null, "installation-shared", repository, "main", [], env.DB);
+    await env.DB.prepare("UPDATE repository_connections SET status = 'ready' WHERE session_id = ?").bind(second.session.id).run();
+    await env.DB.prepare("UPDATE repository_connections SET status = 'inaccessible' WHERE session_id = ?").bind(inaccessible.session.id).run();
+
+    await env.DB.prepare("DROP TABLE github_account_connection_states").run();
+    await env.DB.prepare("DROP TABLE user_github_installations").run();
+    const queries = JSON.parse(env.ACCOUNT_GITHUB_MIGRATION_QUERIES) as string[];
+    await env.DB.batch(queries.map((query) => env.DB.prepare(query)));
+
+    expect(await listUserGitHubInstallations(owner.id, env.DB)).toEqual([
+      expect.objectContaining({ accountLogin: "acme", status: "active" }),
+    ]);
+    expect(await listUserGitHubInstallations(other.id, env.DB)).toEqual([
+      expect.objectContaining({ accountLogin: "acme", status: "active" }),
+    ]);
+    const backfilled = await env.DB.prepare(
+      "SELECT user_id AS userId, installation_id AS installationId FROM user_github_installations ORDER BY user_id",
+    ).all<{ userId: string; installationId: string }>();
+    expect(backfilled.results).toEqual([
+      { userId: other.id, installationId: "installation-shared" },
+      { userId: owner.id, installationId: "installation-shared" },
+    ].sort((a, b) => a.userId.localeCompare(b.userId)));
+  });
+
+  it("binds single-use account GitHub state to user and removal preserves existing session access", async () => {
+    const owner = await upsertUser(identity("account-github-owner", "GitHub Owner"), env.DB);
+    const outsider = await upsertUser(identity("account-github-outsider", "GitHub Outsider"), env.DB);
+    const expiredStateId = await createGitHubAccountConnectionState(owner.id, "onboarding", "/home", env.DB);
+    await env.DB.prepare("UPDATE github_account_connection_states SET expires_at = ? WHERE id = ?")
+      .bind(Date.now() - 1, expiredStateId).run();
+    await expect(consumeGitHubAccountConnectionState(
+      expiredStateId, owner.id, "installation-expired", { login: "expired", type: "Organization" }, env.DB,
+    )).resolves.toBeNull();
+    const stateId = await createGitHubAccountConnectionState(owner.id, "onboarding", "/home", env.DB);
+    await expect(consumeGitHubAccountConnectionState(
+      stateId, outsider.id, "installation-account", { login: "openfloor", type: "Organization" }, env.DB,
+    )).resolves.toBeNull();
+    await expect(consumeGitHubAccountConnectionState(
+      stateId, owner.id, "installation-account", { login: "openfloor", type: "Organization" }, env.DB,
+    )).resolves.toEqual({ purpose: "onboarding", returnTo: "/home" });
+    await expect(consumeGitHubAccountConnectionState(
+      stateId, owner.id, "installation-account", { login: "openfloor", type: "Organization" }, env.DB,
+    )).resolves.toBeNull();
+    const [installation] = await listUserGitHubInstallations(owner.id, env.DB);
+    expect(installation).toEqual(expect.objectContaining({ accountLogin: "openfloor", status: "active" }));
+
+    const created = await createSession(owner.id, { title: "Preserved repository", objective: null }, env.DB);
+    await saveRepositoryConnection(created.session.id, owner.id, null, "installation-account", {
+      id: "repository-account", nodeId: "R_account", owner: "openfloor", name: "repo",
+      fullName: "openfloor/repo", private: true, defaultBranch: "main",
+    }, "main", [], env.DB);
+    await expect(removeUserGitHubInstallation(owner.id, installation.id, env.DB)).resolves.toBe(true);
+    await expect(listUserGitHubInstallations(owner.id, env.DB)).resolves.toEqual([]);
+    await expect(getRepositoryConnectionForMember(created.session.id, owner.id, env.DB)).resolves.toEqual(
+      expect.objectContaining({ installationId: "installation-account", status: "connected" }),
+    );
+  });
+
   it("backfills existing sessions off while preserving and safely deactivating legacy Concierge rows", async () => {
     const owner = await upsertUser(identity("auto-migration-owner", "Migration Owner"), env.DB);
     const existing = await createSession(owner.id, { title: "Existing auto room", objective: null }, env.DB);

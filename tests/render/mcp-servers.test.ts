@@ -1,6 +1,7 @@
 import { env } from "cloudflare:workers";
 import { SELF } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
+import { completeTestOnboarding, testRepositorySelection } from "./github-fixture";
 
 async function onboardedUser(providerUserId: string, firstName: string, lastName: string) {
   const headers = {
@@ -10,13 +11,7 @@ async function onboardedUser(providerUserId: string, firstName: string, lastName
     "x-openfloor-dev-user-email": `${providerUserId}@example.com`,
     "x-openfloor-dev-user-name": `${firstName} ${lastName}`,
   };
-  const form = new FormData();
-  form.set("firstName", firstName);
-  form.set("lastName", lastName);
-  form.set("plan", "free");
-  form.set("returnTo", "/home");
-  const onboarded = await SELF.fetch("http://localhost/api/account/onboarding", { method: "POST", headers, body: form });
-  expect(onboarded.status).toBe(200);
+  await completeTestOnboarding(headers, firstName, lastName);
   const row = await env.DB.prepare("SELECT id FROM users WHERE chatgpt_user_id = ?").bind(providerUserId).first<{ id: string }>();
   if (!row) throw new Error("Onboarded user was not persisted");
   return { userId: row.id, headers };
@@ -35,7 +30,7 @@ describe("session MCP server routes", () => {
     const created = await SELF.fetch("http://localhost/api/sessions", {
       method: "POST",
       headers: jsonHeaders(owner.headers),
-      body: JSON.stringify({ title: "MCP room" }),
+      body: JSON.stringify({ title: "MCP room", ...await testRepositorySelection(owner.headers) }),
     });
     expect(created.status).toBe(201);
     const { session, inviteUrl } = (await created.json()) as { session: { id: string }; inviteUrl: string };
