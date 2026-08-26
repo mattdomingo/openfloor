@@ -197,6 +197,59 @@
   justify-self: end;
 }
 
+/* ── Provider connection tiles ───────────────────────────────────────────
+   The list is a grid so providers read side by side instead of as one tall
+   column, and the open tile spans the full row — its instructions and key
+   field would otherwise squeeze into a third of the width and shove its
+   neighbours down. Doubled class so it wins over the single-column
+   .settings-category-list grid above; shell-agnostic, like the row rules
+   below, because this also renders inside the session setup dialog. */
+.provider-credential-list.provider-credential-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 10px;
+  align-items: start;
+}
+.provider-credential-row[data-expanded="true"] { grid-column: 1 / -1; }
+
+.provider-credential-mark {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+  background: var(--sheet);
+}
+.provider-credential-mark img { display: block; width: 22px; height: 22px; object-fit: contain; }
+.provider-credential-monogram { font: 700 13px var(--sans); color: var(--muted); }
+
+/* The command a member pastes into their own terminal. */
+.provider-credential-command {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+  background: var(--sheet);
+}
+.provider-credential-command code { flex: 1 1 auto; min-width: 0; overflow-x: auto; font: 500 12.5px var(--mono); }
+
+/* Last cell of the grid: how to ask for a provider that isn't carried yet. */
+.provider-credential-request {
+  display: grid;
+  gap: 10px;
+  align-content: start;
+  padding: 18px 20px;
+  border: 1px dashed var(--edge);
+  border-radius: var(--radius-md);
+}
+.provider-credential-request p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.6; }
+.provider-credential-request .button { justify-self: start; }
+
 /* ── Collapsible provider-credential rows ────────────────────────────────
    Doubled class beats the two-class .settings-shell .settings-category-row
    selector above so the fixed name/detail/button grid doesn't fight the
@@ -207,12 +260,16 @@
   padding: 0;
   overflow: hidden;
 }
+/* Mark, then name over status, then the chevron. A single flex row put the
+   name and the status side by side, which collided the moment the row became
+   a ~230px tile. */
 .provider-credential-toggle {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  gap: 16px;
+  gap: 3px 12px;
   width: 100%;
-  padding: 18px 20px;
+  padding: 14px 16px;
   border: 0;
   background: none;
   color: inherit;
@@ -222,9 +279,12 @@
 }
 .provider-credential-toggle:hover { background: var(--shop-2, transparent); }
 .provider-credential-toggle:focus-visible { outline: 2px solid var(--accent-ink); outline-offset: -2px; }
-.provider-credential-toggle .settings-category-name { flex: 1 1 auto; min-width: 0; }
+.provider-credential-mark { grid-column: 1; grid-row: 1 / span 2; }
+.provider-credential-toggle .settings-category-name { grid-column: 2; grid-row: 1; min-width: 0; }
 .provider-credential-status {
-  flex: none;
+  grid-column: 2;
+  grid-row: 2;
+  justify-self: start;
   color: var(--steel);
   font: 650 10px var(--mono);
   letter-spacing: .05em;
@@ -233,7 +293,8 @@
 .provider-credential-status[data-connected="true"] { color: #25805f; }
 .provider-credential-toggle::after {
   content: "";
-  flex: none;
+  grid-column: 3;
+  grid-row: 1 / span 2;
   width: 7px;
   height: 7px;
   border-right: 2px solid var(--steel);
