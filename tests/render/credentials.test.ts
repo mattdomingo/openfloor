@@ -160,8 +160,10 @@ describe("provider credential routes", () => {
     const listed = await SELF.fetch("http://localhost/api/account/credentials", { headers });
     expect(((await listed.json()) as { credentials: Array<{ provider: string; kind: string }> }).credentials
       .map((entry) => `${entry.provider}:${entry.kind}`)).toEqual(["anthropic:api_key", "anthropic:oauth"]);
-    // Providers without a subscription kind refuse it.
-    const refused = await SELF.fetch("http://localhost/api/account/credentials/kimi", {
+    // Providers without a subscription kind refuse it. (This used kimi until
+    // its Kimi Code plan kind became real on 2026-08-26; gemini stays
+    // api_key-only.)
+    const refused = await SELF.fetch("http://localhost/api/account/credentials/gemini", {
       method: "PUT",
       headers: jsonHeaders(headers),
       body: JSON.stringify({ setupToken }),
@@ -175,6 +177,43 @@ describe("provider credential routes", () => {
     const after = await SELF.fetch("http://localhost/api/account/credentials", { headers });
     expect(((await after.json()) as { credentials: Array<{ provider: string; kind: string }> }).credentials
       .map((entry) => `${entry.provider}:${entry.kind}`)).toEqual(["anthropic:api_key"]);
+  });
+
+  it("connects a Kimi Code plan key alongside the Moonshot API key, unverified until its first run", async () => {
+    const { headers } = await onboardedUser("credentials-kimi-plan", "Cred", "Plan");
+    const key = await SELF.fetch("http://localhost/api/account/credentials/kimi", {
+      method: "PUT",
+      headers: jsonHeaders(headers),
+      body: JSON.stringify({ apiKey: ACCEPTED_KIMI_KEY }),
+    });
+    expect(key.status).toBe(200);
+    // A plan key has no connect-time probe (the plan surface is
+    // vendor-documented but unverified with a live plan key — 2026-08-26
+    // decision-log entry), so the row stores validated_at null: "Connected —
+    // not yet verified", and the first run is the real validation. Never a
+    // faked timestamp.
+    const planToken = "sk-kimi-plan-render-5678";
+    const plan = await SELF.fetch("http://localhost/api/account/credentials/kimi", {
+      method: "PUT",
+      headers: jsonHeaders(headers),
+      body: JSON.stringify({ setupToken: planToken }),
+    });
+    expect(plan.status).toBe(200);
+    const planText = await plan.text();
+    expect(planText).not.toContain(planToken);
+    const { credential } = JSON.parse(planText) as { credential: { kind: string; fingerprint: string; validatedAt: number | null } };
+    expect(credential.kind).toBe("oauth");
+    expect(credential.fingerprint).toBe(planToken.slice(-4));
+    expect(credential.validatedAt).toBeNull();
+    // Rows list deterministically: by provider, then kind.
+    const listed = await SELF.fetch("http://localhost/api/account/credentials", { headers });
+    expect(((await listed.json()) as { credentials: Array<{ provider: string; kind: string }> }).credentials
+      .map((entry) => `${entry.provider}:${entry.kind}`)).toEqual(["kimi:api_key", "kimi:oauth"]);
+    // Disconnect is kind-scoped: the plan row goes, the API key stays.
+    expect((await SELF.fetch("http://localhost/api/account/credentials/kimi?kind=oauth", { method: "DELETE", headers })).status).toBe(204);
+    const after = await SELF.fetch("http://localhost/api/account/credentials", { headers });
+    expect(((await after.json()) as { credentials: Array<{ provider: string; kind: string }> }).credentials
+      .map((entry) => `${entry.provider}:${entry.kind}`)).toEqual(["kimi:api_key"]);
   });
 
   it("rejects invalid keys, invalid input, and unknown providers", async () => {
