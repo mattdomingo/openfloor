@@ -1,19 +1,51 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, MouseEvent as ReactMouseEvent, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { DragEvent as ReactDragEvent, FormEvent, MouseEvent as ReactMouseEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useRouter } from "next/navigation";
 import { BASE_PATH } from "@/components/basePath";
 import { LocalDateTime } from "@/components/LocalDateTime";
 import { formatDuration } from "@/lib/date-format";
-import { HoverTip, useDialogDismiss, useHoverTip } from "@/components/session/primitives";
-import { planLabel, type Plan, type PlanStatus } from "@/lib/plans";
-import type { AppUser, SessionSummary } from "@/lib/session-types";
+import { HoverTip, Icon, Spinner, useDialogDismiss, useHoverTip } from "@/components/session/primitives";
+import { SelectMenu } from "@/components/session/SelectMenu";
+import { lowHoursRemaining, planLabel, type Plan, type PlanStatus } from "@/lib/plans";
+import { mergeVisibleOrder, parseSessionOrder, sortByStoredOrder } from "@/lib/session-order";
+import type { AccountGitHubRepositoryOption, AppUser, SessionSummary } from "@/lib/session-types";
 import { WaveField } from "@/app/entry-wave";
 import { AppHeader } from "./AppHeader";
 
 // How far a tile is willing to lean toward the cursor, in pixels.
 const CARD_MAGNET_REACH = 7;
+
+/* Tile order is a per-device preference — nobody else sees your arrangement,
+   so it stays local UI state (AGENTS.md's third state class, alongside panel
+   order on the floor) rather than becoming a D1 column. Stored as one id
+   list covering every tab, so a card keeps its place when it is archived and
+   comes back. Same useSyncExternalStore shape as ThemeToggle, which keeps
+   the server render (no stored order) and hydration in step. */
+const ORDER_STORAGE_KEY = "openfloor:session-order";
+const ORDER_CHANGE_EVENT = "openfloor:session-order-change";
+
+function subscribeToOrder(callback: () => void) {
+  window.addEventListener("storage", callback);
+  window.addEventListener(ORDER_CHANGE_EVENT, callback);
+  return () => {
+    window.removeEventListener("storage", callback);
+    window.removeEventListener(ORDER_CHANGE_EVENT, callback);
+  };
+}
+
+// The raw string is the snapshot, not a parsed array: useSyncExternalStore
+// compares snapshots by identity, and a fresh array every call would loop.
+function readStoredOrder(): string {
+  return localStorage.getItem(ORDER_STORAGE_KEY) ?? "";
+}
+
+function writeOrder(ids: string[]) {
+  localStorage.setItem(ORDER_STORAGE_KEY, JSON.stringify(ids));
+  window.dispatchEvent(new Event(ORDER_CHANGE_EVENT));
+}
+
 
 function handleCardPointerMove(event: ReactMouseEvent<HTMLElement>) {
   const card = event.currentTarget;
@@ -141,6 +173,9 @@ export function HomeScreen({
   const [creating, setCreating] = useState(false);
   const [title, setTitle] = useState("");
   const [objective, setObjective] = useState("");
+  const [repositories, setRepositories] = useState<AccountGitHubRepositoryOption[]>([]);
+  const [repositoryId, setRepositoryId] = useState("");
+  const [repositoriesLoading, setRepositoriesLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<SessionSummary | null>(null);
@@ -155,9 +190,30 @@ export function HomeScreen({
     if (stored) sessionStorage.removeItem("openfloor:removed-notice");
     return stored;
   });
-  const activeSessions = sessions.filter((session) => session.archivedAt == null && session.endedAt == null);
-  const archivedSessions = sessions.filter((session) => session.archivedAt != null);
-  const endedSessions = sessions.filter((session) => session.archivedAt == null && session.endedAt != null);
+  const storedOrder = useSyncExternalStore(subscribeToOrder, readStoredOrder, () => "");
+  const orderedSessions = useMemo(() => sortByStoredOrder(sessions, parseSessionOrder(storedOrder)), [sessions, storedOrder]);
+
+  async function beginCreate() {
+    setCreating(true);
+    setRepositoriesLoading(true);
+    setError(null);
+    try {
+      const response = await fetch(`${BASE_PATH}/api/account/github/repositories`, { cache: "no-store" });
+      const body = await response.json() as { repositories?: AccountGitHubRepositoryOption[]; error?: string };
+      if (!response.ok || !body.repositories) throw new Error(body.error ?? "Unable to load GitHub repositories.");
+      setRepositories(body.repositories);
+      setRepositoryId((current) => body.repositories!.some((repository) => repository.id === current)
+        ? current
+        : body.repositories![0]?.id ?? "");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to load GitHub repositories.");
+    } finally {
+      setRepositoriesLoading(false);
+    }
+  }
+  const activeSessions = orderedSessions.filter((session) => session.archivedAt == null && session.endedAt == null);
+  const archivedSessions = orderedSessions.filter((session) => session.archivedAt != null);
+  const endedSessions = orderedSessions.filter((session) => session.archivedAt == null && session.endedAt != null);
   const tabSessions = tab === "archived" ? archivedSessions : tab === "ended" ? endedSessions : activeSessions;
   // Hours are metered per session and summed onto one monthly total, so two
   // live owned sessions burn the month at twice wall-clock — worth calling
@@ -165,8 +221,14 @@ export function HomeScreen({
   // (and documented) behavior.
   const liveOwnedSessions = sessions.filter((session) => session.role === "owner" && session.endedAt == null).length;
   const quotaExhausted = Number.isFinite(usage.limitHours) && usage.seconds >= usage.limitHours * 3600;
+  const lowHours = lowHoursRemaining(usage.seconds, usage.limitHours);
+  // A deleted-and-resignedup email on the free plan gets a real 0h limit
+  // (lib/plans.ts's planHourLimit), not "nothing purchased yet" — distinct
+  // from the ordinary used-up-this-month case, so it gets its own copy
+  // instead of a usage bar with nothing to divide by.
+  const freeAllowanceUsedUp = usage.effectivePlan === "free" && usage.limitHours === 0;
   const usageLimitSeconds = usage.limitHours * 3600;
-  const usagePercent = Number.isFinite(usage.limitHours) ? Math.min(100, Math.round((usage.seconds / usageLimitSeconds) * 100)) : null;
+  const usagePercent = !Number.isFinite(usage.limitHours) ? null : freeAllowanceUsedUp ? 100 : Math.min(100, Math.round((usage.seconds / usageLimitSeconds) * 100));
   // What the Usage tab shows is the inverse of usagePercent — remaining
   // capacity, not consumed capacity, so "0%" reads as "none left".
   const usageRemainingPercent = usagePercent != null ? Math.max(0, 100 - usagePercent) : null;
@@ -175,10 +237,16 @@ export function HomeScreen({
   // hydration-boundary comment between adjacent text nodes, which would
   // otherwise split a phrase like "Free plan" across a comment.
   const usagePlanLine = `${planLabel(usage.effectivePlan)} plan`;
-  const usageStatLine = Number.isFinite(usage.limitHours)
+  const usageStatLine = freeAllowanceUsedUp
+    ? "This account's free session hours were already used."
+    : Number.isFinite(usage.limitHours)
     ? `${formatDuration(usage.seconds)} of ${usage.limitHours}h session time used this month (UTC)`
     : `${formatDuration(usage.seconds)} session time used this month (UTC)`;
   const usageLiveLine = `${liveOwnedSessions} live sessions, all counting toward your usage`;
+
+  function applyVisibleOrder(nextVisible: string[]) {
+    writeOrder(mergeVisibleOrder(orderedSessions.map((session) => session.id), nextVisible));
+  }
 
   async function setArchived(session: SessionSummary, archived: boolean) {
     const response = await fetch(`${BASE_PATH}/api/sessions/${session.id}/${archived ? "archive" : "unarchive"}`, { method: "POST" });
@@ -192,18 +260,29 @@ export function HomeScreen({
     event.preventDefault();
     setError(null);
     setSubmitting(true);
+    const selectedRepository = repositories.find((repository) => repository.id === repositoryId);
+    if (!selectedRepository) {
+      setError("Select a GitHub repository.");
+      setSubmitting(false);
+      return;
+    }
     const response = await fetch(`${BASE_PATH}/api/sessions`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ title, objective }),
+      body: JSON.stringify({
+        title,
+        objective,
+        repositoryId: selectedRepository.id,
+        accountInstallationId: selectedRepository.accountInstallationId,
+      }),
     });
-    const body = (await response.json()) as { session?: SessionSummary; error?: string };
+    const body = (await response.json()) as { session?: SessionSummary; setupStatus?: "ready" | "failed"; error?: string };
     if (!response.ok || !body.session) {
       setError(body.error ?? "Unable to create the session.");
       setSubmitting(false);
       return;
     }
-    router.push(`/session/${body.session.id}?setup=1`);
+    router.push(`/session/${body.session.id}${body.setupStatus === "failed" ? "?repo=required" : ""}`);
   }
 
   return (
@@ -224,11 +303,21 @@ export function HomeScreen({
                  Workspace.tsx: the 403s on create/dispatch are the
                  enforcement. */
               <p className="notice" data-tone="attention" role="status">
-                {`Your ${planLabel(usage.effectivePlan)} plan's ${usage.limitHours}h of monthly session time is used up. `}
+                {freeAllowanceUsedUp
+                  ? "This account already used its free openfloor hours. "
+                  : `Your ${planLabel(usage.effectivePlan)} plan's ${usage.limitHours}h of monthly session time is used up. `}
                 {/* No `from` here on purpose: tests/render/rendered-html.test.ts:224
                     asserts this literal href, and the settings origin resolver
                     (app/home/settings/origin.ts) already falls back to Sessions/home
                     when `from` is absent — appending it would be redundant. */}
+                <Link href="/home/settings?section=plan">{freeAllowanceUsedUp ? "Choose a plan to continue" : "Upgrade for more session hours"}</Link>.
+              </p>
+            )}
+            {lowHours != null && (
+              /* The same advisory tone one step earlier: nothing is blocked
+                 yet, but the ceiling is close enough to plan around. */
+              <p className="notice" data-tone="attention" role="status">
+                {`${formatDuration(lowHours)} of your ${planLabel(usage.effectivePlan)} plan's ${usage.limitHours}h of monthly session time is left. `}
                 <Link href="/home/settings?section=plan">Upgrade for more session hours</Link>.
               </p>
             )}
@@ -239,10 +328,24 @@ export function HomeScreen({
           <form className="create-card" onSubmit={create}>
             <label><span>Session title</span><input value={title} onChange={(event) => setTitle(event.target.value)} maxLength={100} required autoFocus /></label>
             <label><span>Objective <em>optional</em></span><textarea value={objective} onChange={(event) => setObjective(event.target.value)} maxLength={2000} rows={3} /></label>
+            <label>
+              <span>Repository</span>
+              {repositories.length > 0 ? (
+                <SelectMenu
+                  label="Session repository"
+                  value={repositoryId}
+                  onChange={setRepositoryId}
+                  disabled={repositoriesLoading || submitting}
+                  options={repositories.map((repository) => ({ value: repository.id, label: repository.fullName }))}
+                />
+              ) : repositoriesLoading ? <small>Loading GitHub repositories…</small> : (
+                <small>No repositories available. <Link href="/home/settings?section=connections">Add GitHub access in Account Settings</Link>.</small>
+              )}
+            </label>
             {error && <p className="form-error" role="alert">{error}</p>}
             <div className="form-actions">
               <button type="button" className="button" data-variant="quiet" onClick={() => setCreating(false)}>Cancel</button>
-              <button className="button" data-variant="primary" disabled={submitting}>{submitting ? "Creating…" : "Create session"}</button>
+              <button className="button" data-variant="primary" disabled={submitting || repositoriesLoading || !repositoryId}>{submitting ? <><Spinner />Creating…</> : "Create session"}</button>
             </div>
           </form>
         )}
@@ -267,7 +370,7 @@ export function HomeScreen({
             <div className="usage-tab-content">
               <div className="usage-card">
                 <p className="usage-card-plan">{usagePlanLine}</p>
-                {usagePercent != null && (
+                {usagePercent != null && !freeAllowanceUsedUp && (
                   <progress className="usage-meter" value={Math.min(usage.seconds, usageLimitSeconds)} max={usageLimitSeconds} aria-label={`${usagePercent}% of monthly session time used`} />
                 )}
                 <p className="usage-card-stat">{usageStatLine}</p>
@@ -275,14 +378,14 @@ export function HomeScreen({
               </div>
             </div>
           ) : tab === "active" ? (
-            <SessionGrid sessions={activeSessions} archived={false} showCreateTile onCreateNew={() => setCreating(true)} onDelete={setPendingDelete} onSetArchived={setArchived} limitSeats={usage.limitSeats} />
+            <SessionGrid sessions={activeSessions} archived={false} showCreateTile onCreateNew={() => void beginCreate()} onDelete={setPendingDelete} onSetArchived={setArchived} limitSeats={usage.limitSeats} onReorder={applyVisibleOrder} />
           ) : tabSessions.length === 0 ? (
             <div className="empty-state">
               <strong>Nothing here</strong>
               <p>{tab === "archived" ? "Archive a session from Active or Ended to tuck it out of your own view." : "Sessions the owner ends will show up here."}</p>
             </div>
           ) : (
-            <SessionGrid sessions={tabSessions} archived={tab === "archived"} onDelete={setPendingDelete} onSetArchived={setArchived} limitSeats={usage.limitSeats} />
+            <SessionGrid sessions={tabSessions} archived={tab === "archived"} onDelete={setPendingDelete} onSetArchived={setArchived} limitSeats={usage.limitSeats} onReorder={applyVisibleOrder} />
           )}
         </div>
       </section>
@@ -299,6 +402,7 @@ function SessionGrid({
   limitSeats,
   showCreateTile,
   onCreateNew,
+  onReorder,
 }: {
   sessions: SessionSummary[];
   archived: boolean;
@@ -307,12 +411,65 @@ function SessionGrid({
   limitSeats: number;
   showCreateTile?: boolean;
   onCreateNew?: () => void;
+  onReorder: (nextVisible: string[]) => void;
 }) {
+  const [draggedId, setDraggedId] = useState<string | null>(null);
+  const [dragOverId, setDragOverId] = useState<string | null>(null);
+  const ids = sessions.map((session) => session.id);
+
+  // Dropping on a card puts the dragged one in that card's place, the same
+  // "insert before the target" rule the prompt queue uses.
+  function moveBefore(fromId: string, toId: string) {
+    if (fromId === toId) return;
+    const next = ids.filter((id) => id !== fromId);
+    next.splice(next.indexOf(toId), 0, fromId);
+    onReorder(next);
+  }
+
+  // The keyboard path, driven from the same grip: one step per press.
+  function nudge(id: string, delta: number) {
+    const from = ids.indexOf(id);
+    const to = from + delta;
+    if (from < 0 || to < 0 || to >= ids.length) return;
+    const next = [...ids];
+    next.splice(to, 0, ...next.splice(from, 1));
+    onReorder(next);
+  }
+
   return (
     <div className="session-grid">
       {showCreateTile && onCreateNew && <NewSessionTile onClick={onCreateNew} />}
-      {sessions.map((session) => (
-        <SessionCard key={session.id} session={session} archived={archived} onDelete={onDelete} onSetArchived={onSetArchived} limitSeats={limitSeats} />
+      {sessions.map((session, index) => (
+        <SessionCard
+          key={session.id}
+          session={session}
+          archived={archived}
+          onDelete={onDelete}
+          onSetArchived={onSetArchived}
+          limitSeats={limitSeats}
+          position={index + 1}
+          total={sessions.length}
+          dragging={draggedId === session.id}
+          dropTarget={dragOverId === session.id}
+          onDragStart={() => setDraggedId(session.id)}
+          onDragEnd={() => { setDraggedId(null); setDragOverId(null); }}
+          onDragOver={(event) => {
+            if (!draggedId) return;
+            // Only a preventDefault'd dragover marks this a valid drop target.
+            event.preventDefault();
+            if (draggedId !== session.id) setDragOverId(session.id);
+          }}
+          onDragLeave={(event) => {
+            if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+            setDragOverId((current) => (current === session.id ? null : current));
+          }}
+          onDrop={() => {
+            setDragOverId(null);
+            if (draggedId) moveBefore(draggedId, session.id);
+            setDraggedId(null);
+          }}
+          onNudge={(delta) => nudge(session.id, delta)}
+        />
       ))}
     </div>
   );
@@ -354,12 +511,32 @@ function SessionCard({
   onDelete,
   onSetArchived,
   limitSeats,
+  position,
+  total,
+  dragging,
+  dropTarget,
+  onDragStart,
+  onDragEnd,
+  onDragOver,
+  onDragLeave,
+  onDrop,
+  onNudge,
 }: {
   session: SessionSummary;
   archived: boolean;
   onDelete: (session: SessionSummary) => void;
   onSetArchived: (session: SessionSummary, archived: boolean) => void;
   limitSeats: number;
+  position: number;
+  total: number;
+  dragging: boolean;
+  dropTarget: boolean;
+  onDragStart: () => void;
+  onDragEnd: () => void;
+  onDragOver: (event: ReactDragEvent<HTMLDivElement>) => void;
+  onDragLeave: (event: ReactDragEvent<HTMLDivElement>) => void;
+  onDrop: () => void;
+  onNudge: (delta: number) => void;
 }) {
   // Title, then when it last changed (a quiet caption, not competing with
   // the meta strip below), then the objective — clamped, the full text is
@@ -374,21 +551,61 @@ function SessionCard({
     setActionsOpen(open);
   }, []);
   const { ref: descriptionRef, truncated: descriptionTruncated } = useIsTruncated<HTMLParagraphElement>();
+  // draggable has to be true before the gesture starts, so the grip arms it on
+  // pointer down and the card disarms it again once the drag is over. Arming
+  // the whole card unconditionally would make every text selection a drag.
+  const [armed, setArmed] = useState(false);
   const seatsOrMembers =
     session.role === "owner" && Number.isFinite(limitSeats)
       ? `${session.memberCount} of ${limitSeats} seats`
       : `${session.memberCount} ${session.memberCount === 1 ? "member" : "members"}`;
   return (
-    <div ref={cardRef} className="session-card" data-actions-open={actionsOpen ? "true" : undefined} onMouseMove={(event) => { if (!actionsOpen) handleCardPointerMove(event); }} onMouseLeave={handleCardPointerLeave}>
+    <div
+      ref={cardRef}
+      className="session-card"
+      data-actions-open={actionsOpen ? "true" : undefined}
+      data-dragging={dragging ? "true" : undefined}
+      data-drop-target={dropTarget ? "true" : undefined}
+      draggable={armed}
+      onDragStart={onDragStart}
+      onDragEnd={() => { setArmed(false); onDragEnd(); }}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+      onMouseMove={(event) => { if (!actionsOpen) handleCardPointerMove(event); }}
+      onMouseLeave={handleCardPointerLeave}
+    >
       <div className="session-card-head">
-        {/* The link stays on the title text so tests and readers keep one obvious target. */}
-        <Link className="session-card-link" href={`/session/${session.id}`}><strong>{session.title}</strong></Link>
-        <SessionActionsMenu session={session} archived={archived} onDelete={onDelete} onSetArchived={onSetArchived} onOpenChange={handleActionsOpenChange} />
+        {/* The anchor is still the title, but its ::after (shop.css) stretches
+            over the whole card, so anywhere that isn't the grip or the actions
+            menu opens the session. The objective's hover tip therefore hangs
+            off the link rather than the paragraph it describes — the paragraph
+            sits under that overlay and would never see a pointer event. */}
+        <Link className="session-card-link" href={`/session/${session.id}`} draggable={false} {...(descriptionTruncated ? tip.handlers : {})}><strong>{session.title}</strong></Link>
+        <span className="session-card-tools">
+          <button
+            type="button"
+            className="session-card-grip"
+            aria-label={`Reorder ${session.title}. Position ${position} of ${total}. Drag, or use the left and right arrow keys.`}
+            onPointerDown={() => setArmed(true)}
+            onPointerUp={() => setArmed(false)}
+            onPointerCancel={() => setArmed(false)}
+            onKeyDown={(event) => {
+              const delta = event.key === "ArrowLeft" ? -1 : event.key === "ArrowRight" ? 1 : 0;
+              if (delta === 0) return;
+              event.preventDefault();
+              onNudge(delta);
+            }}
+          >
+            <Icon name="grip" />
+          </button>
+          <SessionActionsMenu session={session} archived={archived} onDelete={onDelete} onSetArchived={onSetArchived} onOpenChange={handleActionsOpenChange} />
+        </span>
       </div>
       <p className="session-card-updated">Updated <LocalDateTime timestamp={session.updatedAt} mode="date" /></p>
       {session.objective ? (
         <>
-          <p className="session-card-desc" ref={descriptionRef} {...(descriptionTruncated ? tip.handlers : {})}>{session.objective}</p>
+          <p className="session-card-desc" ref={descriptionRef}>{session.objective}</p>
           {descriptionTruncated && <HoverTip position={tip.position}>{session.objective}</HoverTip>}
         </>
       ) : (
@@ -465,13 +682,23 @@ function DeleteSessionDialog({ session, onClose }: { session: SessionSummary; on
   const [error, setError] = useState<string | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
   const [blockingRunId, setBlockingRunId] = useState<string | null>(null);
+  const [candidateLive, setCandidateLive] = useState<{ branch: string; canDeleteBranch: boolean } | null>(null);
 
-  async function remove() {
+  async function remove(candidate?: "delete-branch" | "orphan") {
     setBusy(true);
     setError(null);
-    const response = await fetch(`${BASE_PATH}/api/sessions/${session.id}`, { method: "DELETE" });
+    const response = await fetch(`${BASE_PATH}/api/sessions/${session.id}`, {
+      method: "DELETE",
+      headers: candidate ? { "content-type": "application/json" } : undefined,
+      body: candidate ? JSON.stringify({ candidate }) : undefined,
+    });
     if (!response.ok) {
-      const body = (await response.json().catch(() => null)) as { error?: string; runId?: string } | null;
+      const body = (await response.json().catch(() => null)) as { error?: string; code?: string; runId?: string; branch?: string; canDeleteBranch?: boolean } | null;
+      if (body?.code === "candidate_live" && body.branch) {
+        setCandidateLive({ branch: body.branch, canDeleteBranch: Boolean(body.canDeleteBranch) });
+        setBusy(false);
+        return;
+      }
       setError(body?.error ?? "Unable to delete the session");
       setBlockingRunId(body?.runId ?? null);
       setBusy(false);
@@ -527,16 +754,27 @@ function DeleteSessionDialog({ session, onClose }: { session: SessionSummary; on
       </div>
       {error && <div className="dialog-body"><p className="form-error" role="alert">{error}</p></div>}
       {warning && <div className="dialog-body"><p role="status">Session deleted. {warning}</p></div>}
+      {candidateLive && !warning && (
+        <div className="dialog-body"><p>The candidate branch <strong>{candidateLive.branch}</strong> hasn&rsquo;t merged yet. Decide what happens to it before the session is deleted.</p></div>
+      )}
       <div className="dialog-foot">
         {warning ? (
           <button type="button" className="button" onClick={dismiss}>Close</button>
+        ) : candidateLive ? (
+          <>
+            <button type="button" className="button" data-variant="quiet" onClick={dismiss} disabled={busy}>Cancel</button>
+            <button type="button" className="button" onClick={() => void remove("orphan")} disabled={busy}>Leave branch, delete session</button>
+            {candidateLive.canDeleteBranch && (
+              <button type="button" className="button danger-button" onClick={() => void remove("delete-branch")} disabled={busy}>Delete branch &amp; session</button>
+            )}
+          </>
         ) : (
           <>
             <button type="button" className="button" data-variant="quiet" onClick={dismiss} disabled={busy}>Cancel</button>
             {blockingRunId ? (
               <button type="button" className="button danger-button" onClick={cancelAndRetry} disabled={busy}>Cancel that run &amp; delete session</button>
             ) : (
-              <button type="button" className="button danger-button" onClick={remove} disabled={busy}>Delete session</button>
+              <button type="button" className="button danger-button" onClick={() => void remove()} disabled={busy}>Delete session</button>
             )}
           </>
         )}

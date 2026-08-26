@@ -30,7 +30,7 @@ import {
   getRepositoryConnectionForMember,
   reserveRepositoryCandidate,
 } from "@/db/repositories";
-import { getMembershipRole, getOwnerHourQuota, getSessionForMember, PLAN_LIMITS } from "@/db/sessions";
+import { getMembershipRole, getOwnerHourQuota, getSessionForMember } from "@/db/sessions";
 import { renderRunBrief } from "@/db/session-context";
 import {
   advanceConflictAfterFailure,
@@ -135,7 +135,7 @@ export async function startQueueItemRun(sessionId: string, queueItemId: string, 
   // already turns that into the existing AgentRunNotReadyError("Session not
   // found"), which failing closed here would only pre-empt with a bare throw.
   const quota = await getOwnerHourQuota(sessionId, getDb());
-  if (quota && quota.endedAt == null && quota.seconds >= PLAN_LIMITS[quota.plan].hours * 3600) {
+  if (quota && quota.endedAt == null && quota.seconds >= quota.limitHours * 3600) {
     return { ok: false, kind: "quota_exhausted", message: "Your plan's monthly session hours are used up." };
   }
   // Unlike quota_exhausted (a session-wide precondition), this is scoped to
@@ -187,7 +187,7 @@ export async function startConflictResolverRun(conflict: PendingConflict): Promi
     return { ok: false, kind: "disabled", message: `${providerLabel(conflict.agentProvider)} execution is not enabled` };
   }
   const quota = await getOwnerHourQuota(conflict.sessionId, getDb());
-  if (quota && quota.endedAt == null && quota.seconds >= PLAN_LIMITS[quota.plan].hours * 3600) {
+  if (quota && quota.endedAt == null && quota.seconds >= quota.limitHours * 3600) {
     return { ok: false, kind: "quota_exhausted", message: "Your plan's monthly session hours are used up." };
   }
   const budgetContext = await getAgentBudgetContext(conflict.agentId, getDb());

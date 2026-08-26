@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { currentMonth, effectivePlan, effectiveSeatLimit, PAID_PLAN_CATALOG, PLAN_LIMITS, planLimitsSummary, validPaidSeatQuantity, type Plan, type PlanStatus } from "@/lib/plans";
+import { currentMonth, effectivePlan, effectiveSeatLimit, lowHoursRemaining, PAID_PLAN_CATALOG, planHourLimit, PLAN_LIMITS, planLimitsSummary, validPaidSeatQuantity, type Plan, type PlanStatus } from "@/lib/plans";
 
 describe("PLAN_LIMITS", () => {
   it("gives each plan the documented seat and hour caps", () => {
@@ -92,6 +92,19 @@ describe("paid seat pricing", () => {
   });
 });
 
+describe("planHourLimit", () => {
+  it("zeroes the free plan's hours once its email already spent them, and only the free plan", () => {
+    expect(planHourLimit("free", true)).toBe(0);
+    expect(planHourLimit("free", false)).toBe(PLAN_LIMITS.free.hours);
+  });
+
+  it("leaves every paid or enterprise plan's hours untouched by the flag", () => {
+    expect(planHourLimit("pro", true)).toBe(PLAN_LIMITS.pro.hours);
+    expect(planHourLimit("max", true)).toBe(PLAN_LIMITS.max.hours);
+    expect(planHourLimit("enterprise", true)).toBe(Infinity);
+  });
+});
+
 describe("planLimitsSummary", () => {
   it("spells out the numeric seat and hour caps for finite plans", () => {
     expect(planLimitsSummary("free")).toBe("3 seats per session, 2h of session time per month");
@@ -101,5 +114,29 @@ describe("planLimitsSummary", () => {
 
   it("describes enterprise's Infinity limits as unlimited, not as a number", () => {
     expect(planLimitsSummary("enterprise")).toBe("unlimited seats per session, unlimited session time");
+  });
+});
+
+describe("low session-hour warning", () => {
+  const hours = (value: number) => value * 3600;
+
+  it("stays quiet with plenty of the month left", () => {
+    expect(lowHoursRemaining(hours(1), 30)).toBeNull();
+    expect(lowHoursRemaining(hours(23.9), 30)).toBeNull();
+  });
+
+  it("warns from 80% used, reporting what is left", () => {
+    expect(lowHoursRemaining(hours(24), 30)).toBe(hours(6));
+    expect(lowHoursRemaining(hours(29.5), 30)).toBe(hours(0.5));
+  });
+
+  it("stays quiet once the month is spent — that has its own banner", () => {
+    expect(lowHoursRemaining(hours(30), 30)).toBeNull();
+    expect(lowHoursRemaining(hours(40), 30)).toBeNull();
+  });
+
+  it("never warns on an unlimited plan", () => {
+    expect(lowHoursRemaining(hours(9_000), Infinity)).toBeNull();
+    expect(lowHoursRemaining(hours(1), 0)).toBeNull();
   });
 });

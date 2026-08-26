@@ -1,10 +1,10 @@
 "use client";
 
 import { useLayoutEffect, useRef, useState } from "react";
-import { AGENT_PROVIDER_LABELS, type CredentialProvider, type ProviderCredentialSummary } from "@/lib/provider-credentials";
+import { AGENT_PROVIDER_LABELS, connectedProviders, type CredentialProvider, type ProviderCredentialSummary } from "@/lib/provider-credentials";
 import type { AgentRun, CreateFloorAgentInput, FloorAgent, FloorAgentSettingsPatch, FloorParticipant, FloorQueueItem } from "@/lib/floor-types";
 import type { AgentLayout } from "./data";
-import { agentTone, canRollbackRun } from "./data";
+import { agentTone } from "./data";
 import { HoverTip, Icon, useHoverTip } from "./primitives";
 import { Panel, type PanelChrome } from "./Rail";
 import { AgentCard, AgentSpotlight } from "./AgentCard";
@@ -49,7 +49,7 @@ function AllAgentsButton({ active, onClick }: { active: boolean; onClick: () => 
   );
 }
 
-export function AgentFloor({ chrome, sessionId, agents, runs, activity, selected, onSelect, agentLayout, onAgentLayout, onCreateAgent, onUpdateSettings, onRollback, onPauseAgent, onStopAgent, onDeleteAgent, onPauseAllAgents, onResumeAllAgents, onStopAllAgents, agentControlsBusy, queue, participants, currentUserId, enabledProviders, providerCredentials, owner, autoProvisionAgents, autoAgentProvider, effectiveAutoAgentProvider, autoAgentProviderState, onAutoProvisionAgents, onAutoAgentProvider }: {
+export function AgentFloor({ chrome, sessionId, agents, runs, activity, selected, onSelect, agentLayout, onAgentLayout, onCreateAgent, onUpdateSettings, onPauseAgent, onStopAgent, onDeleteAgent, onPauseAllAgents, onResumeAllAgents, onStopAllAgents, agentControlsBusy, queue, participants, currentUserId, enabledProviders, providerCredentials, owner, autoProvisionAgents, autoAgentProvider, effectiveAutoAgentProvider, autoAgentProviderState, onAutoProvisionAgents, onAutoAgentProvider }: {
   chrome: PanelChrome;
   sessionId: string;
   agents: FloorAgent[];
@@ -68,7 +68,6 @@ export function AgentFloor({ chrome, sessionId, agents, runs, activity, selected
   onResumeAllAgents: () => Promise<void>;
   onStopAllAgents: () => Promise<void>;
   agentControlsBusy: boolean;
-  onRollback: (runId: string) => Promise<void>;
   queue: FloorQueueItem[];
   participants: FloorParticipant[];
   currentUserId: string;
@@ -86,12 +85,9 @@ export function AgentFloor({ chrome, sessionId, agents, runs, activity, selected
   const [historyAgentId, setHistoryAgentId] = useState<string | null>(null);
   const createButtonRef = useRef<HTMLButtonElement>(null);
   const historyAgent = agents.find((agent) => agent.id === historyAgentId) ?? null;
-  // Deduped: a provider can hold two credential rows (api_key + oauth) —
-  // it is still one provider, not two "Claude" options with the same value
-  // (which also collide as React keys in the listbox).
-  const providerOptions: SelectMenuOption[] = [...new Set(providerCredentials.map((credential) => credential.provider))]
-    .filter((provider) => enabledProviders.includes(provider))
-    .map((provider) => ({ value: provider, label: AGENT_PROVIDER_LABELS[provider] }));
+  const providerOptions: SelectMenuOption[] = connectedProviders(providerCredentials, enabledProviders).map(
+    (provider) => ({ value: provider, label: AGENT_PROVIDER_LABELS[provider] }),
+  );
   if (providerOptions.length > 1) providerOptions.unshift({ value: "", label: "Choose provider" });
   const selectedLatestRun = selected ? runs.find((run) => run.agentId === selected.id) ?? null : null;
 
@@ -173,10 +169,10 @@ export function AgentFloor({ chrome, sessionId, agents, runs, activity, selected
       ) : agentLayout === "all" ? (
         <div className="agent-grid">{agents.map((agent, index) => { const latestRun = runs.find((run) => run.agentId === agent.id) ?? null; return <AgentCard key={agent.id} agent={agent} tone={agentTone(agent.id, index)} latestRun={latestRun} activityEvents={latestRun ? activity.eventsFor(latestRun.id) : []} selected={selected?.id === agent.id} owner={owner} onFocus={() => focusAgent(agent.id)} onHistory={() => setHistoryAgentId(agent.id)} onPause={onPauseAgent} onStop={onStopAgent} onDelete={onDeleteAgent} />; })}</div>
       ) : selected ? (
-        <AgentSpotlight agent={selected} tone={agentTone(selected.id, agents.findIndex((agent) => agent.id === selected.id))} sessionId={sessionId} latestRun={selectedLatestRun} activity={activity} canRollback={canRollbackRun({ run: selectedLatestRun, item: queue.find((item) => item.id === selectedLatestRun?.queueItemId), agent: selected, currentUserId, sessionOwner: owner })} busy={agentControlsBusy} owner={owner} onRollback={onRollback} onHistory={() => setHistoryAgentId(selected.id)} onUpdateSettings={onUpdateSettings} onPause={onPauseAgent} onStop={onStopAgent} onDelete={onDeleteAgent} />
+        <AgentSpotlight agent={selected} tone={agentTone(selected.id, agents.findIndex((agent) => agent.id === selected.id))} sessionId={sessionId} latestRun={selectedLatestRun} activity={activity} owner={owner} onHistory={() => setHistoryAgentId(selected.id)} onUpdateSettings={onUpdateSettings} onPause={onPauseAgent} onStop={onStopAgent} onDelete={onDeleteAgent} />
       ) : null}
     </Panel>
-    {creating && <CreateAgentDialog participants={participants} currentUserId={currentUserId} enabledProviders={enabledProviders} onClose={() => { setCreating(false); createButtonRef.current?.focus(); }} onCreate={onCreateAgent} />}
+    {creating && <CreateAgentDialog sessionId={sessionId} participants={participants} currentUserId={currentUserId} enabledProviders={enabledProviders} providerCredentials={providerCredentials} onClose={() => { setCreating(false); createButtonRef.current?.focus(); }} onCreate={onCreateAgent} />}
     {historyAgent && <AgentChatHistory agent={historyAgent} queue={queue} onClose={() => setHistoryAgentId(null)} />}
   </>;
 }

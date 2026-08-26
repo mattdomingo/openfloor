@@ -2,7 +2,7 @@
 
 import { FormEvent, useState } from "react";
 import { BASE_PATH } from "@/components/basePath";
-import { useDialogDismiss } from "@/components/session/primitives";
+import { Spinner, useDialogDismiss } from "@/components/session/primitives";
 import type { SessionSkillSummary } from "@/db/skills";
 import { MAX_SKILL_CONTENT_CHARS } from "@/lib/skill-validation";
 
@@ -129,7 +129,7 @@ function AddSkillDialog({ sessionId, onClose, onAdded }: {
         </div>
         <div className="dialog-foot">
           <button type="button" className="button" data-variant="quiet" onClick={dismiss} disabled={submitting}>Cancel</button>
-          <button type="submit" className="button" data-variant="primary" disabled={!ready || submitting}>{submitting ? "Importing…" : "Import skill"}</button>
+          <button type="submit" className="button" data-variant="primary" disabled={!ready || submitting}>{submitting ? <><Spinner />Importing…</> : "Import skill"}</button>
         </div>
       </form>
     </dialog>

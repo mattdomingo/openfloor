@@ -98,6 +98,7 @@ export type FloorQueueItem = {
   assignedBy: "user" | "router" | null;
   assignedReason: string | null;
   intent: PromptIntent | null;
+  rollback: QueueRollbackDescriptor | null;
   prompts: FloorQueuePrompt[];
   createdAt: number;
   updatedAt: number;
@@ -111,6 +112,14 @@ export type AgentRunStatus = "provisioning" | "running" | "checking" | "ready" |
 export type AgentRunKind = "reply" | null;
 
 export type AgentRunRollbackStatus = "requested" | "running" | "completed" | "failed";
+export type AgentRunRollbackScope = "prompt" | "engineer" | "agent";
+
+export type QueueRollbackDescriptor = {
+  runId: string;
+  status: AgentRunRollbackStatus | null;
+  failureReason: string | null;
+  canStart: boolean;
+};
 
 export type RunActivityKind = "reasoning" | "command" | "file_edit" | "agent_message" | "tool_call" | "error" | "truncated";
 
@@ -239,9 +248,65 @@ export type ReviewContributor = {
   requestedBy: Array<{ userId: string; userName: string }>;
 };
 
+export type ReviewContributionPrompt = {
+  id: string;
+  authorUserId: string;
+  authorName: string;
+  text: string;
+  createdAt: number;
+};
+
+export type ReviewContributionFile = {
+  id: string;
+  path: string;
+  changeKind: AgentRunFile["changeKind"];
+  additions: number;
+  deletions: number;
+  summary: string | null;
+  diff?: Array<{ type: "context" | "add" | "remove"; text: string }>;
+};
+
+export type ReviewContribution = {
+  runId: string;
+  queueItemId: string;
+  agentId: string;
+  agentName: string;
+  agentOwnerUserId: string;
+  prompts: ReviewContributionPrompt[];
+  files: ReviewContributionFile[];
+  integratedAt: number;
+  rollbackStatus: AgentRunRollbackStatus | null;
+  rollbackFailureReason: string | null;
+  canRollback: boolean;
+};
+
+export type ReviewContributorFacet = {
+  id: string;
+  name: string;
+  activePromptGroups: number;
+  activeFiles: number;
+};
+
+export type ReviewContributionPage = {
+  items: ReviewContribution[];
+  nextCursor: string | null;
+  engineers: ReviewContributorFacet[];
+  agents: ReviewContributorFacet[];
+};
+
+export type ReviewRollbackImpact = {
+  scope: AgentRunRollbackScope;
+  subjectId: string;
+  subjectName: string;
+  expectedCandidateSha: string;
+  targets: ReviewContribution[];
+  excluded: Array<ReviewContribution & { exclusionReason: string }>;
+  requiredChecks: string[];
+};
+
 export type FloorReviewSnapshot = {
   id: string;
-  status: "draft" | "ready" | "merged";
+  status: "draft" | "ready" | "merged" | "abandoned";
   branch: string;
   baseBranch: string;
   commitSha: string | null;

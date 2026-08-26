@@ -35,6 +35,34 @@ export function credentialKindsForProvider(provider: CredentialProvider): readon
   return provider === "anthropic" ? CREDENTIAL_KINDS : ["api_key"];
 }
 
+// Deduped: a provider can hold two credential rows (api_key + oauth) — it is
+// still one connected provider, not two options with the same value (which
+// also collide as React keys in a listbox). Shared by the create-agent
+// dialog and the auto-agent provider pickers (AgentFloor, SessionScreen) so
+// the dedupe-and-filter rule lives in exactly one place.
+export function connectedProviders(
+  credentials: readonly ProviderCredentialSummary[],
+  enabled: readonly CredentialProvider[],
+): CredentialProvider[] {
+  return [...new Set(credentials.map((credential) => credential.provider))].filter((provider) =>
+    enabled.includes(provider),
+  );
+}
+
+// Kinds the user has actually connected for one provider, intersected with
+// the kinds that provider accepts (defense in depth against a hand-written
+// row of a kind the provider was never meant to offer).
+export function connectedKindsForProvider(
+  credentials: readonly ProviderCredentialSummary[],
+  provider: CredentialProvider,
+): CredentialKind[] {
+  const accepted = credentialKindsForProvider(provider);
+  const connected = new Set(
+    credentials.filter((credential) => credential.provider === provider).map((credential) => credential.kind),
+  );
+  return accepted.filter((kind) => connected.has(kind));
+}
+
 // "API key" / "Claude subscription" / "ChatGPT subscription" — used by
 // Settings rows and gateway refusal messages.
 export function credentialKindLabel(provider: CredentialProvider, kind: CredentialKind): string {
@@ -77,6 +105,38 @@ const PROVIDER_LABELS: Record<CredentialProvider, string> = {
   gemini: "Google",
   glm: "Z.ai",
 };
+
+/* What Settings shows next to each provider: a mark, where the key is made,
+   and the shape a real key has. The placeholder is the whole point of the
+   last one — a pasted key that does not look like the example is almost
+   always the wrong vendor's. Z.ai has no mark in public/logos yet, so its
+   tile falls back to a monogram. */
+export const PROVIDER_LOGOS: Record<CredentialProvider, string | null> = {
+  anthropic: "/logos/anthropic.svg",
+  openai: "/logos/openai.svg",
+  kimi: "/logos/kimi.svg",
+  gemini: "/logos/gemini.svg",
+  glm: null,
+};
+
+export const PROVIDER_KEY_GUIDE: Record<CredentialProvider, { placeholder: string; consoleUrl: string; consoleLabel: string }> = {
+  anthropic: { placeholder: "sk-ant-api03-…", consoleUrl: "https://console.anthropic.com/settings/keys", consoleLabel: "Anthropic Console" },
+  openai: { placeholder: "sk-proj-…", consoleUrl: "https://platform.openai.com/api-keys", consoleLabel: "OpenAI Platform" },
+  kimi: { placeholder: "sk-…", consoleUrl: "https://platform.moonshot.ai/console/api-keys", consoleLabel: "Moonshot Platform" },
+  gemini: { placeholder: "AIza…", consoleUrl: "https://aistudio.google.com/apikey", consoleLabel: "Google AI Studio" },
+  glm: { placeholder: "…", consoleUrl: "https://z.ai/manage-apikey/apikey-list", consoleLabel: "Z.ai console" },
+};
+
+// The command that mints a subscription credential on the member's own
+// machine. Rendered with a copy button rather than as prose, because it is
+// meant to be pasted, and only for the kinds that have one.
+export const CREDENTIAL_SETUP_COMMANDS: Partial<Record<`${CredentialProvider}:${CredentialKind}`, string>> = {
+  "anthropic:oauth": "claude setup-token",
+  "openai:oauth": "codex login",
+};
+
+// Where a member asks for a provider openfloor does not carry yet.
+export const CONNECTION_REQUEST_EMAIL = "hello@opnflr.com";
 
 export function providerLabel(provider: CredentialProvider): string {
   return PROVIDER_LABELS[provider];

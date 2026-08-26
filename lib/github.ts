@@ -41,7 +41,7 @@ export type GitHubAppConfig = {
   slug: string;
   stateSecret: string;
   webhookSecret: string;
-  testData: { installationId: string; repositories: GitHubTestRepository[] } | null;
+  testData: { installationId: string; accountLogin?: string; accountType?: string; repositories: GitHubTestRepository[] } | null;
 };
 
 const API_ROOT = "https://api.github.com";
@@ -66,6 +66,21 @@ export function githubInstallationUrl(config: GitHubAppConfig, state: string): s
   const url = new URL(`https://github.com/apps/${encodeURIComponent(config.slug)}/installations/new`);
   url.searchParams.set("state", state);
   return url.toString();
+}
+
+export async function getInstallationAccount(
+  config: GitHubAppConfig,
+  installationId: string,
+): Promise<{ login: string; type: string }> {
+  if (config.testData) {
+    if (installationId !== config.testData.installationId) throw new GitHubApiError("Installation is not available", 404);
+    return { login: config.testData.accountLogin ?? "openfloor-test", type: config.testData.accountType ?? "Organization" };
+  }
+  const token = await createGitHubAppJwt(config);
+  const response = await githubFetch(`${API_ROOT}/app/installations/${encodeURIComponent(installationId)}`, token);
+  const body = await response.json() as { account?: { login?: string; type?: string } };
+  if (!body.account?.login) throw new GitHubApiError("GitHub did not return the installation account", 502);
+  return { login: body.account.login, type: body.account.type ?? "Account" };
 }
 
 export async function listInstallationRepositories(
@@ -664,19 +679,7 @@ export async function createInstallationToken(
   const cached = installationTokenCache.get(cacheKey);
   if (cached && Date.now() < cached.expiresAt - TOKEN_EXPIRY_MARGIN_MS) return cached.token;
   installationTokenCache.delete(cacheKey);
-  const now = Math.floor(Date.now() / 1000);
-  let key: Awaited<ReturnType<typeof importPKCS8>>;
-  try {
-    key = await importGitHubAppPrivateKey(config.privateKey);
-  } catch {
-    throw new GitHubApiError("GitHub App private key could not be read", 500);
-  }
-  const appJwt = await new SignJWT({})
-    .setProtectedHeader({ alg: "RS256" })
-    .setIssuedAt(now - 60)
-    .setExpirationTime(now + 9 * 60)
-    .setIssuer(config.appId)
-    .sign(key);
+  const appJwt = await createGitHubAppJwt(config);
   const response = await fetch(`${API_ROOT}/app/installations/${encodeURIComponent(installationId)}/access_tokens`, {
     method: "POST",
     headers: githubHeaders(appJwt),
@@ -688,6 +691,22 @@ export async function createInstallationToken(
   const expiresAt = body.expires_at ? Date.parse(body.expires_at) : Number.NaN;
   if (Number.isFinite(expiresAt)) installationTokenCache.set(cacheKey, { token: body.token, expiresAt });
   return body.token;
+}
+
+async function createGitHubAppJwt(config: GitHubAppConfig): Promise<string> {
+  const now = Math.floor(Date.now() / 1000);
+  let key: Awaited<ReturnType<typeof importPKCS8>>;
+  try {
+    key = await importGitHubAppPrivateKey(config.privateKey);
+  } catch {
+    throw new GitHubApiError("GitHub App private key could not be read", 500);
+  }
+  return new SignJWT({})
+    .setProtectedHeader({ alg: "RS256" })
+    .setIssuedAt(now - 60)
+    .setExpirationTime(now + 9 * 60)
+    .setIssuer(config.appId)
+    .sign(key);
 }
 
 export async function importGitHubAppPrivateKey(value: string) {

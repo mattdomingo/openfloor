@@ -3,7 +3,7 @@
 import { FormEvent, useState } from "react";
 import { BASE_PATH } from "@/components/basePath";
 import { SelectMenu } from "@/components/session/SelectMenu";
-import { useDialogDismiss } from "@/components/session/primitives";
+import { Spinner, useDialogDismiss } from "@/components/session/primitives";
 import type { SessionMcpServerSummary } from "@/db/mcp-servers";
 
 // Session-configured remote MCP servers for Claude runs (v1: http/sse only).
@@ -172,7 +172,7 @@ function AddMcpServerDialog({ sessionId, onClose, onAdded }: {
         </div>
         <div className="dialog-foot">
           <button type="button" className="button" data-variant="quiet" onClick={dismiss} disabled={submitting}>Cancel</button>
-          <button type="submit" className="button" data-variant="primary" disabled={!ready || submitting}>{submitting ? "Adding…" : "Add server"}</button>
+          <button type="submit" className="button" data-variant="primary" disabled={!ready || submitting}>{submitting ? <><Spinner />Adding…</> : "Add server"}</button>
         </div>
       </form>
     </dialog>

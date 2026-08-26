@@ -52,6 +52,18 @@ export async function getAgentRuns(sessionId: string, database = getDb()): Promi
   })));
 }
 
+// Review attribution must cover the whole candidate, not the latest 20
+// session runs used by agent cards/activity. Load candidate ids first, then
+// reuse the authoritative single-run reader so rollback/check/file joins stay
+// identical in both contracts.
+export async function getAgentRunsForCandidate(candidateId: string, database = getDb()): Promise<AgentRun[]> {
+  const rows = await database.prepare(
+    "SELECT id FROM agent_runs WHERE candidate_id = ? ORDER BY created_at DESC, id DESC",
+  ).bind(candidateId).all<{ id: string }>();
+  const runs = await Promise.all(rows.results.map((row) => getAgentRun(row.id, database)));
+  return runs.filter((run): run is AgentRun => run !== null);
+}
+
 // The provider a run for this queue item would use, for the rollout gate in
 // lib/agent-run-start.ts. Null when the item or its agent doesn't resolve —
 // createAgentRun produces the precise error for those shapes.

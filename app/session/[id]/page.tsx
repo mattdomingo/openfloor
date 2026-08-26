@@ -1,13 +1,13 @@
 import { notFound } from "next/navigation";
 import { requireOnboardedUser } from "@/lib/server-auth";
-import { getRemovedSessionMembers, getSessionForMember, getSessionMembers } from "@/db/sessions";
+import { getOwnerHourQuota, getRemovedSessionMembers, getSessionForMember, getSessionMembers } from "@/db/sessions";
 import { getActiveRepositoryCandidateForMember, getRepositoryConnectionForMember } from "@/db/repositories";
 import { getLatestRepositoryPreflightForMember } from "@/db/preflights";
 import { listSessionMcpServersForMember } from "@/db/mcp-servers";
 import { listSessionSkillsForMember } from "@/db/skills";
-import { listProviderCredentials } from "@/db/provider-credentials";
 import { SessionScreen } from "@/components/product/SessionScreen";
 import { disabledRunProviders } from "@/lib/provider-rollout";
+import { lowHoursRemaining, PLAN_LIMITS } from "@/lib/plans";
 import { CREDENTIAL_PROVIDERS } from "@/lib/provider-credentials";
 import { env } from "cloudflare:workers";
 
@@ -18,16 +18,16 @@ export default async function SessionPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ github?: string; repo?: string; setup?: string }>;
+  searchParams: Promise<{ repo?: string }>;
 }) {
   const { id } = await params;
   const query = await searchParams;
-  return <AuthenticatedSession id={id} githubSetup={query.github === "setup"} repoGateRequested={query.repo === "required"} setupRequested={query.setup === "1"} />;
+  return <AuthenticatedSession id={id} repoGateRequested={query.repo === "required"} />;
 }
 
-async function AuthenticatedSession({ id, githubSetup, repoGateRequested, setupRequested }: { id: string; githubSetup: boolean; repoGateRequested: boolean; setupRequested: boolean }) {
+async function AuthenticatedSession({ id, repoGateRequested }: { id: string; repoGateRequested: boolean }) {
   const user = await requireOnboardedUser(`/session/${encodeURIComponent(id)}`);
-  const [session, members, removedMembers, repository, candidate, preflight, skills, mcpServers, credentials] = await Promise.all([
+  const [session, members, removedMembers, repository, candidate, preflight, skills, mcpServers, quota] = await Promise.all([
     getSessionForMember(id, user.id),
     getSessionMembers(id, user.id),
     getRemovedSessionMembers(id, user.id),
@@ -36,11 +36,14 @@ async function AuthenticatedSession({ id, githubSetup, repoGateRequested, setupR
     getLatestRepositoryPreflightForMember(id, user.id),
     listSessionSkillsForMember(id, user.id),
     listSessionMcpServersForMember(id, user.id),
-    listProviderCredentials(user.id),
+    // The same owner-scoped read the presence gate makes on every socket
+    // upgrade, reused here so the lobby can warn before that gate bites.
+    getOwnerHourQuota(id),
   ]);
   if (!session || !members) notFound();
   const preflightEnabled = (env as unknown as { PREFLIGHT_ENABLED?: string }).PREFLIGHT_ENABLED === "true";
   const disabled = disabledRunProviders();
   const enabledProviders = CREDENTIAL_PROVIDERS.filter((provider) => !disabled.has(provider));
-  return <SessionScreen user={user} session={session} initialMembers={members} initialRemovedMembers={removedMembers ?? []} initialRepository={repository} initialCandidate={candidate} initialPreflight={preflight} preflightEnabled={preflightEnabled} enabledProviders={enabledProviders} initialCredentials={credentials} initialSkills={skills ?? []} initialMcpServers={mcpServers ?? []} githubSetup={githubSetup} repoGateRequested={repoGateRequested} setupRequested={setupRequested} />;
+  const lowHours = quota ? lowHoursRemaining(quota.seconds, PLAN_LIMITS[quota.plan].hours) : null;
+  return <SessionScreen user={user} session={session} initialMembers={members} initialRemovedMembers={removedMembers ?? []} initialRepository={repository} initialCandidate={candidate} initialPreflight={preflight} preflightEnabled={preflightEnabled} enabledProviders={enabledProviders} initialSkills={skills ?? []} initialMcpServers={mcpServers ?? []} repoGateRequested={repoGateRequested} lowHoursRemaining={lowHours} />;
 }

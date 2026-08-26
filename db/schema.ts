@@ -21,7 +21,8 @@ export const users = sqliteTable(
     // TypeScript-only value effectivePlan returns, never stored here — that
     // keeps this an ADD-COLUMN-only migration (see 0019) instead of a table
     // recreate, which would cascade-delete session_members/session_invites/
-    // github_connection_states (all ON DELETE CASCADE on users.id).
+    // github_connection_states, github_account_connection_states, and
+    // user_github_installations (all ON DELETE CASCADE on users.id).
     plan: text("plan", { enum: ["pro", "max", "enterprise"] }).notNull().default("pro"),
     // Whether `plan` is currently paid for. Only "active" grants its plan's
     // limits; inactive (never purchased), past_due, and canceled all
@@ -42,6 +43,17 @@ export const users = sqliteTable(
     // upsertUser lookups exclude it so the next sign-in with the same
     // identity creates a fresh row instead of resurrecting this one.
     deletedAt: integer("deleted_at"),
+    // HMAC-SHA256(INVITE_SIGNING_SECRET, "openfloor:free-allowance:v1:" +
+    // normalizeEmail(email)) of the address this row held before
+    // deleteAccount scrubbed it — see lib/account-email-hash.ts. Never the
+    // plaintext email. Set only by deleteAccount, on the tombstone row.
+    priorEmailHash: text("prior_email_hash"),
+    // Set only by upsertUser's INSERT branch, when the new row's email
+    // matches a priorEmailHash on some tombstone: this address already
+    // spent its free-plan hour allowance (usage_months resets per user id,
+    // so a fresh row would otherwise get a fresh 2h/month for free). See
+    // planHourLimit() in lib/plans.ts.
+    freeAllowanceUsedAt: integer("free_allowance_used_at"),
   },
   (table) => [
     uniqueIndex("idx_users_chatgpt_user_id").on(table.providerUserId),
@@ -51,6 +63,8 @@ export const users = sqliteTable(
     // this being unique and normalizeEmail (lib/identity.ts) keeping every
     // stored value lowercase and trimmed.
     uniqueIndex("idx_users_email").on(table.email),
+    // Non-unique: the same address can be deleted more than once over time.
+    index("idx_users_prior_email_hash").on(table.priorEmailHash),
     check("users_plan_check", sql`${table.plan} in ('pro', 'max', 'enterprise')`),
     check("users_plan_status_check", sql`${table.planStatus} in ('inactive', 'active', 'past_due', 'canceled')`),
   ],
@@ -364,6 +378,47 @@ export const githubConnectionStates = sqliteTable(
   ],
 );
 
+// Account-level GitHub App access used for onboarding and future repository
+// selection. Session repository rows keep their own installation id, so
+// removing one of these associations never silently breaks existing rooms.
+export const userGithubInstallations = sqliteTable(
+  "user_github_installations",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    installationId: text("installation_id").notNull(),
+    accountLogin: text("account_login").notNull(),
+    accountType: text("account_type").notNull(),
+    status: text("status", { enum: ["active", "revoked"] }).notNull(),
+    connectedAt: integer("connected_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("idx_user_github_installations_user_installation").on(table.userId, table.installationId),
+    index("idx_user_github_installations_user_status").on(table.userId, table.status),
+    index("idx_user_github_installations_installation").on(table.installationId),
+    check("user_github_installations_status_check", sql`${table.status} in ('active', 'revoked')`),
+  ],
+);
+
+export const githubAccountConnectionStates = sqliteTable(
+  "github_account_connection_states",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    purpose: text("purpose", { enum: ["onboarding", "settings"] }).notNull(),
+    returnTo: text("return_to").notNull(),
+    createdAt: integer("created_at").notNull(),
+    expiresAt: integer("expires_at").notNull(),
+    usedAt: integer("used_at"),
+  },
+  (table) => [
+    index("idx_github_account_states_user").on(table.userId, table.createdAt),
+    index("idx_github_account_states_expiry").on(table.expiresAt),
+    check("github_account_states_purpose_check", sql`${table.purpose} in ('onboarding', 'settings')`),
+  ],
+);
+
 export const repositoryConnections = sqliteTable(
   "repository_connections",
   {
@@ -424,6 +479,11 @@ export const repositoryCandidates = sqliteTable(
     cleanupStatus: text("cleanup_status", { enum: ["pending", "complete", "partial"] }),
     cleanupCompletedAt: integer("cleanup_completed_at"),
     branchDeletedAt: integer("branch_deleted_at"),
+    // Derived read-layer status, same convention as mergedAt -> "merged":
+    // never a stored `status` value (the CHECK below only allows
+    // creating/active/creation_failed). Owner-initiated abandonment of a
+    // still-live candidate — see lib/candidate-abandon.ts.
+    abandonedAt: integer("abandoned_at"),
     status: text("status", { enum: ["creating", "active", "creation_failed"] }).notNull(),
     createdBy: text("created_by").notNull().references(() => users.id),
     createdAt: integer("created_at").notNull(),
@@ -434,7 +494,7 @@ export const repositoryCandidates = sqliteTable(
     index("idx_repository_candidates_session_created").on(table.sessionId, table.createdAt),
     uniqueIndex("idx_repository_candidates_one_live")
       .on(table.sessionId)
-      .where(sql`${table.status} in ('creating', 'active') and ${table.mergedAt} is null`),
+      .where(sql`${table.status} in ('creating', 'active') and ${table.mergedAt} is null and ${table.abandonedAt} is null`),
     uniqueIndex("idx_repository_candidates_branch").on(table.connectionId, table.branchName),
     check("repository_candidates_status_check", sql`${table.status} in ('creating', 'active', 'creation_failed')`),
   ],
@@ -616,6 +676,33 @@ export const agentRuns = sqliteTable(
 // new candidate commit and records the attempt here instead of rewriting the
 // run row or deleting its branch. The candidate's existing integration_run_id
 // is the shared candidate-operation lease while a rollback is active.
+export const agentRunRollbackGroups = sqliteTable(
+  "agent_run_rollback_groups",
+  {
+    id: text("id").primaryKey(),
+    sessionId: text("session_id").notNull().references(() => sessions.id, { onDelete: "cascade" }),
+    candidateId: text("candidate_id").notNull().references(() => repositoryCandidates.id, { onDelete: "cascade" }),
+    leaseRunId: text("lease_run_id").notNull().references(() => agentRuns.id, { onDelete: "cascade" }),
+    scope: text("scope", { enum: ["prompt", "engineer", "agent"] }).notNull(),
+    subjectId: text("subject_id").notNull(),
+    expectedCandidateSha: text("expected_candidate_sha").notNull(),
+    rollbackCommitSha: text("rollback_commit_sha"),
+    status: text("status", { enum: ["requested", "running", "completed", "failed"] }).notNull(),
+    failureReason: text("failure_reason"),
+    createdBy: text("created_by").notNull().references(() => users.id),
+    createdAt: integer("created_at").notNull(),
+    startedAt: integer("started_at"),
+    completedAt: integer("completed_at"),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [
+    index("idx_agent_run_rollback_groups_session_created").on(table.sessionId, table.createdAt),
+    index("idx_agent_run_rollback_groups_candidate_status").on(table.candidateId, table.status),
+    check("agent_run_rollback_groups_scope_check", sql`${table.scope} in ('prompt', 'engineer', 'agent')`),
+    check("agent_run_rollback_groups_status_check", sql`${table.status} in ('requested', 'running', 'completed', 'failed')`),
+  ],
+);
+
 export const agentRunRollbacks = sqliteTable(
   "agent_run_rollbacks",
   {
@@ -640,6 +727,21 @@ export const agentRunRollbacks = sqliteTable(
     uniqueIndex("idx_agent_run_rollbacks_one_completed").on(table.runId)
       .where(sql`${table.status} = 'completed'`),
     check("agent_run_rollbacks_status_check", sql`${table.status} in ('requested', 'running', 'completed', 'failed')`),
+  ],
+);
+
+// Separate join preserves the already-live agent_run_rollbacks shape and its
+// uniqueness indexes. One group may atomically complete several ordinary
+// per-run rollback attempts with one candidate commit.
+export const agentRunRollbackGroupItems = sqliteTable(
+  "agent_run_rollback_group_items",
+  {
+    groupId: text("group_id").notNull().references(() => agentRunRollbackGroups.id, { onDelete: "cascade" }),
+    rollbackId: text("rollback_id").notNull().references(() => agentRunRollbacks.id, { onDelete: "cascade" }),
+  },
+  (table) => [
+    primaryKey({ columns: [table.groupId, table.rollbackId] }),
+    uniqueIndex("idx_agent_run_rollback_group_items_rollback").on(table.rollbackId),
   ],
 );
 

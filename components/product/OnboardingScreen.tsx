@@ -4,14 +4,16 @@ import { FormEvent, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { WaveField } from "@/app/entry-wave";
 import { BASE_PATH } from "@/components/basePath";
-import { Avatar } from "@/components/session/primitives";
-import { ACCEPTED_AVATAR_TYPE_LIST, ACCEPTED_AVATAR_TYPES, MAX_AVATAR_BYTES } from "@/lib/avatar-constraints";
+import { AvatarCropper, AvatarFileButton } from "@/components/product/AvatarCropper";
+import { Avatar, Spinner } from "@/components/session/primitives";
+import { ACCEPTED_AVATAR_TYPES, MAX_AVATAR_BYTES } from "@/lib/avatar-constraints";
 import { initialsFromParts } from "@/lib/display-name";
 import { PAID_PLAN_CATALOG, PLAN_LIMITS, planLimitsSummary, type PaidPlan } from "@/lib/plans";
 import { Brand } from "./Brand";
+import type { UserGitHubInstallationSummary } from "@/lib/session-types";
 
 type OnboardingPlan = "free" | PaidPlan;
-type OnboardingStep = 1 | 2;
+type OnboardingStep = 1 | 2 | 3;
 
 function splitName(fullName: string | null): { firstName: string; lastName: string } {
   const parts = (fullName ?? "").trim().split(/\s+/).filter(Boolean);
@@ -22,6 +24,7 @@ function splitName(fullName: string | null): { firstName: string; lastName: stri
 
 export function OnboardingScreen({
   fullName, firstName: savedFirstName, lastName: savedLastName, githubHandle: savedGithubHandle, returnTo, inviteSignup,
+  githubInstallations: initialGithubInstallations, githubConnected,
 }: {
   fullName: string | null;
   firstName: string | null;
@@ -29,10 +32,12 @@ export function OnboardingScreen({
   githubHandle: string | null;
   returnTo: string;
   inviteSignup: boolean;
+  githubInstallations: UserGitHubInstallationSummary[];
+  githubConnected: boolean;
 }) {
   const router = useRouter();
   const initial = splitName(fullName);
-  const [step, setStep] = useState<OnboardingStep>(1);
+  const [step, setStep] = useState<OnboardingStep>(githubConnected ? 2 : 1);
   const [firstName, setFirstName] = useState(savedFirstName ?? initial.firstName);
   const [lastName, setLastName] = useState(savedLastName ?? initial.lastName);
   const [githubHandle, setGithubHandle] = useState(savedGithubHandle ?? "");
@@ -40,16 +45,20 @@ export function OnboardingScreen({
   const [quantity, setQuantity] = useState(3);
   const [avatarFile, setAvatarFile] = useState<File | null>(null);
   const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
+  const [cropSource, setCropSource] = useState<File | null>(null);
   const [profileError, setProfileError] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [githubInstallations] = useState(initialGithubInstallations);
   const profileHeadingRef = useRef<HTMLHeadingElement>(null);
+  const githubHeadingRef = useRef<HTMLHeadingElement>(null);
   const planHeadingRef = useRef<HTMLHeadingElement>(null);
   const validProfile = firstName.trim().length > 0 && lastName.trim().length > 0;
-  const ready = validProfile && plan != null;
+  const githubReady = githubInstallations.some((installation) => installation.status === "active");
+  const ready = validProfile && githubReady && plan != null;
 
   useEffect(() => {
-    (step === 1 ? profileHeadingRef : planHeadingRef).current?.focus();
+    (step === 1 ? profileHeadingRef : step === 2 ? githubHeadingRef : planHeadingRef).current?.focus();
   }, [step]);
 
   useEffect(() => () => {
@@ -75,23 +84,65 @@ export function OnboardingScreen({
       return;
     }
     setProfileError(null);
-    setAvatarFile(file);
-    setAvatarPreview(URL.createObjectURL(file));
+    setCropSource(file);
   }
 
-  function continueToPlan() {
+  // The cropper hands back the framed square, so what is previewed here is
+  // exactly what gets uploaded.
+  function applyCrop(cropped: File) {
+    setCropSource(null);
+    setAvatarFile(cropped);
+    setAvatarPreview(URL.createObjectURL(cropped));
+  }
+
+  async function continueToGitHub() {
     if (!validProfile) {
       setProfileError("Enter your first and last name to continue.");
       return;
     }
     setProfileError(null);
+    setSubmitting(true);
+    const form = new FormData();
+    form.set("firstName", firstName.trim());
+    form.set("lastName", lastName.trim());
+    form.set("githubHandle", githubHandle.trim());
+    if (avatarFile) form.set("avatar", avatarFile);
+    const response = await fetch(`${BASE_PATH}/api/account/onboarding`, { method: "PATCH", body: form });
+    if (!response.ok) {
+      const body = (await response.json().catch(() => null)) as { error?: string } | null;
+      setProfileError(body?.error ?? "Unable to save your profile. Try again.");
+      setSubmitting(false);
+      return;
+    }
+    setSubmitting(false);
     setStep(2);
+  }
+
+  async function connectGitHub() {
+    setSubmitError(null);
+    setSubmitting(true);
+    const response = await fetch(`${BASE_PATH}/api/account/github/connect`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ purpose: "onboarding", returnTo }),
+    });
+    const body = await response.json().catch(() => null) as { installUrl?: string; error?: string } | null;
+    if (!response.ok || !body?.installUrl) {
+      setSubmitError(body?.error ?? "Unable to begin GitHub setup.");
+      setSubmitting(false);
+      return;
+    }
+    window.location.assign(body.installUrl);
   }
 
   async function submit(event: FormEvent) {
     event.preventDefault();
     if (step === 1) {
-      continueToPlan();
+      void continueToGitHub();
+      return;
+    }
+    if (step === 2) {
+      if (githubReady) setStep(3);
       return;
     }
     if (!ready || submitting) return;
@@ -104,7 +155,6 @@ export function OnboardingScreen({
     form.set("plan", plan ?? "");
     form.set("quantity", String(quantity));
     form.set("returnTo", returnTo);
-    if (avatarFile) form.set("avatar", avatarFile);
     const response = await fetch(`${BASE_PATH}/api/account/onboarding`, { method: "POST", body: form });
     if (!response.ok) {
       const body = (await response.json().catch(() => null)) as { error?: string } | null;
@@ -133,7 +183,7 @@ export function OnboardingScreen({
           <div className="onboarding-intro">
             <p className="eyebrow">Welcome to openfloor</p>
             <h1 id="onboarding-title">Set up your account</h1>
-            <p>Your profile introduces you to the room. Your plan sets the capacity for sessions you own.</p>
+            <p>Your profile introduces you to the room. GitHub supplies repository access. Your plan sets session capacity.</p>
           </div>
 
           <ol className="onboarding-progress" aria-label="Account setup progress">
@@ -141,25 +191,29 @@ export function OnboardingScreen({
               <span>01</span><strong>Profile</strong>
             </li>
             <li aria-current={step === 2 ? "step" : undefined}>
-              <span>02</span><strong>Plan</strong>
+              <span>02</span><strong>GitHub</strong>
+            </li>
+            <li aria-current={step === 3 ? "step" : undefined}>
+              <span>03</span><strong>Plan</strong>
             </li>
           </ol>
 
           <form className="onboarding-form" onSubmit={submit} noValidate>
             <section className="onboarding-step" hidden={step !== 1} aria-labelledby="profile-step-title">
               <div className="onboarding-step-heading">
-                <p className="eyebrow">Step 1 of 2</p>
+                <p className="eyebrow">Step 1 of 3</p>
                 <h2 id="profile-step-title" ref={profileHeadingRef} tabIndex={-1}>Create your profile</h2>
                 <p>Use the name your teammates will recognize. You can update these details later in Settings.</p>
               </div>
 
-              <label className="field onboarding-avatar-field">
+              <div className="field onboarding-avatar-field">
                 <span className="label">Profile picture <em>optional</em></span>
                 <div className="onboarding-avatar-picker">
                   <Avatar initials={initialsFromParts(firstName, lastName)} tone="you" previewSrc={avatarPreview ?? undefined} />
-                  <div><input type="file" accept={ACCEPTED_AVATAR_TYPE_LIST.join(",")} onChange={(event) => pickAvatar(event.target.files?.[0])} /><small>PNG, JPEG, or WebP. 5MB maximum.</small></div>
+                  <div><AvatarFileButton hasPicture={Boolean(avatarPreview)} onPick={pickAvatar} /><small>PNG, JPEG, or WebP. 5MB maximum.</small></div>
                 </div>
-              </label>
+              </div>
+              {cropSource && <AvatarCropper file={cropSource} onCancel={() => setCropSource(null)} onCropped={applyCrop} />}
 
               <div className="field-grid">
                 <label className="field"><span className="label">First name</span><input value={firstName} onChange={(event) => { setFirstName(event.target.value); setProfileError(null); }} maxLength={50} required autoComplete="given-name" /></label>
@@ -169,12 +223,34 @@ export function OnboardingScreen({
               <label className="field"><span className="label">GitHub handle <em>optional</em></span><input value={githubHandle} onChange={(event) => setGithubHandle(event.target.value)} maxLength={39} placeholder="octocat" autoComplete="off" /></label>
 
               {profileError && <p className="form-error" role="alert">{profileError}</p>}
-              <div className="form-actions"><button type="submit" className="button" data-variant="primary" data-size="lg">Continue</button></div>
+              <div className="form-actions"><button type="submit" className="button" data-variant="primary" data-size="lg" disabled={submitting}>{submitting ? "Saving…" : "Continue"}</button></div>
             </section>
 
-            <section className="onboarding-step" hidden={step !== 2} aria-labelledby="plan-step-title">
+            <section className="onboarding-step" hidden={step !== 2} aria-labelledby="github-step-title">
               <div className="onboarding-step-heading">
-                <p className="eyebrow">Step 2 of 2</p>
+                <p className="eyebrow">Step 2 of 3</p>
+                <h2 id="github-step-title" ref={githubHeadingRef} tabIndex={-1}>Connect GitHub</h2>
+                <p>Install openfloor GitHub App for each personal account or organization whose repositories you want to use.</p>
+              </div>
+              {githubReady ? (
+                <div className="onboarding-invite-plan" role="status">
+                  {githubInstallations.filter((installation) => installation.status === "active").map((installation) => (
+                    <div key={installation.id}><strong>{installation.accountLogin}</strong><span>{installation.accountType}</span></div>
+                  ))}
+                  <p>GitHub access connected. More installations can be added later from Settings.</p>
+                </div>
+              ) : <p className="form-note">GitHub access is required before account setup can finish.</p>}
+              {submitError && <p className="form-error" role="alert">{submitError}</p>}
+              <div className="form-actions onboarding-plan-actions">
+                <button type="button" className="button" data-variant="quiet" disabled={submitting} onClick={() => setStep(1)}>Back</button>
+                {!githubReady && <button type="button" className="button" data-variant="primary" data-size="lg" disabled={submitting} onClick={() => void connectGitHub()}>{submitting ? "Opening…" : "Connect GitHub"}</button>}
+                {githubReady && <button type="button" className="button" data-variant="primary" data-size="lg" onClick={() => setStep(3)}>Continue</button>}
+              </div>
+            </section>
+
+            <section className="onboarding-step" hidden={step !== 3} aria-labelledby="plan-step-title">
+              <div className="onboarding-step-heading">
+                <p className="eyebrow">Step 3 of 3</p>
                 <h2 id="plan-step-title" ref={planHeadingRef} tabIndex={-1}>{inviteSignup ? "Your invite includes Free" : "Choose your plan"}</h2>
                 <p>{inviteSignup ? "Finish your profile now, then review the session invite before you join." : "Pick the capacity that fits your work."}</p>
               </div>
@@ -217,8 +293,8 @@ export function OnboardingScreen({
 
               {submitError && <p className="form-error" role="alert">{submitError}</p>}
               <div className="form-actions onboarding-plan-actions">
-                <button type="button" className="button" data-variant="quiet" disabled={submitting} onClick={() => setStep(1)}>Back</button>
-                <button type="submit" className="button" data-variant="primary" data-size="lg" disabled={!ready || submitting}>{submitting ? "Saving…" : plan === "free" ? "Finish setup" : "Continue to payment"}</button>
+                <button type="button" className="button" data-variant="quiet" disabled={submitting} onClick={() => setStep(2)}>Back</button>
+                <button type="submit" className="button" data-variant="primary" data-size="lg" disabled={!ready || submitting}>{submitting ? <><Spinner />Saving…</> : plan === "free" ? "Finish setup" : "Continue to payment"}</button>
               </div>
             </section>
           </form>
