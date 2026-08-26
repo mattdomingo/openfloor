@@ -1,7 +1,7 @@
 "use client";
 
 import { useLayoutEffect, useRef, useState } from "react";
-import { AGENT_PROVIDER_LABELS, type CredentialProvider, type ProviderCredentialSummary } from "@/lib/provider-credentials";
+import { AGENT_PROVIDER_LABELS, connectedProviders, type CredentialProvider, type ProviderCredentialSummary } from "@/lib/provider-credentials";
 import type { AgentRun, CreateFloorAgentInput, FloorAgent, FloorAgentSettingsPatch, FloorParticipant, FloorQueueItem } from "@/lib/floor-types";
 import type { AgentLayout } from "./data";
 import { agentTone } from "./data";
@@ -85,12 +85,9 @@ export function AgentFloor({ chrome, sessionId, agents, runs, activity, selected
   const [historyAgentId, setHistoryAgentId] = useState<string | null>(null);
   const createButtonRef = useRef<HTMLButtonElement>(null);
   const historyAgent = agents.find((agent) => agent.id === historyAgentId) ?? null;
-  // Deduped: a provider can hold two credential rows (api_key + oauth) —
-  // it is still one provider, not two "Claude" options with the same value
-  // (which also collide as React keys in the listbox).
-  const providerOptions: SelectMenuOption[] = [...new Set(providerCredentials.map((credential) => credential.provider))]
-    .filter((provider) => enabledProviders.includes(provider))
-    .map((provider) => ({ value: provider, label: AGENT_PROVIDER_LABELS[provider] }));
+  const providerOptions: SelectMenuOption[] = connectedProviders(providerCredentials, enabledProviders).map(
+    (provider) => ({ value: provider, label: AGENT_PROVIDER_LABELS[provider] }),
+  );
   if (providerOptions.length > 1) providerOptions.unshift({ value: "", label: "Choose provider" });
   const selectedLatestRun = selected ? runs.find((run) => run.agentId === selected.id) ?? null : null;
 
@@ -175,7 +172,7 @@ export function AgentFloor({ chrome, sessionId, agents, runs, activity, selected
         <AgentSpotlight agent={selected} tone={agentTone(selected.id, agents.findIndex((agent) => agent.id === selected.id))} sessionId={sessionId} latestRun={selectedLatestRun} activity={activity} owner={owner} onHistory={() => setHistoryAgentId(selected.id)} onUpdateSettings={onUpdateSettings} onPause={onPauseAgent} onStop={onStopAgent} onDelete={onDeleteAgent} />
       ) : null}
     </Panel>
-    {creating && <CreateAgentDialog participants={participants} currentUserId={currentUserId} enabledProviders={enabledProviders} onClose={() => { setCreating(false); createButtonRef.current?.focus(); }} onCreate={onCreateAgent} />}
+    {creating && <CreateAgentDialog sessionId={sessionId} participants={participants} currentUserId={currentUserId} enabledProviders={enabledProviders} providerCredentials={providerCredentials} onClose={() => { setCreating(false); createButtonRef.current?.focus(); }} onCreate={onCreateAgent} />}
     {historyAgent && <AgentChatHistory agent={historyAgent} queue={queue} onClose={() => setHistoryAgentId(null)} />}
   </>;
 }

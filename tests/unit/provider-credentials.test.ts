@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   AGENT_PROVIDER_LABELS,
+  connectedKindsForProvider,
+  connectedProviders,
   CREDENTIAL_PROVIDERS,
   credentialAadContext,
   credentialFingerprint,
@@ -14,6 +16,7 @@ import {
   resolveRunCredentialSource,
   resolveRunModel,
   usesClaudeRunner,
+  type ProviderCredentialSummary,
 } from "@/lib/provider-credentials";
 import { validateProviderApiKey, validateProviderOauthSecret } from "@/lib/provider-validation";
 
@@ -137,6 +140,41 @@ describe("credential kinds", () => {
     expect(credentialKindLabel("anthropic", "api_key")).toBe("API key");
     expect(credentialKindLabel("anthropic", "oauth")).toBe("Claude subscription");
     expect(credentialKindLabel("openai", "oauth")).toBe("ChatGPT subscription");
+  });
+});
+
+function credential(provider: ProviderCredentialSummary["provider"], kind: ProviderCredentialSummary["kind"]): ProviderCredentialSummary {
+  return { provider, kind, fingerprint: "abcd", validatedAt: null, createdAt: 0, updatedAt: 0 };
+}
+
+describe("connected providers/kinds for the create-agent dialog", () => {
+  it("dedupes a provider holding both api_key and oauth rows into one option", () => {
+    const credentials = [credential("anthropic", "api_key"), credential("anthropic", "oauth")];
+    expect(connectedProviders(credentials, CREDENTIAL_PROVIDERS)).toEqual(["anthropic"]);
+  });
+
+  it("excludes providers disabled by rollout even if a key is connected", () => {
+    const credentials = [credential("anthropic", "api_key"), credential("gemini", "api_key")];
+    expect(connectedProviders(credentials, ["gemini"])).toEqual(["gemini"]);
+  });
+
+  it("returns nothing when no credentials are connected", () => {
+    expect(connectedProviders([], CREDENTIAL_PROVIDERS)).toEqual([]);
+  });
+
+  it("intersects connected kinds with the kinds a provider actually accepts", () => {
+    const credentials = [credential("anthropic", "api_key"), credential("anthropic", "oauth")];
+    expect(connectedKindsForProvider(credentials, "anthropic")).toEqual(["api_key", "oauth"]);
+    expect(connectedKindsForProvider([credential("anthropic", "api_key")], "anthropic")).toEqual(["api_key"]);
+  });
+
+  it("never returns a kind the provider does not accept, even from a hand-written row", () => {
+    const credentials = [credential("openai", "api_key"), credential("openai", "oauth")];
+    expect(connectedKindsForProvider(credentials, "openai")).toEqual(["api_key"]);
+  });
+
+  it("returns nothing for a provider with no connected rows", () => {
+    expect(connectedKindsForProvider([credential("openai", "api_key")], "anthropic")).toEqual([]);
   });
 });
 

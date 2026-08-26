@@ -174,6 +174,21 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await expect(owner.getByLabel("Session invite link")).toHaveValue(/\/join\//);
   await owner.getByRole("button", { name: "Done" }).click();
 
+  // The create-agent dialog only offers providers the owner has actually
+  // connected a key for (no server-key fallback), so New agent below needs
+  // this connected ahead of time. Repository setup no longer offers a
+  // credentials step (account-level GitHub setup moved it out), so this
+  // goes through Settings → Connections like any other post-onboarding key.
+  const sessionUrl = owner.url();
+  await owner.goto("/home/settings?section=connections");
+  const credentialRow = owner.locator(".provider-credential-row").first();
+  const credentialInput = credentialRow.locator("input");
+  await credentialRow.getByRole("button", { name: "Not connected" }).click();
+  await credentialInput.fill("sk-ant-e2e-accepted");
+  await credentialRow.getByRole("button", { name: "Connect", exact: true }).click();
+  await expect(credentialRow.getByText("Connected", { exact: true })).toBeVisible();
+  await owner.goto(sessionUrl);
+
   const agentFloor = owner.getByRole("region", { name: "Agent floor" });
   await agentFloor.getByRole("button", { name: "New agent" }).click();
   await owner.getByLabel("Name").fill("Lumen");

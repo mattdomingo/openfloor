@@ -35,6 +35,34 @@ export function credentialKindsForProvider(provider: CredentialProvider): readon
   return provider === "anthropic" ? CREDENTIAL_KINDS : ["api_key"];
 }
 
+// Deduped: a provider can hold two credential rows (api_key + oauth) — it is
+// still one connected provider, not two options with the same value (which
+// also collide as React keys in a listbox). Shared by the create-agent
+// dialog and the auto-agent provider pickers (AgentFloor, SessionScreen) so
+// the dedupe-and-filter rule lives in exactly one place.
+export function connectedProviders(
+  credentials: readonly ProviderCredentialSummary[],
+  enabled: readonly CredentialProvider[],
+): CredentialProvider[] {
+  return [...new Set(credentials.map((credential) => credential.provider))].filter((provider) =>
+    enabled.includes(provider),
+  );
+}
+
+// Kinds the user has actually connected for one provider, intersected with
+// the kinds that provider accepts (defense in depth against a hand-written
+// row of a kind the provider was never meant to offer).
+export function connectedKindsForProvider(
+  credentials: readonly ProviderCredentialSummary[],
+  provider: CredentialProvider,
+): CredentialKind[] {
+  const accepted = credentialKindsForProvider(provider);
+  const connected = new Set(
+    credentials.filter((credential) => credential.provider === provider).map((credential) => credential.kind),
+  );
+  return accepted.filter((kind) => connected.has(kind));
+}
+
 // "API key" / "Claude subscription" / "ChatGPT subscription" — used by
 // Settings rows and gateway refusal messages.
 export function credentialKindLabel(provider: CredentialProvider, kind: CredentialKind): string {
