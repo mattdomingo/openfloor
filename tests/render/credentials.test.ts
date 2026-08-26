@@ -147,19 +147,25 @@ describe("provider credential routes", () => {
     expect(credential.kind).toBe("oauth");
     expect(credential.fingerprint).toBe(setupToken.slice(-4));
     expect(credential.validatedAt).not.toBeNull();
-    // openai's ChatGPT-bundle kind is withheld until §5 ships: the authJson
-    // shape parses, but the provider refuses the kind — no stored credential
-    // every run of which would 503.
+    // openai's ChatGPT-bundle kind went live with Spike D (2026-08-26). The
+    // bundle stores verbatim, is fingerprinted by account_id (never by any
+    // token inside it), and has no connect-time probe, so validated_at is null.
     const bundle = await SELF.fetch("http://localhost/api/account/credentials/openai", {
       method: "PUT",
       headers: jsonHeaders(headers),
       body: JSON.stringify({ authJson: JSON.stringify({ tokens: { account_id: "acct-render-1234", access_token: "at" } }) }),
     });
-    expect(bundle.status).toBe(400);
+    expect(bundle.status).toBe(200);
+    const bundleText = await bundle.text();
+    expect(bundleText).not.toContain("access_token");
+    const storedBundle = (JSON.parse(bundleText) as { credential: { kind: string; fingerprint: string; validatedAt: number | null } }).credential;
+    expect(storedBundle.kind).toBe("oauth");
+    expect(storedBundle.fingerprint).toBe("1234");
+    expect(storedBundle.validatedAt).toBeNull();
     // Rows list deterministically: by provider, then kind.
     const listed = await SELF.fetch("http://localhost/api/account/credentials", { headers });
     expect(((await listed.json()) as { credentials: Array<{ provider: string; kind: string }> }).credentials
-      .map((entry) => `${entry.provider}:${entry.kind}`)).toEqual(["anthropic:api_key", "anthropic:oauth"]);
+      .map((entry) => `${entry.provider}:${entry.kind}`)).toEqual(["anthropic:api_key", "anthropic:oauth", "openai:oauth"]);
     // Providers without a subscription kind refuse it.
     const refused = await SELF.fetch("http://localhost/api/account/credentials/kimi", {
       method: "PUT",
@@ -168,9 +174,9 @@ describe("provider credential routes", () => {
     });
     expect(refused.status).toBe(400);
     // Disconnect is kind-scoped: the subscription goes, the API key stays.
-    // An oauth kind on a provider that withholds it is a 404 both ways.
+    // An unknown kind is still a 404; openai's oauth row now really deletes.
     expect((await SELF.fetch("http://localhost/api/account/credentials/anthropic?kind=bogus", { method: "DELETE", headers })).status).toBe(404);
-    expect((await SELF.fetch("http://localhost/api/account/credentials/openai?kind=oauth", { method: "DELETE", headers })).status).toBe(404);
+    expect((await SELF.fetch("http://localhost/api/account/credentials/openai?kind=oauth", { method: "DELETE", headers })).status).toBe(204);
     expect((await SELF.fetch("http://localhost/api/account/credentials/anthropic?kind=oauth", { method: "DELETE", headers })).status).toBe(204);
     const after = await SELF.fetch("http://localhost/api/account/credentials", { headers });
     expect(((await after.json()) as { credentials: Array<{ provider: string; kind: string }> }).credentials

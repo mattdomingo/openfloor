@@ -110,8 +110,8 @@ describe("floor input validation", () => {
     const base = { name: "A", role: "R", task: "T", ownerUserId: "o" };
     expect(parseAgentInput({ ...base, provider: "anthropic", credentialKind: "oauth" })?.credentialKind).toBe("oauth");
     expect(parseAgentInput({ ...base, provider: "openai", credentialKind: "api_key" })?.credentialKind).toBe("api_key");
-    // openai's oauth kind is withheld until §5 ships.
-    expect(parseAgentInput({ ...base, provider: "openai", credentialKind: "oauth" })).toBeNull();
+    // openai's oauth kind went live when Spike D passed (2026-08-26).
+    expect(parseAgentInput({ ...base, provider: "openai", credentialKind: "oauth" })?.credentialKind).toBe("oauth");
     // Omitted and explicit null both mean "the owner's default".
     expect(parseAgentInput({ ...base, provider: "anthropic" })?.credentialKind).toBeNull();
     expect(parseAgentInput({ ...base, provider: "anthropic", credentialKind: null })?.credentialKind).toBeNull();

@@ -168,6 +168,18 @@ function ProviderCredentialRow({ provider, kind, credential, showAgentDefaults, 
                     {" "}Used only for runs of agents you own; the subscription&rsquo;s rate limits are yours and apply here too.
                     openfloor never uses it for anyone else, and disconnecting is immediate.
                   </p>
+                  {/* Not a caveat — a certainty, and it must be read BEFORE the
+                      paste. Refreshing rotates the refresh token, which kills
+                      whichever copy did not rotate last. openfloor writing its
+                      own copy back cannot prevent that; only the member can, by
+                      logging in again. */}
+                  {bundle && (
+                    <p className="settings-category-detail">
+                      Heads up: openfloor refreshes this credential as it expires, and each refresh invalidates the
+                      copy on your own machine. Expect to run <code>codex login</code> again there at some point after
+                      connecting.
+                    </p>
+                  )}
                   {setupCommand && <CopyCommand command={setupCommand} />}
                 </>
               ) : (

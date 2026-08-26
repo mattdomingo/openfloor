@@ -112,9 +112,10 @@ describe("run credential resolution order", () => {
 describe("credential kinds", () => {
   it("allows a subscription kind only where one is actually honored", () => {
     expect(credentialKindsForProvider("anthropic")).toEqual(["api_key", "oauth"]);
-    // openai's ChatGPT-bundle kind is withheld until §5 ships (Spike D):
-    // don't offer a connection every run of which would 503.
-    expect(credentialKindsForProvider("openai")).toEqual(["api_key"]);
+    // openai's ChatGPT-bundle kind went live when Spike D passed (2026-08-26):
+    // the gateway substitutes the bundle's access token toward
+    // chatgpt.com/backend-api/codex, so the container holds no credential.
+    expect(credentialKindsForProvider("openai")).toEqual(["api_key", "oauth"]);
     expect(credentialKindsForProvider("kimi")).toEqual(["api_key"]);
     expect(credentialKindsForProvider("gemini")).toEqual(["api_key"]);
     expect(credentialKindsForProvider("glm")).toEqual(["api_key"]);

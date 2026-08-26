@@ -51,14 +51,25 @@ export type RunGatewayClaims = {
   operation: "source" | "openai" | "anthropic" | "kimi" | "gemini" | "glm" | "bundle_upload" | "bundle_read" | "events" | "context" | "conflict_source" | "conflict_input";
 };
 
+// The "wait for Codex" step allows 60 minutes (worker/agent-run-workflow.ts),
+// so a 60-minute model token expires at exactly the boundary of the longest
+// permitted run — equal, not greater. The openai operation gets 90 minutes so a
+// full-length run cannot outlive its own credential; the step timeout is
+// deliberately NOT shortened, since that would cut the longest possible run for
+// every provider to solve an openai-only problem.
+const RUN_TOKEN_TTL_SECONDS: Partial<Record<RunGatewayClaims["operation"], number>> = { openai: 90 * 60 };
+const LONG_LIVED_OPERATIONS = ["anthropic", "kimi", "gemini", "glm", "events", "context", "conflict_input"];
+
 export async function signRunGatewayToken(claims: RunGatewayClaims, secret: string): Promise<string> {
   const now = Math.floor(Date.now() / 1000);
+  const ttl = RUN_TOKEN_TTL_SECONDS[claims.operation]
+    ?? (LONG_LIVED_OPERATIONS.includes(claims.operation) ? 60 * 60 : 10 * 60);
   return new SignJWT(claims)
     .setProtectedHeader({ alg: "HS256" })
     .setIssuer("openfloor")
     .setAudience("openfloor-runtime-gateway")
     .setIssuedAt(now)
-    .setExpirationTime(now + (["openai", "anthropic", "kimi", "gemini", "glm", "events", "context", "conflict_input"].includes(claims.operation) ? 60 * 60 : 10 * 60))
+    .setExpirationTime(now + ttl)
     .sign(new TextEncoder().encode(secret));
 }
 

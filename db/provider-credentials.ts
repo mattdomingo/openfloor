@@ -1,5 +1,11 @@
 import { getDb, type D1DatabaseLike } from "./index";
-import { decryptCredential } from "@/lib/credential-crypto";
+import { decryptCredential, encryptCredential } from "@/lib/credential-crypto";
+import {
+  chatGptBundleNeedsRefresh,
+  parseChatGptBundle,
+  refreshChatGptBundle,
+  type ChatGptBundle,
+} from "@/lib/chatgpt-auth";
 import {
   credentialAadContext,
   credentialKindsForProvider,
@@ -138,11 +144,12 @@ export async function getRunAgentOwnerCredential(
   requestedKind: CredentialKind | null;
   kind: CredentialKind | null;
   ciphertext: string | null;
+  updatedAt: number | null;
 } | null> {
   return await database
     .prepare(
       `SELECT fa.owner_user_id AS ownerUserId, fa.credential_kind AS requestedKind,
-              c.kind AS kind, c.ciphertext AS ciphertext
+              c.kind AS kind, c.ciphertext AS ciphertext, c.updated_at AS updatedAt
        FROM agent_runs r
        JOIN floor_agents fa ON fa.id = r.agent_id
        JOIN session_members sm ON sm.session_id = r.session_id AND sm.user_id = fa.owner_user_id AND sm.removed_at IS NULL
@@ -154,11 +161,14 @@ export async function getRunAgentOwnerCredential(
        LIMIT 1`,
     )
     .bind(provider, runId)
-    .first<{ ownerUserId: string; requestedKind: CredentialKind | null; kind: CredentialKind | null; ciphertext: string | null }>();
+    .first<{ ownerUserId: string; requestedKind: CredentialKind | null; kind: CredentialKind | null; ciphertext: string | null; updatedAt: number | null }>();
 }
 
+// ownerUserId/updatedAt are present only on an owner resolution, and exist so a
+// gateway can run the D6 conditional-update critical section against the exact
+// row it just read. Server resolutions have no row to rotate.
 export type ResolvedRunSecret =
-  | { ok: true; source: "owner" | "server"; kind: CredentialKind; secret: string }
+  | { ok: true; source: "owner" | "server"; kind: CredentialKind; secret: string; ownerUserId?: string; updatedAt?: number }
   | { ok: false; message: string };
 
 // The one implementation of the per-run credential ladder, shared by every
@@ -194,7 +204,14 @@ export async function resolveRunProviderSecret(
     if (!decrypted) {
       return { ok: false, message: `The agent owner's connected ${providerLabel(provider)} credential could not be read. Reconnect it in Settings.` };
     }
-    return { ok: true, source: "owner", kind: owner.kind, secret: decrypted };
+    return {
+      ok: true,
+      source: "owner",
+      kind: owner.kind,
+      secret: decrypted,
+      ownerUserId: owner.ownerUserId,
+      ...(owner.updatedAt === null ? {} : { updatedAt: owner.updatedAt }),
+    };
   }
   if (resolution.source === "server" && options.serverKey) {
     return { ok: true, source: "server", kind: "api_key", secret: options.serverKey };
@@ -206,4 +223,64 @@ export async function resolveRunProviderSecret(
     };
   }
   return { ok: false, message: `No ${providerLabel(provider)} credential is available for this run.` };
+}
+
+/**
+ * Keep a stored ChatGPT bundle usable, refreshing server-side when its access
+ * token is close to expiring.
+ *
+ * This is the brief's D6 critical section, and it is a real requirement rather
+ * than a theoretical one: the vendor ROTATES the refresh token on every
+ * exchange (measured), so if two concurrent dispatches both refreshed, the
+ * loser would persist a refresh token the winner had already invalidated and
+ * every later run for that member would break. The guard is a conditional
+ * update on the row's `updated_at` — one short write, never a whole-run lock —
+ * and the loser simply re-reads the winner's result.
+ *
+ * The container is never involved: it holds no bundle, so there is nothing to
+ * write back from a run. Refresh failure is deliberately NOT fatal — the
+ * existing token is usually still valid, and a genuinely dead one fails at the
+ * vendor with its own message rather than being masked here.
+ */
+export async function ensureFreshChatGptBundle(
+  resolved: { secret: string; ownerUserId?: string; updatedAt?: number },
+  options: { encryptionKey: string | undefined },
+  database: D1DatabaseLike = getDb(),
+  now: number = Date.now(),
+): Promise<ChatGptBundle | null> {
+  const bundle = parseChatGptBundle(resolved.secret);
+  if (!bundle) return null;
+  if (!chatGptBundleNeedsRefresh(bundle, now)) return bundle;
+  if (!bundle.refreshToken || !resolved.ownerUserId || resolved.updatedAt === undefined || !options.encryptionKey) {
+    return bundle;
+  }
+  const rotated = await refreshChatGptBundle(bundle);
+  if (!rotated) return bundle;
+  const ciphertext = await encryptCredential(
+    rotated,
+    options.encryptionKey,
+    credentialAadContext(resolved.ownerUserId, "openai", "oauth"),
+  );
+  const update = await database
+    .prepare(
+      `UPDATE user_provider_credentials SET ciphertext = ?, updated_at = ?
+        WHERE user_id = ? AND provider = 'openai' AND kind = 'oauth' AND updated_at = ?`,
+    )
+    .bind(ciphertext, now, resolved.ownerUserId, resolved.updatedAt)
+    .run();
+  if ((update.meta?.changes ?? 0) > 0) return parseChatGptBundle(rotated) ?? bundle;
+  // Lost the race. The winner already stored a bundle built from the same
+  // refresh token, so re-read theirs instead of using ours: only one of the two
+  // rotations is the one the vendor will still honour next time.
+  const row = await database
+    .prepare("SELECT ciphertext FROM user_provider_credentials WHERE user_id = ? AND provider = 'openai' AND kind = 'oauth'")
+    .bind(resolved.ownerUserId)
+    .first<{ ciphertext: string }>();
+  if (!row) return bundle;
+  const winner = await decryptCredential(
+    row.ciphertext,
+    options.encryptionKey,
+    credentialAadContext(resolved.ownerUserId, "openai", "oauth"),
+  );
+  return (winner && parseChatGptBundle(winner)) || bundle;
 }

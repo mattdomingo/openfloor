@@ -26,13 +26,14 @@ export function parseCredentialKind(value: unknown): CredentialKind | null {
 // subscription token sent to another vendor. Server fallback credentials are
 // always api_key by construction (plain string bindings) — openfloor never
 // operates one person's subscription seat on behalf of others.
-// openai's oauth kind (a ChatGPT auth bundle) is deliberately WITHHELD until
-// the brief's §5 ships (gated on Spike D): the parse shape and the dormant
-// Settings form remain §5-ready, but offering a connection no run can honor
-// would only manufacture 503s. The openai gateway keeps its own oauth-kind
-// refusal as defense in depth for hand-written rows.
+// anthropic: Claude setup tokens, spike-verified 2026-08-24.
+// openai: a ChatGPT `~/.codex/auth.json` bundle. Withheld on 2026-08-25 while
+// Spike D was unrun; Spike D PASSED on 2026-08-26 and the kind is now live.
+// The gateway substitutes the bundle's access token toward
+// chatgpt.com/backend-api/codex, so the run container never holds the
+// credential at all — see the 2026-08-26 ENG-117 decision-log entry.
 export function credentialKindsForProvider(provider: CredentialProvider): readonly CredentialKind[] {
-  return provider === "anthropic" ? CREDENTIAL_KINDS : ["api_key"];
+  return provider === "anthropic" || provider === "openai" ? CREDENTIAL_KINDS : ["api_key"];
 }
 
 // "API key" / "Claude subscription" / "ChatGPT subscription" — used by
