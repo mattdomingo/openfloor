@@ -26,7 +26,7 @@ const RAIL_COLLAPSED_WIDTH = 40;
 const RAIL_MIN_WIDTH = 250;
 const RAIL_MAX_WIDTH = 520;
 
-export function Workspace({ user, session, members, floorData, activity, repositoryTree, typingDrafts, onTypingUpdate, onSaveObjective, agentRunEnabled, enabledProviders, providerCredentials, presenceConnected, quotaExhausted }: {
+export function Workspace({ user, session, members, floorData, activity, repositoryTree, typingDrafts, onTypingUpdate, onSaveObjective, agentRunEnabled, enabledProviders, providerCredentials, presenceConnected, quotaExhausted, lowHoursRemaining }: {
   user: AppUser;
   session: SessionSummary;
   members: SessionMember[];
@@ -41,6 +41,7 @@ export function Workspace({ user, session, members, floorData, activity, reposit
   providerCredentials: ProviderCredentialSummary[];
   presenceConnected: boolean;
   quotaExhausted: boolean;
+  lowHoursRemaining: number | null;
 }) {
   const { agents, assignments, queue, messages, review, runs, repository, activeCandidate } = floorData.floor;
   const participants = useMemo(() => floorParticipants(members, user), [members, user]);
@@ -281,6 +282,9 @@ export function Workspace({ user, session, members, floorData, activity, reposit
       <p className="notice" data-tone="attention" role="status">This session ended <LocalDateTime timestamp={session.endedAt} mode="date" />{session.endedReason === "merged" ? " because the candidate branch was merged" : ""}. The floor is read-only.</p>
     )}
     {quotaExhausted && session.endedAt == null && <QuotaNotice sessionId={session.id} role={session.role} />}
+    {!quotaExhausted && session.endedAt == null && lowHoursRemaining != null && (
+      <QuotaNotice sessionId={session.id} role={session.role} remainingSeconds={lowHoursRemaining} />
+    )}
     {screen !== "review" && attentionConflicts[0] && <button type="button" className="notice conflict-attention-banner" data-tone="attention" onClick={() => { setSelectedConflictCaseId(attentionConflicts[0].id); setScreen("review"); }}><strong>{attentionConflicts[0].status === "awaiting_input" ? "Merge conflict needs a decision" : "Merge Resolver needs attention"}</strong><span>Open Review to see the conflict and {attentionConflicts[0].status === "awaiting_input" ? "answer its questions" : "retry resolution"}.</span></button>}
     {screen === "review" ? <ReviewScreen review={review} repository={repository} repositoryTree={repositoryTree} selectedConflictCaseId={selectedConflictCaseId} owner={session.role === "owner"} busy={floorData.busy} blockingRunId={floorData.blockingRunId} onResolveConflict={async (caseId) => Boolean(await floorData.resolveConflict(caseId))} onAnswerConflict={async (caseId, answers) => Boolean(await floorData.answerConflict(caseId, answers))} onReady={async () => { if (await floorData.readyReview()) setNotice("GitHub review status synchronized"); }} onMerge={async (deleteCandidateBranch) => { const result = await floorData.squashMergeReview(deleteCandidateBranch); if (result) setNotice(deleteCandidateBranch ? "Pull request squash merged and branches cleaned up" : "Pull request squash merged; candidate branch kept"); return Boolean(result); }} onDeleteBranch={async () => { const result = await floorData.deleteReviewBranch(); if (result) setNotice("Candidate branch deleted"); return Boolean(result); }} onCancelRun={async (runId) => { await floorData.cancelRun(runId); }} teamChat={messages} onSendTeamMessage={async (text, recipient) => Boolean(await floorData.sendMessage(text, recipient))} participants={participants} currentUserId={user.id} /> : <><div className="workspace" data-expanded={expandedPanel ? "true" : "false"} data-resizing={resizing ? "true" : "false"}>{panelOrder.map((panel, index) => { const next = panelOrder[index + 1]; const showHandle = !expandedPanel && next !== undefined && !(isCollapsed(panel) && panel !== "floor"); return <div key={panel} ref={(element) => { if (element) panelSlotRefs.current.set(panel, element); else panelSlotRefs.current.delete(panel); }} className="panel-slot" style={slotStyle(panel)} data-expanded={expandedPanel === panel ? "true" : "false"} data-collapsed={isCollapsed(panel) ? "true" : "false"} data-dragging={draggedPanel === panel ? "true" : "false"} data-drop-target={dragOverPanel === panel ? "true" : "false"} onDragOver={(event) => { event.preventDefault(); if (draggedPanel && draggedPanel !== panel) setDragOverPanel(panel); }} onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragOverPanel((current) => current === panel ? null : current); }} onDrop={() => dropPanel(panel)}>{renderPanel(panel, chromeFor(panel, index))}{showHandle && <div className="resize-handle" role="separator" aria-label={`Resize ${panel} panel`} onPointerDown={(event) => startResize(panel, next, event)} />}</div>; })}</div><FloorDock onSubmit={enqueuePrompt} agents={agents} queueTarget={queueTarget} onQueueTargetChange={setQueueTarget} textareaRef={composerRef} notice={notice} noticeTone={noticeTone} noticeVisible={noticeVisible} busy={floorData.busy} participants={participants} typingDrafts={typingDrafts} onTypingUpdate={onTypingUpdate} /></>}
     {screen === "review" && notice && <StatusBar notice={notice} visible={noticeVisible} tone={noticeTone} />}

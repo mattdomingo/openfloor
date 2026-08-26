@@ -533,6 +533,41 @@
   letter-spacing: -.018em;
 }
 .shop-shell .session-card-link:hover strong { color: var(--accent-ink); }
+.shop-shell .session-card[data-dragging="true"] { opacity: .45; }
+.shop-shell .session-card[data-drop-target="true"] {
+  border-color: var(--accent-ink);
+  box-shadow: 0 0 0 1px var(--accent-ink);
+}
+
+/* Grip and actions sit together at the head's trailing edge, above the
+   title's stretched hit area. The grip stays out of the way until the tile
+   is hovered or it takes focus; a device that cannot hover always shows it. */
+.shop-shell .session-card-tools {
+  position: relative;
+  z-index: 2;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.shop-shell .session-card-grip {
+  display: inline-flex;
+  align-items: center;
+  padding: 8px 4px;
+  border: 0;
+  background: none;
+  color: var(--steel);
+  cursor: grab;
+  opacity: 0;
+  transition: opacity .16s ease, color .16s ease;
+}
+.shop-shell .session-card:hover .session-card-grip,
+.shop-shell .session-card-grip:focus-visible { opacity: 1; }
+.shop-shell .session-card-grip:hover { color: var(--ink); }
+.shop-shell .session-card-grip:active { cursor: grabbing; }
+@media (hover: none) {
+  .shop-shell .session-card-grip { opacity: 1; }
+}
 
 /* The create-session tile: same box as a real session-card, but a plain
    "+" — the tooltip (HomeScreen.tsx) is what actually says "New session". */

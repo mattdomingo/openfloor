@@ -5,18 +5,24 @@ import { BASE_PATH } from "@/components/basePath";
 import { Spinner } from "@/components/session/primitives";
 import {
   AGENT_PROVIDER_LABELS,
+  CONNECTION_REQUEST_EMAIL,
+  CREDENTIAL_SETUP_COMMANDS,
   credentialKindLabel,
   credentialKindsForProvider,
   DEFAULT_PROVIDER_MODELS,
+  PROVIDER_KEY_GUIDE,
+  PROVIDER_LOGOS,
   providerLabel,
   type CredentialKind,
   type CredentialProvider,
   type ProviderCredentialSummary,
 } from "@/lib/provider-credentials";
 
-// One row per (provider, kind): providers that accept a subscription
-// credential alongside an API key render two independently connectable rows;
-// everything else renders one, exactly as before kinds existed.
+// One tile per (provider, kind): providers that accept a subscription
+// credential alongside an API key render two independently connectable tiles;
+// everything else renders one, exactly as before kinds existed. Tiles sit in a
+// grid and the open one spans the full row, so reading a key's instructions
+// never reflows the tiles beside it.
 export function ProviderCredentials({
   initialCredentials,
   providers,
@@ -49,6 +55,12 @@ export function ProviderCredentials({
           />
         )),
       )}
+      <li className="provider-credential-request">
+        <p>Need a provider that isn&rsquo;t here? Tell us which one and we&rsquo;ll look at adding it.</p>
+        <a className="button" data-variant="quiet" data-size="sm" href={`mailto:${CONNECTION_REQUEST_EMAIL}?subject=${encodeURIComponent("openfloor: model connection request")}`}>
+          Request a provider
+        </a>
+      </li>
     </ul>
   );
 }
@@ -70,9 +82,12 @@ function ProviderCredentialRow({ provider, kind, credential, showAgentDefaults, 
   const field = kind === "api_key" ? "apiKey" : bundle ? "authJson" : "setupToken";
   const rowName = kind === "api_key" ? providerLabel(provider) : credentialKindLabel(provider, kind);
   const panelId = `credential-panel-${provider}-${kind}`;
-  // Connected rows start collapsed (nothing to do); unconnected rows start
-  // open so the key field is visible without an extra click.
-  const [expanded, setExpanded] = useState(!credential);
+  // Every tile starts collapsed. Opening the unconnected ones by default was
+  // right when this was a single column, but an open tile spans the grid row,
+  // so with five providers it collapsed the whole layout back into a list.
+  const [expanded, setExpanded] = useState(false);
+  const guide = PROVIDER_KEY_GUIDE[provider];
+  const setupCommand = CREDENTIAL_SETUP_COMMANDS[`${provider}:${kind}`];
 
   async function connect(event: FormEvent) {
     event.preventDefault();
@@ -118,6 +133,7 @@ function ProviderCredentialRow({ provider, kind, credential, showAgentDefaults, 
         aria-controls={panelId}
         onClick={() => setExpanded((value) => !value)}
       >
+        <ProviderMark provider={provider} />
         <span className="settings-category-name">
           {rowName}
           {showAgentDefaults && kind === "api_key" && <small>{AGENT_PROVIDER_LABELS[provider]} · {DEFAULT_PROVIDER_MODELS[provider]}</small>}
@@ -143,13 +159,21 @@ function ProviderCredentialRow({ provider, kind, credential, showAgentDefaults, 
             </>
           ) : (
             <form className="settings-category-detail" onSubmit={connect}>
-              {kind === "oauth" && (
+              {kind === "oauth" ? (
+                <>
+                  <p className="settings-category-detail">
+                    {bundle
+                      ? <>Run this on your machine, then paste the contents of <code>~/.codex/auth.json</code>.</>
+                      : <>Run this on your machine and paste the token it prints.</>}
+                    {" "}Used only for runs of agents you own; the subscription&rsquo;s rate limits are yours and apply here too.
+                    openfloor never uses it for anyone else, and disconnecting is immediate.
+                  </p>
+                  {setupCommand && <CopyCommand command={setupCommand} />}
+                </>
+              ) : (
                 <p className="settings-category-detail">
-                  {bundle
-                    ? <>Run <code>codex login</code> on your machine, then paste the contents of <code>~/.codex/auth.json</code>.</>
-                    : <>Run <code>claude setup-token</code> on your machine and paste the token.</>}
-                  {" "}Used only for runs of agents you own; the subscription&rsquo;s rate limits are yours and apply here too.
-                  openfloor never uses it for anyone else, and disconnecting is immediate.
+                  Create a key in the <a href={guide.consoleUrl} target="_blank" rel="noreferrer noopener">{guide.consoleLabel}</a>, then paste it here.
+                  It is encrypted on arrival and never sent back to the browser.
                 </p>
               )}
               {bundle ? (
@@ -173,6 +197,7 @@ function ProviderCredentialRow({ provider, kind, credential, showAgentDefaults, 
                     type="password"
                     value={secret}
                     onChange={(event) => setSecret(event.target.value)}
+                    placeholder={kind === "api_key" ? guide.placeholder : undefined}
                     maxLength={512}
                     autoComplete="off"
                     spellCheck={false}
@@ -190,5 +215,50 @@ function ProviderCredentialRow({ provider, kind, credential, showAgentDefaults, 
         </div>
       )}
     </li>
+  );
+}
+
+/* The vendor mark, or its initial where public/logos has no file yet. The
+   image is decorative — the tile's own name is the accessible label — so its
+   alt stays empty rather than repeating that name to a screen reader. */
+function ProviderMark({ provider }: { provider: CredentialProvider }) {
+  const logo = PROVIDER_LOGOS[provider];
+  return (
+    <span className="provider-credential-mark" aria-hidden="true">
+      {logo
+        // eslint-disable-next-line @next/next/no-img-element -- a fixed 22px vendor mark; next/image would add a loader round trip for a static SVG
+        ? <img src={`${BASE_PATH}${logo}`} alt="" width={22} height={22} />
+        : <span className="provider-credential-monogram">{providerLabel(provider).slice(0, 1)}</span>}
+    </span>
+  );
+}
+
+/* "Copy this to your agent": the command that mints a subscription token is
+   meant to be pasted into a terminal, so it gets a copy button rather than
+   being read out of a sentence. */
+function CopyCommand({ command }: { command: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <span className="provider-credential-command">
+      <code>{command}</code>
+      <button
+        type="button"
+        className="button"
+        data-variant="quiet"
+        data-size="sm"
+        onClick={async () => {
+          try {
+            await navigator.clipboard.writeText(command);
+            setCopied(true);
+          } catch {
+            // Clipboard access can be refused (insecure origin, denied
+            // permission); the command is on screen either way.
+            setCopied(false);
+          }
+        }}
+      >
+        {copied ? "Copied" : "Copy"}
+      </button>
+    </span>
   );
 }
