@@ -1,7 +1,7 @@
 import { requireOnboardedUser } from "@/lib/server-auth";
 import { getUsageForUser } from "@/db/sessions";
 import { listProviderCredentials } from "@/db/provider-credentials";
-import { SettingsScreen } from "@/components/product/SettingsScreen";
+import { isSettingsSection, SettingsScreen } from "@/components/product/SettingsScreen";
 import { getBillingSummary } from "@/db/billing";
 import { resolveSettingsOrigin } from "./origin";
 import { listUserGitHubInstallations } from "@/db/github-installations";
@@ -25,7 +25,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
       billing={billing}
       credentials={credentials}
       githubInstallations={githubInstallations}
-      initialSection={query.section === "plan" || query.section === "connections" ? query.section : "profile"}
+      initialSection={isSettingsSection(query.section) ? query.section : "profile"}
       billingNotice={query.billing ?? null}
       backTo={origin}
       originPath={origin.href === "/home" ? null : origin.href}

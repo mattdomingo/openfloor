@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { FormEvent, useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { AvatarCropper, AvatarFileButton } from "@/components/product/AvatarCropper";
 import { BASE_PATH } from "@/components/basePath";
 import { DoNotDisturbToggle } from "@/components/DoNotDisturbToggle";
@@ -22,7 +22,11 @@ import { WaveField } from "@/app/entry-wave";
 import { AppHeader } from "./AppHeader";
 import { ProviderCredentials } from "./ProviderCredentials";
 
-type SettingsSection = "profile" | "plan" | "connections" | "preferences" | "danger";
+export type SettingsSection = "profile" | "plan" | "connections" | "preferences" | "danger";
+const SETTINGS_SECTION_VALUES: SettingsSection[] = ["profile", "plan", "connections", "preferences", "danger"];
+export function isSettingsSection(value: string | undefined): value is SettingsSection {
+  return SETTINGS_SECTION_VALUES.includes(value as SettingsSection);
+}
 type Usage = { plan: Plan; planStatus: PlanStatus; effectivePlan: Plan; seconds: number; limitHours: number; limitSeats: number };
 type Billing = { customerId: string | null; subscriptionId: string | null; plan: PaidPlan | null; quantity: number | null; stripeStatus: string | null; currentPeriodEnd: number | null; cancelAtPeriodEnd: boolean };
 type BlockedSession = { id: string; title: string; reason: "integration_in_progress" };
@@ -66,7 +70,7 @@ export function SettingsScreen({ user: initialUser, usage, billing, credentials,
   billing: Billing;
   credentials: ProviderCredentialSummary[];
   githubInstallations: UserGitHubInstallationSummary[];
-  initialSection: "profile" | "plan" | "connections";
+  initialSection: SettingsSection;
   billingNotice: string | null;
   // Where "Account settings" was opened from — resolved server-side in
   // app/home/settings/page.tsx (app/home/settings/origin.ts) so the header link and
@@ -87,6 +91,23 @@ export function SettingsScreen({ user: initialUser, usage, billing, credentials,
     setUser(initialUser);
   }
   const [section, setSection] = useState<SettingsSection>(initialSection);
+  const router = useRouter();
+  const pathname = usePathname();
+
+  // The rail is client-only state, so a refresh has nothing to read back
+  // except the URL. Every switch replaces `section` in it (dropping the
+  // one-shot `billing` notice) so reloading — or a stuck-looking action
+  // that makes someone hit refresh — lands back on the section they were on,
+  // not always Profile. Read the current query from `window.location` rather
+  // than `useSearchParams()`, which would force this page into a Suspense
+  // boundary it doesn't otherwise need.
+  function changeSection(next: SettingsSection) {
+    setSection(next);
+    const params = new URLSearchParams(window.location.search);
+    params.set("section", next);
+    params.delete("billing");
+    router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+  }
 
   return (
     <main className="product-shell shop-shell settings-shell">
@@ -102,7 +123,7 @@ export function SettingsScreen({ user: initialUser, usage, billing, credentials,
         </div>
 
         <div className="settings-layout">
-          <SettingsRail value={section} onChange={setSection} />
+          <SettingsRail value={section} onChange={changeSection} />
           {/* key={section} remounts on every switch so the shop shell's
               rise-and-fade (shop-settle, app/styles/shop.css) replays
               each time, same as HomeScreen's tab-panel. */}
