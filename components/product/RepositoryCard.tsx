@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { BASE_PATH } from "@/components/basePath";
 import { SelectMenu } from "@/components/session/SelectMenu";
 import type {
+  AccountGitHubRepositoryOption,
   GitHubRepositoryOption,
   RepositoryCandidate,
   RepositoryConnection,
@@ -12,7 +13,8 @@ import type {
   SessionRole,
 } from "@/lib/session-types";
 
-type OptionsResponse = { repositories: GitHubRepositoryOption[]; branches: string[]; error?: string };
+type RepositoryOption = GitHubRepositoryOption | AccountGitHubRepositoryOption;
+type OptionsResponse = { repositories: RepositoryOption[]; branches: string[]; error?: string };
 
 const connectionStatusLabel: Record<RepositoryConnectionStatus, string> = {
   connected: "Connected",
@@ -66,7 +68,7 @@ export function RepositoryCard({
   const [preflight, setPreflight] = useState(initialPreflight);
   const [logs, setLogs] = useState<string | null>(null);
   const [editing, setEditing] = useState(beginSetup);
-  const [repositories, setRepositories] = useState<GitHubRepositoryOption[]>([]);
+  const [repositories, setRepositories] = useState<RepositoryOption[]>([]);
   const [branches, setBranches] = useState<string[]>([]);
   const [repositoryId, setRepositoryId] = useState(initialRepository?.repositoryId ?? "");
   const [baseBranch, setBaseBranch] = useState(initialRepository?.baseBranch ?? "");
@@ -74,9 +76,6 @@ export function RepositoryCard({
   const [busy, setBusy] = useState(beginSetup);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [namingCandidate, setNamingCandidate] = useState(false);
-  const [candidateName, setCandidateName] = useState(sessionTitle);
-  const [candidateDescription, setCandidateDescription] = useState(sessionObjective ?? "");
 
   const selectedRepository = useMemo(
     () => repositories.find((item) => item.id === repositoryId) ?? null,
@@ -139,19 +138,6 @@ export function RepositoryCard({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editing, loadOptions, role]);
 
-  async function connect() {
-    setBusy(true);
-    setError(null);
-    const response = await fetch(`${BASE_PATH}/api/sessions/${sessionId}/repository/connect`, { method: "POST" });
-    const body = await readResponse<{ installUrl?: string; error?: string }>(response);
-    if (!response.ok || !body.installUrl) {
-      setError(body.error ?? "Unable to begin GitHub setup");
-      setBusy(false);
-      return;
-    }
-    window.location.assign(body.installUrl);
-  }
-
   async function chooseRepository(nextId: string) {
     setRepositoryId(nextId);
     setBusy(true);
@@ -175,9 +161,21 @@ export function RepositoryCard({
     const response = await fetch(`${BASE_PATH}/api/sessions/${sessionId}/repository`, {
       method,
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ repositoryId, baseBranch, checkCommands }),
+      body: JSON.stringify({
+        repositoryId,
+        baseBranch,
+        checkCommands,
+        ...(selectedRepository && "accountInstallationId" in selectedRepository
+          ? { accountInstallationId: selectedRepository.accountInstallationId }
+          : {}),
+      }),
     });
-    const body = await readResponse<{ repository?: RepositoryConnection; error?: string }>(response);
+    const body = await readResponse<{
+      repository?: RepositoryConnection;
+      candidate?: RepositoryCandidate | null;
+      setupStatus?: "ready" | "failed";
+      error?: string;
+    }>(response);
     if (!response.ok || !body.repository) {
       setError(body.error ?? "Unable to save the repository connection");
       setBusy(false);
@@ -188,7 +186,9 @@ export function RepositoryCard({
     setCommands(body.repository.checkCommands.map((item) => item.command).join("\n"));
     setEditing(false);
     setBusy(false);
-    setNotice("GitHub repository connected.");
+    setCandidate(body.candidate ?? candidate);
+    onStateChange?.({ repository: body.repository, candidate: body.candidate ?? candidate });
+    setNotice(body.setupStatus === "failed" ? "Repository saved, but candidate setup needs retry." : "GitHub repository ready.");
   }
 
   async function disconnect() {
@@ -214,7 +214,7 @@ export function RepositoryCard({
     const response = await fetch(`${BASE_PATH}/api/sessions/${sessionId}/repository/${action}`, {
       method: "POST",
       headers: action === "candidate" ? { "content-type": "application/json" } : undefined,
-      body: action === "candidate" ? JSON.stringify({ name: candidateName, description: candidateDescription }) : undefined,
+      body: action === "candidate" ? JSON.stringify({ name: sessionTitle, description: sessionObjective ?? "" }) : undefined,
     });
     const body = await readResponse<{ repository?: RepositoryConnection; candidate?: RepositoryCandidate; error?: string }>(response);
     if (!response.ok || !body.repository || !body.candidate) {
@@ -223,8 +223,7 @@ export function RepositoryCard({
       setRepository(body.repository);
       setCandidate(body.candidate);
       onStateChange?.({ repository: body.repository, candidate: body.candidate });
-      setNamingCandidate(false);
-      setNotice(action === "candidate" ? "Execution enabled. Candidate branch created." : "Repository state synchronized with GitHub.");
+      setNotice(action === "candidate" ? "Candidate branch ready." : "Repository state synchronized with GitHub.");
     }
     setBusy(false);
   }
@@ -267,21 +266,14 @@ export function RepositoryCard({
       <h2>GitHub connection</h2>
       {!repository && !editing && (
         <>
-          <p>No repository is connected yet. Connect GitHub so this session has a repository to work in.</p>
+          <p>No repository is connected yet. Select one already authorized in Account Settings.</p>
           {role === "owner" ? (
             <>
-              <div className="repository-checks">
-                <span>What to expect</span>
-                <ol>
-                  <li>Connect GitHub opens github.com to install the openfloor App — you leave this page and return here when the install finishes.</li>
-                  <li>During the install, choose which repositories the App may access. Some organizations require an admin to approve it first.</li>
-                  <li>Back here, pick the repository and base branch, then save. Check commands are optional — add them later if you want agent changes verified automatically before they&apos;re marked ready.</li>
-                </ol>
-              </div>
-              <button className="button" data-variant="primary" onClick={connect} disabled={busy}>Connect GitHub</button>
+              <p className="form-note">If none appear, add or restore GitHub access under <a href={`${BASE_PATH}/home/settings?section=connections`}>Account Settings</a>.</p>
+              <button className="button" data-variant="primary" onClick={edit} disabled={busy}>Select repository</button>
             </>
           ) : (
-            <p className="repository-checks">Only the session owner can connect GitHub. Ask them to set it up from this page.</p>
+            <p className="repository-checks">Only session owner can select repository.</p>
           )}
         </>
       )}
@@ -325,32 +317,14 @@ export function RepositoryCard({
               {repository.status !== "disconnected" && repository.status !== "revoked" && repository.status !== "inaccessible" ? (
                 <>
                   <button className="button" onClick={edit} disabled={busy}>Configure</button>
-                  {!candidate && repository.status === "connected" && <button className="button" data-variant="primary" onClick={() => setNamingCandidate(true)} disabled={busy}>Enable execution</button>}
+                  {!candidate && repository.status === "connected" && <button className="button" data-variant="primary" onClick={() => void candidateAction("candidate")} disabled={busy}>Retry candidate setup</button>}
                   {candidate && <button className="button" data-variant="primary" onClick={() => void candidateAction("sync")} disabled={busy}>Sync repository</button>}
                   {preflightEnabled && candidate && repository.status === "ready" && (
                     <button className="button" onClick={() => void verifyRunner()} disabled={busy || repository.checkCommands.length === 0 || Boolean(preflight && ["provisioning", "running"].includes(preflight.status))}>Verify runner</button>
                   )}
                   <button className="button danger-button" onClick={disconnect} disabled={busy}>Disconnect</button>
                 </>
-              ) : <button className="button" data-variant="primary" onClick={connect} disabled={busy}>Reconnect GitHub</button>}
-            </div>
-          )}
-          {role === "owner" && !candidate && namingCandidate && repository.status === "connected" && (
-            <div className="repository-form" aria-label="Candidate setup">
-              <label>
-                <span>Candidate branch name</span>
-                <input aria-label="Candidate branch name" value={candidateName} onChange={(event) => setCandidateName(event.target.value)} maxLength={100} />
-                <small>openfloor converts this name into a safe branch beneath its protected candidate prefix.</small>
-              </label>
-              <label>
-                <span>Candidate description</span>
-                <textarea aria-label="Candidate description" value={candidateDescription} onChange={(event) => setCandidateDescription(event.target.value)} maxLength={2000} rows={4} />
-                <small>This becomes the description of the draft pull request.</small>
-              </label>
-              <div className="button-row">
-                <button className="button" data-variant="primary" onClick={() => void candidateAction("candidate")} disabled={busy || !candidateName.trim()}>Create candidate</button>
-                <button className="button" onClick={() => setNamingCandidate(false)} disabled={busy}>Cancel</button>
-              </div>
+              ) : <button className="button" data-variant="primary" onClick={edit} disabled={busy}>Select account repository</button>}
             </div>
           )}
         </>
