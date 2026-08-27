@@ -1182,6 +1182,7 @@ Durable Object migration `v1` registers `SessionPresence`; `v2` registers `Sandb
 - `GITHUB_APP_PRIVATE_KEY`
 - `GITHUB_STATE_SECRET`
 - `GITHUB_WEBHOOK_SECRET`
+- `GITHUB_APP_CLIENT_ID` (optional binding, but required for device-flow sign-in: GitHub App → General → Client ID, with "Enable Device Flow" ticked on the App; absent, the device endpoints answer 501 and the dialog falls back to the install redirect)
 - `RUNTIME_GATEWAY_SECRET`
 - `OPENAI_API_KEY`
 - `STRIPE_SECRET_KEY`
