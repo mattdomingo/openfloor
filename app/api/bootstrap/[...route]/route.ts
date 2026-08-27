@@ -14,7 +14,7 @@ import { getFloorSnapshot } from "@/db/floor";
 import { listUserGitHubInstallations } from "@/db/github-installations";
 import { listSessionMcpServersForMember } from "@/db/mcp-servers";
 import { getLatestRepositoryPreflightForMember } from "@/db/preflights";
-import { listProviderCredentials } from "@/db/provider-credentials";
+import { getMonthlyModelUsage, listProviderCredentials } from "@/db/provider-credentials";
 import { getActiveRepositoryCandidateForMember, getRepositoryConnectionForMember } from "@/db/repositories";
 import {
   getInvitePreview,
@@ -95,19 +95,25 @@ export async function GET(request: Request, { params }: { params: Promise<{ rout
   if (head === "home" && rest.length === 0) {
     const gated = gate("/home");
     if (gated instanceof Response) return gated;
-    const [sessions, usage] = await Promise.all([listSessionsForUser(user.id), getUsageForUser(user.id)]);
-    return Response.json({ props: { user, sessions, usage } });
+    const [sessions, usage, initialCredentials, modelUsage] = await Promise.all([
+      listSessionsForUser(user.id),
+      getUsageForUser(user.id),
+      listProviderCredentials(user.id),
+      getMonthlyModelUsage(user.id),
+    ]);
+    return Response.json({ props: { user, sessions, usage, initialCredentials, enabledProviders: enabledProviders(), modelUsage } });
   }
 
   if (head === "settings" && rest.length === 0) {
     const gated = gate("/home/settings");
     if (gated instanceof Response) return gated;
-    const [usage, billing, credentials, githubInstallations, origin] = await Promise.all([
+    const [usage, billing, credentials, githubInstallations, origin, modelUsage] = await Promise.all([
       getUsageForUser(user.id),
       getBillingSummary(user.id),
       listProviderCredentials(user.id),
       listUserGitHubInstallations(user.id),
       resolveSettingsOrigin(query.get("from") ?? undefined, user.id),
+      getMonthlyModelUsage(user.id),
     ]);
     const section = query.get("section");
     return Response.json({
@@ -117,6 +123,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ rout
         billing,
         credentials,
         githubInstallations,
+        modelUsage,
         initialSection: section === "plan" || section === "connections" ? section : "profile",
         billingNotice: query.get("billing"),
         backTo: origin,
