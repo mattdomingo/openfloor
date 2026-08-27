@@ -63,6 +63,7 @@ export function getGitHubAppConfig(): import("@/lib/github").GitHubAppConfig {
   }
   const config = {
     appId: bindings.GITHUB_APP_ID ?? "",
+    clientId: bindings.GITHUB_APP_CLIENT_ID ?? "",
     privateKey: bindings.GITHUB_APP_PRIVATE_KEY ?? "",
     slug: bindings.GITHUB_APP_SLUG ?? "",
     stateSecret: bindings.GITHUB_STATE_SECRET ?? "",

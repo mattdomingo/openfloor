@@ -13,6 +13,7 @@ import { CREDENTIAL_PROVIDERS, type ProviderCredentialSummary } from "@/lib/prov
 import type { OnboardingStep } from "@/lib/onboarding-plan";
 import { Brand } from "./Brand";
 import { ProviderCredentials } from "./ProviderCredentials";
+import { GitHubDeviceDialog } from "@/components/product/GitHubDeviceDialog";
 import type { UserGitHubInstallationSummary } from "@/lib/session-types";
 
 type OnboardingPlan = "free" | PaidPlan;
@@ -68,7 +69,8 @@ export function OnboardingScreen({
   const [profileError, setProfileError] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [githubInstallations] = useState(initialGithubInstallations);
+  const [githubInstallations, setGithubInstallations] = useState(initialGithubInstallations);
+  const [deviceDialogOpen, setDeviceDialogOpen] = useState(false);
   const profileHeadingRef = useRef<HTMLHeadingElement>(null);
   const githubHeadingRef = useRef<HTMLHeadingElement>(null);
   const connectionsHeadingRef = useRef<HTMLHeadingElement>(null);
@@ -140,21 +142,9 @@ export function OnboardingScreen({
     changeStep(2);
   }
 
-  async function connectGitHub() {
+  function connectGitHub() {
     setSubmitError(null);
-    setSubmitting(true);
-    const response = await fetch(`${BASE_PATH}/api/account/github/connect`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ purpose: "onboarding", returnTo }),
-    });
-    const body = await response.json().catch(() => null) as { installUrl?: string; error?: string } | null;
-    if (!response.ok || !body?.installUrl) {
-      setSubmitError(body?.error ?? "Unable to begin GitHub setup.");
-      setSubmitting(false);
-      return;
-    }
-    window.location.assign(body.installUrl);
+    setDeviceDialogOpen(true);
   }
 
   async function submit(event: FormEvent) {
@@ -270,7 +260,8 @@ export function OnboardingScreen({
               {submitError && <p className="form-error" role="alert">{submitError}</p>}
               <div className="form-actions onboarding-plan-actions">
                 <button type="button" className="button" data-variant="quiet" disabled={submitting} onClick={() => changeStep(1)}>Back</button>
-                {!githubReady && <button type="button" className="button" data-variant="primary" data-size="lg" disabled={submitting} onClick={() => void connectGitHub()}>{submitting ? "Opening…" : "Connect GitHub"}</button>}
+                {!githubReady && <button type="button" className="button" data-variant="primary" data-size="lg" disabled={submitting} onClick={connectGitHub}>Connect GitHub</button>}
+                {deviceDialogOpen && <GitHubDeviceDialog purpose="onboarding" returnTo={returnTo} onConnected={setGithubInstallations} onClose={() => setDeviceDialogOpen(false)} />}
                 {githubReady && <button type="button" className="button" data-variant="primary" data-size="lg" onClick={() => changeStep(3)}>Continue</button>}
               </div>
             </section>

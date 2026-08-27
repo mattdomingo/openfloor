@@ -27,11 +27,11 @@
 
   /* Text */
   --text-primary: #1f241f;
-  --text-secondary: #6a6961;
-  --text-tertiary: #928f86;
+  --text-secondary: #55544c;
+  --text-tertiary: #767368;
   --text-inverse: #e8ede8;
-  --text-inverse-secondary: #97a098;
-  --text-inverse-tertiary: #6d756e;
+  --text-inverse-secondary: #aeb6af;
+  --text-inverse-tertiary: #8b948c;
 
   /* Lines. Strong lines draw window boundaries; soft lines separate rows
      within a surface. Both are tuned to read clearly on every surface above. */
@@ -145,8 +145,8 @@
     --surface-sunken: #121412;
 
     --text-primary: #e8ede8;
-    --text-secondary: #a7aca3;
-    --text-tertiary: #7b8078;
+    --text-secondary: #c0c5bc;
+    --text-tertiary: #999e94;
 
     --line-strong: #4a5147;
     --line-soft: #343a33;
@@ -182,8 +182,8 @@
   --surface-sunken: #121412;
 
   --text-primary: #e8ede8;
-  --text-secondary: #a7aca3;
-  --text-tertiary: #7b8078;
+  --text-secondary: #c0c5bc;
+  --text-tertiary: #999e94;
 
   --line-strong: #4a5147;
   --line-soft: #343a33;
@@ -225,8 +225,8 @@
      can never pick up the dark-preference block's near-white values by
      accident — same reasoning as dark/midnight duplicating their own. */
   --text-primary: #1f241f;
-  --text-secondary: #6a6961;
-  --text-tertiary: #928f86;
+  --text-secondary: #55544c;
+  --text-tertiary: #767368;
 
   /* Darker than a literal near-white gray: against surfaces this pale, a
      line needs real luminance separation to read at all, let alone as a
@@ -248,8 +248,8 @@
   --surface-sunken: #000000;
 
   --text-primary: #e8ede8;
-  --text-secondary: #a7aca3;
-  --text-tertiary: #7b8078;
+  --text-secondary: #c0c5bc;
+  --text-tertiary: #999e94;
 
   --line-strong: #33382f;
   --line-soft: #202420;
@@ -309,8 +309,8 @@
   --surface-sunken: #b9c0c9;
 
   --text-primary: #12181f;
-  --text-secondary: #3d4652;
-  --text-tertiary: #4a525c;
+  --text-secondary: #2c3540;
+  --text-tertiary: #39424d;
 
   --line-strong: #a9b1bd;
   --line-soft: #c2c9d1;
@@ -358,8 +358,8 @@
   --surface-sunken: #171c22;
 
   --text-primary: #dfe3e8;
-  --text-secondary: #a5acb6;
-  --text-tertiary: #8a919b;
+  --text-secondary: #c2c8d1;
+  --text-tertiary: #a6adb7;
 
   --line-strong: #4e5560;
   --line-soft: #404751;
@@ -434,8 +434,8 @@
     --surface-sunken: #171c22;
 
     --text-primary: #dfe3e8;
-    --text-secondary: #a5acb6;
-    --text-tertiary: #8a919b;
+    --text-secondary: #c2c8d1;
+    --text-tertiary: #a6adb7;
 
     --line-strong: #4e5560;
     --line-soft: #404751;

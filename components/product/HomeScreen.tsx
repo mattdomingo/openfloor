@@ -171,13 +171,9 @@ export function HomeScreen({
   }
   const [tab, setTab] = useState<SessionTab>("active");
   const [creating, setCreating] = useState(false);
-  const [title, setTitle] = useState("");
-  const [objective, setObjective] = useState("");
   const [repositories, setRepositories] = useState<AccountGitHubRepositoryOption[]>([]);
-  const [repositoryId, setRepositoryId] = useState("");
   const [repositoriesLoading, setRepositoriesLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<SessionSummary | null>(null);
   // The removal close code (4005) fires while the removed member is still on
   // the session or floor page, which navigates here before this component
@@ -196,17 +192,14 @@ export function HomeScreen({
   async function beginCreate() {
     setCreating(true);
     setRepositoriesLoading(true);
-    setError(null);
+    setLoadError(null);
     try {
       const response = await fetch(`${BASE_PATH}/api/account/github/repositories`, { cache: "no-store" });
       const body = await response.json() as { repositories?: AccountGitHubRepositoryOption[]; error?: string };
       if (!response.ok || !body.repositories) throw new Error(body.error ?? "Unable to load GitHub repositories.");
       setRepositories(body.repositories);
-      setRepositoryId((current) => body.repositories!.some((repository) => repository.id === current)
-        ? current
-        : body.repositories![0]?.id ?? "");
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Unable to load GitHub repositories.");
+      setLoadError(reason instanceof Error ? reason.message : "Unable to load GitHub repositories.");
     } finally {
       setRepositoriesLoading(false);
     }
@@ -256,35 +249,6 @@ export function HomeScreen({
     );
   }
 
-  async function create(event: FormEvent) {
-    event.preventDefault();
-    setError(null);
-    setSubmitting(true);
-    const selectedRepository = repositories.find((repository) => repository.id === repositoryId);
-    if (!selectedRepository) {
-      setError("Select a GitHub repository.");
-      setSubmitting(false);
-      return;
-    }
-    const response = await fetch(`${BASE_PATH}/api/sessions`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        title,
-        objective,
-        repositoryId: selectedRepository.id,
-        accountInstallationId: selectedRepository.accountInstallationId,
-      }),
-    });
-    const body = (await response.json()) as { session?: SessionSummary; setupStatus?: "ready" | "failed"; error?: string };
-    if (!response.ok || !body.session) {
-      setError(body.error ?? "Unable to create the session.");
-      setSubmitting(false);
-      return;
-    }
-    router.push(`/session/${body.session.id}?${body.setupStatus === "failed" ? "repo=required" : "setup=1"}`);
-  }
-
   return (
     <main className="product-shell shop-shell">
       <WaveField varName="--wave" className="shop-wave" />
@@ -325,29 +289,12 @@ export function HomeScreen({
         </div>
 
         {creating && (
-          <form className="create-card" onSubmit={create}>
-            <label><span>Session title</span><input value={title} onChange={(event) => setTitle(event.target.value)} maxLength={100} required autoFocus /></label>
-            <label><span>Objective <em>optional</em></span><textarea value={objective} onChange={(event) => setObjective(event.target.value)} maxLength={2000} rows={3} /></label>
-            <label>
-              <span>Repository</span>
-              {repositories.length > 0 ? (
-                <SelectMenu
-                  label="Session repository"
-                  value={repositoryId}
-                  onChange={setRepositoryId}
-                  disabled={repositoriesLoading || submitting}
-                  options={repositories.map((repository) => ({ value: repository.id, label: repository.fullName }))}
-                />
-              ) : repositoriesLoading ? <small>Loading GitHub repositories…</small> : (
-                <small>No repositories available. <Link href="/home/settings?section=connections">Add GitHub access in Account Settings</Link>.</small>
-              )}
-            </label>
-            {error && <p className="form-error" role="alert">{error}</p>}
-            <div className="form-actions">
-              <button type="button" className="button" data-variant="quiet" onClick={() => setCreating(false)}>Cancel</button>
-              <button className="button" data-variant="primary" disabled={submitting || repositoriesLoading || !repositoryId}>{submitting ? <><Spinner />Creating…</> : "Create session"}</button>
-            </div>
-          </form>
+          <CreateSessionDialog
+            repositories={repositories}
+            repositoriesLoading={repositoriesLoading}
+            loadError={loadError}
+            onClose={() => setCreating(false)}
+          />
         )}
 
         {/* Usage is a fourth tab, not a side toggle, so it (and the tab
@@ -672,6 +619,90 @@ function SessionActionsMenu({
         {session.role === "owner" && <button type="button" className="button danger-button" data-size="sm" onClick={() => { onDelete(session); setMenuOpen(false); }}>Delete</button>}
       </span>
     </div>
+  );
+}
+
+// The create flow is a centered modal: task, goal, repository — then straight
+// to the agent floor. A failed candidate provision lands on the lobby with the
+// repository gate open instead, same as the webapp's old inline card did.
+function CreateSessionDialog({ repositories, repositoriesLoading, loadError, onClose }: {
+  repositories: AccountGitHubRepositoryOption[];
+  repositoriesLoading: boolean;
+  loadError: string | null;
+  onClose: () => void;
+}) {
+  const router = useRouter();
+  const { dismiss, dialogProps } = useDialogDismiss(onClose);
+  const [title, setTitle] = useState("");
+  const [objective, setObjective] = useState("");
+  const [repositoryId, setRepositoryId] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  // Repositories arrive after the dialog opens; adopt the first as default.
+  if (!repositoryId && repositories.length > 0) setRepositoryId(repositories[0].id);
+
+  async function create(event: FormEvent) {
+    event.preventDefault();
+    setError(null);
+    setSubmitting(true);
+    const selectedRepository = repositories.find((repository) => repository.id === repositoryId);
+    if (!selectedRepository) {
+      setError("Select a GitHub repository.");
+      setSubmitting(false);
+      return;
+    }
+    const response = await fetch(`${BASE_PATH}/api/sessions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        title,
+        objective,
+        repositoryId: selectedRepository.id,
+        accountInstallationId: selectedRepository.accountInstallationId,
+      }),
+    });
+    const body = (await response.json()) as { session?: SessionSummary; setupStatus?: "ready" | "failed"; error?: string };
+    if (!response.ok || !body.session) {
+      setError(body.error ?? "Unable to create the session.");
+      setSubmitting(false);
+      return;
+    }
+    router.push(body.setupStatus === "failed"
+      ? `/session/${body.session.id}?repo=required`
+      : `/session/${body.session.id}/floor`);
+  }
+
+  return (
+    <dialog className="dialog create-dialog" {...dialogProps} aria-labelledby="create-session-title">
+      <form onSubmit={create}>
+        <div className="dialog-head">
+          <div className="dialog-title"><h2 id="create-session-title">New session</h2><p>Name the task, set the goal, and pick the repository. You land on the agent floor.</p></div>
+        </div>
+        <div className="dialog-body create-dialog-body">
+          <label><span>Task</span><input value={title} onChange={(event) => setTitle(event.target.value)} maxLength={100} required autoFocus placeholder="What is this session for?" /></label>
+          <label><span>Goal <em>optional</em></span><textarea value={objective} onChange={(event) => setObjective(event.target.value)} maxLength={2000} rows={3} placeholder="The shared objective the floor works toward" /></label>
+          <label>
+            <span>Repository</span>
+            {repositories.length > 0 ? (
+              <SelectMenu
+                label="Session repository"
+                value={repositoryId}
+                onChange={setRepositoryId}
+                disabled={repositoriesLoading || submitting}
+                options={repositories.map((repository) => ({ value: repository.id, label: repository.fullName }))}
+              />
+            ) : repositoriesLoading ? <small>Loading GitHub repositories…</small> : (
+              <small>No repositories available. <Link href="/home/settings?section=connections">Add GitHub access in Account Settings</Link>.</small>
+            )}
+          </label>
+          {(error ?? loadError) && <p className="form-error" role="alert">{error ?? loadError}</p>}
+        </div>
+        <div className="dialog-foot">
+          <button type="button" className="button" data-variant="quiet" onClick={dismiss}>Cancel</button>
+          <button className="button" data-variant="primary" disabled={submitting || repositoriesLoading || !repositoryId}>{submitting ? <><Spinner />Creating…</> : "Create session"}</button>
+        </div>
+      </form>
+    </dialog>
   );
 }
 

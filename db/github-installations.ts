@@ -66,6 +66,28 @@ export async function consumeGitHubAccountConnectionState(
   ).bind(stateId, userId).first<{ purpose: GitHubAccountConnectionPurpose; returnTo: string }>();
 }
 
+/** Device-flow linking: upserts an installation association directly. The
+    browser-redirect path keeps its one-time signed state (above); here the
+    proof is the user-to-server token that just listed this installation. */
+export async function linkUserGitHubInstallation(
+  userId: string,
+  installationId: string,
+  account: { login: string; type: string },
+  database = getDb(),
+): Promise<void> {
+  const now = Date.now();
+  await database.prepare(
+    `INSERT INTO user_github_installations
+     (id, user_id, installation_id, account_login, account_type, status, connected_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, 'active', ?, ?)
+     ON CONFLICT(user_id, installation_id) DO UPDATE SET
+       account_login = excluded.account_login,
+       account_type = excluded.account_type,
+       status = 'active',
+       updated_at = excluded.updated_at`,
+  ).bind(crypto.randomUUID(), userId, installationId, account.login, account.type, now, now).run();
+}
+
 export async function listUserGitHubInstallations(
   userId: string,
   database = getDb(),
