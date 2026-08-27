@@ -16,6 +16,7 @@ import { monthlyUsageLabel, type CredentialProvider, type MonthlyProviderUsage, 
 import { formatTokens } from "@/components/session/data";
 import type { AccountGitHubRepositoryOption, AppUser, SessionSummary } from "@/lib/session-types";
 import { WaveField } from "@/app/entry-wave";
+import { GuidedTour, type TourStep } from "@/components/GuidedTour";
 import { AppHeader } from "./AppHeader";
 import { ProviderCredentials } from "./ProviderCredentials";
 
@@ -364,9 +365,25 @@ export function HomeScreen({
         </div>
       </section>
       {pendingDelete && <DeleteSessionDialog session={pendingDelete} onClose={() => setPendingDelete(null)} />}
+      <GuidedTour storageKey="openfloor:tutorial:home" steps={HOME_TOUR} />
     </main>
   );
 }
+
+// First-visit walkthrough (ENG-17). Two steps here; the floor carries its own
+// tour, so each surface teaches only what it renders.
+const HOME_TOUR: TourStep[] = [
+  {
+    selector: '[aria-label="New session"]',
+    title: "Start a session",
+    body: "A session is one room for one goal. Creating it picks the GitHub repository, names the candidate branch, and can connect an AI provider on the way in.",
+  },
+  {
+    selector: ".shop-tabs",
+    title: "Your sessions",
+    body: "Filter Active, Archived, and Ended sessions, and check monthly usage. Drag a card by its grip to reorder the grid.",
+  },
+];
 
 function SessionGrid({
   sessions,

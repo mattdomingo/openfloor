@@ -920,6 +920,8 @@ If product requirements call for any of these to persist or synchronize, add an 
 
 The theme choice is deliberately a per-device preference: localStorage `openfloor:theme`, owned by `components/ThemeToggle.tsx`, never synchronized through D1 or presence.
 
+The guided tour's seen-it flags follow the same convention: localStorage `openfloor:tutorial:home` and `openfloor:tutorial:floor`, owned by `components/GuidedTour.tsx` (ENG-17). The tour auto-opens once per surface on a device with no flag and never returns after Skip/Done; per-account persistence was deliberately not added.
+
 ### Styling
 
 - Global styles are composed from `app/globals.css` and files under `app/styles/`.
