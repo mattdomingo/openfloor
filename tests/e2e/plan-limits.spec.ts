@@ -25,9 +25,15 @@ test("free-tier seat cap refuses a fourth member with the session already full",
   // The New session tile only renders on the Active tab.
   await owner.getByRole("button", { name: /^Active/ }).click();
   await owner.getByRole("button", { name: "New session" }).click();
-  await owner.getByLabel("Session title").fill("Free tier session");
+  await owner.getByLabel("Task").fill("Free tier session");
+  await owner.getByRole("button", { name: "Continue" }).click();
+  await expect(owner.getByLabel("Candidate branch name")).toHaveValue("Free tier session");
+  await owner.getByRole("button", { name: "Continue" }).click();
   await owner.getByRole("button", { name: "Create session" }).click();
-  await expect(owner).toHaveURL(/\/session\/[0-9a-f-]+$/);
+  // A ready provision lands on the agent floor; the invite link lives on
+  // the lobby, so navigate back there for it.
+  await expect(owner).toHaveURL(/\/session\/[0-9a-f-]+\/floor$/);
+  await owner.goto(owner.url().replace(/\/floor$/, ""));
   const inviteUrl = await owner.getByLabel("Active invite link").inputValue();
   const invitePath = new URL(inviteUrl).pathname;
 

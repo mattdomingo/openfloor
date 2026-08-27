@@ -13,7 +13,9 @@ function shortId(value: string): string {
   return normalized.slice(0, 8);
 }
 
-function branchSlug(value: string): string {
+// Exported so the create-session dialog can render an honest live preview of
+// the branch that will be created, without a second slug implementation.
+export function branchSlug(value: string): string {
   const slug = value
     .normalize("NFKD")
     .replace(/[\u0300-\u036f]/g, "")

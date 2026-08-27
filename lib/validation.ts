@@ -8,7 +8,7 @@ import {
 } from "./provider-credentials";
 
 export type SessionInput = { title: string; objective: string | null };
-export type SessionCreateInput = SessionInput & { accountInstallationId: string; repositoryId: string };
+export type SessionCreateInput = SessionInput & { accountInstallationId: string; repositoryId: string; candidateName: string | null };
 export type ObjectiveInput = { objective: string | null };
 export type AgentInput = {
   name: string;
@@ -74,7 +74,15 @@ export function parseSessionCreateInput(value: unknown): SessionCreateInput | nu
   const accountInstallationId = input.accountInstallationId.trim();
   const repositoryId = input.repositoryId.trim();
   if (!accountInstallationId || accountInstallationId.length > 100 || !repositoryId || repositoryId.length > 100) return null;
-  return { ...session, accountInstallationId, repositoryId };
+  if (input.candidateName != null && typeof input.candidateName !== "string") return null;
+  // Same normalization as parseRepositoryCandidateInput's `name` — the two
+  // paths write the same repository_candidates.name column. Empty/absent
+  // falls back to the session title, so existing callers are unaffected.
+  const candidateNameRaw = typeof input.candidateName === "string"
+    ? input.candidateName.normalize("NFKC").trim().replace(/\s+/g, " ")
+    : "";
+  if (candidateNameRaw.length > 100) return null;
+  return { ...session, accountInstallationId, repositoryId, candidateName: candidateNameRaw || null };
 }
 
 export function parseObjectiveInput(value: unknown): ObjectiveInput | null {

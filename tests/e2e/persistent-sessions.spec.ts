@@ -26,14 +26,29 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
 
   await owner.goto("/home");
   await owner.getByRole("button", { name: "New session" }).click();
-  await owner.getByLabel("Session title").fill("Release coordination");
-  await owner.getByLabel(/Objective/).fill("Ship persistent multiplayer sessions");
+  // Step 1 of the create-session dialog: task + goal.
+  await owner.getByLabel("Task").fill("Release coordination");
+  await owner.getByLabel(/Goal/).fill("Ship persistent multiplayer sessions");
+  await owner.getByRole("button", { name: "Continue" }).click();
+  // Step 2: repository — the single test repository auto-selects, and the
+  // candidate branch name defaults to the task title until edited.
+  await expect(owner.getByLabel("Candidate branch name")).toHaveValue("Release coordination");
+  await owner.getByRole("button", { name: "Continue" }).click();
+  // Step 3: AI connection is optional — create without connecting one.
   await owner.getByRole("button", { name: "Create session" }).click();
-  await expect(owner).toHaveURL(/\/session\/[0-9a-f-]+$/);
+  // A ready provision lands straight on the agent floor; navigate back to
+  // the lobby to run this journey's lobby-state assertions before entering
+  // the floor again further down, same as every other flow in this test.
+  await expect(owner).toHaveURL(/\/session\/[0-9a-f-]+\/floor$/);
+  const createdSessionUrl = owner.url().replace(/\/floor$/, "");
+  await owner.goto(createdSessionUrl);
   await expect(owner.getByText("Floor ready")).toBeVisible();
   await expect(owner.getByRole("dialog")).toHaveCount(0);
   await expect(owner.getByText("openfloor-test/repository-integration")).toBeVisible();
-  await expect(owner.getByLabel("GitHub repository").getByText("Ready", { exact: true })).toBeVisible();
+  // RepositoryCard itself only shows a status chip for externally_modified
+  // (components/product/RepositoryCard.tsx) — the plain-ready state's
+  // "Ready" badge lives one level up, on "Prepare the workspace".
+  await expect(owner.locator(".setup-status[data-ready='true']")).toHaveText("Ready");
   await expect(owner.getByRole("heading", { name: "Release coordination", exact: true })).toBeVisible();
   await expect(owner.getByText("Ship persistent multiplayer sessions", { exact: true }).first()).toBeVisible();
   await expect(owner.getByText(/openfloor\/[0-9a-f]{8}\/candidate\/release-coordination-[0-9a-f]{8}/)).toBeVisible();

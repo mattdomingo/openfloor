@@ -54,12 +54,13 @@ export async function POST(request: Request) {
 
   const sessionId = crypto.randomUUID();
   const candidateId = crypto.randomUUID();
-  const branchName = openFloorBranchName(sessionId, "candidate", candidateId, input.title);
+  const candidateName = input.candidateName ?? input.title;
+  const branchName = openFloorBranchName(sessionId, "candidate", candidateId, candidateName);
   const created = await createSessionWithRepository(
     user.id,
     input,
     { ...resolved.repository, installationId: resolved.installationId },
-    { id: candidateId, branchName, baseSha },
+    { id: candidateId, branchName, baseSha, name: candidateName },
     sessionId,
   );
   const token = await signInviteId(created.inviteId, getInviteSigningSecret());
