@@ -17,10 +17,15 @@ test("returning through a different login method reaches the same session, not a
 
   await firstLogin.goto("/home");
   await firstLogin.getByRole("button", { name: "New session" }).click();
-  await firstLogin.getByLabel("Session title").fill("Session from the first login");
+  await firstLogin.getByLabel("Task").fill("Session from the first login");
+  await firstLogin.getByRole("button", { name: "Continue" }).click();
+  await expect(firstLogin.getByLabel("Candidate branch name")).toHaveValue("Session from the first login");
+  await firstLogin.getByRole("button", { name: "Continue" }).click();
   await firstLogin.getByRole("button", { name: "Create session" }).click();
-  await expect(firstLogin).toHaveURL(/\/session\/[0-9a-f-]+$/);
-  const sessionUrl = firstLogin.url();
+  // A ready provision lands on the agent floor; the lobby URL (what the
+  // rest of this test cares about) is that with /floor stripped.
+  await expect(firstLogin).toHaveURL(/\/session\/[0-9a-f-]+\/floor$/);
+  const sessionUrl = firstLogin.url().replace(/\/floor$/, "");
   await firstLoginContext.close();
 
   // Same mailbox, different case, different provider id — the Google-login
@@ -41,10 +46,13 @@ test("a genuine stranger with a different email still cannot open the session", 
   const owner = await ownerContext.newPage();
   await owner.goto("/home");
   await owner.getByRole("button", { name: "New session" }).click();
-  await owner.getByLabel("Session title").fill("Private to the owner");
+  await owner.getByLabel("Task").fill("Private to the owner");
+  await owner.getByRole("button", { name: "Continue" }).click();
+  await expect(owner.getByLabel("Candidate branch name")).toHaveValue("Private to the owner");
+  await owner.getByRole("button", { name: "Continue" }).click();
   await owner.getByRole("button", { name: "Create session" }).click();
-  await expect(owner).toHaveURL(/\/session\/[0-9a-f-]+$/);
-  const sessionUrl = owner.url();
+  await expect(owner).toHaveURL(/\/session\/[0-9a-f-]+\/floor$/);
+  const sessionUrl = owner.url().replace(/\/floor$/, "");
   await ownerContext.close();
 
   const strangerContext = await authenticatedContext(browser, "stranger-test-outsider", "stranger-test-outsider@example.com", "Outsider", "Example");

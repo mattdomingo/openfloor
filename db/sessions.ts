@@ -320,7 +320,7 @@ export async function createSessionWithRepository(
     private: boolean;
     defaultBranch: string;
   },
-  candidate: { id: string; branchName: string; baseSha: string },
+  candidate: { id: string; branchName: string; baseSha: string; name: string },
   sessionId: string,
   database = getDb(),
 ): Promise<{ session: SessionSummary; inviteId: string; connectionId: string }> {
@@ -349,7 +349,7 @@ export async function createSessionWithRepository(
        (id, session_id, connection_id, name, description, branch_name, base_branch, base_sha,
         status, created_by, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'creating', ?, ?, ?)`,
-    ).bind(candidate.id, sessionId, connectionId, input.title, input.objective ?? "", candidate.branchName,
+    ).bind(candidate.id, sessionId, connectionId, candidate.name, input.objective ?? "", candidate.branchName,
       repository.defaultBranch, candidate.baseSha, userId, now, now),
   ]);
   return {

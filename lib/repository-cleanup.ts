@@ -24,6 +24,7 @@ export async function deleteVerifiedBranches(
     try {
       const observed = await getRepositoryRefSha(config, installationId, repository, target.name);
       if (observed === target.sha) safe.push(target);
+      else console.error(`branch cleanup skipped ${target.name}: expected ${target.sha}, GitHub has ${observed}`);
     } catch (error) {
       if (error instanceof GitHubApiError && error.status === 404) alreadyMissing.push(target);
       else throw error;
@@ -50,8 +51,9 @@ export async function deleteVerifiedBranches(
         },
       });
       if (!result.success) throw new GitHubApiError("Trusted branch cleanup failed", 502);
-      const output = JSON.parse(result.stdout.trim()) as { deleted?: string[] };
+      const output = JSON.parse(result.stdout.trim()) as { deleted?: string[]; failed?: Array<{ name: string; error: string }> };
       deleted = safe.filter((target) => output.deleted?.includes(target.name));
+      for (const failure of output.failed ?? []) console.error(`branch cleanup push failed for ${failure.name}: ${failure.error}`);
     } finally {
       await sandbox.destroy().catch(() => undefined);
     }

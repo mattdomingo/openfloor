@@ -17,14 +17,14 @@ export default async function SessionPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ repo?: string; setup?: string }>;
+  searchParams: Promise<{ repo?: string }>;
 }) {
   const { id } = await params;
   const query = await searchParams;
-  return <AuthenticatedSession id={id} repoGateRequested={query.repo === "required"} setupRequested={query.setup === "1"} />;
+  return <AuthenticatedSession id={id} repoGateRequested={query.repo === "required"} />;
 }
 
-async function AuthenticatedSession({ id, repoGateRequested, setupRequested }: { id: string; repoGateRequested: boolean; setupRequested: boolean }) {
+async function AuthenticatedSession({ id, repoGateRequested }: { id: string; repoGateRequested: boolean }) {
   const user = await requireOnboardedUser(`/session/${encodeURIComponent(id)}`);
   const [session, members, removedMembers, repository, candidate, skills, mcpServers, quota, credentials] = await Promise.all([
     getSessionForMember(id, user.id),
@@ -43,5 +43,5 @@ async function AuthenticatedSession({ id, repoGateRequested, setupRequested }: {
   const disabled = disabledRunProviders();
   const enabledProviders = CREDENTIAL_PROVIDERS.filter((provider) => !disabled.has(provider));
   const lowHours = quota ? lowHoursRemaining(quota.seconds, PLAN_LIMITS[quota.plan].hours) : null;
-  return <SessionScreen user={user} session={session} initialMembers={members} initialRemovedMembers={removedMembers ?? []} initialRepository={repository} initialCandidate={candidate} enabledProviders={enabledProviders} initialCredentials={credentials} initialSkills={skills ?? []} initialMcpServers={mcpServers ?? []} repoGateRequested={repoGateRequested} setupRequested={setupRequested} lowHoursRemaining={lowHours} />;
+  return <SessionScreen user={user} session={session} initialMembers={members} initialRemovedMembers={removedMembers ?? []} initialRepository={repository} initialCandidate={candidate} enabledProviders={enabledProviders} initialCredentials={credentials} initialSkills={skills ?? []} initialMcpServers={mcpServers ?? []} repoGateRequested={repoGateRequested} lowHoursRemaining={lowHours} />;
 }

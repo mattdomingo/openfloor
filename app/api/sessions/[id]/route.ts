@@ -56,8 +56,18 @@ export async function DELETE(request: Request, { params }: { params: Promise<{ i
     if (abandonResult.outcome === "blocked") {
       return Response.json({ error: "The candidate is still being updated", runId: abandonResult.runId }, { status: 409 });
     }
+    // Deleting the session cascades away the repository_candidates row, so
+    // once that happens a failed branch delete can never be retried — the
+    // branch is orphaned on GitHub with no record left anywhere. If the
+    // owner explicitly asked for the branch to go and it didn't, stop here
+    // (candidate stays abandoned-but-live) so the dialog can offer a retry
+    // instead of silently losing the branch.
+    if (abandonResult.outcome === "abandoned" && candidateChoice === "delete-branch" && !abandonResult.branchDeleted) {
+      return Response.json({ error: "The candidate branch could not be deleted on GitHub", code: "branch_delete_failed", branch: abandonResult.branch }, { status: 409 });
+    }
     // "no_candidate" (already handled, or a benign race) and "abandoned"
-    // both fall through — deleteSession below re-checks live state itself.
+    // (branch deleted, or orphan was requested) both fall through —
+    // deleteSession below re-checks live state itself.
   }
 
   const result = await deleteSession(sessionId, user.id);

@@ -197,6 +197,29 @@
   justify-self: end;
 }
 
+/* GitHub's connect action and its connected installations share one box:
+   the installation list is a direct child of the row so it can span both
+   grid columns below the name/detail/button line above it. */
+.settings-shell .settings-github-installations {
+  grid-column: 1 / -1;
+  grid-row: 3;
+  display: grid;
+  gap: 8px;
+  margin: 6px 0 0;
+  padding: 10px 0 0;
+  border-top: 1px solid var(--edge);
+  list-style: none;
+}
+.settings-shell .settings-github-installation {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 2px 16px;
+}
+.settings-shell .settings-github-installation .settings-category-name { grid-row: 1; font-size: 13px; }
+.settings-shell .settings-github-installation .settings-category-detail { grid-row: 2; font-size: 12px; }
+.settings-shell .settings-github-installation .button { grid-row: 1 / span 2; justify-self: end; }
+
 /* ── Provider connection tiles ───────────────────────────────────────────
    The list is a grid so providers read side by side instead of as one tall
    column, and the open tile spans the full row — its instructions and key

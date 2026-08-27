@@ -131,7 +131,7 @@ async function onboardedUser(providerUserId: string, firstName: string, lastName
 }
 
 describe("session lobby setup rendering", () => {
-  it("opens the setup dialog for the owner, but the repo gate wins and non-owners never see it", async () => {
+  it("never renders a post-creation setup dialog — the lobby's own cards are the only setup surface", async () => {
     const owner = await onboardedUser("setup-render-owner", "Setup", "Owner");
     const created = await SELF.fetch("http://localhost/api/sessions", {
       method: "POST",
@@ -141,29 +141,28 @@ describe("session lobby setup rendering", () => {
     expect(created.status).toBe(201);
     const { session } = await created.json() as { session: { id: string } };
 
-    const setupHtml = await (await SELF.fetch(`http://localhost/session/${session.id}?setup=1`, { headers: owner.headers })).text();
-    expect(setupHtml).toContain("Floor ready");
-    expect(setupHtml).toContain("Session setup · Step");
-    // No hero "Setup" button — the dialog is the only entry point, opened by
-    // ?setup=1 right after creation or by the repository gate.
-    expect(setupHtml).not.toMatch(/<button[^>]*>Setup<\/button>/);
-    // Step 1 no longer offers repository selection, sync, or disconnect —
-    // those all happened at session creation.
-    expect(setupHtml).not.toContain("Sync repository");
-    expect(setupHtml).not.toContain(">Disconnect<");
-    expect(setupHtml).not.toContain(">Configure<");
-    // Step 2 is AI-provider-only; the generated-agent provider picker moved
-    // to the floor toolbar.
-    expect(setupHtml).not.toContain("Generated-agent provider");
+    // ?setup=1 is a retired query contract (setup now happens in
+    // CreateSessionDialog on /home, before the session exists) — the server
+    // no longer reads it, so passing it changes nothing.
+    const ownerHtml = await (await SELF.fetch(`http://localhost/session/${session.id}?setup=1`, { headers: owner.headers })).text();
+    expect(ownerHtml).toContain("Floor ready");
+    expect(ownerHtml).not.toContain("Session setup · Step");
+    // The lobby's RepositoryCard no longer offers repository selection,
+    // sync, or disconnect — those all happen at session creation.
+    expect(ownerHtml).not.toContain("Sync repository");
+    expect(ownerHtml).not.toContain(">Disconnect<");
+    expect(ownerHtml).not.toContain(">Configure<");
+    // The generated-agent provider picker moved to the floor toolbar.
+    expect(ownerHtml).not.toContain("Generated-agent provider");
 
-    const gateHtml = await (await SELF.fetch(`http://localhost/session/${session.id}?repo=required&setup=1`, { headers: owner.headers })).text();
+    const gateHtml = await (await SELF.fetch(`http://localhost/session/${session.id}?repo=required`, { headers: owner.headers })).text();
     expect(gateHtml).toContain("Floor ready");
     expect(gateHtml).not.toContain("Session setup · Step");
 
     const member = await onboardedUser("setup-render-member", "Setup", "Member");
     await env.DB.prepare("INSERT INTO session_members (session_id, user_id, role, joined_at) VALUES (?, ?, 'member', ?)")
       .bind(session.id, member.userId, Date.now()).run();
-    const memberHtml = await (await SELF.fetch(`http://localhost/session/${session.id}?setup=1`, { headers: member.headers })).text();
+    const memberHtml = await (await SELF.fetch(`http://localhost/session/${session.id}`, { headers: member.headers })).text();
     expect(memberHtml).not.toContain("Session setup · Step");
     expect(memberHtml).toContain("Member access");
   });
@@ -184,6 +183,37 @@ describe("session lobby setup rendering", () => {
     expect(lobbyHtml).toContain("Imported skills");
     expect(lobbyHtml).toContain("Connected tools");
     expect(lobbyHtml).not.toMatch(/<button[^>]*>Setup<\/button>/);
+  });
+
+  it("names the candidate branch from an owner-supplied candidateName, distinct from the session title", async () => {
+    const owner = await onboardedUser("candidate-name-owner", "Candidate", "Owner");
+    const created = await SELF.fetch("http://localhost/api/sessions", {
+      method: "POST",
+      headers: { ...owner.headers, "content-type": "application/json", accept: "application/json" },
+      body: JSON.stringify({
+        title: "Q3 planning",
+        objective: null,
+        candidateName: "Checkout revamp",
+        ...await testRepositorySelection(owner.headers),
+      }),
+    });
+    expect(created.status).toBe(201);
+    const body = await created.json() as { session: { id: string }; candidate: { name: string; branchName: string } | null };
+    expect(body.candidate?.name).toBe("Checkout revamp");
+    expect(body.candidate?.branchName).toMatch(new RegExp(`^openfloor/${body.session.id.replace(/-/g, "").slice(0, 8)}/candidate/checkout-revamp-[0-9a-f]{8}$`));
+  });
+
+  it("falls back the candidate branch name to the session title when candidateName is omitted", async () => {
+    const owner = await onboardedUser("candidate-name-fallback-owner", "Candidate", "Fallback");
+    const created = await SELF.fetch("http://localhost/api/sessions", {
+      method: "POST",
+      headers: { ...owner.headers, "content-type": "application/json", accept: "application/json" },
+      body: JSON.stringify({ title: "Release coordination", objective: null, ...await testRepositorySelection(owner.headers) }),
+    });
+    expect(created.status).toBe(201);
+    const body = await created.json() as { candidate: { name: string; branchName: string } | null };
+    expect(body.candidate?.name).toBe("Release coordination");
+    expect(body.candidate?.branchName).toMatch(/\/candidate\/release-coordination-[0-9a-f]{8}$/);
   });
 });
 

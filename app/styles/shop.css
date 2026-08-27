@@ -1090,9 +1090,8 @@
 .session-lobby-shell .setup-status { flex: none; padding: 7px 10px; border: 1px solid #b5761f; border-radius: var(--radius-sm); color: var(--attention-ink); font: 650 10px var(--mono); letter-spacing: .08em; text-transform: uppercase; }
 .session-lobby-shell .setup-status[data-ready="true"] { border-color: #25805f; color: var(--ready-ink); }
 /* 2x2 tile grid: GitHub connection, imported skills, connected tools, and
-   AI connection all live in the same grid now (the two setup-dialog
-   placeholders below share the GitHub/AI-connection cells when the setup
-   dialog is open, so those cells stay wrapped in .floor-setup-tile). */
+   AI connection all live in the same grid — GitHub/AI-connection stay
+   wrapped in .floor-setup-tile purely for consistent tile spacing. */
 .session-lobby-shell .floor-setup-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px; padding: 22px; }
 .session-lobby-shell .floor-setup-grid > * { min-width: 0; }
 .session-lobby-shell .floor-setup-grid .action-card { border-color: var(--edge); border-radius: var(--radius-md); background: var(--shop-2); box-shadow: none; }
@@ -1148,29 +1147,29 @@
 .session-lobby-shell .settings-category-row { border-color: var(--rule); border-radius: var(--radius-sm); background: var(--shop-2); }
 .session-lobby-shell .settings-category-name { color: var(--ink); }
 .session-lobby-shell .settings-category-detail { color: var(--muted); }
-.session-lobby-shell .setup-dialog-active { padding: 28px; border: 1px dashed var(--rule); border-radius: var(--radius-sm); color: var(--steel); text-align: center; }
 
 .session-lobby-shell .lobby-bottom-controls { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 20px 24px; background: transparent; }
 .session-lobby-shell .lobby-bottom-controls p:last-child { margin-top: 5px; color: var(--muted); font-size: 13px; }
 
-.session-lobby-shell .session-setup-dialog { width: min(940px, calc(100vw - 32px)); max-width: 940px; max-height: calc(100vh - 32px); }
-.session-lobby-shell .setup-dialog-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 30px; }
-.session-lobby-shell .setup-step-list { display: flex; gap: 24px; margin: 0; padding: 0; list-style: none; }
-.session-lobby-shell .setup-step-list li { display: grid; align-content: start; gap: 4px; padding-top: 6px; border-top: 2px solid var(--rule); color: var(--steel); font: 650 10px var(--mono); letter-spacing: .07em; text-transform: uppercase; }
-.session-lobby-shell .setup-step-list li[data-current="true"] { border-color: var(--accent-ink); color: var(--ink); }
-.session-lobby-shell .setup-step-list li[data-complete="true"] { border-color: #25805f; }
-.session-lobby-shell .setup-step-list span { font-size: 9px; font-weight: 500; }
-.session-lobby-shell .setup-dialog-body { overflow-y: auto; padding: 22px; }
-.session-lobby-shell .setup-dialog-body > .repository-card { border-radius: var(--radius-md); border-color: var(--edge); background: var(--shop-2); box-shadow: none; }
-.session-lobby-shell .setup-credentials > p { margin-bottom: 20px; color: var(--muted); line-height: 1.6; }
-.session-lobby-shell .provider-credential-row .settings-category-name { display: grid; gap: 3px; }
-.session-lobby-shell .provider-credential-row .settings-category-name small { color: var(--steel); font: 500 9px var(--mono); text-transform: none; }
-.session-lobby-shell .provider-credential-row form { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 10px; }
-.session-lobby-shell .provider-credential-row input { background: var(--sheet); }
-.session-lobby-shell .provider-credential-row .form-actions { align-self: end; }
-.session-lobby-shell .provider-credential-row .form-error { grid-column: 1 / -1; }
-.session-lobby-shell .setup-dialog-foot { justify-content: space-between; }
-.session-lobby-shell .setup-dialog-nav { display: flex; gap: 10px; }
+/* Shared by HomeScreen's CreateSessionDialog (.shop-shell, three steps —
+   session, repository/candidate, AI connection) and, for the credential-row
+   rules only, the lobby's ModelConnectionCard (.session-lobby-shell) —
+   unscoped so both shells pick it up. */
+.setup-dialog-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 30px; }
+.setup-step-list { display: flex; gap: 24px; margin: 0; padding: 0; list-style: none; }
+.setup-step-list li { display: grid; align-content: start; gap: 4px; padding-top: 6px; border-top: 2px solid var(--rule); color: var(--steel); font: 650 10px var(--mono); letter-spacing: .07em; text-transform: uppercase; }
+.setup-step-list li[data-current="true"] { border-color: var(--accent-ink); color: var(--ink); }
+.setup-step-list li[data-complete="true"] { border-color: #25805f; }
+.setup-step-list span { font-size: 9px; font-weight: 500; }
+.setup-credentials > p { margin-bottom: 20px; color: var(--muted); line-height: 1.6; }
+.provider-credential-row .settings-category-name { display: grid; gap: 3px; }
+.provider-credential-row .settings-category-name small { color: var(--steel); font: 500 9px var(--mono); text-transform: none; }
+.provider-credential-row form { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 10px; }
+.provider-credential-row input { background: var(--sheet); }
+.provider-credential-row .form-actions { align-self: end; }
+.provider-credential-row .form-error { grid-column: 1 / -1; }
+.setup-dialog-foot { justify-content: space-between; }
+.setup-dialog-nav { display: flex; gap: 10px; }
 
 @media (max-width: 860px) {
   .session-lobby-shell .lobby-team-access,
@@ -1187,20 +1186,22 @@
   .session-lobby-shell .member-list li > .button { grid-column: 2 / -1; justify-self: start; }
   .session-lobby-shell .access-lock-row,
   .session-lobby-shell .floor-setup-heading,
-  .session-lobby-shell .lobby-bottom-controls,
-  .session-lobby-shell .setup-dialog-head { align-items: flex-start; flex-direction: column; display: flex; }
+  .session-lobby-shell .lobby-bottom-controls { align-items: flex-start; flex-direction: column; display: flex; }
   .session-lobby-shell .floor-setup-grid { padding-inline: 14px; }
-  .session-lobby-shell .setup-step-list { width: 100%; }
-  .session-lobby-shell .setup-step-list li { flex: 1; }
-  .session-lobby-shell .provider-credential-row form { grid-template-columns: 1fr; }
-  .session-lobby-shell .setup-dialog-foot { align-items: stretch; flex-direction: column; }
-  .session-lobby-shell .setup-dialog-nav { justify-content: flex-end; }
+  .setup-dialog-head { align-items: flex-start; flex-direction: column; display: flex; }
+  .setup-step-list { width: 100%; }
+  .setup-step-list li { flex: 1; }
+  .provider-credential-row form { grid-template-columns: 1fr; }
+  .setup-dialog-foot { align-items: stretch; flex-direction: column; }
+  .setup-dialog-nav { justify-content: flex-end; }
 }
 
-/* ── Create-session dialog (HomeScreen's centered modal) ─────────────── */
+/* ── Create-session dialog (HomeScreen's centered modal) ───────────────
+   Widened from the original single-step 520px to fit the step-list header
+   and AI-connection provider rows across all three steps. */
 
-.shop-shell .create-dialog { width: min(520px, calc(100vw - 48px)); }
-.create-dialog-body { display: grid; gap: var(--space-5); }
+.shop-shell .create-dialog { width: min(680px, calc(100vw - 48px)); max-height: calc(100vh - 32px); }
+.create-dialog-body { display: grid; gap: var(--space-5); overflow-y: auto; }
 .create-dialog-body label { display: grid; gap: var(--space-2); font-size: var(--text-sm); font-weight: 700; }
 .create-dialog-body label > span { display: flex; justify-content: space-between; }
 .create-dialog-body label em { color: var(--text-tertiary); font-style: normal; font-weight: 500; }

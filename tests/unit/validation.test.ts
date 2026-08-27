@@ -15,6 +15,7 @@ import {
   parseRoutingSettingsInput,
   parseConflictInputRequest,
   parseConflictAnswersInput,
+  parseSessionCreateInput,
   parseSessionInput,
 } from "@/lib/validation";
 
@@ -32,6 +33,31 @@ describe("session input validation", () => {
     expect(parseSessionInput({ title: "  " })).toBeNull();
     expect(parseSessionInput({ title: "x".repeat(101) })).toBeNull();
     expect(parseSessionInput({ title: "Room", objective: "x".repeat(2001) })).toBeNull();
+  });
+});
+
+describe("session create input validation", () => {
+  const base = { title: "Launch room", objective: null, accountInstallationId: "install-1", repositoryId: "repo-1" };
+
+  it("normalizes a supplied candidate name", () => {
+    expect(parseSessionCreateInput({ ...base, candidateName: "  Checkout   revamp  " })).toEqual({
+      title: "Launch room",
+      objective: null,
+      accountInstallationId: "install-1",
+      repositoryId: "repo-1",
+      candidateName: "Checkout revamp",
+    });
+  });
+
+  it("defaults candidateName to null when absent, empty, or whitespace-only", () => {
+    expect(parseSessionCreateInput(base)?.candidateName).toBeNull();
+    expect(parseSessionCreateInput({ ...base, candidateName: "" })?.candidateName).toBeNull();
+    expect(parseSessionCreateInput({ ...base, candidateName: "   " })?.candidateName).toBeNull();
+  });
+
+  it("rejects a candidate name over 100 characters or the wrong type", () => {
+    expect(parseSessionCreateInput({ ...base, candidateName: "x".repeat(101) })).toBeNull();
+    expect(parseSessionCreateInput({ ...base, candidateName: 42 })).toBeNull();
   });
 });
 

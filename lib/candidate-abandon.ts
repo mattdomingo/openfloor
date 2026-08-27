@@ -60,13 +60,14 @@ export async function abandonSessionCandidate(
       ];
       cleanup = await deleteVerifiedBranches(config, context.installationId, repository, targets, context.candidateId);
       branchDeleted = cleanup.candidateDeleted;
-    } catch {
+    } catch (error) {
       // Best-effort: the branch is left orphaned on GitHub; the candidate is
       // still abandoned in D1 below so the caller (session/account delete,
       // or an explicit Review abandon) never dead-ends on any optional
       // cleanup failure. deleteVerifiedBranches can reject before GitHub
       // returns a typed error (configuration, token, Sandbox, or parsing),
       // and every such case is equally non-authoritative for abandonment.
+      console.error(`candidate branch cleanup failed for ${context.candidateBranch} (candidate ${context.candidateId})`, error);
     }
   }
 

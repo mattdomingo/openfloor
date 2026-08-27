@@ -21,7 +21,6 @@ import { ModelConnectionCard } from "./ModelConnectionCard";
 import type { SessionMcpServerSummary } from "@/db/mcp-servers";
 import type { SessionSkillSummary } from "@/db/skills";
 import { WaveField } from "@/app/entry-wave";
-import { ProviderCredentials } from "./ProviderCredentials";
 
 export function SessionScreen({
   user,
@@ -35,7 +34,6 @@ export function SessionScreen({
   initialSkills,
   initialMcpServers,
   repoGateRequested,
-  setupRequested,
   lowHoursRemaining,
 }: {
   user: AppUser;
@@ -49,7 +47,6 @@ export function SessionScreen({
   initialSkills: SessionSkillSummary[];
   initialMcpServers: SessionMcpServerSummary[];
   repoGateRequested: boolean;
-  setupRequested: boolean;
   /* Seconds of plan time left, read once on the server and only when the
      owner is already inside the warning band. It ages while the page stays
      open, which is fine in one direction: the number only ever overstates
@@ -83,10 +80,6 @@ export function SessionScreen({
   const repositoryReady = isRepositoryReadyForFloor(repository, candidate);
   const floorAccessible = endedAt == null && repositoryReady;
   const [repoGateOpen, setRepoGateOpen] = useState(repoGateRequested && !repositoryReady);
-  const [setupOpen, setSetupOpen] = useState(
-    session.role === "owner" && endedAt == null && !repoGateRequested && setupRequested,
-  );
-  const [setupStep, setSetupStep] = useState<1 | 2>(1);
 
   function enterAgentFloor(event: MouseEvent<HTMLAnchorElement>) {
     if (floorAccessible) return;
@@ -99,16 +92,12 @@ export function SessionScreen({
     setCandidate(state.candidate);
   }
 
-  function closeSetup() {
-    setSetupOpen(false);
-    setSetupStep(1);
-    router.replace(`/session/${session.id}`);
-  }
-
+  // Setup now happens before creation (CreateSessionDialog, on /home), so the
+  // repository gate's only job here is to send the owner to the lobby's own
+  // RepositoryCard, already rendered below in "Prepare the workspace".
   function goToRepositorySetup() {
     setRepoGateOpen(false);
-    setSetupStep(1);
-    setSetupOpen(true);
+    document.getElementById("floor-setup-title")?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
   const refreshMembers = useCallback(async () => {
@@ -322,8 +311,7 @@ export function SessionScreen({
             </div>
             <div className="floor-setup-grid">
               <div className="floor-setup-tile">
-                {!setupOpen && <RepositoryCard sessionId={session.id} sessionTitle={session.title} sessionObjective={session.objective} role={session.role} initialRepository={repository} initialCandidate={candidate} onStateChange={updateRepositoryState} />}
-                {setupOpen && <p className="setup-dialog-active">Repository setup is open in the dialog.</p>}
+                <RepositoryCard sessionId={session.id} sessionTitle={session.title} sessionObjective={session.objective} role={session.role} initialRepository={repository} initialCandidate={candidate} onStateChange={updateRepositoryState} />
               </div>
               {enabledProviders.some(usesClaudeRunner) && (
                 <>
@@ -332,8 +320,7 @@ export function SessionScreen({
                 </>
               )}
               <div className="floor-setup-tile">
-                {!setupOpen && <ModelConnectionCard initialCredentials={initialCredentials} providers={enabledProviders} />}
-                {setupOpen && <p className="setup-dialog-active">AI connection setup is open in the dialog.</p>}
+                <ModelConnectionCard initialCredentials={initialCredentials} providers={enabledProviders} />
               </div>
             </div>
           </section>
@@ -368,97 +355,7 @@ export function SessionScreen({
           onGoToSetup={goToRepositorySetup}
         />
       )}
-      {setupOpen && session.role === "owner" && endedAt == null && (
-        <SessionSetupDialog
-          session={session}
-          repository={repository}
-          candidate={candidate}
-          enabledProviders={enabledProviders}
-          initialCredentials={initialCredentials}
-          step={setupStep}
-          onStepChange={setSetupStep}
-          onRepositoryStateChange={updateRepositoryState}
-          onClose={closeSetup}
-        />
-      )}
     </main>
-  );
-}
-
-// The two things the app actually requires before anyone can enter the live
-// floor: GitHub repository access (step 1) and an AI connection (step 2).
-// Generated-agent provider selection is not part of this — it's a floor
-// toolbar setting (AgentFloor.tsx), not a setup gate.
-function SessionSetupDialog({
-  session,
-  repository,
-  candidate,
-  enabledProviders,
-  initialCredentials,
-  step,
-  onStepChange,
-  onRepositoryStateChange,
-  onClose,
-}: {
-  session: SessionSummary;
-  repository: RepositoryConnection | null;
-  candidate: RepositoryCandidate | null;
-  enabledProviders: CredentialProvider[];
-  initialCredentials: ProviderCredentialSummary[];
-  step: 1 | 2;
-  onStepChange: (step: 1 | 2) => void;
-  onRepositoryStateChange: (state: { repository: RepositoryConnection | null; candidate: RepositoryCandidate | null }) => void;
-  onClose: () => void;
-}) {
-  const { dismiss, dialogProps } = useDialogDismiss(onClose);
-  const ready = isRepositoryReadyForFloor(repository, candidate);
-
-  return (
-    <dialog className="dialog session-setup-dialog" {...dialogProps} aria-labelledby="session-setup-title">
-      <div className="dialog-head setup-dialog-head">
-        <div className="dialog-title">
-          <p className="eyebrow">Session setup · Step {step} of 2</p>
-          <h2 id="session-setup-title">{step === 1 ? "Connect the workspace" : "Connect an AI provider"}</h2>
-          <p>{step === 1 ? "A ready repository is required before anyone can enter the live agent floor." : "At least one connected provider is required to run agents. You can add more later in Settings."}</p>
-        </div>
-        <ol className="setup-step-list" aria-label="Setup progress">
-          <li data-current={step === 1} data-complete={ready}>01 Repository <span>Required</span></li>
-          <li data-current={step === 2}>02 AI connection <span>Required</span></li>
-        </ol>
-      </div>
-      <div className="dialog-body setup-dialog-body">
-        {step === 1 ? (
-          <RepositoryCard
-            sessionId={session.id}
-            sessionTitle={session.title}
-            sessionObjective={session.objective}
-            role={session.role}
-            initialRepository={repository}
-            initialCandidate={candidate}
-            onStateChange={onRepositoryStateChange}
-          />
-        ) : (
-          <section className="setup-credentials" aria-label="AI connection">
-            <p>
-              A run uses the key connected by that agent&rsquo;s owner, then the configured server key. If neither is
-              available, the run refuses clearly. Stored values are encrypted and never returned to the browser.
-            </p>
-            <ProviderCredentials initialCredentials={initialCredentials} providers={enabledProviders} showAgentDefaults />
-          </section>
-        )}
-      </div>
-      <div className="dialog-foot setup-dialog-foot">
-        <button type="button" className="button" data-variant="quiet" onClick={dismiss}>Set up later</button>
-        <span className="setup-dialog-nav">
-          {step === 2 && <button type="button" className="button" onClick={() => onStepChange(1)}>Back</button>}
-          {step === 1 ? (
-            <button type="button" className="button" data-variant="primary" onClick={() => onStepChange(2)}>Continue to AI connection</button>
-          ) : (
-            <button type="button" className="button" data-variant="primary" onClick={dismiss}>Finish setup</button>
-          )}
-        </span>
-      </div>
-    </dialog>
   );
 }
 
