@@ -1,10 +1,11 @@
 import { requireOnboardedUser } from "@/lib/server-auth";
 import { getUsageForUser } from "@/db/sessions";
 import { listProviderCredentials } from "@/db/provider-credentials";
-import { isSettingsSection, SettingsScreen } from "@/components/product/SettingsScreen";
+import { SettingsScreen } from "@/components/product/SettingsScreen";
 import { getBillingSummary } from "@/db/billing";
 import { resolveSettingsOrigin } from "./origin";
 import { listUserGitHubInstallations } from "@/db/github-installations";
+import { isSettingsSection } from "@/lib/settings-plan";
 
 export const dynamic = "force-dynamic";
 

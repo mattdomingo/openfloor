@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { WaveField } from "@/app/entry-wave";
 import { BASE_PATH } from "@/components/basePath";
 import { AvatarCropper, AvatarFileButton } from "@/components/product/AvatarCropper";
@@ -10,12 +10,12 @@ import { ACCEPTED_AVATAR_TYPES, MAX_AVATAR_BYTES } from "@/lib/avatar-constraint
 import { initialsFromParts } from "@/lib/display-name";
 import { PAID_PLAN_CATALOG, PLAN_LIMITS, planLimitsSummary, type PaidPlan } from "@/lib/plans";
 import { CREDENTIAL_PROVIDERS, type ProviderCredentialSummary } from "@/lib/provider-credentials";
+import type { OnboardingStep } from "@/lib/onboarding-plan";
 import { Brand } from "./Brand";
 import { ProviderCredentials } from "./ProviderCredentials";
 import type { UserGitHubInstallationSummary } from "@/lib/session-types";
 
 type OnboardingPlan = "free" | PaidPlan;
-type OnboardingStep = 1 | 2 | 3 | 4;
 
 function splitName(fullName: string | null): { firstName: string; lastName: string } {
   const parts = (fullName ?? "").trim().split(/\s+/).filter(Boolean);
@@ -26,7 +26,7 @@ function splitName(fullName: string | null): { firstName: string; lastName: stri
 
 export function OnboardingScreen({
   fullName, firstName: savedFirstName, lastName: savedLastName, githubHandle: savedGithubHandle, returnTo, inviteSignup,
-  githubInstallations: initialGithubInstallations, githubConnected, initialCredentials,
+  githubInstallations: initialGithubInstallations, githubConnected, initialCredentials, initialStep,
 }: {
   fullName: string | null;
   firstName: string | null;
@@ -37,10 +37,26 @@ export function OnboardingScreen({
   githubInstallations: UserGitHubInstallationSummary[];
   githubConnected: boolean;
   initialCredentials: ProviderCredentialSummary[];
+  initialStep: OnboardingStep | null;
 }) {
   const router = useRouter();
+  const pathname = usePathname();
   const initial = splitName(fullName);
-  const [step, setStep] = useState<OnboardingStep>(githubConnected ? 2 : 1);
+  // The explicit `?step=` a refresh carries wins; otherwise fall back to
+  // whether GitHub is actually connected (from real installation data, not
+  // just the one-shot redirect flag) so at minimum a plain reload of step 2
+  // doesn't bounce back to step 1 either.
+  const [step, setStep] = useState<OnboardingStep>(initialStep ?? (githubConnected ? 2 : 1));
+
+  // Every step change replaces `step` in the URL so a refresh — or the one
+  // someone reaches for when a provider-key "Connect" looks stuck — lands
+  // back on the step it was taken from, not always step 1.
+  function changeStep(next: OnboardingStep) {
+    setStep(next);
+    const params = new URLSearchParams(window.location.search);
+    params.set("step", String(next));
+    router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+  }
   const [firstName, setFirstName] = useState(savedFirstName ?? initial.firstName);
   const [lastName, setLastName] = useState(savedLastName ?? initial.lastName);
   const githubHandle = savedGithubHandle ?? "";
@@ -121,7 +137,7 @@ export function OnboardingScreen({
       return;
     }
     setSubmitting(false);
-    setStep(2);
+    changeStep(2);
   }
 
   async function connectGitHub() {
@@ -148,11 +164,11 @@ export function OnboardingScreen({
       return;
     }
     if (step === 2) {
-      if (githubReady) setStep(3);
+      if (githubReady) changeStep(3);
       return;
     }
     if (step === 3) {
-      setStep(4);
+      changeStep(4);
       return;
     }
     if (!ready || submitting) return;
@@ -253,9 +269,9 @@ export function OnboardingScreen({
               ) : <p className="form-note">GitHub access is required before account setup can finish.</p>}
               {submitError && <p className="form-error" role="alert">{submitError}</p>}
               <div className="form-actions onboarding-plan-actions">
-                <button type="button" className="button" data-variant="quiet" disabled={submitting} onClick={() => setStep(1)}>Back</button>
+                <button type="button" className="button" data-variant="quiet" disabled={submitting} onClick={() => changeStep(1)}>Back</button>
                 {!githubReady && <button type="button" className="button" data-variant="primary" data-size="lg" disabled={submitting} onClick={() => void connectGitHub()}>{submitting ? "Opening…" : "Connect GitHub"}</button>}
-                {githubReady && <button type="button" className="button" data-variant="primary" data-size="lg" onClick={() => setStep(3)}>Continue</button>}
+                {githubReady && <button type="button" className="button" data-variant="primary" data-size="lg" onClick={() => changeStep(3)}>Continue</button>}
               </div>
             </section>
 
@@ -267,8 +283,8 @@ export function OnboardingScreen({
               </div>
               <ProviderCredentials initialCredentials={initialCredentials} providers={[...CREDENTIAL_PROVIDERS]} />
               <div className="form-actions onboarding-plan-actions">
-                <button type="button" className="button" data-variant="quiet" disabled={submitting} onClick={() => setStep(2)}>Back</button>
-                <button type="button" className="button" data-variant="primary" data-size="lg" onClick={() => setStep(4)}>Continue</button>
+                <button type="button" className="button" data-variant="quiet" disabled={submitting} onClick={() => changeStep(2)}>Back</button>
+                <button type="button" className="button" data-variant="primary" data-size="lg" onClick={() => changeStep(4)}>Continue</button>
               </div>
             </section>
 
@@ -317,7 +333,7 @@ export function OnboardingScreen({
 
               {submitError && <p className="form-error" role="alert">{submitError}</p>}
               <div className="form-actions onboarding-plan-actions">
-                <button type="button" className="button" data-variant="quiet" disabled={submitting} onClick={() => setStep(3)}>Back</button>
+                <button type="button" className="button" data-variant="quiet" disabled={submitting} onClick={() => changeStep(3)}>Back</button>
                 <button type="submit" className="button" data-variant="primary" data-size="lg" disabled={!ready || submitting}>{submitting ? <><Spinner />Saving…</> : plan === "free" ? "Finish setup" : "Continue to payment"}</button>
               </div>
             </section>

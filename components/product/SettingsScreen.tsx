@@ -18,15 +18,11 @@ import {
   type ProviderCredentialSummary,
 } from "@/lib/provider-credentials";
 import type { AppUser, UserGitHubInstallationSummary } from "@/lib/session-types";
+import type { SettingsSection } from "@/lib/settings-plan";
 import { WaveField } from "@/app/entry-wave";
 import { AppHeader } from "./AppHeader";
 import { ProviderCredentials } from "./ProviderCredentials";
 
-export type SettingsSection = "profile" | "plan" | "connections" | "preferences" | "danger";
-const SETTINGS_SECTION_VALUES: SettingsSection[] = ["profile", "plan", "connections", "preferences", "danger"];
-export function isSettingsSection(value: string | undefined): value is SettingsSection {
-  return SETTINGS_SECTION_VALUES.includes(value as SettingsSection);
-}
 type Usage = { plan: Plan; planStatus: PlanStatus; effectivePlan: Plan; seconds: number; limitHours: number; limitSeats: number };
 type Billing = { customerId: string | null; subscriptionId: string | null; plan: PaidPlan | null; quantity: number | null; stripeStatus: string | null; currentPeriodEnd: number | null; cancelAtPeriodEnd: boolean };
 type BlockedSession = { id: string; title: string; reason: "integration_in_progress" };
