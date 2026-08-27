@@ -1089,8 +1089,14 @@
 .session-lobby-shell .floor-setup-heading > div > p:last-child { margin-top: 8px; color: var(--muted); line-height: 1.55; }
 .session-lobby-shell .setup-status { flex: none; padding: 7px 10px; border: 1px solid #b5761f; border-radius: var(--radius-sm); color: var(--attention-ink); font: 650 10px var(--mono); letter-spacing: .08em; text-transform: uppercase; }
 .session-lobby-shell .setup-status[data-ready="true"] { border-color: #25805f; color: var(--ready-ink); }
-.session-lobby-shell .repository-card-slot { padding: 22px; }
-.session-lobby-shell .repository-card-slot .repository-card { padding: 24px; border-color: var(--edge); border-radius: var(--radius-md); background: var(--shop-2); box-shadow: none; }
+/* 2x2 tile grid: GitHub connection, imported skills, connected tools, and
+   AI connection all live in the same grid now (the two setup-dialog
+   placeholders below share the GitHub/AI-connection cells when the setup
+   dialog is open, so those cells stay wrapped in .floor-setup-tile). */
+.session-lobby-shell .floor-setup-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px; padding: 22px; }
+.session-lobby-shell .floor-setup-grid > * { min-width: 0; }
+.session-lobby-shell .floor-setup-grid .action-card { border-color: var(--edge); border-radius: var(--radius-md); background: var(--shop-2); box-shadow: none; }
+.session-lobby-shell .floor-setup-grid .repository-card { padding: 24px; }
 .session-lobby-shell .button,
 .session-lobby-shell .button[data-size="sm"],
 .session-lobby-shell .button[data-variant="primary"],
@@ -1138,8 +1144,6 @@
 .session-lobby-shell .repository-checks { color: var(--muted); }
 .session-lobby-shell .repository-summary span { color: var(--steel); }
 .session-lobby-shell .repository-checks { padding: 14px 0; border-bottom: 1px solid var(--rule); }
-.session-lobby-shell .floor-setup-secondary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px; padding: 0 22px 22px; }
-.session-lobby-shell .floor-setup-secondary .action-card { min-width: 0; border-color: var(--edge); border-radius: var(--radius-md); background: var(--shop-2); box-shadow: none; }
 .session-lobby-shell .settings-category-list { margin-top: 18px; border-color: var(--rule); }
 .session-lobby-shell .settings-category-row { border-color: var(--rule); border-radius: var(--radius-sm); background: var(--shop-2); }
 .session-lobby-shell .settings-category-name { color: var(--ink); }
@@ -1170,7 +1174,7 @@
 
 @media (max-width: 860px) {
   .session-lobby-shell .lobby-team-access,
-  .session-lobby-shell .floor-setup-secondary { grid-template-columns: 1fr; }
+  .session-lobby-shell .floor-setup-grid { grid-template-columns: 1fr; }
   .session-lobby-shell .lobby-hero { align-items: flex-start; flex-direction: column; }
 }
 
@@ -1185,8 +1189,7 @@
   .session-lobby-shell .floor-setup-heading,
   .session-lobby-shell .lobby-bottom-controls,
   .session-lobby-shell .setup-dialog-head { align-items: flex-start; flex-direction: column; display: flex; }
-  .session-lobby-shell .repository-card-slot,
-  .session-lobby-shell .floor-setup-secondary { padding-inline: 14px; }
+  .session-lobby-shell .floor-setup-grid { padding-inline: 14px; }
   .session-lobby-shell .setup-step-list { width: 100%; }
   .session-lobby-shell .setup-step-list li { flex: 1; }
   .session-lobby-shell .provider-credential-row form { grid-template-columns: 1fr; }

@@ -320,19 +320,21 @@ export function SessionScreen({
               <div><p className="eyebrow">Floor setup</p><h2 id="floor-setup-title">Prepare the workspace</h2><p>Repository access and an AI connection are required for the live floor. Skills and MCP servers are optional.</p></div>
               <span className="setup-status" data-ready={repositoryReady}>{repositoryReady ? "Ready" : "Repository required"}</span>
             </div>
-            <div className="repository-card-slot">
-              {!setupOpen && <RepositoryCard sessionId={session.id} sessionTitle={session.title} sessionObjective={session.objective} role={session.role} initialRepository={repository} initialCandidate={candidate} onStateChange={updateRepositoryState} />}
-              {setupOpen && <p className="setup-dialog-active">Repository setup is open in the dialog.</p>}
-            </div>
-            {enabledProviders.some(usesClaudeRunner) && (
-              <div className="floor-setup-secondary">
-                <SkillsCard sessionId={session.id} role={session.role} initialSkills={initialSkills} />
-                <McpServersCard sessionId={session.id} role={session.role} initialServers={initialMcpServers} />
+            <div className="floor-setup-grid">
+              <div className="floor-setup-tile">
+                {!setupOpen && <RepositoryCard sessionId={session.id} sessionTitle={session.title} sessionObjective={session.objective} role={session.role} initialRepository={repository} initialCandidate={candidate} onStateChange={updateRepositoryState} />}
+                {setupOpen && <p className="setup-dialog-active">Repository setup is open in the dialog.</p>}
               </div>
-            )}
-            <div className="repository-card-slot">
-              {!setupOpen && <ModelConnectionCard initialCredentials={initialCredentials} providers={enabledProviders} />}
-              {setupOpen && <p className="setup-dialog-active">AI connection setup is open in the dialog.</p>}
+              {enabledProviders.some(usesClaudeRunner) && (
+                <>
+                  <SkillsCard sessionId={session.id} role={session.role} initialSkills={initialSkills} />
+                  <McpServersCard sessionId={session.id} role={session.role} initialServers={initialMcpServers} />
+                </>
+              )}
+              <div className="floor-setup-tile">
+                {!setupOpen && <ModelConnectionCard initialCredentials={initialCredentials} providers={enabledProviders} />}
+                {setupOpen && <p className="setup-dialog-active">AI connection setup is open in the dialog.</p>}
+              </div>
             </div>
           </section>
         )}
