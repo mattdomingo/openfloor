@@ -29,7 +29,7 @@ import {
 } from "@/db/sessions";
 import { listSessionSkillsForMember } from "@/db/skills";
 import { verifyInviteToken } from "@/lib/invites";
-import { validInviteOnboardingReturn } from "@/lib/onboarding-plan";
+import { parseOnboardingStep, validInviteOnboardingReturn } from "@/lib/onboarding-plan";
 import { lowHoursRemaining, PLAN_LIMITS } from "@/lib/plans";
 import { CREDENTIAL_PROVIDERS } from "@/lib/provider-credentials";
 import { disabledRunProviders } from "@/lib/provider-rollout";
@@ -67,9 +67,10 @@ export async function GET(request: Request, { params }: { params: Promise<{ rout
   if (head === "onboarding" && rest.length === 0) {
     const returnTo = safeAppReturnPath(query.get("return_to") ?? undefined) ?? `${BASE_PATH}/home`;
     if (user.onboardedAt != null) return redirectTo(returnTo);
-    const [inviteReturnTo, githubInstallations] = await Promise.all([
+    const [inviteReturnTo, githubInstallations, credentials] = await Promise.all([
       validInviteOnboardingReturn(returnTo),
       listUserGitHubInstallations(user.id),
+      listProviderCredentials(user.id),
     ]);
     return Response.json({
       props: {
@@ -81,6 +82,8 @@ export async function GET(request: Request, { params }: { params: Promise<{ rout
         inviteSignup: inviteReturnTo != null,
         githubInstallations,
         githubConnected: query.get("github") === "connected",
+        initialCredentials: credentials,
+        initialStep: parseOnboardingStep(query.get("step") ?? undefined),
       },
     });
   }
@@ -172,7 +175,8 @@ export async function GET(request: Request, { params }: { params: Promise<{ rout
       getOwnerHourQuota(id),
     ]);
     if (!session || !members || !floor) return notFound();
-    if (session.endedAt == null && !isRepositoryReadyForFloor(repository, candidate)) {
+    if (session.endedAt != null) return redirectTo(`/session/${encodeURIComponent(id)}`);
+    if (!isRepositoryReadyForFloor(repository, candidate)) {
       return redirectTo(`/session/${encodeURIComponent(id)}?repo=required`);
     }
     return Response.json({
