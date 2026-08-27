@@ -35,9 +35,11 @@ it("deletes only branches that still match their recorded SHA", () => {
           { name: "openfloor/session/run/two", sha: firstSha },
         ]),
       },
-    })) as { deleted: string[]; failed: string[] };
+    })) as { deleted: string[]; failed: Array<{ name: string; error: string }> };
     expect(result.deleted).toEqual(["openfloor/session/run/one"]);
-    expect(result.failed).toEqual(["openfloor/session/run/two"]);
+    expect(result.failed).toHaveLength(1);
+    expect(result.failed[0].name).toBe("openfloor/session/run/two");
+    expect(result.failed[0].error.length).toBeGreaterThan(0);
     expect(() => git(["--git-dir", remote, "rev-parse", "refs/heads/openfloor/session/run/one"])).toThrow();
     expect(git(["--git-dir", remote, "rev-parse", "refs/heads/openfloor/session/run/two"]).trim()).not.toBe(firstSha);
   } finally {

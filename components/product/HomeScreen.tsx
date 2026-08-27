@@ -714,6 +714,7 @@ function DeleteSessionDialog({ session, onClose }: { session: SessionSummary; on
   const [warning, setWarning] = useState<string | null>(null);
   const [blockingRunId, setBlockingRunId] = useState<string | null>(null);
   const [candidateLive, setCandidateLive] = useState<{ branch: string; canDeleteBranch: boolean } | null>(null);
+  const [branchDeleteFailed, setBranchDeleteFailed] = useState<{ branch: string } | null>(null);
 
   async function remove(candidate?: "delete-branch" | "orphan") {
     setBusy(true);
@@ -727,6 +728,11 @@ function DeleteSessionDialog({ session, onClose }: { session: SessionSummary; on
       const body = (await response.json().catch(() => null)) as { error?: string; code?: string; runId?: string; branch?: string; canDeleteBranch?: boolean } | null;
       if (body?.code === "candidate_live" && body.branch) {
         setCandidateLive({ branch: body.branch, canDeleteBranch: Boolean(body.canDeleteBranch) });
+        setBusy(false);
+        return;
+      }
+      if (body?.code === "branch_delete_failed" && body.branch) {
+        setBranchDeleteFailed({ branch: body.branch });
         setBusy(false);
         return;
       }
@@ -788,9 +794,18 @@ function DeleteSessionDialog({ session, onClose }: { session: SessionSummary; on
       {candidateLive && !warning && (
         <div className="dialog-body"><p>The candidate branch <strong>{candidateLive.branch}</strong> hasn&rsquo;t merged yet. Decide what happens to it before the session is deleted.</p></div>
       )}
+      {branchDeleteFailed && !warning && (
+        <div className="dialog-body"><p className="form-error" role="alert">Couldn&rsquo;t delete <strong>{branchDeleteFailed.branch}</strong> on GitHub. The session hasn&rsquo;t been deleted yet — try again, or leave the branch and delete the session anyway.</p></div>
+      )}
       <div className="dialog-foot">
         {warning ? (
           <button type="button" className="button" onClick={dismiss}>Close</button>
+        ) : branchDeleteFailed ? (
+          <>
+            <button type="button" className="button" data-variant="quiet" onClick={dismiss} disabled={busy}>Cancel</button>
+            <button type="button" className="button" onClick={() => void remove("orphan")} disabled={busy}>Leave branch, delete session</button>
+            <button type="button" className="button danger-button" onClick={() => void remove("delete-branch")} disabled={busy}>Try again</button>
+          </>
         ) : candidateLive ? (
           <>
             <button type="button" className="button" data-variant="quiet" onClick={dismiss} disabled={busy}>Cancel</button>

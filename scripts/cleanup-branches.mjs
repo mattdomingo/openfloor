@@ -22,16 +22,30 @@ git(["remote", "add", "origin", process.env.OPENFLOOR_REPOSITORY_URL], root);
 const authorization = githubGitAuthorization(process.env.OPENFLOOR_GITHUB_TOKEN);
 const deleted = [];
 const failed = [];
+const ATTEMPTS = 3;
 for (const branch of branches) {
-  const result = spawnSync("git", [
-    "-c", "core.hooksPath=/dev/null",
-    "-c", "credential.helper=",
-    "-c", `http.extraHeader=${authorization}`,
-    "push", `--force-with-lease=refs/heads/${branch.name}:${branch.sha}`,
-    "origin", `:refs/heads/${branch.name}`,
-  ], { cwd: root, maxBuffer: 1_000_000 });
-  if (result.status === 0) deleted.push(branch.name);
-  else failed.push(branch.name);
+  let lastError = "";
+  let ok = false;
+  for (let attempt = 1; attempt <= ATTEMPTS && !ok; attempt += 1) {
+    const result = spawnSync("git", [
+      "-c", "core.hooksPath=/dev/null",
+      "-c", "credential.helper=",
+      "-c", `http.extraHeader=${authorization}`,
+      "push", `--force-with-lease=refs/heads/${branch.name}:${branch.sha}`,
+      "origin", `:refs/heads/${branch.name}`,
+    ], { cwd: root, maxBuffer: 1_000_000 });
+    if (result.status === 0) {
+      ok = true;
+      break;
+    }
+    lastError = (result.stderr?.toString() || result.error?.message || `git exited ${result.status}`).trim().slice(0, 2000);
+    // A lease rejection means the branch moved — retrying only wastes time,
+    // the current SHA no longer matches what we verified before cleanup.
+    if (/stale info|fetch first|non-fast-forward/i.test(lastError)) break;
+    if (attempt < ATTEMPTS) await new Promise((resolve) => setTimeout(resolve, attempt * 1000));
+  }
+  if (ok) deleted.push(branch.name);
+  else failed.push({ name: branch.name, error: lastError });
 }
 process.stdout.write(JSON.stringify({ deleted, failed }));
 
