@@ -61,6 +61,7 @@ import {
 } from "../db/rollbacks";
 import { githubGitAuthorization } from "../lib/github-git-auth";
 import { rollbackSandboxIds } from "../lib/rollback-sandbox";
+import { ROLLBACK_PREPARE_COMMAND, ROLLBACK_PUBLISH_COMMAND, redactRollbackOutput } from "../lib/rollback-git";
 
 type R2BucketLike = { put(key: string, value: string, options?: unknown): Promise<unknown> };
 
@@ -714,26 +715,7 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
         if (observed !== context.expectedCandidateSha) throw new NonRetryableError("The candidate changed before rollback preparation");
         const token = await createInstallationToken(config, context.installationId, context.repositoryId);
         const result = await targetSandbox.exec(
-          `rm -rf /workspace/repository && mkdir -p /workspace/repository && cd /workspace/repository &&
-           git init -q && git remote add origin "$OPENFLOOR_REPOSITORY_URL" &&
-           git -c credential.helper= -c "http.extraHeader=$OPENFLOOR_GIT_AUTHORIZATION" fetch --no-tags --depth=1 origin "$OPENFLOOR_EXPECTED_SHA" &&
-           git update-ref refs/openfloor/current FETCH_HEAD &&
-           target_index=0 && for target_sha in $OPENFLOOR_TARGET_SHAS; do
-             git -c credential.helper= -c "http.extraHeader=$OPENFLOOR_GIT_AUTHORIZATION" fetch --no-tags --depth=2 origin "$target_sha" || exit $?;
-             git update-ref "refs/openfloor/target-$target_index" FETCH_HEAD || exit $?;
-             target_index=$((target_index + 1));
-           done && git checkout -q --detach refs/openfloor/current &&
-           git config user.name "OpenFloor Rollback" && git config user.email "rollback@opnflr.com" &&
-           target_index=0 && for target_sha in $OPENFLOOR_TARGET_SHAS; do
-             target_ref="refs/openfloor/target-$target_index";
-             parent_count="$(git cat-file -p "$target_ref" | awk '$1 == "parent" { count += 1 } END { print count + 0 }')";
-             if [ "$parent_count" = "1" ]; then git revert --no-commit "$target_ref" || exit $?;
-             elif [ "$parent_count" = "2" ]; then git revert --no-commit -m 1 "$target_ref" || exit $?;
-             else echo "unsupported parent count" >&2; exit 64; fi;
-             target_index=$((target_index + 1));
-           done &&
-           GIT_AUTHOR_DATE="$OPENFLOOR_COMMIT_DATE" GIT_COMMITTER_DATE="$OPENFLOOR_COMMIT_DATE" git commit -q -m "$OPENFLOOR_COMMIT_MESSAGE" &&
-           git rev-parse HEAD`,
+          ROLLBACK_PREPARE_COMMAND,
           {
             timeout: 8 * 60 * 1000,
             env: {
@@ -749,10 +731,11 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
           },
         );
         if (!result.success) {
-          const conflicted = /conflict|could not revert|after resolving/i.test(`${result.stdout}\n${result.stderr}`);
+          const output = `${result.stdout}\n${result.stderr}`;
+          const conflicted = /conflict|could not revert|after resolving/i.test(output);
           throw new NonRetryableError(conflicted
             ? "Rollback conflicts with changes integrated later in the candidate"
-            : "The verified candidate history could not be prepared for rollback");
+            : `The verified candidate history could not be prepared for rollback: ${redactRollbackOutput(output, token)}`);
         }
         const sha = result.stdout.trim().split(/\s+/).at(-1) ?? "";
         if (!/^[0-9a-f]{40}$/.test(sha)) throw new NonRetryableError("Rollback did not produce a valid commit");
@@ -769,9 +752,7 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
         if (observed !== context.expectedCandidateSha) throw new NonRetryableError("The candidate changed before rollback publication");
         const token = await createInstallationToken(config, context.installationId, context.repositoryId);
         const result = await rollbackPublisher.exec(
-          `cd /workspace/repository && git -c credential.helper= -c "http.extraHeader=$OPENFLOOR_GIT_AUTHORIZATION" push
-             "--force-with-lease=refs/heads/$OPENFLOOR_CANDIDATE_BRANCH:$OPENFLOOR_EXPECTED_SHA"
-             "$OPENFLOOR_REPOSITORY_URL" "$OPENFLOOR_ROLLBACK_SHA:refs/heads/$OPENFLOOR_CANDIDATE_BRANCH"`,
+          ROLLBACK_PUBLISH_COMMAND,
           {
             timeout: 2 * 60 * 1000,
             env: {
@@ -784,10 +765,11 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
           },
         );
         if (!result.success) {
-          const leaseMismatch = /stale info|fetch first|non-fast-forward/i.test(`${result.stdout}\n${result.stderr}`);
+          const output = `${result.stdout}\n${result.stderr}`;
+          const leaseMismatch = /stale info|fetch first|non-fast-forward/i.test(output);
           throw new NonRetryableError(leaseMismatch
             ? "The candidate changed before rollback publication"
-            : "GitHub rejected the authenticated rollback push");
+            : `GitHub rejected the authenticated rollback push: ${redactRollbackOutput(output, token)}`);
         }
         const reconciled = await getRepositoryRefSha(config, context.installationId, repository, context.candidateBranch);
         if (reconciled !== rollbackSha) throw new Error("Candidate branch did not reconcile after rollback");
