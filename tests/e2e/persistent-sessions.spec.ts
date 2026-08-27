@@ -272,13 +272,16 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await expect(member.getByText("Unassigned", { exact: true }).first()).toBeVisible();
   const unassignedItem = owner.locator("li.queue-item", { hasText: "Document the next backend contract" });
   await expect(unassignedItem.getByRole("button", { name: "Run", exact: true })).toHaveCount(0);
-  // Scroll first: SelectMenu closes on any outside scroll (stale fixed
-  // coordinates), so letting the option click auto-scroll the queue list
-  // would close the menu and the click would land on nothing. With the item
-  // already in view the option is clickable without force.
+  // SelectMenu closes on any outside scroll (stale fixed coordinates), so a
+  // scroll from a realtime refresh — or the option click's own
+  // scroll-into-view — can void the selection between opening the menu and
+  // clicking. Retry the whole open-then-pick gesture until it lands.
   await unassignedItem.scrollIntoViewIfNeeded();
-  await unassignedItem.getByRole("combobox", { name: "Queue target" }).click();
-  await owner.getByRole("option", { name: "Lumen" }).click();
+  const unassignedTarget = unassignedItem.getByRole("combobox", { name: "Queue target" });
+  await expect(async () => {
+    await unassignedTarget.click();
+    await owner.getByRole("option", { name: "Lumen" }).click({ timeout: 2_000 });
+  }).toPass();
   await expect(unassignedItem.getByRole("button", { name: "Lumen", exact: true })).toBeVisible();
   await expect(unassignedItem.getByRole("button", { name: "Run", exact: true })).toBeVisible();
 
@@ -616,18 +619,20 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   const retainedCard = owner.locator(".session-card", { hasText: "Release coordination" });
   await retainedCard.getByRole("button", { name: "Session actions" }).click();
   // The tab panel's entrance stagger and the actions-open tilt reset both
-  // animate transform — wait for the card to hold still before capturing the
-  // reference bounds, or the two reads race the transition.
-  let retainedBounds = await retainedCard.boundingBox();
-  await expect.poll(async () => {
-    const next = await retainedCard.boundingBox();
-    const stable = JSON.stringify(next) === JSON.stringify(retainedBounds);
-    retainedBounds = next;
-    return stable;
-  }).toBe(true);
+  // animate transform, and the stagger's animation-delay means the card can
+  // sit still at its offset position — sampling for stillness isn't enough.
+  // Wait for every running animation and transition to finish instead.
+  await retainedCard.evaluate((element) =>
+    Promise.all(element.getAnimations({ subtree: true }).map((animation) => animation.finished.catch(() => null))),
+  );
+  const retainedBounds = await retainedCard.boundingBox();
   const retainedDelete = await retainedCard.getByRole("button", { name: "Delete" }).boundingBox();
   await owner.mouse.move(retainedDelete!.x + retainedDelete!.width / 2, retainedDelete!.y + 1);
-  expect(await retainedCard.boundingBox()).toEqual(retainedBounds);
+  // Position only: the claim is that the magnet tilt stays zeroed while the
+  // actions menu is open, not that the inline reveal can't wrap the meta
+  // strip and grow the card.
+  const afterHover = await retainedCard.boundingBox();
+  expect({ x: afterHover!.x, y: afterHover!.y }).toEqual({ x: retainedBounds!.x, y: retainedBounds!.y });
   await retainedCard.getByRole("button", { name: "Delete" }).click();
   await owner.getByRole("dialog").getByRole("button", { name: "Delete session" }).click();
   await expect(owner.getByText("Release coordination")).toHaveCount(0);
@@ -635,8 +640,14 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   // The New session tile only renders on the Active tab.
   await owner.getByRole("button", { name: /^Active/ }).click();
   await owner.getByRole("button", { name: "New session" }).click();
-  await owner.getByLabel("Session title").fill("Disposable session");
+  // #219's 3-step wizard: task/goal, repo + candidate name, AI connection.
+  await owner.getByLabel("Task").fill("Disposable session");
+  await owner.getByRole("button", { name: "Continue" }).click();
+  await owner.getByRole("button", { name: "Continue" }).click();
   await owner.getByRole("button", { name: "Create session" }).click();
+  // Creation routes straight to the floor; End session lives in the lobby.
+  await expect(owner).toHaveURL(/\/session\/[0-9a-f-]+\/floor$/);
+  await owner.goto(owner.url().replace(/\/floor$/, ""));
   await owner.getByRole("button", { name: "End session", exact: true }).click();
   await owner.getByRole("dialog").getByRole("button", { name: "End session", exact: true }).click();
   await owner.goto("/home");
@@ -645,8 +656,14 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await disposableCard.getByRole("button", { name: "Session actions" }).click();
   await disposableCard.getByRole("button", { name: "Delete" }).click();
   await owner.getByRole("dialog").getByRole("button", { name: "Delete session" }).click();
-  await expect(owner.getByRole("alert")).toHaveText("This session's candidate branch hasn't merged yet — merge or abandon it before deleting");
-  await expect(disposableCard).toBeVisible();
+  // ENG-83/#216: a live candidate no longer refuses deletion outright — the
+  // dialog asks what happens to the branch. Orphaning it deletes the
+  // session and reports the branch was kept.
+  await expect(owner.getByRole("dialog").getByText(/hasn[’']t merged yet\. Decide what happens to it/)).toBeVisible();
+  await owner.getByRole("dialog").getByRole("button", { name: "Leave branch, delete session" }).click();
+  await expect(owner.getByRole("dialog").getByRole("status")).toContainText("Session deleted");
+  await owner.getByRole("dialog").getByRole("button", { name: "Close" }).click();
+  await expect(owner.getByText("Disposable session")).toHaveCount(0);
 
   await ownerContext.close();
   await memberContext.close();
