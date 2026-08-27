@@ -61,10 +61,9 @@ export function AgentCard({ agent, tone, latestRun, activityEvents, selected, ow
   );
 }
 
-// A real speech bubble, not an icon+tooltip: the clamped reply sits directly
-// on the tile so the text is visible without a hover/focus step, with a tail
-// pointing at the agent identity row above it. Click opens the spotlight,
-// where .spotlight-response renders the same text in full.
+// Plain reply text, not a bubble or tooltip: the clamped reply sits directly
+// on the tile so it's visible without a hover/focus step. Click opens the
+// spotlight, where .spotlight-response renders the same text in full.
 function AgentReplyBubble({ agentName, reply, onOpen }: { agentName: string; reply: string; onOpen: () => void }) {
   return (
     <button type="button" className="agent-reply-bubble" aria-label={`${agentName} said: ${reply}. Open to read in full.`} onClick={(event) => { event.stopPropagation(); onOpen(); }}>
