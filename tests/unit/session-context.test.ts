@@ -31,6 +31,7 @@ function baseSnapshot(overrides: Partial<SessionContextSnapshot> = {}): SessionC
     blockedRuns: [],
     priorAttempts: [],
     chat: [],
+    sharedFiles: [],
     ...overrides,
   };
 }

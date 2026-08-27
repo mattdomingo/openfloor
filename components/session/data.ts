@@ -6,7 +6,7 @@ export type AgentLayout = "focus" | "all";
 export type WorkspaceScreen = "workspace" | "review";
 export type QueueScope = "mine" | "team";
 export type QueueOrderMode = "auto" | "manual";
-export type TeamPanelView = "goals" | "chat";
+export type TeamPanelView = "goals" | "chat" | "artifacts";
 export type ChatThread = "team" | string;
 
 export function initials(name: string) {

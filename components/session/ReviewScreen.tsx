@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { LocalDateTime } from "@/components/LocalDateTime";
-import type { FloorMessage, FloorParticipant, FloorReviewSnapshot, MergeConflictCase, ReviewContribution, ReviewContributor, ReviewContributorFacet } from "@/lib/floor-types";
+import type { FloorMessage, FloorParticipant, FloorReviewSnapshot, MergeConflictCase, ReviewContribution, ReviewContributor, ReviewContributorFacet, SessionFile } from "@/lib/floor-types";
 import type { RepositoryTreeEntry } from "@/lib/github";
 import type { RepositoryConnection } from "@/lib/session-types";
 import { agentTone } from "./data";
@@ -41,7 +41,7 @@ function MergeGateRow({ review }: { review: FloorReviewSnapshot }) {
   </div>;
 }
 
-export function ReviewScreen({ sessionId, revision, review, repository, repositoryTree, selectedConflictCaseId, promptRequest, owner, busy, blockingRunId, onRequestRollback, onReady, onMerge, onDeleteBranch, onAbandon, onCancelRun, onResolveConflict, onAnswerConflict, teamChat, onSendTeamMessage, participants, currentUserId }: {
+export function ReviewScreen({ sessionId, revision, review, repository, repositoryTree, selectedConflictCaseId, promptRequest, owner, busy, blockingRunId, onRequestRollback, onReady, onMerge, onDeleteBranch, onAbandon, onCancelRun, onResolveConflict, onAnswerConflict, teamChat, onSendTeamMessage, participants, currentUserId, sessionFiles }: {
   sessionId: string;
   revision: number;
   review: FloorReviewSnapshot | null;
@@ -61,6 +61,7 @@ export function ReviewScreen({ sessionId, revision, review, repository, reposito
   onResolveConflict: (caseId: string) => Promise<boolean>;
   onAnswerConflict: (caseId: string, answers: Array<{ questionId: string; answer: string }>) => Promise<boolean>;
   teamChat: FloorMessage[];
+  sessionFiles: SessionFile[];
   onSendTeamMessage: (text: string, recipientUserId: string | null) => Promise<boolean>;
   participants: FloorParticipant[];
   currentUserId: string;
@@ -206,7 +207,7 @@ export function ReviewScreen({ sessionId, revision, review, repository, reposito
     setPendingAction(null);
   }
 
-  const teamChatPane = <section className="review-pane review-team-chat" aria-label="Team chat"><div className="review-pane-head"><h3>Team chat</h3><span>{teamChat.filter((message) => message.recipientUserId === null).length}</span></div><TeamChat messages={teamChat} onSend={onSendTeamMessage} participants={participants} currentUserId={currentUserId} /></section>;
+  const teamChatPane = <section className="review-pane review-team-chat" aria-label="Team chat"><div className="review-pane-head"><h3>Team chat</h3><span>{teamChat.filter((message) => message.recipientUserId === null).length}</span></div><TeamChat messages={teamChat} onSend={onSendTeamMessage} participants={participants} currentUserId={currentUserId} sessionId={sessionId} files={sessionFiles} /></section>;
 
   // Shared by the no-review branches' plain Changed/All pane below and the
   // full-review left rail's 3-way Browse control — the list content itself
@@ -295,7 +296,7 @@ export function ReviewScreen({ sessionId, revision, review, repository, reposito
         <section aria-label="Checks"><div className="review-pane-head"><h3>Checks</h3><span>{review.checks.length}</span></div>{review.checks.length === 0 ? <p className="review-empty">No checks reported by GitHub or openfloor.</p> : <ul className="review-check-list">{review.checks.map((check) => <li key={check.id}><span className="check-mark" aria-label={check.state}>{check.state === "passed" ? "✓" : check.state === "failed" ? "!" : "…"}</span><div><strong>{check.name}</strong>{check.detail && <span>{check.detail}</span>}</div></li>)}</ul>}</section>
         {(isMerged || isAbandoned) && <section aria-label="Branch cleanup"><div className="review-pane-head"><h3>Branch cleanup</h3><span>{review.cleanupStatus ?? "pending"}</span></div><p className="review-empty">{isAbandoned && !review.cleanupStatus ? "This candidate was abandoned without attempting to delete its branch." : review.cleanupStatus === "complete" ? "Recorded candidate and run branches were deleted after exact-SHA verification." : "Any branch that did not match its recorded SHA was preserved."}</p>{owner && !review.branchDeletedAt && <div className="review-actions"><button type="button" className="button danger-button" disabled={busy || retrying} onClick={() => isMerged ? setDeleteConfirmOpen(true) : void runAbandon(true)}>Delete candidate branch</button></div>}</section>}
       </>}
-      {rightTab === "chat" && <div className="review-inspector-chat" aria-label="Team chat"><div className="review-pane-head"><h3>Team chat</h3><span>{teamChat.filter((message) => message.recipientUserId === null).length}</span></div><TeamChat messages={teamChat} onSend={onSendTeamMessage} participants={participants} currentUserId={currentUserId} /></div>}
+      {rightTab === "chat" && <div className="review-inspector-chat" aria-label="Team chat"><div className="review-pane-head"><h3>Team chat</h3><span>{teamChat.filter((message) => message.recipientUserId === null).length}</span></div><TeamChat messages={teamChat} onSend={onSendTeamMessage} participants={participants} currentUserId={currentUserId} sessionId={sessionId} files={sessionFiles} /></div>}
       {rightTab === "contributors" && <>
         <ContributorList title="Engineers" facets={promptContributions.engineers} selectedId={engineerFilter} owner={owner && contributionStatus === "active"} scope="engineer" onFilter={setEngineerFilter} onRollback={onRequestRollback} />
         <ContributorList title="Agents" facets={promptContributions.agents} selectedId={agentFilter} owner={owner && contributionStatus === "active"} scope="agent" onFilter={setAgentFilter} onRollback={onRequestRollback} />

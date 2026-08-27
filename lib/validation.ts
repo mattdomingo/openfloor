@@ -27,7 +27,7 @@ export type AgentInput = {
 export type AgentSettingsInput = { task?: string; model?: string | null; credentialKind?: CredentialKind | null };
 export type AgentPauseInput = { paused: boolean };
 export type AssignmentInput = { task: string | null };
-export type MessageInput = { text: string; recipientUserId: string | null };
+export type MessageInput = { text: string; recipientUserId: string | null; attachmentIds?: string[] };
 export type QueuePromptInput = { prompt: string; agentId: string | null };
 export type RoutingSettingsInput = { autoDispatch?: boolean; autoProvisionAgents?: boolean; autoAgentProvider?: CredentialProvider | null; autoResolveConflicts?: boolean };
 export type ConflictInputRequest = { explanation: string; questions: string[] };
@@ -170,10 +170,16 @@ export function parseMessageInput(value: unknown): MessageInput | null {
   const input = value as Record<string, unknown>;
   if (typeof input.text !== "string") return null;
   if (input.recipientUserId !== undefined && input.recipientUserId !== null && typeof input.recipientUserId !== "string") return null;
+  if (input.attachmentIds !== undefined && !Array.isArray(input.attachmentIds)) return null;
+  const attachmentIds = (input.attachmentIds ?? []) as unknown[];
+  if (attachmentIds.length > 8 || attachmentIds.some((id) => typeof id !== "string" || !id || id.length > 100)) return null;
   const text = input.text.trim();
   const recipientUserId = typeof input.recipientUserId === "string" ? input.recipientUserId.trim() : null;
   if (!text || text.length > 4000 || (recipientUserId !== null && (!recipientUserId || recipientUserId.length > 100))) return null;
-  return { text, recipientUserId };
+  // Attachments are team-chat only: a DM attachment would surface in the
+  // session-wide artifacts area and leak the private exchange.
+  if (recipientUserId !== null && attachmentIds.length > 0) return null;
+  return { text, recipientUserId, attachmentIds: attachmentIds as string[] };
 }
 
 export function parseQueuePromptInput(value: unknown): QueuePromptInput | null {

@@ -44,6 +44,7 @@ export default defineConfig({
         compatibilityFlags: ["nodejs_compat"],
         assets: { directory: "./dist/client", binding: "ASSETS", run_worker_first: true },
         d1Databases: ["DB"],
+        r2Buckets: ["PREFLIGHT_LOGS"],
         durableObjects: { SESSION_PRESENCE: "SessionPresence" },
         bindings: {
           INVITE_SIGNING_SECRET: "render-test-secret",

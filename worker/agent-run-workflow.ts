@@ -25,12 +25,12 @@ import {
   setRunSandboxId,
 } from "../db/runs";
 import { claimPoolSandbox, releasePoolSandbox, retirePoolSandbox } from "../db/sandbox-pool";
-import { getSessionContext, viewerFromRunContext } from "../db/session-context";
+import { getSessionContext, getSessionSharedFiles, viewerFromRunContext } from "../db/session-context";
 import { getGitHubAppConfig } from "../db";
 import { createDraftPullRequest, createInstallationToken, getRepositoryRefSha, GitHubApiError, mergeRepositoryBranch } from "../lib/github";
 import type { AgentRunFile } from "../lib/floor-types";
 import type { GitHubRepositoryOption } from "../lib/session-types";
-import { renderSessionContext } from "../lib/session-context";
+import { renderSessionContext, SESSION_FILE_MOUNT, sessionFilePath } from "../lib/session-context";
 import { getEnabledMcpServersForRun } from "../db/mcp-servers";
 import { getSessionSkillsForRun } from "../db/skills";
 import { serializeMcpServersForClaude } from "../lib/mcp-config";
@@ -63,7 +63,10 @@ import { githubGitAuthorization } from "../lib/github-git-auth";
 import { rollbackSandboxIds } from "../lib/rollback-sandbox";
 import { ROLLBACK_PREPARE_COMMAND, ROLLBACK_PUBLISH_COMMAND, redactRollbackOutput } from "../lib/rollback-git";
 
-type R2BucketLike = { put(key: string, value: string, options?: unknown): Promise<unknown> };
+type R2BucketLike = {
+  put(key: string, value: string, options?: unknown): Promise<unknown>;
+  get(key: string): Promise<{ body: ReadableStream<Uint8Array> } | null>;
+};
 
 export interface AgentRunWorkflowEnv {
   DB: D1DatabaseLike;
@@ -228,6 +231,19 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
             // head -c counts bytes; a multi-byte character split at the
             // boundary decodes as a trailing U+FFFD, dropped here.
             prompt += `\n\n## Repository CLAUDE.md (first 8,000 bytes)\n\n${claudeMd.stdout.replace(/�$/, "")}`;
+          }
+        }
+        // Shared session files (ENG-113): copy each to the exact path the
+        // brief's "Files the team shared" section lists — outside the
+        // repository worktree, so they can never surface as changed paths.
+        // A file whose R2 object is missing is skipped; the brief lists it,
+        // and the agent finding it absent is more honest than failing the run.
+        const sharedFiles = await getSessionSharedFiles(context.sessionId, this.env.DB);
+        if (sharedFiles.length > 0) {
+          await sandbox.exec(`mkdir -p ${SESSION_FILE_MOUNT}`, { timeout: 30_000 });
+          for (const shared of sharedFiles) {
+            const object = await this.env.PREFLIGHT_LOGS.get(`sessions/${context.sessionId}/files/${shared.id}`);
+            if (object?.body) await sandbox.writeFile(sessionFilePath(shared), object.body);
           }
         }
         const materializedSkills: string[] = [];

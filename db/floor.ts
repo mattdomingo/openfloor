@@ -8,6 +8,7 @@ import type {
   FloorReviewSnapshot,
   FloorSnapshot,
   ReviewContributor,
+  SessionFile,
 } from "@/lib/floor-types";
 import type { AgentInput, AgentSettingsInput, AssignmentInput, MessageInput, QueuePromptInput } from "@/lib/validation";
 import { normalizeAgentName } from "@/lib/validation";
@@ -55,7 +56,7 @@ export async function getFloorSnapshot(
 }
 
 async function readFloorSnapshot(sessionId: string, userId: string, database: D1DatabaseLike): Promise<FloorSnapshot> {
-  const [session, providerResolution, agents, assignments, messages, queue, prompts, repository, activeCandidate, reviewCandidate, latestPreflight, runs, conflicts] = await Promise.all([
+  const [session, providerResolution, agents, assignments, messages, files, queue, prompts, repository, activeCandidate, reviewCandidate, latestPreflight, runs, conflicts] = await Promise.all([
     database.prepare(
       `SELECT s.floor_revision AS revision, s.auto_dispatch AS autoDispatch,
               s.auto_provision_agents AS autoProvisionAgents, s.auto_resolve_conflicts AS autoResolveConflicts,
@@ -111,6 +112,13 @@ async function readFloorSnapshot(sessionId: string, userId: string, database: D1
          AND (m.recipient_user_id IS NULL OR m.author_user_id = ? OR m.recipient_user_id = ?)
        ORDER BY m.created_at, m.id`,
     ).bind(sessionId, userId, userId).all<MessageRecord>(),
+    database.prepare(
+      `SELECT f.id, f.uploaded_by_user_id AS uploadedByUserId, uploader.display_name AS uploadedByName,
+              f.message_id AS messageId, f.name, f.content_type AS contentType,
+              f.size_bytes AS sizeBytes, f.created_at AS createdAt
+       FROM session_files f JOIN users uploader ON uploader.id = f.uploaded_by_user_id
+       WHERE f.session_id = ? ORDER BY f.created_at, f.id`,
+    ).bind(sessionId).all<SessionFile>(),
     database.prepare(
       `SELECT q.id, q.agent_id AS agentId, a.name AS agentName, a.owner_user_id AS agentOwnerUserId,
               q.position, q.status,
@@ -184,6 +192,7 @@ async function readFloorSnapshot(sessionId: string, userId: string, database: D1
       updatedAt: assignment.updatedAt ?? null,
     })),
     messages: messages.results.map((message) => ({ ...message, recipientUserId: message.recipientUserId ?? null })),
+    files: files.results.map((file) => ({ ...file, messageId: file.messageId ?? null })),
     queue: queue.results.map((item) => {
       const prompts = promptsByItem.get(item.id) ?? [];
       const { rollbackRunId, rollbackStatus, rollbackFailureReason, agentOwnerUserId, answerRunId, answerAgentId, answerAgentName, answerText, answerCreatedAt, ...queueItem } = item;
@@ -781,15 +790,73 @@ export async function createFloorMessage(
     throw new FloorTargetError("Message recipient must be a session member.");
   }
   const now = Date.now();
-  const results = await database.batch([
+  const messageId = crypto.randomUUID();
+  const statements = [
     database.prepare(
       `INSERT INTO floor_messages (id, session_id, author_user_id, recipient_user_id, text, created_at)
        SELECT ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM sessions WHERE id = ? AND ended_at IS NULL)`,
-    ).bind(crypto.randomUUID(), sessionId, userId, input.recipientUserId, input.text, now, sessionId),
+    ).bind(messageId, sessionId, userId, input.recipientUserId, input.text, now, sessionId),
+  ];
+  // Claim the sender's own still-unattached uploads for this message, in the
+  // same batch as the insert. The WHERE clauses make a stale or foreign id a
+  // silent no-op rather than a cross-session or cross-user link (validation
+  // already refused attachments on DMs).
+  const attachmentIds = input.attachmentIds ?? [];
+  if (attachmentIds.length > 0) {
+    statements.push(
+      database.prepare(
+        `UPDATE session_files SET message_id = ?
+         WHERE session_id = ? AND uploaded_by_user_id = ? AND message_id IS NULL
+           AND id IN (${attachmentIds.map(() => "?").join(",")})
+           AND EXISTS (SELECT 1 FROM floor_messages WHERE id = ?)`,
+      ).bind(messageId, sessionId, userId, ...attachmentIds, messageId),
+    );
+  }
+  // Last on purpose: activeBatchApplied reads the final statement's changes,
+  // and the revision bump is the ended-session detector.
+  statements.push(bumpFloorRevision(database, sessionId, now));
+  const results = await database.batch(statements);
+  if (!(await activeBatchApplied(results, sessionId, userId, database))) return null;
+  return readFloorSnapshot(sessionId, userId, database);
+}
+
+// Records uploads whose bytes the caller already put in R2 (ENG-113). The
+// same ended-session INSERT...SELECT guard as every floor mutation; the
+// caller unwinds its R2 objects when this returns null.
+export async function createSessionFiles(
+  sessionId: string,
+  userId: string,
+  files: { id: string; name: string; r2Key: string; contentType: string; sizeBytes: number }[],
+  database = getDb(),
+): Promise<FloorSnapshot | null> {
+  if (!(await getActiveMembershipRole(sessionId, userId, database))) return null;
+  const now = Date.now();
+  const results = await database.batch([
+    ...files.map((file) =>
+      database.prepare(
+        `INSERT INTO session_files (id, session_id, uploaded_by_user_id, message_id, name, r2_key, content_type, size_bytes, created_at)
+         SELECT ?, ?, ?, NULL, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM sessions WHERE id = ? AND ended_at IS NULL)`,
+      ).bind(file.id, sessionId, userId, file.name, file.r2Key, file.contentType, file.sizeBytes, now, sessionId),
+    ),
     bumpFloorRevision(database, sessionId, now),
   ]);
   if (!(await activeBatchApplied(results, sessionId, userId, database))) return null;
   return readFloorSnapshot(sessionId, userId, database);
+}
+
+// The serve route's authorization read: membership first, then the row,
+// scoped by session so a file id can never cross sessions.
+export async function getSessionFileForMember(
+  sessionId: string,
+  fileId: string,
+  userId: string,
+  database = getDb(),
+): Promise<{ r2Key: string; name: string; contentType: string } | null> {
+  if (!(await getMembershipRole(sessionId, userId, database))) return null;
+  const row = await database.prepare(
+    "SELECT r2_key AS r2Key, name, content_type AS contentType FROM session_files WHERE session_id = ? AND id = ?",
+  ).bind(sessionId, fileId).first<{ r2Key: string; name: string; contentType: string }>();
+  return row ?? null;
 }
 
 export async function createFloorQueueItem(
