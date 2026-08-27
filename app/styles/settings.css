@@ -214,6 +214,16 @@
   gap: 10px;
 }
 .provider-credential-row[data-expanded="true"] { grid-column: 1 / -1; }
+/* The equal-height stretch below (height: 100%, overflow: hidden) is only
+   meant to level off collapsed tiles against their row neighbours. An
+   expanded row carries its own connect form, so pin it back to its natural
+   height — otherwise the form (the input/textarea included) gets clipped to
+   the collapsed toggle's height and never appears. */
+.provider-credential-row[data-expanded="true"],
+.provider-credential-row[data-expanded="true"] .provider-credential-toggle {
+  height: auto;
+  overflow: visible;
+}
 
 .provider-credential-mark {
   flex: none;
