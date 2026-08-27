@@ -6,6 +6,7 @@ import { AGENT_PROVIDER_LABELS, credentialKindLabel, credentialKindsForProvider,
 import { BASE_PATH } from "@/components/basePath";
 import { LocalDateTime } from "@/components/LocalDateTime";
 import { Icon } from "./primitives";
+import { Markdown } from "./Markdown";
 import { SelectMenu } from "./SelectMenu";
 import type { RunActivitySource } from "./useRunActivity";
 import { ACTIVE_RUN_STATUSES, agentReplyText, formatAgentCost, isRunLive, runStatusToken } from "./data";
@@ -131,7 +132,7 @@ export function AgentSpotlight({ agent, tone, sessionId, latestRun, activity, ow
         </div>
       )}
       {latestRun?.finalResponse && (
-        <div className="spotlight-row"><span className="label">Response</span><div className="spotlight-response">{latestRun.finalResponse}</div></div>
+        <div className="spotlight-row"><span className="label">Response</span><div className="spotlight-response"><Markdown>{latestRun.finalResponse}</Markdown></div></div>
       )}
       {!isReply && (
         <div className="spotlight-row"><span className="label">Execution</span>{latestRun ? <div className="spotlight-execution"><ActivityTimeline run={latestRun} activity={activity} /><p className="review-empty">{latestRun.files.length} changed file{latestRun.files.length === 1 ? "" : "s"}</p>{latestRun.runBranch && <p className="review-empty"><code>{latestRun.runBranch}</code>{latestRun.discardedAt ? " · discarded" : ""}{latestRun.rollbackStatus === "completed" ? " · rolled back" : ""}</p>}{latestRun.rollbackFailureReason && <p className="review-empty">{latestRun.rollbackFailureReason}</p>}<ArtifactToggle sessionId={sessionId} run={latestRun} label="Open raw log" closeLabel="Hide raw log" emptyText="The raw log becomes available when the run finishes." /><ArtifactToggle sessionId={sessionId} run={latestRun} kind="prompt" label="Session brief sent to this agent" closeLabel="Hide session brief" emptyText="The session brief becomes available once the run starts." /></div> : <p className="review-empty">No agent run has started.</p>}</div>
@@ -158,7 +159,9 @@ function ActivityTimeline({ run, activity }: { run: AgentRun; activity: RunActiv
   }, [events.length]);
 
   if (events.length === 0) {
-    return <p className="review-empty">{run.summary ?? `Run is ${run.status.replace("_", " ")}.`}</p>;
+    return run.summary
+      ? <Markdown className="review-empty">{run.summary}</Markdown>
+      : <p className="review-empty">{`Run is ${run.status.replace("_", " ")}.`}</p>;
   }
   const live = ACTIVE_RUN_STATUSES.has(run.status);
   return (

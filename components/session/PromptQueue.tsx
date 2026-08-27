@@ -6,6 +6,7 @@ import { LocalDateTime } from "@/components/LocalDateTime";
 import type { QueueOrderMode, QueueScope } from "./data";
 import { queueItemDestination, runStatusToken } from "./data";
 import { AgentTargetMenu } from "./AgentTargetMenu";
+import { Markdown } from "./Markdown";
 import { Icon, SegmentedControl } from "./primitives";
 import { Panel, type PanelChrome } from "./Rail";
 import { QueueOrderMenu } from "./QueueOrderMenu";
@@ -149,7 +150,7 @@ function QueueItemDetail({ run, item, onFocusAgent }: { run: AgentRun | null; it
   const bodyText = run ? (run.kind === "reply" ? run.finalResponse : run.summary) : item.answer?.text;
   return <div className="queue-detail">
     <div className="queue-detail-head"><strong>{agentName}</strong><span>{token.replace("_", " ")}</span></div>
-    {bodyText && <p className="queue-detail-body">{bodyText}</p>}
+    {bodyText && <Markdown className="queue-detail-body">{bodyText}</Markdown>}
     {run?.conflictReason && <p className="queue-detail-body">{run.conflictReason}</p>}
     {rollbackFailure && <p className="queue-detail-body">{rollbackFailure}</p>}
     {failedChecks.length > 0 && <ul className="queue-detail-checks">{failedChecks.map((check) => <li key={check.id}><code>{check.command}</code>{check.outputExcerpt && <pre>{check.outputExcerpt}</pre>}</li>)}</ul>}

@@ -1517,7 +1517,6 @@
   font-size: var(--text-sm);
   line-height: 1.55;
   overflow-y: auto;
-  white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 
