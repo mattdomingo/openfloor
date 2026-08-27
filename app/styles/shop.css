@@ -354,6 +354,11 @@
 .shop-shell .usage-meter::-webkit-progress-bar { background: var(--rule); }
 .shop-shell .usage-meter::-webkit-progress-value { background: var(--accent-ink); }
 .shop-shell .usage-meter::-moz-progress-bar { background: var(--accent-ink); }
+/* Per-provider model usage rows (Home's Usage tab and Settings → Plan). */
+.usage-model-list { display: grid; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
+.usage-model-list li { display: flex; justify-content: space-between; gap: var(--space-4); font-size: var(--text-sm); }
+.usage-model-list li span:last-child { color: var(--muted); white-space: nowrap; }
+
 .shop-shell .usage-card-stat {
   margin: 10px 0 0;
   color: var(--ink);

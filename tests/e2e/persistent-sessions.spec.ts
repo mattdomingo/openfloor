@@ -76,12 +76,13 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await expect(member.getByRole("button", { name: "Disconnect" })).toHaveCount(0);
 
   await owner.reload();
-  await expect(owner.getByRole("button", { name: "Sync repository" })).toBeVisible();
-  await owner.getByRole("button", { name: "Sync repository" }).click();
-  await expect(owner.getByLabel("GitHub repository").getByText("Ready", { exact: true })).toBeVisible();
+  // PR #211 removed RepositoryCard's owner Sync/Configure/Disconnect
+  // controls — synchronization is server-driven now. A reload re-renders the
+  // ready state from D1, which is the durable claim worth keeping here.
+  await expect(owner.locator(".setup-status[data-ready='true']")).toHaveText("Ready");
+  await expect(owner.getByRole("button", { name: "Sync repository" })).toHaveCount(0);
   await member.reload();
   await expect(member.getByText(/openfloor\/[0-9a-f]{8}\/candidate\/release-coordination-[0-9a-f]{8}/)).toBeVisible();
-  await expect(member.getByRole("button", { name: "Sync repository" })).toHaveCount(0);
 
   await owner.getByRole("link", { name: "Enter agent floor" }).click();
   await member.getByRole("link", { name: "Enter agent floor" }).click();
@@ -230,8 +231,12 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   const answeredItem = owner.locator("li.queue-item", { hasText: "What does the auth module do?" });
   await expect(answeredItem.getByText("answered", { exact: true })).toBeVisible();
   await expect(answeredItem).toHaveAttribute("data-done", "true");
-  const responseIcon = agentFloor.locator(".agent-response-icon");
-  await expect(responseIcon).toBeVisible();
+  // The reply renders as a clamped bubble directly on the tile (no hover
+  // step since e4e7d85 dropped the speech-bubble chrome); clicking it opens
+  // the spotlight with the full text.
+  const replyBubble = agentFloor.locator(".agent-reply-bubble");
+  await expect(replyBubble).toBeVisible();
+  await expect(replyBubble).toContainText(/auth/i);
   expect((await agentFloor.locator(".agent-grid").boundingBox())!.y).toBe(gridTopBeforeReply);
   const lumenCard = agentFloor.locator(".agent-card", { hasText: "Lumen" });
   const cardBounds = (await lumenCard.boundingBox())!;
@@ -240,9 +245,7 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   expect(cardControls.x).toBeGreaterThanOrEqual(cardBounds.x);
   expect(cardControls.y + cardControls.height).toBeLessThanOrEqual(cardBounds.y + cardBounds.height);
   expect(ownershipFooter.y + ownershipFooter.height).toBeLessThanOrEqual(cardBounds.y + cardBounds.height);
-  await responseIcon.hover();
-  await expect(owner.locator(".hover-tip")).toContainText(/auth/i);
-  await responseIcon.click();
+  await replyBubble.click();
   await expect(agentFloor.locator(".spotlight-response")).toContainText(/auth/i);
   const spotlightBounds = (await agentFloor.locator(".spotlight").boundingBox())!;
   const spotlightControls = (await agentFloor.locator(".spotlight > .agent-controls").boundingBox())!;
@@ -269,9 +272,17 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await expect(member.getByText("Unassigned", { exact: true }).first()).toBeVisible();
   const unassignedItem = owner.locator("li.queue-item", { hasText: "Document the next backend contract" });
   await expect(unassignedItem.getByRole("button", { name: "Run", exact: true })).toHaveCount(0);
-  await unassignedItem.getByRole("combobox", { name: "Queue target" }).click();
-  await owner.getByRole("option", { name: "Lumen" }).click({ force: true });
-  await expect(unassignedItem.getByText("Unassigned", { exact: true })).toHaveCount(0);
+  // SelectMenu closes on any outside scroll (stale fixed coordinates), so a
+  // scroll from a realtime refresh — or the option click's own
+  // scroll-into-view — can void the selection between opening the menu and
+  // clicking. Retry the whole open-then-pick gesture until it lands.
+  await unassignedItem.scrollIntoViewIfNeeded();
+  const unassignedTarget = unassignedItem.getByRole("combobox", { name: "Queue target" });
+  await expect(async () => {
+    await unassignedTarget.click();
+    await owner.getByRole("option", { name: "Lumen" }).click({ timeout: 2_000 });
+  }).toPass();
+  await expect(unassignedItem.getByRole("button", { name: "Lumen", exact: true })).toBeVisible();
   await expect(unassignedItem.getByRole("button", { name: "Run", exact: true })).toBeVisible();
 
   await owner.getByRole("region", { name: "Open floor" }).getByRole("combobox", { name: "Queue target" }).click();
@@ -456,7 +467,9 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await answerFields.nth(0).fill("Preserve the existing public behavior.");
   await answerFields.nth(1).fill("Do not remove the legacy path yet.");
   await ownerQuestionConflict.getByRole("button", { name: "Submit answers" }).click();
-  await expect(ownerQuestionConflict.getByText("resolved", { exact: true })).toBeVisible();
+  // Resolution clears the case's selected state, so assert on the case
+  // itself rather than the [data-selected] scope used to answer it.
+  await expect(owner.locator(".conflict-case", { hasText: "Create a conflict needing a session decision" }).getByText("resolved", { exact: true })).toBeVisible();
   const staleAnswer = await owner.request.post(`/api/sessions/${new URL(owner.url()).pathname.split("/")[2]}/conflicts/${questionCase!.id}/answers`, {
     data: { answers: questionCase!.questions.map((question) => ({ questionId: question.id, answer: "Stale answer" })) },
   });
@@ -520,13 +533,15 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await expect(failingItem.getByRole("button", { name: "Resume", exact: true })).toBeVisible();
 
   // A failed card is clickable — it expands in place to the agent's saved
-  // failure message instead of just saying "failed".
-  await expect(failingItem.getByText("A required check failed.", { exact: true })).toHaveCount(0);
+  // failure message instead of just saying "failed". Check commands are
+  // removed this release, so the detail carries the run summary and no
+  // per-check output block.
+  await expect(failingItem.getByText("The agent run failed.", { exact: true })).toHaveCount(0);
   await failingItem.locator(".queue-prompt").click();
-  await expect(failingItem.getByText("A required check failed.", { exact: true })).toBeVisible();
-  await expect(failingItem.locator(".queue-detail-checks pre")).toContainText("required check failed");
+  await expect(failingItem.getByText("The agent run failed.", { exact: true })).toBeVisible();
+  await expect(failingItem.locator(".queue-detail-checks")).toHaveCount(0);
   await failingItem.locator(".queue-chip[data-kind=\"status\"]").click();
-  await expect(failingItem.getByText("A required check failed.", { exact: true })).toHaveCount(0);
+  await expect(failingItem.getByText("The agent run failed.", { exact: true })).toHaveCount(0);
 
   await owner.getByLabel("Prompt to add to the queue").fill("Hold for cancellation");
   await owner.getByRole("button", { name: "Add to queue" }).click();
@@ -553,7 +568,9 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await expect(member.getByRole("button", { name: "Ready for review" })).toHaveCount(0);
   await expect(member.getByRole("button", { name: "Squash merge" })).toHaveCount(0);
   await owner.getByRole("button", { name: "Ready for review" }).click();
-  await expect(owner.getByRole("link", { name: /PR #1 · open/ })).toBeVisible();
+  // PR #217 split the link ("PR #1 on GitHub") from the state line ("open").
+  await expect(owner.getByRole("link", { name: /PR #1 on GitHub/ })).toBeVisible();
+  await expect(owner.getByText("open", { exact: true })).toBeVisible();
   await expect(owner.getByText("clean", { exact: true })).toBeVisible();
   await expect(owner.getByText("passing", { exact: true })).toBeVisible();
   await owner.getByRole("button", { name: "Squash merge" }).click();
@@ -601,10 +618,21 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await owner.getByRole("button", { name: /^Ended/ }).click();
   const retainedCard = owner.locator(".session-card", { hasText: "Release coordination" });
   await retainedCard.getByRole("button", { name: "Session actions" }).click();
+  // The tab panel's entrance stagger and the actions-open tilt reset both
+  // animate transform, and the stagger's animation-delay means the card can
+  // sit still at its offset position — sampling for stillness isn't enough.
+  // Wait for every running animation and transition to finish instead.
+  await retainedCard.evaluate((element) =>
+    Promise.all(element.getAnimations({ subtree: true }).map((animation) => animation.finished.catch(() => null))),
+  );
   const retainedBounds = await retainedCard.boundingBox();
   const retainedDelete = await retainedCard.getByRole("button", { name: "Delete" }).boundingBox();
   await owner.mouse.move(retainedDelete!.x + retainedDelete!.width / 2, retainedDelete!.y + 1);
-  expect(await retainedCard.boundingBox()).toEqual(retainedBounds);
+  // Position only: the claim is that the magnet tilt stays zeroed while the
+  // actions menu is open, not that the inline reveal can't wrap the meta
+  // strip and grow the card.
+  const afterHover = await retainedCard.boundingBox();
+  expect({ x: afterHover!.x, y: afterHover!.y }).toEqual({ x: retainedBounds!.x, y: retainedBounds!.y });
   await retainedCard.getByRole("button", { name: "Delete" }).click();
   await owner.getByRole("dialog").getByRole("button", { name: "Delete session" }).click();
   await expect(owner.getByText("Release coordination")).toHaveCount(0);
@@ -612,8 +640,14 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   // The New session tile only renders on the Active tab.
   await owner.getByRole("button", { name: /^Active/ }).click();
   await owner.getByRole("button", { name: "New session" }).click();
-  await owner.getByLabel("Session title").fill("Disposable session");
+  // #219's 3-step wizard: task/goal, repo + candidate name, AI connection.
+  await owner.getByLabel("Task").fill("Disposable session");
+  await owner.getByRole("button", { name: "Continue" }).click();
+  await owner.getByRole("button", { name: "Continue" }).click();
   await owner.getByRole("button", { name: "Create session" }).click();
+  // Creation routes straight to the floor; End session lives in the lobby.
+  await expect(owner).toHaveURL(/\/session\/[0-9a-f-]+\/floor$/);
+  await owner.goto(owner.url().replace(/\/floor$/, ""));
   await owner.getByRole("button", { name: "End session", exact: true }).click();
   await owner.getByRole("dialog").getByRole("button", { name: "End session", exact: true }).click();
   await owner.goto("/home");
@@ -622,8 +656,14 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await disposableCard.getByRole("button", { name: "Session actions" }).click();
   await disposableCard.getByRole("button", { name: "Delete" }).click();
   await owner.getByRole("dialog").getByRole("button", { name: "Delete session" }).click();
-  await expect(owner.getByRole("alert")).toHaveText("This session's candidate branch hasn't merged yet — merge or abandon it before deleting");
-  await expect(disposableCard).toBeVisible();
+  // ENG-83/#216: a live candidate no longer refuses deletion outright — the
+  // dialog asks what happens to the branch. Orphaning it deletes the
+  // session and reports the branch was kept.
+  await expect(owner.getByRole("dialog").getByText(/hasn[’']t merged yet\. Decide what happens to it/)).toBeVisible();
+  await owner.getByRole("dialog").getByRole("button", { name: "Leave branch, delete session" }).click();
+  await expect(owner.getByRole("dialog").getByRole("status")).toContainText("Session deleted");
+  await owner.getByRole("dialog").getByRole("button", { name: "Close" }).click();
+  await expect(owner.getByText("Disposable session")).toHaveCount(0);
 
   await ownerContext.close();
   await memberContext.close();

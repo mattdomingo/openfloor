@@ -3,6 +3,7 @@
 import { FormEvent, useState } from "react";
 import { BASE_PATH } from "@/components/basePath";
 import { Spinner } from "@/components/session/primitives";
+import { formatTokens } from "@/components/session/data";
 import {
   AGENT_PROVIDER_LABELS,
   CONNECTION_REQUEST_EMAIL,
@@ -310,7 +311,7 @@ function ProviderBudgetControl({ credential, busy, onSaveLimit }: {
   return (
     <div className="provider-budget">
       <div className="provider-budget-line">
-        <span>This month: {formatUsd(credential.monthSpendMicroUsd)}{hasLimit ? ` of ${formatUsd(credential.monthlyLimitMicroUsd as number)}` : ""}</span>
+        <span>This month: {formatUsd(credential.monthSpendMicroUsd)}{hasLimit ? ` of ${formatUsd(credential.monthlyLimitMicroUsd as number)}` : ""}{credential.monthInputTokens > 0 || credential.monthOutputTokens > 0 ? ` · ${formatTokens(credential.monthInputTokens)} in / ${formatTokens(credential.monthOutputTokens)} out` : ""}</span>
         <button type="button" className="button" data-variant="quiet" data-size="sm" onClick={() => setEditing((value) => !value)} disabled={busy}>
           {hasLimit ? "Change limit" : "Set limit"}
         </button>

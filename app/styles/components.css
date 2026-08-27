@@ -20,8 +20,12 @@ input, textarea { width: 100%; padding: 11px 12px; border: 1px solid var(--line-
 .onboarding-avatar-preview { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0; }
 
 /* .field input's width:100% outranks .sr-only's, so the hidden picker keeps a
-   full-width absolutely positioned box unless its size is pinned here too. */
-.avatar-file-input { width: 1px; height: 1px; padding: 0; }
+   full-width absolutely positioned box unless its size is pinned here too.
+   The element qualifier is load-bearing: `.field input` is (0,1,1), so a bare
+   `.avatar-file-input` at (0,1,0) loses to it and the input stays 100% wide —
+   which, absolutely positioned inside the card, pushed documentElement past
+   the viewport and made onboarding scroll sideways on a phone. */
+input.avatar-file-input { width: 1px; height: 1px; padding: 0; }
 
 /* Crop window. The square's size is set inline from AvatarCropper's
    WINDOW_SIZE, because avatarCropRect clamps the pan against that exact
@@ -209,6 +213,16 @@ input, textarea { width: 100%; padding: 11px 12px; border: 1px solid var(--line-
 .usage-meter[data-level="over"]::-webkit-progress-value { background: var(--status-blocked); }
 .usage-meter[data-level="over"]::-moz-progress-bar { background: var(--status-blocked); }
 
+/* Guided tour (components/GuidedTour.tsx). The highlight's oversized shadow
+   dims everything except the spotlit control; both layers sit above the
+   hover-tip's z-index: 80 so a stray tooltip can't cover the tour. */
+.tour-highlight { position: fixed; z-index: 84; border: 2px solid var(--accent); border-radius: var(--radius-md); box-shadow: 0 0 0 200vmax rgb(0 0 0 / .35); pointer-events: none; }
+.tour-bubble { position: fixed; z-index: 85; display: grid; gap: var(--space-2); padding: var(--space-4); border: 1px solid var(--line-soft); border-radius: var(--radius-md); background: var(--surface-raised); color: var(--text-primary); box-shadow: 0 12px 32px rgb(0 0 0 / .18); }
+.tour-bubble:focus { outline: none; }
+.tour-bubble p { margin: 0; color: var(--text-secondary); font-size: var(--text-sm); line-height: 1.5; }
+.tour-controls { display: flex; align-items: center; gap: var(--space-2); }
+.tour-count { margin-right: auto; color: var(--text-tertiary); font-size: var(--text-xs); }
+
 .empty-state { margin-top: var(--space-6); padding: 64px var(--space-6); text-align: center; }
 .empty-state strong { font: 400 26px var(--font-serif); }
 .empty-state p { margin-top: var(--space-2); color: var(--text-secondary); }
@@ -260,7 +274,10 @@ input, textarea { width: 100%; padding: 11px 12px; border: 1px solid var(--line-
 .queue-detail { display: grid; gap: var(--space-2); padding: var(--space-3); border-radius: var(--radius-sm); background: var(--surface-panel); }
 .queue-detail-head { display: flex; align-items: baseline; gap: var(--space-2); color: var(--text-secondary); font-size: var(--text-xs); text-transform: uppercase; letter-spacing: .02em; }
 .queue-detail-head strong { color: var(--text-primary); text-transform: none; letter-spacing: normal; }
-.queue-detail-body { margin: 0; color: var(--text-primary); font-size: var(--text-sm); line-height: 1.5; white-space: pre-wrap; }
+.queue-detail-body { margin: 0; color: var(--text-primary); font-size: var(--text-sm); line-height: 1.5; }
+/* Plain-text detail rows (conflict reasons, rollback failures) keep their
+   line breaks; the markdown-rendered body manages its own block spacing. */
+p.queue-detail-body { white-space: pre-wrap; }
 .queue-detail-checks { display: grid; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
 .queue-detail-checks code { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--status-blocked); }
 .queue-detail-checks pre { margin: var(--space-1) 0 0; padding: var(--space-2); border-radius: var(--radius-sm); background: var(--surface-sunken); overflow-x: auto; font-family: var(--font-mono); font-size: var(--text-xs); white-space: pre-wrap; word-break: break-word; }

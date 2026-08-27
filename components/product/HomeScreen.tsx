@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { DragEvent as ReactDragEvent, FormEvent, MouseEvent as ReactMouseEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { CSSProperties, DragEvent as ReactDragEvent, FormEvent, MouseEvent as ReactMouseEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { flushSync } from "react-dom";
 import { useRouter } from "next/navigation";
 import { BASE_PATH } from "@/components/basePath";
 import { LocalDateTime } from "@/components/LocalDateTime";
@@ -11,9 +12,11 @@ import { SelectMenu } from "@/components/session/SelectMenu";
 import { lowHoursRemaining, planLabel, type Plan, type PlanStatus } from "@/lib/plans";
 import { mergeVisibleOrder, parseSessionOrder, sortByStoredOrder } from "@/lib/session-order";
 import { branchSlug } from "@/lib/repository-refs";
-import type { CredentialProvider, ProviderCredentialSummary } from "@/lib/provider-credentials";
+import { monthlyUsageLabel, type CredentialProvider, type MonthlyProviderUsage, type ProviderCredentialSummary } from "@/lib/provider-credentials";
+import { formatTokens } from "@/components/session/data";
 import type { AccountGitHubRepositoryOption, AppUser, SessionSummary } from "@/lib/session-types";
 import { WaveField } from "@/app/entry-wave";
+import { GuidedTour, type TourStep } from "@/components/GuidedTour";
 import { AppHeader } from "./AppHeader";
 import { ProviderCredentials } from "./ProviderCredentials";
 
@@ -159,12 +162,14 @@ export function HomeScreen({
   usage,
   initialCredentials,
   enabledProviders,
+  modelUsage,
 }: {
   user: AppUser;
   sessions: SessionSummary[];
   usage: Usage;
   initialCredentials: ProviderCredentialSummary[];
   enabledProviders: CredentialProvider[];
+  modelUsage: MonthlyProviderUsage[];
 }) {
   const [sessions, setSessions] = useState(initialSessions);
   // router.refresh() (after delete) re-renders this Server Component prop without
@@ -331,6 +336,21 @@ export function HomeScreen({
                 <p className="usage-card-stat">{usageStatLine}</p>
                 {liveOwnedSessions > 1 && <p className="usage-card-note">{usageLiveLine}</p>}
               </div>
+              <div className="usage-card">
+                <p className="usage-card-plan">Model usage this month (UTC)</p>
+                {modelUsage.length === 0 ? (
+                  <p className="usage-card-stat">No model usage this month.</p>
+                ) : (
+                  <ul className="usage-model-list">
+                    {modelUsage.map((row) => (
+                      <li key={`${row.provider}-${row.kind}`}>
+                        <span>{monthlyUsageLabel(row)}</span>
+                        <span>{`$${(row.microUsd / 1_000_000).toFixed(2)} · ${formatTokens(row.inputTokens)} in / ${formatTokens(row.outputTokens)} out`}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
             </div>
           ) : tab === "active" ? (
             <SessionGrid sessions={activeSessions} archived={false} showCreateTile onCreateNew={() => void beginCreate()} onDelete={setPendingDelete} onSetArchived={setArchived} limitSeats={usage.limitSeats} onReorder={applyVisibleOrder} />
@@ -345,9 +365,25 @@ export function HomeScreen({
         </div>
       </section>
       {pendingDelete && <DeleteSessionDialog session={pendingDelete} onClose={() => setPendingDelete(null)} />}
+      <GuidedTour storageKey="openfloor:tutorial:home" steps={HOME_TOUR} />
     </main>
   );
 }
+
+// First-visit walkthrough (ENG-17). Two steps here; the floor carries its own
+// tour, so each surface teaches only what it renders.
+const HOME_TOUR: TourStep[] = [
+  {
+    selector: '[aria-label="New session"]',
+    title: "Start a session",
+    body: "A session is one room for one goal. Creating it picks the GitHub repository, names the candidate branch, and can connect an AI provider on the way in.",
+  },
+  {
+    selector: ".shop-tabs",
+    title: "Your sessions",
+    body: "Filter Active, Archived, and Ended sessions, and check monthly usage. Drag a card by its grip to reorder the grid.",
+  },
+];
 
 function SessionGrid({
   sessions,
@@ -370,15 +406,30 @@ function SessionGrid({
 }) {
   const [draggedId, setDraggedId] = useState<string | null>(null);
   const [dragOverId, setDragOverId] = useState<string | null>(null);
-  const ids = sessions.map((session) => session.id);
+  // While a drag is live the grid renders this order instead of the saved
+  // one, so the other cards visibly step aside as the cursor moves. Nothing
+  // is persisted until drop; an abandoned drag animates back.
+  const [previewIds, setPreviewIds] = useState<string[] | null>(null);
+  const visible = useMemo(() => {
+    if (!previewIds) return sessions;
+    const byId = new Map(sessions.map((session) => [session.id, session]));
+    const shown = previewIds.flatMap((id) => byId.get(id) ?? []);
+    // A session that appeared mid-drag (realtime refresh) still renders.
+    for (const session of sessions) if (!previewIds.includes(session.id)) shown.push(session);
+    return shown;
+  }, [previewIds, sessions]);
+  const ids = visible.map((session) => session.id);
 
-  // Dropping on a card puts the dragged one in that card's place, the same
-  // "insert before the target" rule the prompt queue uses.
-  function moveBefore(fromId: string, toId: string) {
-    if (fromId === toId) return;
-    const next = ids.filter((id) => id !== fromId);
-    next.splice(next.indexOf(toId), 0, fromId);
-    onReorder(next);
+  // The dragged card takes the hovered card's slot and everything between
+  // shifts one place — the classic list-move, previewed live on dragover.
+  function previewOver(targetId: string) {
+    if (!draggedId || draggedId === targetId) return;
+    const from = ids.indexOf(draggedId);
+    const to = ids.indexOf(targetId);
+    if (from < 0 || to < 0 || from === to) return;
+    const next = [...ids];
+    next.splice(to, 0, ...next.splice(from, 1));
+    animateReorder(() => setPreviewIds(next));
   }
 
   // The keyboard path, driven from the same grip: one step per press.
@@ -388,13 +439,13 @@ function SessionGrid({
     if (from < 0 || to < 0 || to >= ids.length) return;
     const next = [...ids];
     next.splice(to, 0, ...next.splice(from, 1));
-    onReorder(next);
+    animateReorder(() => onReorder(next));
   }
 
   return (
     <div className="session-grid">
       {showCreateTile && onCreateNew && <NewSessionTile onClick={onCreateNew} />}
-      {sessions.map((session, index) => (
+      {visible.map((session, index) => (
         <SessionCard
           key={session.id}
           session={session}
@@ -403,16 +454,23 @@ function SessionGrid({
           onSetArchived={onSetArchived}
           limitSeats={limitSeats}
           position={index + 1}
-          total={sessions.length}
+          total={visible.length}
           dragging={draggedId === session.id}
           dropTarget={dragOverId === session.id}
           onDragStart={() => setDraggedId(session.id)}
-          onDragEnd={() => { setDraggedId(null); setDragOverId(null); }}
+          onDragEnd={() => {
+            // Fires after drop (preview already committed and cleared) and
+            // on an abandoned drag, where the preview animates back.
+            setDraggedId(null);
+            setDragOverId(null);
+            animateReorder(() => setPreviewIds(null));
+          }}
           onDragOver={(event) => {
             if (!draggedId) return;
             // Only a preventDefault'd dragover marks this a valid drop target.
             event.preventDefault();
             if (draggedId !== session.id) setDragOverId(session.id);
+            previewOver(session.id);
           }}
           onDragLeave={(event) => {
             if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
@@ -420,14 +478,40 @@ function SessionGrid({
           }}
           onDrop={() => {
             setDragOverId(null);
-            if (draggedId) moveBefore(draggedId, session.id);
+            if (draggedId && previewIds) onReorder(previewIds);
             setDraggedId(null);
+            setPreviewIds(null);
           }}
           onNudge={(delta) => nudge(session.id, delta)}
         />
       ))}
     </div>
   );
+}
+
+/* Reorders animate as a view transition — each card carries a
+   view-transition-name, so the browser FLIPs it from its old grid slot to
+   the new one. Browsers without the API, and anyone preferring reduced
+   motion, get today's instant reflow. flushSync is what the API needs: the
+   DOM must reach its new state inside the callback, not on React's
+   schedule. */
+function animateReorder(update: () => void) {
+  const doc = document as Document & {
+    startViewTransition?: (callback: () => void) => { ready: Promise<void>; finished: Promise<void>; updateCallbackDone: Promise<void> };
+  };
+  if (!doc.startViewTransition || window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    update();
+    return;
+  }
+  const transition = doc.startViewTransition(() => { flushSync(update); });
+  // Rapid dragover steps start a new transition before the last one ends;
+  // the browser skips the old one and REJECTS its promises ("Skipped
+  // ViewTransition due to another transition starting"). That skip is the
+  // behavior we want — swallow the rejections so they don't surface as
+  // unhandled. The state update itself always applies either way.
+  transition.ready.catch(() => {});
+  transition.finished.catch(() => {});
+  transition.updateCallbackDone.catch(() => {});
 }
 
 // The tile that starts a new session — a plain "+" rather than a label, so
@@ -518,6 +602,9 @@ function SessionCard({
     <div
       ref={cardRef}
       className="session-card"
+      // Names the card for animateReorder's view transition. Session ids are
+      // uuids; stripping anything else keeps the name a valid CSS ident.
+      style={{ viewTransitionName: `session-card-${session.id.replace(/[^a-zA-Z0-9_-]/g, "")}` } as CSSProperties}
       data-actions-open={actionsOpen ? "true" : undefined}
       data-dragging={dragging ? "true" : undefined}
       data-drop-target={dropTarget ? "true" : undefined}

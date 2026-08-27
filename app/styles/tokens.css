@@ -27,11 +27,11 @@
 
   /* Text */
   --text-primary: #1f241f;
-  --text-secondary: #55544c;
-  --text-tertiary: #767368;
+  --text-secondary: #45443d;
+  --text-tertiary: #605d53;
   --text-inverse: #e8ede8;
-  --text-inverse-secondary: #aeb6af;
-  --text-inverse-tertiary: #8b948c;
+  --text-inverse-secondary: #bcc3bd;
+  --text-inverse-tertiary: #9ca59d;
 
   /* Lines. Strong lines draw window boundaries; soft lines separate rows
      within a surface. Both are tuned to read clearly on every surface above. */
@@ -57,7 +57,7 @@
   --status-blocked-soft: #f8e3de;
   --status-review: #4c6d88;
   --status-review-soft: #e2eaf0;
-  --status-waiting: #8b8578;
+  --status-waiting: #6e695e;
   --status-waiting-soft: #ebe6da;
   --status-attention: #b5761f;
   --status-attention-soft: #f6e9d2;
@@ -145,8 +145,8 @@
     --surface-sunken: #121412;
 
     --text-primary: #e8ede8;
-    --text-secondary: #c0c5bc;
-    --text-tertiary: #999e94;
+    --text-secondary: #cbd0c7;
+    --text-tertiary: #a9aea4;
 
     --line-strong: #4a5147;
     --line-soft: #343a33;
@@ -162,7 +162,7 @@
     --status-blocked-soft: #3a2622;
     --status-review: #7da3c2;
     --status-review-soft: #232e37;
-    --status-waiting: #9a958a;
+    --status-waiting: #a8a398;
     --status-waiting-soft: #2b2b26;
     --status-attention: #d09a4a;
     --status-attention-soft: #362b1c;
@@ -182,8 +182,8 @@
   --surface-sunken: #121412;
 
   --text-primary: #e8ede8;
-  --text-secondary: #c0c5bc;
-  --text-tertiary: #999e94;
+  --text-secondary: #cbd0c7;
+  --text-tertiary: #a9aea4;
 
   --line-strong: #4a5147;
   --line-soft: #343a33;
@@ -199,7 +199,7 @@
   --status-blocked-soft: #3a2622;
   --status-review: #7da3c2;
   --status-review-soft: #232e37;
-  --status-waiting: #9a958a;
+  --status-waiting: #a8a398;
   --status-waiting-soft: #2b2b26;
   --status-attention: #d09a4a;
   --status-attention-soft: #362b1c;
@@ -225,8 +225,8 @@
      can never pick up the dark-preference block's near-white values by
      accident — same reasoning as dark/midnight duplicating their own. */
   --text-primary: #1f241f;
-  --text-secondary: #55544c;
-  --text-tertiary: #767368;
+  --text-secondary: #45443d;
+  --text-tertiary: #605d53;
 
   /* Darker than a literal near-white gray: against surfaces this pale, a
      line needs real luminance separation to read at all, let alone as a
@@ -248,8 +248,8 @@
   --surface-sunken: #000000;
 
   --text-primary: #e8ede8;
-  --text-secondary: #c0c5bc;
-  --text-tertiary: #999e94;
+  --text-secondary: #cbd0c7;
+  --text-tertiary: #a9aea4;
 
   --line-strong: #33382f;
   --line-soft: #202420;
@@ -265,7 +265,7 @@
   --status-blocked-soft: #3a2622;
   --status-review: #7da3c2;
   --status-review-soft: #232e37;
-  --status-waiting: #9a958a;
+  --status-waiting: #a8a398;
   --status-waiting-soft: #2b2b26;
   --status-attention: #d09a4a;
   --status-attention-soft: #362b1c;

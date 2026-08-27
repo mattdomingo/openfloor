@@ -68,6 +68,21 @@ export type FloorAssignment = {
   updatedAt: number | null;
 };
 
+// A file a member shared into the session (ENG-113). messageId links it to
+// the team-chat message it was attached to; null means it went straight to
+// the artifacts area (composer attachments included). Bytes are served by
+// GET /api/sessions/[id]/files/[fileId]; this row is what authorizes that.
+export type SessionFile = {
+  id: string;
+  uploadedByUserId: string;
+  uploadedByName: string;
+  messageId: string | null;
+  name: string;
+  contentType: string;
+  sizeBytes: number;
+  createdAt: number;
+};
+
 export type FloorMessage = {
   id: string;
   authorUserId: string;
@@ -185,6 +200,12 @@ export type AgentRun = {
   model: string;
   summary: string | null;
   finalResponse: string | null;
+  // Whole-run totals recorded at completion (lib/run-usage.ts); null for a
+  // pre-feature run or a provider that reported nothing.
+  inputTokens: number | null;
+  outputTokens: number | null;
+  cacheReadTokens: number | null;
+  cacheWriteTokens: number | null;
   createdBy: string;
   createdAt: number;
   startedAt: number | null;
@@ -361,6 +382,7 @@ export type FloorSnapshot = {
   agents: FloorAgent[];
   assignments: FloorAssignment[];
   messages: FloorMessage[];
+  files: SessionFile[];
   queue: FloorQueueItem[];
   repository: RepositoryConnection | null;
   activeCandidate: RepositoryCandidate | null;

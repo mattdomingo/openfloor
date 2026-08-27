@@ -185,7 +185,13 @@ describe("floor input validation", () => {
 
   it("validates assignments, messages, prompts, and ordering", () => {
     expect(parseAssignmentInput({ task: "  " })).toEqual({ task: null });
-    expect(parseMessageInput({ text: " Hello ", recipientUserId: "member" })).toEqual({ text: "Hello", recipientUserId: "member" });
+    expect(parseMessageInput({ text: " Hello ", recipientUserId: "member" })).toEqual({ text: "Hello", recipientUserId: "member", attachmentIds: [] });
+    expect(parseMessageInput({ text: "Hello", recipientUserId: null, attachmentIds: ["file-1"] })).toEqual({ text: "Hello", recipientUserId: null, attachmentIds: ["file-1"] });
+    // Attachments are team-chat only — a DM attachment would leak into the
+    // session-wide artifacts area.
+    expect(parseMessageInput({ text: "Hello", recipientUserId: "member", attachmentIds: ["file-1"] })).toBeNull();
+    expect(parseMessageInput({ text: "Hello", attachmentIds: Array.from({ length: 9 }, (_, i) => `f${i}`) })).toBeNull();
+    expect(parseMessageInput({ text: "Hello", attachmentIds: [""] })).toBeNull();
     expect(parseQueuePromptInput({ prompt: " Do work " })).toEqual({ prompt: "Do work", agentId: null });
     expect(parseQueueOrderInput({ itemIds: [] })).toEqual({ itemIds: [] });
   });

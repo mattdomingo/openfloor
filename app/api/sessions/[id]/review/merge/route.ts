@@ -6,8 +6,8 @@ import {
   markCandidateMerged,
   reconcileCandidateReview,
 } from "@/db/repositories";
-import { endSession } from "@/db/sessions";
-import { getPullRequestReview, GitHubApiError, squashMergePullRequest } from "@/lib/github";
+import { endSession, getSessionMemberIdentities } from "@/db/sessions";
+import { coauthorTrailers, getPullRequestReview, GitHubApiError, squashMergePullRequest } from "@/lib/github";
 import { notifyFloorChanged, notifySessionEnded } from "@/lib/presence-server";
 import { deleteVerifiedBranches, type CleanupTarget } from "@/lib/repository-cleanup";
 import { isApiError, requireApiUser } from "@/lib/server-auth";
@@ -55,7 +55,10 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       if (review.mergeable !== true) return Response.json({ error: review.mergeable === null ? "GitHub is still calculating mergeability; try again shortly" : "GitHub reports that this pull request is not mergeable" }, { status: 409 });
       if (review.mergeableState !== "clean") return Response.json({ error: `GitHub reports that merge requirements are ${review.mergeableState ?? "not ready"}` }, { status: 409 });
       if (!review.checksPassing) return Response.json({ error: "GitHub checks are not passing" }, { status: 409 });
-      mergeCommitSha = (await squashMergePullRequest(config, context.installationId, repository, context.pullRequestNumber, context.candidateSha)).sha;
+      // Everyone in the session becomes a co-author of the squash commit —
+      // the one commit that reaches the base branch (ENG-65).
+      const trailers = coauthorTrailers(await getSessionMemberIdentities(sessionId));
+      mergeCommitSha = (await squashMergePullRequest(config, context.installationId, repository, context.pullRequestNumber, context.candidateSha, trailers)).sha;
       review = await getPullRequestReview(config, context.installationId, repository, context.pullRequestNumber);
       await reconcileCandidateReview(sessionId, context.candidateId, review);
     }

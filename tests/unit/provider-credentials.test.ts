@@ -166,7 +166,7 @@ describe("credential kinds", () => {
 });
 
 function credential(provider: ProviderCredentialSummary["provider"], kind: ProviderCredentialSummary["kind"]): ProviderCredentialSummary {
-  return { provider, kind, fingerprint: "abcd", validatedAt: null, createdAt: 0, updatedAt: 0, monthSpendMicroUsd: 0, monthlyLimitMicroUsd: null };
+  return { provider, kind, fingerprint: "abcd", validatedAt: null, createdAt: 0, updatedAt: 0, monthSpendMicroUsd: 0, monthlyLimitMicroUsd: null, monthInputTokens: 0, monthOutputTokens: 0 };
 }
 
 describe("connected providers/kinds for the create-agent dialog", () => {

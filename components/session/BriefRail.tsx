@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
-import type { FloorAgent, FloorAssignment, FloorMessage, FloorParticipant, FloorQueueItem } from "@/lib/floor-types";
+import { useRef, useState } from "react";
+import type { FloorAgent, FloorAssignment, FloorMessage, FloorParticipant, FloorQueueItem, SessionFile } from "@/lib/floor-types";
+import { BASE_PATH } from "@/components/basePath";
 import type { ChatThread, TeamPanelView } from "./data";
 import { Avatar, Icon, SegmentedControl } from "./primitives";
 import { Panel, type PanelChrome } from "./Rail";
@@ -9,6 +10,7 @@ import { TeamChat } from "./TeamChat";
 
 type BriefRailProps = {
   chrome: PanelChrome;
+  sessionId: string;
   assignments: FloorAssignment[];
   agents: FloorAgent[];
   queue: FloorQueueItem[];
@@ -16,13 +18,72 @@ type BriefRailProps = {
   view: TeamPanelView;
   onViewChange: (view: TeamPanelView) => void;
   messages: FloorMessage[];
-  onSendMessage: (text: string, recipientUserId: string | null) => Promise<boolean>;
+  onSendMessage: (text: string, recipientUserId: string | null, attachmentIds?: string[]) => Promise<boolean>;
   chatThread: ChatThread;
   onChatThreadChange: (thread: ChatThread) => void;
   participants: FloorParticipant[];
   currentUserId: string;
   unreadTeamCount: number;
+  files: SessionFile[];
+  onUploadFiles: (files: File[]) => Promise<string[] | null>;
 };
+
+// Every file shared into the session (ENG-113): chat attachments and direct
+// uploads alike, all of it copied into each agent run's sandbox. Real rows
+// from session_files — an empty session says so instead of inventing files.
+function ArtifactsPanel({ sessionId, files, onUploadFiles }: {
+  sessionId: string;
+  files: SessionFile[];
+  onUploadFiles: (files: File[]) => Promise<string[] | null>;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+  return (
+    <div className="rail-section">
+      <div className="rail-section-head">
+        <span className="label">Artifacts</span>
+        <span className="value">Shared with the team and every agent run</span>
+      </div>
+      <input
+        ref={inputRef}
+        type="file"
+        multiple
+        style={{ display: "none" }}
+        onChange={async (event) => {
+          const chosen = event.target.files ? Array.from(event.target.files) : [];
+          event.target.value = "";
+          if (chosen.length === 0) return;
+          setBusy(true);
+          await onUploadFiles(chosen);
+          setBusy(false);
+        }}
+      />
+      <button type="button" className="button" data-size="sm" onClick={() => inputRef.current?.click()} disabled={busy}>
+        {busy ? "Uploading…" : "Add files"}
+      </button>
+      {files.length === 0 ? (
+        <p className="owner-detail-empty">No files shared yet. Anything added here or attached in team chat lands in every agent&apos;s workspace.</p>
+      ) : (
+        <ul className="artifact-list">
+          {[...files].reverse().map((file) => (
+            <li key={file.id}>
+              <a href={`${BASE_PATH}/api/sessions/${sessionId}/files/${file.id}`} target="_blank" rel="noreferrer noopener">
+                <Icon name="file" size={12} />
+                <span>{file.name}</span>
+              </a>
+              <small>{formatFileSize(file.sizeBytes)} · {file.uploadedByName}</small>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function formatFileSize(sizeBytes: number): string {
+  if (sizeBytes >= 1024 * 1024) return `${(sizeBytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${Math.max(1, Math.round(sizeBytes / 1024))} KB`;
+}
 
 export function BriefRail(props: BriefRailProps) {
   const chatLabel = props.unreadTeamCount > 0
@@ -33,7 +94,7 @@ export function BriefRail(props: BriefRailProps) {
       label="Team panel view"
       value={props.view}
       onChange={props.onViewChange}
-      options={[{ value: "goals", label: "Goals" }, { value: "chat", label: chatLabel }]}
+      options={[{ value: "goals", label: "Goals" }, { value: "chat", label: chatLabel }, { value: "artifacts", label: "Artifacts" }]}
     />
   );
 
@@ -47,7 +108,12 @@ export function BriefRail(props: BriefRailProps) {
           onThreadChange={props.onChatThreadChange}
           participants={props.participants}
           currentUserId={props.currentUserId}
+          sessionId={props.sessionId}
+          files={props.files}
+          onUploadFiles={props.onUploadFiles}
         />
+      ) : props.view === "artifacts" ? (
+        <ArtifactsPanel sessionId={props.sessionId} files={props.files} onUploadFiles={props.onUploadFiles} />
       ) : (
         <div className="rail-section">
           <div className="rail-section-head">

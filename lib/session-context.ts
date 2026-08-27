@@ -54,6 +54,24 @@ export type SessionContextChatMessage = {
   text: string;
 };
 
+// A file a member shared into the session (ENG-113). The workflow copies the
+// bytes to sessionFilePath() in the sandbox before the run starts, so the
+// brief can point at real paths.
+export type SessionContextFile = {
+  id: string;
+  name: string;
+  sizeBytes: number;
+};
+
+export const SESSION_FILE_MOUNT = "/workspace/attachments";
+
+// Outside the repository worktree on purpose: a shared file must never
+// become a changed path the publisher rejects. The id prefix keeps two
+// same-named uploads distinct.
+export function sessionFilePath(file: Pick<SessionContextFile, "id" | "name">): string {
+  return `${SESSION_FILE_MOUNT}/${file.id.slice(0, 8)}-${file.name.replace(/\s+/g, "_")}`;
+}
+
 export type SessionContextSnapshot = {
   session: { title: string; objective: string | null };
   repository: { fullName: string; baseBranch: string } | null;
@@ -66,6 +84,7 @@ export type SessionContextSnapshot = {
   blockedRuns: SessionContextRun[];
   priorAttempts: SessionContextPriorAttempt[];
   chat: SessionContextChatMessage[];
+  sharedFiles: SessionContextFile[];
 };
 
 export type SessionContextViewer = {
@@ -91,6 +110,7 @@ export const SESSION_CONTEXT_LIMITS = {
   queuedItems: 20,
   chatMessages: 20,
   chatChars: 300,
+  sharedFiles: 20,
   totalChars: 24_000,
 };
 
@@ -196,6 +216,11 @@ function renderChat(snapshot: SessionContextSnapshot): string {
   return renderList(lines, SESSION_CONTEXT_LIMITS.chatMessages, snapshot.chat.length, "No recent team chat.");
 }
 
+function renderSharedFiles(snapshot: SessionContextSnapshot): string {
+  const lines = snapshot.sharedFiles.map((file) => `- ${sessionFilePath(file)} (${Math.max(1, Math.round(file.sizeBytes / 1024))} KB)`);
+  return renderList(lines, SESSION_CONTEXT_LIMITS.sharedFiles, snapshot.sharedFiles.length, "No shared files.");
+}
+
 type Section = { title: string; priority: number; body: string };
 
 /**
@@ -223,11 +248,12 @@ export function renderSessionContext(snapshot: SessionContextSnapshot, viewer: S
   // exceeds the character budget. "Your request" and the header are never
   // dropped.
   const sections: Section[] = [
-    { title: "Who else is on this floor", priority: 6, body: renderFloor(snapshot, viewer) },
-    { title: "Already integrated", priority: 5, body: renderIntegrated(snapshot) },
-    { title: "Running right now", priority: 4, body: renderInFlight(snapshot) },
-    { title: "Waiting in the queue", priority: 3, body: renderQueue(snapshot, viewer) },
-    { title: "Blocked or failed earlier", priority: 2, body: renderBlocked(snapshot) },
+    { title: "Who else is on this floor", priority: 7, body: renderFloor(snapshot, viewer) },
+    { title: "Already integrated", priority: 6, body: renderIntegrated(snapshot) },
+    { title: "Running right now", priority: 5, body: renderInFlight(snapshot) },
+    { title: "Waiting in the queue", priority: 4, body: renderQueue(snapshot, viewer) },
+    { title: "Blocked or failed earlier", priority: 3, body: renderBlocked(snapshot) },
+    { title: "Files the team shared (already copied to these paths in your sandbox)", priority: 2, body: renderSharedFiles(snapshot) },
     { title: "Recent team chat", priority: 1, body: renderChat(snapshot) },
   ];
 

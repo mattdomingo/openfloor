@@ -587,6 +587,13 @@ Deliberately left alone: `usage_months` rows survive (see that table's own no-FK
 - Snapshot reads return all team messages plus only DMs authored by or addressed to the current user.
 - Because of DM filtering, two members can receive different `FloorSnapshot.messages` arrays at the same floor revision. Never cache one user's floor snapshot as a room-global payload.
 
+#### `session_files`
+
+- Files members share into the session (ENG-113), from the team-chat composer, the prompt composer, or the Team panel's Artifacts view. Bytes live in R2 (`PREFLIGHT_LOGS`, key `sessions/{sessionId}/files/{id}` via `lib/session-files.ts`); the row is the authority for existence and authorization, the same D1-first contract as avatars.
+- `message_id` set = attached to the team-chat message that claimed it (only the uploader's own still-unclaimed rows can be claimed, in the same batch as the message insert); null = a plain artifact. `ON DELETE SET NULL` keeps the artifact listed if its message ever goes away. Attachments are refused on DMs — a DM attachment would surface in the session-wide artifacts list and leak the private exchange.
+- Uploads are member-writes capped by `lib/session-file-constraints.ts` (8 files/8MB each per request, sanitized single-line names); any content type is accepted, and safety lives at serve time: `GET /api/sessions/[id]/files/[fileId]` sends `x-content-type-options: nosniff` and serves only image types inline, everything else as `content-disposition: attachment`, so an uploaded HTML/SVG can never script the app origin.
+- Every run's sandbox receives the current shared files (bounded by `getSessionSharedFiles`, 20 rows) copied to `/workspace/attachments/<id8>-<name>` — outside the repository worktree so they can never surface as changed paths — and the brief's "Files the team shared" section lists those exact paths. Realtime rides the existing `messages` floor domain; no new DO event type.
+
 #### `floor_queue_items`
 
 - Ordered by integer `position` within a session.
@@ -737,7 +744,9 @@ All paths below are shown without the production `/app` prefix.
 | `POST /api/sessions/[id]/agents/resume-all` | Owner | Resume every paused persistent agent and generated worker; exclude Concierge. |
 | `POST /api/sessions/[id]/agents/stop-all` | Owner | Pause every persistent agent and generated worker and cancel every active run they have; exclude Concierge. |
 | `PATCH /api/sessions/[id]/assignments/[memberId]` | Session member | Persist `{ task: string \| null }`. |
-| `POST /api/sessions/[id]/messages` | Session member | Persist `{ text, recipientUserId? }`. |
+| `POST /api/sessions/[id]/messages` | Session member | Persist `{ text, recipientUserId?, attachmentIds? }`. Attachment ids claim the caller's own still-unclaimed `session_files` rows for the new message; refused (`400`) with a recipient. |
+| `POST /api/sessions/[id]/files` | Active session member | `multipart/form-data` `files` (1–8, ≤8MB each). Bytes to R2, rows to `session_files`, returns `{ floor, fileIds }` (`201`). |
+| `GET /api/sessions/[id]/files/[fileId]` | Session member | Stream one shared file; image types inline, everything else `attachment`, always `nosniff`; non-members and unknown files share the same `404`. |
 | `POST /api/sessions/[id]/queue` | Session member | Persist `{ prompt, agentId? }`; null target is valid. |
 | `PATCH /api/sessions/[id]/queue/order` | Session member | Persist an exact unique `{ itemIds }` order. |
 | `POST /api/sessions/[id]/queue/merge` | Session member | Merge at least two existing same-target items, preserving prompts. |
@@ -919,6 +928,8 @@ The following currently reset on reload and must not be mistaken for shared data
 If product requirements call for any of these to persist or synchronize, add an explicit storage owner and document the decision.
 
 The theme choice is deliberately a per-device preference: localStorage `openfloor:theme`, owned by `components/ThemeToggle.tsx`, never synchronized through D1 or presence.
+
+The guided tour's seen-it flags follow the same convention: localStorage `openfloor:tutorial:home` and `openfloor:tutorial:floor`, owned by `components/GuidedTour.tsx` (ENG-17). The tour auto-opens once per surface on a device with no flag and never returns after Skip/Done; per-account persistence was deliberately not added.
 
 ### Styling
 
@@ -1182,6 +1193,7 @@ Durable Object migration `v1` registers `SessionPresence`; `v2` registers `Sandb
 - `GITHUB_APP_PRIVATE_KEY`
 - `GITHUB_STATE_SECRET`
 - `GITHUB_WEBHOOK_SECRET`
+- `GITHUB_APP_CLIENT_ID` (optional binding, but required for device-flow sign-in: GitHub App → General → Client ID, with "Enable Device Flow" ticked on the App; absent, the device endpoints answer 501 and the dialog falls back to the install redirect)
 - `RUNTIME_GATEWAY_SECRET`
 - `OPENAI_API_KEY`
 - `STRIPE_SECRET_KEY`
@@ -1994,6 +2006,30 @@ Separately, the lobby's `SessionSetupDialog`/`setupRequested`/`?setup=1` are del
 **Rationale:** The one field an owner is most likely to want to change, the candidate branch name, could previously only be edited after the branch already existed on GitHub, and doing so meant a real `DELETE` + `POST` round trip (`RepositoryCard.tsx`'s `renameBranch`) rather than picking the name up front. Collecting task, repository, candidate name, and (optionally) an AI connection in one pre-creation flow removes that round trip entirely for the common case. Extending the existing ENG-163 dialog in place, rather than introducing a second dialog component, avoids two divergent session-creation entry points.
 
 **Consequences:** `tests/render/rendered-html.test.ts`'s "session lobby setup rendering" describe block now asserts `?setup=1` renders nothing (the server no longer reads it) and adds two cases asserting the created candidate's `name`/`branchName` come from `candidateName` when supplied and fall back to the title otherwise. `tests/unit/validation.test.ts` covers `parseSessionCreateInput`'s new field. The e2e specs that create a session (`persistent-sessions.spec.ts`, `plan-limits.spec.ts`, `google-signin-return.spec.ts`) step through the three dialog steps instead of one screen. `app/home/page.tsx` now also loads `listProviderCredentials` and the rollout-filtered `enabledProviders`, passed to `HomeScreen`/`CreateSessionDialog` alongside the existing `sessions`/`usage`. A pre-existing, unrelated e2e breakage was found during verification and left unfixed: `persistent-sessions.spec.ts`'s later assertions on a "Sync repository" button and a `RepositoryCard`-scoped "Ready" status chip fail against current `main` — the 2026-08-26 "simplify session setup" change (PR #211) removed `RepositoryCard`'s Configure/Sync/Disconnect controls and narrowed its status chip to the `externally_modified` case only, without updating this e2e spec; it needs its own fix outside this decision's scope. This document's own repository-setup invariant bullet (`## Product principles` — session creation) previously claimed "no creation setup dialog or owner-confirmed candidate naming step remains," which was already false before this change; it is corrected here to describe `CreateSessionDialog`.
+
+### 2026-08-26 — Shared session files: chat attachments, an Artifacts view, and sandbox materialization (ENG-113)
+
+**Decision:** One `session_files` table (migration `0037`) serves three surfaces: team-chat attachments (upload first via `POST /api/sessions/[id]/files`, then the message claims the ids), the Team panel's Artifacts segment (every shared file, plus direct upload), and agent runs (the workflow copies the bytes into `/workspace/attachments/` before launch and the brief lists the exact paths — see the `session_files` table notes for the full contract). Bytes reuse `PREFLIGHT_LOGS`, already the session blob store; realtime rides the `messages` floor domain. The prompt composer's attach button — previously a selection-only stub — now uploads to the same store; its files are session artifacts, not per-prompt payloads.
+
+**Rationale:** One table with a nullable `message_id` is the whole model — a second "artifacts" table would only duplicate it. Serve-time safety (inline allowlist + nosniff + attachment fallback) beats an upload-time type allowlist, which would block legitimate context files without making the origin any safer.
+
+**Consequences:** DM attachments are refused at validation (they would leak into the session-wide list). Files are copyable context, not repository changes: they land outside the worktree, so the publisher never sees them. No delete surface yet — add an uploader/owner-only `DELETE` when someone actually needs it.
+
+### 2026-08-26 — Session members are co-authors of the squash commit (ENG-65)
+
+**Decision:** The owner's squash merge sends a `commit_message` of `Co-authored-by: <display name> <email>` trailers — one per active session member, join-ordered, deduped by email, names flattened to trailer-safe single lines (`coauthorTrailers` in `lib/github.ts`, fed by `getSessionMemberIdentities` in `db/sessions.ts`). The squash commit is the only commit that ever reaches the base branch, so trailers there credit the whole team without touching the publisher, the sandbox image, or the byte-identical rollback reconstruction. Run-branch and candidate-integration commits stay bot-authored; the merge-commit message path truncates at 250 chars and must not carry trailers.
+
+**Rationale:** Emails are the login addresses D1 already holds; GitHub links a co-author when the address is on their account and shows the literal line otherwise. `users.github_handle` is self-typed and unverified, so it is deliberately not used.
+
+**Consequences:** GitHub's default squash body (concatenated branch commit messages — all synthetic `openfloor run <id>` lines) is replaced by the trailer block; the commit title remains GitHub's default (`<PR title> (#N)`).
+
+### 2026-08-26 — Agent spotlight context meter is a per-run upper bound, and there is no flush (ENG-141)
+
+**Decision:** The agent spotlight shows a "Context" row for the latest run: prompt-side token totals (fresh input + cache reads + cache writes, the columns `agent_runs` already persisted but never read back — now selected by `getAgentRuns`/`getAgentRun` and carried on `AgentRun`) as a `usage-meter` against the model's context window. Windows live in `MODEL_CONTEXT_TOKENS` (`lib/provider-credentials.ts`) and name only models whose window is documented (the anthropic 200K/1M note in that file, and `k3-256k`'s own vendor id); an undocumented window renders the token count with no meter, never a guessed bar. The row's title states the semantics: totals are summed across the whole run, so the meter is an upper bound on context fullness — exact for a single-turn run, conservative for a multi-turn one.
+
+**Rationale:** Runs are stateless — each rebuilds its prompt and no `providerThreadId` is ever resumed — so no accumulating conversation context exists, and a "context flush" action would have nothing to flush; the recorded run totals are the only real context signal available without changing the pinned sandbox runners. Presenting them as an explicit upper bound keeps the real-data invariant.
+
+**Consequences:** A precise meter (final-turn context size) requires the runners to record per-turn usage, which means a sandbox image bump — do that in its own change if the upper bound proves too coarse. `runContextUsage` (`components/session/data.ts`) is the single place the semantics live, unit-tested in `tests/unit/run-context.test.ts`.
 
 ## How to record the next decision
 

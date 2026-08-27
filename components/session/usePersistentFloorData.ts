@@ -57,6 +57,41 @@ export function usePersistentFloorData(sessionId: string, initialFloor: FloorSna
     }
   }, [onMissing, sessionId]);
 
+  // Multipart sibling of `request` (ENG-113): uploads files, adopts the
+  // returned floor, and hands back the new file ids so the chat composer can
+  // link them to the message it sends next.
+  const uploadFiles = useCallback(async (files: File[]) => {
+    if (files.length === 0) return [] as string[];
+    setBusy(true);
+    setError(null);
+    try {
+      const form = new FormData();
+      for (const file of files) form.append("files", file);
+      const response = await fetch(`${BASE_PATH}/api/sessions/${sessionId}/files`, { method: "POST", body: form, cache: "no-store" });
+      if (response.status === 404) {
+        onMissing();
+        return null;
+      }
+      let result: (MutationResult & { fileIds?: string[] }) | null = null;
+      try {
+        result = (await response.json()) as MutationResult & { fileIds?: string[] };
+      } catch {
+        result = null;
+      }
+      if (!response.ok || !result?.floor || !result.fileIds) {
+        setError(result?.error ?? `The upload failed (${response.status}).`);
+        return null;
+      }
+      setFloor(result.floor);
+      return result.fileIds;
+    } catch {
+      setError("The floor could not be reached.");
+      return null;
+    } finally {
+      setBusy(false);
+    }
+  }, [onMissing, sessionId]);
+
   const refresh = useCallback(async () => {
     try {
       const response = await fetch(`${BASE_PATH}/api/sessions/${sessionId}/floor`, { cache: "no-store" });
@@ -91,7 +126,9 @@ export function usePersistentFloorData(sessionId: string, initialFloor: FloorSna
     resumeAllAgents: () => request("/agents/resume-all", "POST"),
     stopAllAgents: () => request("/agents/stop-all", "POST"),
     updateAssignment: (memberId: string, task: string | null) => request(`/assignments/${encodeURIComponent(memberId)}`, "PATCH", { task }),
-    sendMessage: (text: string, recipientUserId: string | null) => request("/messages", "POST", { text, recipientUserId }),
+    sendMessage: (text: string, recipientUserId: string | null, attachmentIds?: string[]) =>
+      request("/messages", "POST", { text, recipientUserId, ...(attachmentIds?.length ? { attachmentIds } : {}) }),
+    uploadFiles,
     addQueueItem: (prompt: string, agentId: string | null) => request("/queue", "POST", { prompt, agentId }),
     reorderQueue: (itemIds: string[]) => request("/queue/order", "PATCH", { itemIds }),
     setQueueItemAgent: (queueItemId: string, agentId: string) =>

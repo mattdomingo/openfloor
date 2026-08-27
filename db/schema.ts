@@ -324,6 +324,31 @@ export const floorMessages = sqliteTable(
   ],
 );
 
+// Files members share into the session (ENG-113): bytes live in R2 under
+// sessions/{sessionId}/files/{id} (PREFLIGHT_LOGS, the session blob store),
+// this row is the authority for existence and authorization. message_id set
+// = attached to a team-chat message; null = uploaded straight to the
+// artifacts area (including composer attachments). ON DELETE SET NULL keeps
+// the artifact listed if its message ever goes away.
+export const sessionFiles = sqliteTable(
+  "session_files",
+  {
+    id: text("id").primaryKey(),
+    sessionId: text("session_id").notNull().references(() => sessions.id, { onDelete: "cascade" }),
+    uploadedByUserId: text("uploaded_by_user_id").notNull().references(() => users.id),
+    messageId: text("message_id").references(() => floorMessages.id, { onDelete: "set null" }),
+    name: text("name").notNull(),
+    r2Key: text("r2_key").notNull(),
+    contentType: text("content_type").notNull(),
+    sizeBytes: integer("size_bytes").notNull(),
+    createdAt: integer("created_at").notNull(),
+  },
+  (table) => [
+    index("idx_session_files_session_created").on(table.sessionId, table.createdAt),
+    index("idx_session_files_message").on(table.messageId),
+  ],
+);
+
 export const floorQueueItems = sqliteTable(
   "floor_queue_items",
   {

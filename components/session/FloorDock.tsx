@@ -17,8 +17,9 @@ const draftVisibilityOptions: { value: DraftVisibility; label: ReactNode; title:
   { value: "hidden", label: <Icon name="eyeOff" size={13} />, title: "Hidden" },
 ];
 
-export function FloorDock({ onSubmit, agents, queueTarget, onQueueTargetChange, textareaRef, notice, noticeTone, noticeVisible, busy, participants, typingDrafts, onTypingUpdate }: {
+export function FloorDock({ onSubmit, onUploadFiles, agents, queueTarget, onQueueTargetChange, textareaRef, notice, noticeTone, noticeVisible, busy, participants, typingDrafts, onTypingUpdate }: {
   onSubmit: (value: string) => Promise<boolean>;
+  onUploadFiles: (files: File[]) => Promise<string[] | null>;
   textareaRef: RefObject<HTMLTextAreaElement | null>;
   notice: string | null;
   noticeTone: "notice" | "error";
@@ -62,7 +63,15 @@ export function FloorDock({ onSubmit, agents, queueTarget, onQueueTargetChange, 
 
   async function submitPrompt() {
     const prompt = value.trim();
-    if (!prompt || busy) return;
+    if (busy) return;
+    // Attachments land in the session's shared files (the Team panel's
+    // Artifacts view) and every later agent run's sandbox — they aren't tied
+    // to this one prompt. Uploading works with or without prompt text.
+    if (attachments.length > 0) {
+      if (!(await onUploadFiles(attachments))) return;
+      setAttachments([]);
+    }
+    if (!prompt) return;
     if (await onSubmit(prompt)) {
       setValue("");
       // Clear the DOM node itself, not just React state: a slow render can
@@ -74,8 +83,6 @@ export function FloorDock({ onSubmit, agents, queueTarget, onQueueTargetChange, 
     }
   }
 
-  // Selection only for now — nothing is uploaded or sent. Kept local so the
-  // composer can show what's queued to attach once sending is wired up.
   function addAttachments(files: FileList | null) {
     if (!files || files.length === 0) return;
     setAttachments((current) => [...current, ...Array.from(files)]);

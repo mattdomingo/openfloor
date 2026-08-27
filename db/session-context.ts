@@ -3,6 +3,7 @@ import {
   type SessionContextAgent,
   type SessionContextAssignment,
   type SessionContextChatMessage,
+  type SessionContextFile,
   type SessionContextPriorAttempt,
   type SessionContextPrompt,
   type SessionContextQueueItem,
@@ -24,6 +25,17 @@ const RUN_LIMIT = 40;
 const QUEUE_LIMIT = 40;
 const CHAT_LIMIT = 30;
 const AGENT_LIMIT = 50;
+const SHARED_FILE_LIMIT = 20;
+
+// One reader for the shared-file list (ENG-113): the brief's section and the
+// workflow's sandbox materialization must agree on which files exist, so
+// both go through this bounded query.
+export async function getSessionSharedFiles(sessionId: string, database: D1DatabaseLike = getDb()): Promise<SessionContextFile[]> {
+  const rows = await database.prepare(
+    "SELECT id, name, size_bytes AS sizeBytes FROM session_files WHERE session_id = ? ORDER BY created_at, id LIMIT ?",
+  ).bind(sessionId, SHARED_FILE_LIMIT).all<SessionContextFile>();
+  return rows.results;
+}
 
 const IN_FLIGHT_STATUSES = new Set(["provisioning", "running", "checking", "ready", "publishing", "published", "integrating", "cancel_requested"]);
 const BLOCKED_STATUSES = new Set(["conflicted", "failed"]);
@@ -47,7 +59,7 @@ export async function getSessionContext(
     .bind(sessionId).first<{ title: string; objective: string | null }>();
   if (!session) return null;
 
-  const [connection, candidate, agentRows, assignmentRows, runRows, queueRows, chatRows, priorAttemptRows] = await Promise.all([
+  const [connection, candidate, agentRows, assignmentRows, runRows, queueRows, chatRows, sharedFileRows, priorAttemptRows] = await Promise.all([
     database.prepare("SELECT repository_full_name AS fullName, base_branch AS baseBranch FROM repository_connections WHERE session_id = ?")
       .bind(sessionId).first<{ fullName: string; baseBranch: string }>(),
     database.prepare(
@@ -81,6 +93,7 @@ export async function getSessionContext(
        WHERE m.session_id = ? AND m.recipient_user_id IS NULL
        ORDER BY m.created_at DESC LIMIT ?`,
     ).bind(sessionId, CHAT_LIMIT).all<SessionContextChatMessage>(),
+    getSessionSharedFiles(sessionId, database),
     viewer
       ? database.prepare(
           `SELECT attempt, status, conflict_reason AS conflictReason FROM agent_runs
@@ -162,6 +175,7 @@ export async function getSessionContext(
     blockedRuns,
     priorAttempts: priorAttemptRows.results,
     chat: [...chatRows.results].reverse(),
+    sharedFiles: sharedFileRows,
   };
 }
 

@@ -27,6 +27,10 @@ test("a direct user keeps profile state across steps and completes Free onboardi
 
   await page.getByRole("button", { name: "Continue", exact: true }).click();
   await page.getByRole("button", { name: "Connect GitHub" }).click();
+  // ENG-163: Connect GitHub runs the device-flow dialog now; test mode links
+  // the fake installation on the first poll, then Done dismisses the modal.
+  await expect(page.getByText("Connected. openfloor can reach:")).toBeVisible();
+  await page.getByRole("button", { name: "Done" }).click();
   await expect(page.getByText("GitHub access connected.")).toBeVisible();
   await page.getByRole("button", { name: "Continue", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Connect AI providers" })).toBeFocused();
@@ -47,6 +51,8 @@ test("paid plan selection exposes seat controls bounded by its catalog", async (
   await page.goto("/onboarding");
   await page.getByRole("button", { name: "Continue", exact: true }).click();
   await page.getByRole("button", { name: "Connect GitHub" }).click();
+  await expect(page.getByText("Connected. openfloor can reach:")).toBeVisible();
+  await page.getByRole("button", { name: "Done" }).click();
   await page.getByRole("button", { name: "Continue", exact: true }).click();
   await page.getByRole("button", { name: "Continue", exact: true }).click();
   await page.getByRole("button", { name: /^Pro/ }).click();
@@ -83,6 +89,8 @@ test("a valid invite locks onboarding to Free and still requires explicit member
   await expect(invitee).toHaveURL(/\/onboarding\?return_to=/);
   await invitee.getByRole("button", { name: "Continue", exact: true }).click();
   await invitee.getByRole("button", { name: "Connect GitHub" }).click();
+  await expect(invitee.getByText("Connected. openfloor can reach:")).toBeVisible();
+  await invitee.getByRole("button", { name: "Done" }).click();
   await invitee.getByRole("button", { name: "Continue", exact: true }).click();
   await invitee.getByRole("button", { name: "Continue", exact: true }).click();
   await expect(invitee.getByRole("heading", { name: "Your invite includes Free" })).toBeFocused();
