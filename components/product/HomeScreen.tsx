@@ -496,12 +496,22 @@ function SessionGrid({
    DOM must reach its new state inside the callback, not on React's
    schedule. */
 function animateReorder(update: () => void) {
-  const doc = document as Document & { startViewTransition?: (callback: () => void) => void };
+  const doc = document as Document & {
+    startViewTransition?: (callback: () => void) => { ready: Promise<void>; finished: Promise<void>; updateCallbackDone: Promise<void> };
+  };
   if (!doc.startViewTransition || window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
     update();
     return;
   }
-  doc.startViewTransition(() => { flushSync(update); });
+  const transition = doc.startViewTransition(() => { flushSync(update); });
+  // Rapid dragover steps start a new transition before the last one ends;
+  // the browser skips the old one and REJECTS its promises ("Skipped
+  // ViewTransition due to another transition starting"). That skip is the
+  // behavior we want — swallow the rejections so they don't surface as
+  // unhandled. The state update itself always applies either way.
+  transition.ready.catch(() => {});
+  transition.finished.catch(() => {});
+  transition.updateCallbackDone.catch(() => {});
 }
 
 // The tile that starts a new session — a plain "+" rather than a label, so
