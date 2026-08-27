@@ -73,6 +73,42 @@ export function formatAgentCost(agent: Pick<FloorAgent, "costMicroUsd" | "costSo
   return { label, title };
 }
 
+// Compact token count for meters and chips: 850, 12K, 1.2M.
+export function formatTokens(count: number): string {
+  if (count >= 10_000_000) return `${Math.round(count / 1_000_000)}M`;
+  if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(1).replace(/\.0$/, "")}M`;
+  if (count >= 1_000) return `${Math.round(count / 1_000)}K`;
+  return String(count);
+}
+
+// The spotlight's context meter. Prompt-side totals (fresh input + cache
+// reads + cache writes) are summed across the whole run, so against the
+// model's window this is an UPPER BOUND on how full the context got — exact
+// for a single-turn run, conservative for a multi-turn one. Runs are
+// stateless (each rebuilds its prompt), so there is no cross-run context and
+// nothing to flush. max is null when the model's window isn't documented in
+// MODEL_CONTEXT_TOKENS — callers show the count without a meter.
+export function runContextUsage(run: Pick<AgentRun, "model" | "inputTokens" | "outputTokens" | "cacheReadTokens" | "cacheWriteTokens">, windowTokens: number | null): {
+  promptTokens: number;
+  windowTokens: number | null;
+  level: "ok" | "warn" | "over";
+  label: string;
+  title: string;
+} | null {
+  if (run.inputTokens === null && run.cacheReadTokens === null && run.cacheWriteTokens === null) return null;
+  const promptTokens = (run.inputTokens ?? 0) + (run.cacheReadTokens ?? 0) + (run.cacheWriteTokens ?? 0);
+  const ratio = windowTokens ? promptTokens / windowTokens : 0;
+  const level = ratio >= 1 ? "over" : ratio >= 0.8 ? "warn" : "ok";
+  const out = run.outputTokens !== null ? ` · ${formatTokens(run.outputTokens)} out` : "";
+  const label = windowTokens
+    ? `${formatTokens(promptTokens)} of ${formatTokens(windowTokens)} window${out}`
+    : `${formatTokens(promptTokens)} prompt tokens${out}`;
+  const title = windowTokens
+    ? `Prompt-side tokens across the latest run against ${run.model}'s ${formatTokens(windowTokens)} context window — an upper bound on how full the context got.`
+    : `Prompt-side tokens across the latest run. ${run.model}'s context window isn't documented, so no meter is drawn.`;
+  return { promptTokens, windowTokens, level, label, title };
+}
+
 // Where a click on a queue item's card/status chip should go, derived purely
 // from the item and its matched run — no fetch, so PromptQueue can compute it
 // per row during render.

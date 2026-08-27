@@ -242,6 +242,20 @@ export const DEFAULT_PROVIDER_MODELS = Object.fromEntries(
   CREDENTIAL_PROVIDERS.map((provider) => [provider, PROVIDER_MODELS[provider][0]]),
 ) as Record<CredentialProvider, string>;
 
+// Context-window sizes in tokens, only for models whose window is documented
+// somewhere this file can cite: the anthropic note above (claude-haiku-4-5 is
+// the 200K entry, the rest are 1M) and k3-256k's own vendor id. Absent means
+// unknown — the UI shows a plain token count, never a guessed meter. Extend
+// alongside PROVIDER_MODELS when a vendor documents a window.
+export const MODEL_CONTEXT_TOKENS: Record<string, number> = {
+  "claude-opus-5": 1_000_000,
+  "claude-fable-5": 1_000_000,
+  "claude-opus-4-8": 1_000_000,
+  "claude-sonnet-5": 1_000_000,
+  "claude-haiku-4-5": 200_000,
+  "k3-256k": 256_000,
+};
+
 export function resolveRunModel(provider: CredentialProvider, agentModel: string | null): string {
   const model = agentModel?.trim();
   return model || DEFAULT_PROVIDER_MODELS[provider];

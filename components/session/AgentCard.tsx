@@ -2,14 +2,14 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { AgentRun, FloorAgent, FloorAgentSettingsPatch, RunActivityEvent } from "@/lib/floor-types";
-import { AGENT_PROVIDER_LABELS, credentialKindLabel, credentialKindsForProvider, parseCredentialKind, PROVIDER_MODELS } from "@/lib/provider-credentials";
+import { AGENT_PROVIDER_LABELS, credentialKindLabel, credentialKindsForProvider, MODEL_CONTEXT_TOKENS, parseCredentialKind, PROVIDER_MODELS } from "@/lib/provider-credentials";
 import { BASE_PATH } from "@/components/basePath";
 import { LocalDateTime } from "@/components/LocalDateTime";
 import { Icon } from "./primitives";
 import { Markdown } from "./Markdown";
 import { SelectMenu } from "./SelectMenu";
 import type { RunActivitySource } from "./useRunActivity";
-import { ACTIVE_RUN_STATUSES, agentReplyText, formatAgentCost, isRunLive, runStatusToken } from "./data";
+import { ACTIVE_RUN_STATUSES, agentReplyText, formatAgentCost, isRunLive, runContextUsage, runStatusToken } from "./data";
 
 const KIND_GLYPHS: Record<string, string> = {
   reasoning: "✳",
@@ -80,6 +80,7 @@ export function AgentSpotlight({ agent, tone, sessionId, latestRun, activity, ow
   const paused = agent.pausedAt !== null;
   const controllable = agent.kind !== "answer";
   const stateLabel = paused ? "Paused" : latestRun ? runStatusToken(latestRun).replace("_", " ") : "Created";
+  const context = latestRun ? runContextUsage(latestRun, MODEL_CONTEXT_TOKENS[latestRun.model] ?? null) : null;
   return (
     <article className="spotlight" data-status={paused ? "paused" : latestRun ? runStatusToken(latestRun) : "idle"} data-tone={tone}>
       <div className="spotlight-head">
@@ -133,6 +134,22 @@ export function AgentSpotlight({ agent, tone, sessionId, latestRun, activity, ow
       )}
       {latestRun?.finalResponse && (
         <div className="spotlight-row"><span className="label">Response</span><div className="spotlight-response"><Markdown>{latestRun.finalResponse}</Markdown></div></div>
+      )}
+      {context && (
+        <div className="spotlight-row"><span className="label">Context</span>
+          <div className="spotlight-context" title={context.title}>
+            {context.windowTokens !== null && (
+              <progress
+                className="usage-meter"
+                value={Math.min(context.promptTokens, context.windowTokens)}
+                max={context.windowTokens}
+                data-level={context.level === "ok" ? undefined : context.level}
+                aria-label={context.label}
+              />
+            )}
+            <small>{context.label}</small>
+          </div>
+        </div>
       )}
       {!isReply && (
         <div className="spotlight-row"><span className="label">Execution</span>{latestRun ? <div className="spotlight-execution"><ActivityTimeline run={latestRun} activity={activity} /><p className="review-empty">{latestRun.files.length} changed file{latestRun.files.length === 1 ? "" : "s"}</p>{latestRun.runBranch && <p className="review-empty"><code>{latestRun.runBranch}</code>{latestRun.discardedAt ? " · discarded" : ""}{latestRun.rollbackStatus === "completed" ? " · rolled back" : ""}</p>}{latestRun.rollbackFailureReason && <p className="review-empty">{latestRun.rollbackFailureReason}</p>}<ArtifactToggle sessionId={sessionId} run={latestRun} label="Open raw log" closeLabel="Hide raw log" emptyText="The raw log becomes available when the run finishes." /><ArtifactToggle sessionId={sessionId} run={latestRun} kind="prompt" label="Session brief sent to this agent" closeLabel="Hide session brief" emptyText="The session brief becomes available once the run starts." /></div> : <p className="review-empty">No agent run has started.</p>}</div>

@@ -185,6 +185,12 @@ export type AgentRun = {
   model: string;
   summary: string | null;
   finalResponse: string | null;
+  // Whole-run totals recorded at completion (lib/run-usage.ts); null for a
+  // pre-feature run or a provider that reported nothing.
+  inputTokens: number | null;
+  outputTokens: number | null;
+  cacheReadTokens: number | null;
+  cacheWriteTokens: number | null;
   createdBy: string;
   createdAt: number;
   startedAt: number | null;
