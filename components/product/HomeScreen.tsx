@@ -10,9 +10,12 @@ import { HoverTip, Icon, Spinner, useDialogDismiss, useHoverTip } from "@/compon
 import { SelectMenu } from "@/components/session/SelectMenu";
 import { lowHoursRemaining, planLabel, type Plan, type PlanStatus } from "@/lib/plans";
 import { mergeVisibleOrder, parseSessionOrder, sortByStoredOrder } from "@/lib/session-order";
+import { branchSlug } from "@/lib/repository-refs";
+import type { CredentialProvider, ProviderCredentialSummary } from "@/lib/provider-credentials";
 import type { AccountGitHubRepositoryOption, AppUser, SessionSummary } from "@/lib/session-types";
 import { WaveField } from "@/app/entry-wave";
 import { AppHeader } from "./AppHeader";
+import { ProviderCredentials } from "./ProviderCredentials";
 
 // How far a tile is willing to lean toward the cursor, in pixels.
 const CARD_MAGNET_REACH = 7;
@@ -154,10 +157,14 @@ export function HomeScreen({
   user,
   sessions: initialSessions,
   usage,
+  initialCredentials,
+  enabledProviders,
 }: {
   user: AppUser;
   sessions: SessionSummary[];
   usage: Usage;
+  initialCredentials: ProviderCredentialSummary[];
+  enabledProviders: CredentialProvider[];
 }) {
   const [sessions, setSessions] = useState(initialSessions);
   // router.refresh() (after delete) re-renders this Server Component prop without
@@ -292,6 +299,8 @@ export function HomeScreen({
             repositories={repositories}
             repositoriesLoading={repositoriesLoading}
             loadError={loadError}
+            initialCredentials={initialCredentials}
+            enabledProviders={enabledProviders}
             onClose={() => setCreating(false)}
           />
         )}
@@ -624,40 +633,61 @@ function SessionActionsMenu({
 // The create flow is a centered modal: task, goal, repository — then straight
 // to the agent floor. A failed candidate provision lands on the lobby with the
 // repository gate open instead, same as the webapp's old inline card did.
-function CreateSessionDialog({ repositories, repositoriesLoading, loadError, onClose }: {
+type CreateSessionStep = 1 | 2 | 3;
+
+// Three steps gathered before POST /api/sessions ever fires: task/goal, then
+// repository + candidate branch name, then an optional AI connection. One
+// <form> spans all three (display: contents, so it adds no box of its own
+// and .dialog's flex-column layout of head/body/foot is unaffected) so
+// Enter in a text field advances, same as the single-step form this
+// replaced; each step's primary button is a plain type="submit".
+function CreateSessionDialog({ repositories, repositoriesLoading, loadError, initialCredentials, enabledProviders, onClose }: {
   repositories: AccountGitHubRepositoryOption[];
   repositoriesLoading: boolean;
   loadError: string | null;
+  initialCredentials: ProviderCredentialSummary[];
+  enabledProviders: CredentialProvider[];
   onClose: () => void;
 }) {
   const router = useRouter();
   const { dismiss, dialogProps } = useDialogDismiss(onClose);
+  const [step, setStep] = useState<CreateSessionStep>(1);
   const [title, setTitle] = useState("");
   const [objective, setObjective] = useState("");
   const [repositoryId, setRepositoryId] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   // Repositories arrive after the dialog opens; adopt the first as default.
   if (!repositoryId && repositories.length > 0) setRepositoryId(repositories[0].id);
+  // The candidate name mirrors the task title until the owner deliberately
+  // edits it — most sessions never need a second name, but touching it once
+  // stops further title edits from silently overwriting it.
+  const [candidateName, setCandidateName] = useState("");
+  const [candidateNameTouched, setCandidateNameTouched] = useState(false);
+  const effectiveCandidateName = candidateNameTouched ? candidateName : title;
+  const [credentials, setCredentials] = useState(initialCredentials);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  async function create(event: FormEvent) {
-    event.preventDefault();
-    setError(null);
-    setSubmitting(true);
+  const trimmedTitle = title.trim();
+  const canContinueFromStep1 = trimmedTitle.length > 0;
+  const canContinueFromStep2 = Boolean(repositoryId) && effectiveCandidateName.trim().length > 0;
+
+  async function createSession() {
     const selectedRepository = repositories.find((repository) => repository.id === repositoryId);
     if (!selectedRepository) {
       setError("Select a GitHub repository.");
-      setSubmitting(false);
       return;
     }
+    setError(null);
+    setSubmitting(true);
     const response = await fetch(`${BASE_PATH}/api/sessions`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        title,
+        title: trimmedTitle,
         objective,
         repositoryId: selectedRepository.id,
         accountInstallationId: selectedRepository.accountInstallationId,
+        candidateName: effectiveCandidateName,
       }),
     });
     const body = (await response.json()) as { session?: SessionSummary; setupStatus?: "ready" | "failed"; error?: string };
@@ -671,34 +701,106 @@ function CreateSessionDialog({ repositories, repositoriesLoading, loadError, onC
       : `/session/${body.session.id}/floor`);
   }
 
+  function handleSubmit(event: FormEvent) {
+    event.preventDefault();
+    if (step === 1) {
+      if (canContinueFromStep1) setStep(2);
+      return;
+    }
+    if (step === 2) {
+      if (canContinueFromStep2) setStep(3);
+      return;
+    }
+    void createSession();
+  }
+
   return (
     <dialog className="dialog create-dialog" {...dialogProps} aria-labelledby="create-session-title">
-      <form onSubmit={create}>
-        <div className="dialog-head">
-          <div className="dialog-title"><h2 id="create-session-title">New session</h2><p>Name the task, set the goal, and pick the repository. You land on the agent floor.</p></div>
+      <form onSubmit={handleSubmit} style={{ display: "contents" }}>
+        <div className="dialog-head setup-dialog-head">
+          <div className="dialog-title">
+            <p className="eyebrow">New session · Step {step} of 3</p>
+            <h2 id="create-session-title">{step === 1 ? "Name the session" : step === 2 ? "Connect the workspace" : "Connect an AI provider"}</h2>
+            <p>
+              {step === 1
+                ? "Name the task and, optionally, set the goal the floor works toward."
+                : step === 2
+                ? "Pick the repository and name the candidate branch this session will work on."
+                : "Optional. At least one connected provider is required to run agents — you can also add one later in Settings."}
+            </p>
+          </div>
+          <ol className="setup-step-list" aria-label="Setup progress">
+            <li data-current={step === 1} data-complete={canContinueFromStep1}>01 Session <span>Required</span></li>
+            <li data-current={step === 2} data-complete={step > 2 && canContinueFromStep2}>02 Repository <span>Required</span></li>
+            <li data-current={step === 3}>03 AI connection <span>Optional</span></li>
+          </ol>
         </div>
         <div className="dialog-body create-dialog-body">
-          <label><span>Task</span><input value={title} onChange={(event) => setTitle(event.target.value)} maxLength={100} required autoFocus placeholder="What is this session for?" /></label>
-          <label><span>Goal <em>optional</em></span><textarea value={objective} onChange={(event) => setObjective(event.target.value)} maxLength={2000} rows={3} placeholder="The shared objective the floor works toward" /></label>
-          <label>
-            <span>Repository</span>
-            {repositories.length > 0 ? (
-              <SelectMenu
-                label="Session repository"
-                value={repositoryId}
-                onChange={setRepositoryId}
-                disabled={repositoriesLoading || submitting}
-                options={repositories.map((repository) => ({ value: repository.id, label: repository.fullName }))}
-              />
-            ) : repositoriesLoading ? <small>Loading GitHub repositories…</small> : (
-              <small>No repositories available. <Link href="/home/settings?section=connections">Add GitHub access in Account Settings</Link>.</small>
-            )}
-          </label>
-          {(error ?? loadError) && <p className="form-error" role="alert">{error ?? loadError}</p>}
+          {step === 1 && (
+            <>
+              <label><span>Task</span><input value={title} onChange={(event) => setTitle(event.target.value)} maxLength={100} required autoFocus placeholder="What is this session for?" /></label>
+              <label><span>Goal <em>optional</em></span><textarea value={objective} onChange={(event) => setObjective(event.target.value)} maxLength={2000} rows={3} placeholder="The shared objective the floor works toward" /></label>
+            </>
+          )}
+          {step === 2 && (
+            <>
+              <label>
+                <span>Repository</span>
+                {repositories.length > 0 ? (
+                  <SelectMenu
+                    label="Session repository"
+                    value={repositoryId}
+                    onChange={setRepositoryId}
+                    disabled={repositoriesLoading}
+                    options={repositories.map((repository) => ({ value: repository.id, label: repository.fullName }))}
+                  />
+                ) : repositoriesLoading ? <small>Loading GitHub repositories…</small> : (
+                  <small>No repositories available. <Link href="/home/settings?section=connections">Add GitHub access in Account Settings</Link>.</small>
+                )}
+              </label>
+              {loadError && <p className="form-error" role="alert">{loadError}</p>}
+              <label>
+                <span>Candidate branch name</span>
+                <input
+                  value={effectiveCandidateName}
+                  onChange={(event) => {
+                    setCandidateNameTouched(true);
+                    setCandidateName(event.target.value);
+                  }}
+                  maxLength={100}
+                  placeholder={trimmedTitle || "Candidate name"}
+                />
+              </label>
+              {/* The record and branch don't exist until the server creates
+                  them, so only the slug segment (a pure function of the
+                  name) is real here — the session/candidate ids render as
+                  literal placeholders rather than invented hex. */}
+              <p className="form-note">
+                Branch that will be created: <code>openfloor/&lt;session&gt;/candidate/{branchSlug(effectiveCandidateName || trimmedTitle)}-&lt;id&gt;</code>
+              </p>
+            </>
+          )}
+          {step === 3 && (
+            <section className="setup-credentials" aria-label="AI connection">
+              <p>
+                A run uses the key connected by that agent&rsquo;s owner, then the configured server key. If neither is
+                available, the run refuses clearly. Stored values are encrypted and never returned to the browser.
+              </p>
+              <ProviderCredentials initialCredentials={credentials} providers={enabledProviders} showAgentDefaults onCredentialsChange={setCredentials} />
+            </section>
+          )}
+          {error && <p className="form-error" role="alert">{error}</p>}
         </div>
-        <div className="dialog-foot">
-          <button type="button" className="button" data-variant="quiet" onClick={dismiss}>Cancel</button>
-          <button className="button" data-variant="primary" disabled={submitting || repositoriesLoading || !repositoryId}>{submitting ? <><Spinner />Creating…</> : "Create session"}</button>
+        <div className="dialog-foot setup-dialog-foot">
+          <button type="button" className="button" data-variant="quiet" onClick={dismiss} disabled={submitting}>Cancel</button>
+          <span className="setup-dialog-nav">
+            {step > 1 && <button type="button" className="button" onClick={() => setStep((current) => (current - 1) as CreateSessionStep)} disabled={submitting}>Back</button>}
+            {step === 1 && <button type="submit" className="button" data-variant="primary" disabled={!canContinueFromStep1}>Continue</button>}
+            {step === 2 && <button type="submit" className="button" data-variant="primary" disabled={!canContinueFromStep2}>Continue</button>}
+            {step === 3 && (
+              <button type="submit" className="button" data-variant="primary" disabled={submitting || !canContinueFromStep2}>{submitting ? <><Spinner />Creating…</> : "Create session"}</button>
+            )}
+          </span>
         </div>
       </form>
     </dialog>
