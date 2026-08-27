@@ -416,7 +416,9 @@ function ConnectionsSection({ initialCredentials, initialGithubInstallations }: 
         <li className="settings-category-row">
           <span className="settings-category-name">GitHub</span>
           <span className="settings-category-detail">Connected installations supply repositories when creating sessions. Removing one affects future selection only; existing session connections remain intact.</span>
-          <button className="button" data-variant="primary" disabled={busy != null} onClick={() => void connectGitHub()}>{busy === "connect" ? "Opening…" : "Add GitHub access"}</button>
+          {installations.length === 0 && (
+            <button className="button" data-variant="primary" disabled={busy != null} onClick={() => void connectGitHub()}>{busy === "connect" ? "Opening…" : "Add GitHub access"}</button>
+          )}
           {installations.length > 0 && (
             <ul className="settings-github-installations">
               {installations.map((installation) => (
