@@ -10,6 +10,17 @@ export function identityHeaders(id: string, email: string, name: string) {
 
 export async function authenticatedContext(browser: Browser, id: string, email: string, firstName: string, lastName: string): Promise<BrowserContext> {
   const context = await browser.newContext({ extraHTTPHeaders: identityHeaders(id, email, `${firstName} ${lastName}`) });
+  // Mark the first-visit guided tour (components/GuidedTour.tsx) as seen so
+  // its bubble never intercepts a click mid-flow; the tour's own behavior is
+  // per-device UI, not the collaboration under test here.
+  await context.addInitScript(() => {
+    try {
+      localStorage.setItem("openfloor:tutorial:home", "done");
+      localStorage.setItem("openfloor:tutorial:floor", "done");
+    } catch {
+      // Storage unavailable: the tour stays closed in that case anyway.
+    }
+  });
   await context.request.patch("/api/account/onboarding", { multipart: { firstName, lastName, githubHandle: "" } });
   const begun = await context.request.post("/api/account/github/connect", { data: { purpose: "onboarding", returnTo: "/home" } });
   const { installUrl } = await begun.json() as { installUrl: string };

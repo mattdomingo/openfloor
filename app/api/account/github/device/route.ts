@@ -12,6 +12,7 @@
 // GitHub entirely and links the fake installation on the first poll.
 import { getGitHubAppConfig } from "@/db";
 import { linkUserGitHubInstallation, listUserGitHubInstallations } from "@/db/github-installations";
+import { getInstallationAccount } from "@/lib/github";
 import { isApiError, requireApiUser } from "@/lib/server-auth";
 
 const GITHUB_ACCEPT = { accept: "application/json", "content-type": "application/json" };
@@ -73,10 +74,14 @@ export async function PUT(request: Request) {
 
   if (config.testData) {
     if (deviceCode !== TEST_DEVICE_CODE) return Response.json({ error: "Device code is required" }, { status: 400 });
-    await linkUserGitHubInstallation(user.id, config.testData.installationId, {
-      login: config.testData.accountLogin ?? "test-account",
-      type: config.testData.accountType ?? "User",
-    });
+    // Same account resolution as the install-redirect callback — the two
+    // connect paths must write the identical fixture identity, or a test
+    // that removes and re-adds access sees the account rename itself.
+    await linkUserGitHubInstallation(
+      user.id,
+      config.testData.installationId,
+      await getInstallationAccount(config, config.testData.installationId),
+    );
     return Response.json({ connected: true, installations: await listUserGitHubInstallations(user.id) });
   }
 

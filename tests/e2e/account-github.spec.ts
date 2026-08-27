@@ -44,8 +44,12 @@ test("Settings removes and restores account GitHub access without changing an ex
   expect(blocked.status()).toBe(409);
   await expect(blocked.json()).resolves.toEqual(expect.objectContaining({ code: "github_required" }));
 
+  // ENG-163: Add GitHub access opens the device-flow dialog instead of the
+  // install redirect (no ?github=connected round trip); test mode links the
+  // fake installation on the first poll.
   await page.getByRole("button", { name: "Add GitHub access" }).click();
-  await expect(page).toHaveURL(/\/home\/settings\?section=connections&github=connected$/);
+  await expect(page.getByText("Connected. openfloor can reach:")).toBeVisible();
+  await page.getByRole("button", { name: "Done" }).click();
   await expect(page.locator("li.settings-category-row", { hasText: "openfloor-test" })
     .filter({ has: page.getByRole("button", { name: "Remove", exact: true }) })).toBeVisible();
   expect((await repositories(context)).length).toBeGreaterThan(0);
