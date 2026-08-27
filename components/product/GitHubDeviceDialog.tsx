@@ -52,14 +52,12 @@ export function GitHubDeviceDialog({ purpose, returnTo, onConnected, onClose }: 
     void (async () => {
       const started = await fetch(`${BASE_PATH}/api/account/github/device`, { method: "POST" });
       if (stopped.current) return;
-      if (started.status === 501) {
-        void openInstallPage();
-        return;
-      }
       const start = await started.json().catch(() => null) as
         { deviceCode?: string; userCode?: string; verificationUri?: string; interval?: number; error?: string } | null;
       if (!started.ok || !start?.deviceCode || !start.userCode) {
-        setPhase({ name: "error", message: start?.error ?? "GitHub did not start the device flow." });
+        // Unconfigured (501), device flow not enabled on the App, or GitHub
+        // unreachable — the classic install redirect covers every case.
+        void openInstallPage();
         return;
       }
       const verificationUri = start.verificationUri ?? "https://github.com/login/device";
