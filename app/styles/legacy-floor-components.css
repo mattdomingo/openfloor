@@ -3656,6 +3656,13 @@
   min-width: 0;
 }
 
+.review-title-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
 .review-title {
   font: 400 19px var(--font-serif);
 }
