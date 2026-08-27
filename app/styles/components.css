@@ -366,3 +366,14 @@ input, textarea { width: 100%; padding: 11px 12px; border: 1px solid var(--line-
   .member-list li { grid-template-columns: auto minmax(0,1fr) auto; }
   .member-role { display: none; }
 }
+
+/* ── Files rail: the floor's left-panel worktree browser ─────────────── */
+
+.files-rail { display: flex; flex-direction: column; min-height: 0; height: 100%; }
+.files-rail-branch { flex: none; }
+.files-rail-branch .value { display: inline-flex; align-items: center; gap: 4px; font-family: var(--font-mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+.files-rail-tree { flex: 1 1 auto; min-height: 80px; overflow: auto; }
+.files-rail-preview { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; border-top: 1px solid var(--line-soft); }
+.files-rail-preview-head { flex: none; display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
+.files-rail-preview-head .value { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.files-rail-code { flex: 1; min-height: 0; overflow: auto; margin: 0; }

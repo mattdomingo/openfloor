@@ -1977,6 +1977,14 @@ The agent-floor response presentation is now a no-space absolutely-positioned ic
 
 **Consequences:** The bootstrap payloads must stay in lockstep with their pages: changing what a page loads or passes means changing the matching branch in the same commit. The desktop app re-fetches its current route's bootstrap on window focus in place of `router.refresh()`. No new write path exists; billing, invites, GitHub routing, presence, and runs all flow through the unchanged existing routes (presence over the same WebSocket, authenticated by the same cookie).
 
+### 2026-08-26 — GitHub connect becomes a device flow; install-redirect stays the fallback (ENG-163)
+
+**Decision:** `POST/PUT /api/account/github/device` runs GitHub's OAuth device flow server-side using the GitHub App's public client id (`GITHUB_APP_CLIENT_ID`, new optional binding; the flow also requires "Enable Device Flow" ticked on the GitHub App). The UI (`components/product/GitHubDeviceDialog.tsx`, used by Settings connections and onboarding) shows the user code, opens `github.com/login/device`, and polls. On success the user-to-server token is used exactly once — `GET /user/installations` — to upsert the member's installation associations (`linkUserGitHubInstallation`, same table as the redirect callback), then discarded; openfloor continues to store no GitHub user token. When the binding is absent the endpoints answer 501 and the dialog falls back to the existing App-install redirect automatically; that redirect also remains the path for granting repositories when an authorization finds zero installations. Test mode (`OPENFLOOR_TEST_GITHUB_DATA`) short-circuits GitHub and links the fake installation on the first poll.
+
+**Rationale:** The desktop app has no natural browser-redirect return path, and even in the webapp the device flow is the shorter, popup-free UX for the common case (App already installed somewhere). Listing installations with the member's own one-shot token adds no new authorization surface: the redirect callback already trusted GitHub's own account/installation data for the same table.
+
+**Consequences:** `GITHUB_APP_CLIENT_ID` must be set (dashboard: GitHub App → General → Client ID) and device flow enabled on the App before the dialog's primary path works in production; until then everything degrades to the redirect. The device endpoints are under `/api/*`, so Access App 2 already covers them.
+
 ## How to record the next decision
 
 Append an entry using this structure:

@@ -39,6 +39,9 @@ export type GitHubAppConfig = {
   appId: string;
   privateKey: string;
   slug: string;
+  /** The GitHub App's OAuth client id — public, used only for the device
+      flow. Empty when GITHUB_APP_CLIENT_ID is not configured. */
+  clientId?: string;
   stateSecret: string;
   webhookSecret: string;
   testData: { installationId: string; accountLogin?: string; accountType?: string; repositories: GitHubTestRepository[] } | null;

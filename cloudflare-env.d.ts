@@ -7,6 +7,7 @@ declare global {
       CF_ACCESS_TEAM_DOMAIN?: string;
       INVITE_SIGNING_SECRET: string;
       GITHUB_APP_ID: string;
+      GITHUB_APP_CLIENT_ID?: string;
       GITHUB_APP_SLUG: string;
       GITHUB_APP_PRIVATE_KEY: string;
       GITHUB_STATE_SECRET: string;

@@ -5,6 +5,7 @@ import { FormEvent, useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { AvatarCropper, AvatarFileButton } from "@/components/product/AvatarCropper";
 import { BASE_PATH } from "@/components/basePath";
+import { GitHubDeviceDialog } from "@/components/product/GitHubDeviceDialog";
 import { DoNotDisturbToggle } from "@/components/DoNotDisturbToggle";
 import { Avatar, Spinner, useDialogDismiss } from "@/components/session/primitives";
 import { ThemeToggle } from "@/components/ThemeToggle";
@@ -389,21 +390,11 @@ function ConnectionsSection({ initialCredentials, initialGithubInstallations }: 
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  async function connectGitHub() {
-    setBusy("connect");
+  const [deviceDialogOpen, setDeviceDialogOpen] = useState(false);
+
+  function connectGitHub() {
     setError(null);
-    const response = await fetch(`${BASE_PATH}/api/account/github/connect`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ purpose: "settings", returnTo: `${BASE_PATH}/home/settings?section=connections` }),
-    });
-    const body = await response.json().catch(() => null) as { installUrl?: string; error?: string } | null;
-    if (!response.ok || !body?.installUrl) {
-      setError(body?.error ?? "Unable to begin GitHub setup.");
-      setBusy(null);
-      return;
-    }
-    window.location.assign(body.installUrl);
+    setDeviceDialogOpen(true);
   }
 
   async function removeGitHub(id: string) {
@@ -436,6 +427,14 @@ function ConnectionsSection({ initialCredentials, initialGithubInstallations }: 
         ))}
         {error && <li><p className="form-error" role="alert">{error}</p></li>}
       </ul>
+      {deviceDialogOpen && (
+        <GitHubDeviceDialog
+          purpose="settings"
+          returnTo={`${BASE_PATH}/home/settings?section=connections`}
+          onConnected={setInstallations}
+          onClose={() => setDeviceDialogOpen(false)}
+        />
+      )}
       <p className="settings-category-detail">
         Connect your own API keys. A run uses the key connected by that agent&rsquo;s owner, then the configured server key;
         if neither is available, the run refuses clearly. Keys are encrypted, shown only by their last four characters,

@@ -20,8 +20,8 @@
   --sheet: #dce1e7;
   --bone: #d7dadf;
   --ink: #12181f;
-  --muted: #3d4652;
-  --steel: #4a525c;
+  --muted: #2c3540;
+  --steel: #39424d;
   --rule: #a9b1bd;
   --edge: #1e262f;
   --accent-ink: #1A3FA6;
@@ -59,8 +59,8 @@
   --shop-2: #292f37;
   --sheet: #313740;
   --ink: #dfe3e8;
-  --muted: #a5acb6;
-  --steel: #8a919b;
+  --muted: #c2c8d1;
+  --steel: #a6adb7;
   --rule: #404751;
   --edge: #4e5560;
   --accent-ink: #7FB0FF;
@@ -79,8 +79,8 @@
     --shop-2: #292f37;
     --sheet: #313740;
     --ink: #dfe3e8;
-    --muted: #a5acb6;
-    --steel: #8a919b;
+    --muted: #c2c8d1;
+    --steel: #a6adb7;
     --rule: #404751;
     --edge: #4e5560;
     --accent-ink: #7FB0FF;
@@ -1196,3 +1196,29 @@
   .session-lobby-shell .setup-dialog-foot { align-items: stretch; flex-direction: column; }
   .session-lobby-shell .setup-dialog-nav { justify-content: flex-end; }
 }
+
+/* ── Create-session dialog (HomeScreen's centered modal) ─────────────── */
+
+.shop-shell .create-dialog { width: min(520px, calc(100vw - 48px)); }
+.create-dialog-body { display: grid; gap: var(--space-5); }
+.create-dialog-body label { display: grid; gap: var(--space-2); font-size: var(--text-sm); font-weight: 700; }
+.create-dialog-body label > span { display: flex; justify-content: space-between; }
+.create-dialog-body label em { color: var(--text-tertiary); font-style: normal; font-weight: 500; }
+
+/* ── GitHub device-flow dialog ───────────────────────────────────────── */
+
+.shop-shell .device-dialog { width: min(460px, calc(100vw - 48px)); }
+.device-dialog-body { display: grid; gap: var(--space-4); justify-items: center; text-align: center; }
+.device-dialog-code {
+  margin: var(--space-2) 0 0;
+  padding: var(--space-3) var(--space-6);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  font: 600 28px var(--font-mono);
+  letter-spacing: 0.18em;
+}
+.device-dialog-hint a { text-decoration: underline; }
+.device-dialog-status { display: inline-flex; align-items: center; gap: var(--space-2); color: var(--text-secondary); }
+.device-dialog-installations { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-2); }
+.device-dialog-installations li { display: flex; gap: var(--space-2); align-items: baseline; }
+.device-dialog-installations li span { color: var(--text-secondary); font-size: var(--text-sm); }

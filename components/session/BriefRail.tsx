@@ -5,6 +5,8 @@ import type { FloorAgent, FloorAssignment, FloorMessage, FloorParticipant, Floor
 import type { ChatThread, TeamPanelView } from "./data";
 import { Avatar, Icon, SegmentedControl } from "./primitives";
 import { Panel, type PanelChrome } from "./Rail";
+import { RepositoryFilesBrowser } from "./RepositoryFiles";
+import type { RepositorySource } from "./useRepositoryTree";
 import { TeamChat } from "./TeamChat";
 
 type BriefRailProps = {
@@ -22,6 +24,9 @@ type BriefRailProps = {
   participants: FloorParticipant[];
   currentUserId: string;
   unreadTeamCount: number;
+  repositoryFiles: RepositorySource;
+  repositoryBrowsable: boolean;
+  branch: string | null;
 };
 
 export function BriefRail(props: BriefRailProps) {
@@ -33,13 +38,15 @@ export function BriefRail(props: BriefRailProps) {
       label="Team panel view"
       value={props.view}
       onChange={props.onViewChange}
-      options={[{ value: "goals", label: "Goals" }, { value: "chat", label: chatLabel }]}
+      options={[{ value: "files", label: "Files" }, { value: "goals", label: "Goals" }, { value: "chat", label: chatLabel }]}
     />
   );
 
   return (
     <Panel chrome={props.chrome} title="Team" actions={controls}>
-      {props.view === "chat" ? (
+      {props.view === "files" ? (
+        <RepositoryFilesBrowser source={props.repositoryFiles} browsable={props.repositoryBrowsable} branch={props.branch} />
+      ) : props.view === "chat" ? (
         <TeamChat
           messages={props.messages}
           onSend={props.onSendMessage}
