@@ -159,7 +159,6 @@ export function HomeScreen({
   sessions: SessionSummary[];
   usage: Usage;
 }) {
-  const router = useRouter();
   const [sessions, setSessions] = useState(initialSessions);
   // router.refresh() (after delete) re-renders this Server Component prop without
   // remounting HomeScreen, so local state needs to resync — done during render,
