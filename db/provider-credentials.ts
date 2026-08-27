@@ -14,6 +14,7 @@ import {
   resolveRunCredentialSource,
   type CredentialKind,
   type CredentialProvider,
+  type MonthlyProviderUsage,
   type ProviderCredentialSummary,
 } from "@/lib/provider-credentials";
 
@@ -26,6 +27,8 @@ type CredentialRow = {
   updatedAt: number;
   monthlyLimitMicroUsd: number | null;
   monthSpendMicroUsd: number;
+  monthInputTokens: number;
+  monthOutputTokens: number;
 };
 
 // Joined to provider_spend_months for the current UTC month so every
@@ -35,7 +38,8 @@ type CredentialRow = {
 // so this LEFT JOIN never double-counts across kinds.
 const SUMMARY_COLUMNS =
   `c.provider, c.kind, c.fingerprint, c.validated_at AS validatedAt, c.created_at AS createdAt, c.updated_at AS updatedAt,
-   c.monthly_limit_micro_usd AS monthlyLimitMicroUsd, COALESCE(spend.micro_usd, 0) AS monthSpendMicroUsd`;
+   c.monthly_limit_micro_usd AS monthlyLimitMicroUsd, COALESCE(spend.micro_usd, 0) AS monthSpendMicroUsd,
+   COALESCE(spend.input_tokens, 0) AS monthInputTokens, COALESCE(spend.output_tokens, 0) AS monthOutputTokens`;
 const SUMMARY_JOIN =
   `LEFT JOIN provider_spend_months spend
      ON spend.user_id = c.user_id AND spend.provider = c.provider AND spend.kind = c.kind AND spend.month = ?`;
@@ -52,6 +56,20 @@ export async function listProviderCredentials(
     .prepare(`SELECT ${SUMMARY_COLUMNS} FROM user_provider_credentials c ${SUMMARY_JOIN} WHERE c.user_id = ? ORDER BY c.provider, c.kind`)
     .bind(currentUtcMonth(), userId)
     .all<CredentialRow>();
+  return rows.results;
+}
+
+// Every rollup row for the current UTC month, including kind='server' rows
+// (openfloor's fallback key), which have no credential row and are invisible
+// to listProviderCredentials' join.
+export async function getMonthlyModelUsage(
+  userId: string,
+  database: D1DatabaseLike = getDb(),
+): Promise<MonthlyProviderUsage[]> {
+  const rows = await database.prepare(
+    `SELECT provider, kind, micro_usd AS microUsd, input_tokens AS inputTokens, output_tokens AS outputTokens
+     FROM provider_spend_months WHERE user_id = ? AND month = ? ORDER BY provider, kind`,
+  ).bind(userId, currentUtcMonth()).all<MonthlyProviderUsage>();
   return rows.results;
 }
 

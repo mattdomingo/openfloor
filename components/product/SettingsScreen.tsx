@@ -16,8 +16,11 @@ import { initialsFromParts } from "@/lib/display-name";
 import { lowHoursRemaining, PAID_PLAN_CATALOG, planLabel, planLimitsSummary, type PaidPlan, type Plan, type PlanStatus } from "@/lib/plans";
 import {
   CREDENTIAL_PROVIDERS,
+  monthlyUsageLabel,
+  type MonthlyProviderUsage,
   type ProviderCredentialSummary,
 } from "@/lib/provider-credentials";
+import { formatTokens } from "@/components/session/data";
 import type { AppUser, UserGitHubInstallationSummary } from "@/lib/session-types";
 import type { SettingsSection } from "@/lib/settings-plan";
 import { WaveField } from "@/app/entry-wave";
@@ -61,12 +64,13 @@ function SettingsRail({ value, onChange }: { value: SettingsSection; onChange: (
   );
 }
 
-export function SettingsScreen({ user: initialUser, usage, billing, credentials, githubInstallations, initialSection, billingNotice, backTo, originPath }: {
+export function SettingsScreen({ user: initialUser, usage, billing, credentials, githubInstallations, modelUsage, initialSection, billingNotice, backTo, originPath }: {
   user: AppUser;
   usage: Usage;
   billing: Billing;
   credentials: ProviderCredentialSummary[];
   githubInstallations: UserGitHubInstallationSummary[];
+  modelUsage: MonthlyProviderUsage[];
   initialSection: SettingsSection;
   billingNotice: string | null;
   // Where "Account settings" was opened from — resolved server-side in
@@ -126,7 +130,7 @@ export function SettingsScreen({ user: initialUser, usage, billing, credentials,
               each time, same as HomeScreen's tab-panel. */}
           <div className="settings-panel tab-panel" key={section}>
             {section === "profile" && <ProfileSection user={user} onSaved={setUser} />}
-            {section === "plan" && <PlanSection usage={usage} billing={billing} billingNotice={billingNotice} originPath={originPath} />}
+            {section === "plan" && <PlanSection usage={usage} billing={billing} modelUsage={modelUsage} billingNotice={billingNotice} originPath={originPath} />}
             {section === "connections" && <ConnectionsSection initialCredentials={credentials} initialGithubInstallations={githubInstallations} />}
             {section === "preferences" && <PreferencesSection user={user} />}
             {section === "danger" && <DangerZoneSection />}
@@ -267,7 +271,7 @@ function ProfileSection({ user, onSaved }: { user: AppUser; onSaved: (user: AppU
   );
 }
 
-function PlanSection({ usage, billing, billingNotice, originPath }: { usage: Usage; billing: Billing; billingNotice: string | null; originPath: string | null }) {
+function PlanSection({ usage, billing, modelUsage, billingNotice, originPath }: { usage: Usage; billing: Billing; modelUsage: MonthlyProviderUsage[]; billingNotice: string | null; originPath: string | null }) {
   const limitSeconds = usage.limitHours * 3600;
   const lowHours = lowHoursRemaining(usage.seconds, usage.limitHours);
   const limitedHours = Number.isFinite(usage.limitHours);
@@ -343,6 +347,22 @@ function PlanSection({ usage, billing, billingNotice, originPath }: { usage: Usa
             ? `${formatDuration(usage.seconds)} of ${usage.limitHours}h used this month (UTC)`
             : `${formatDuration(usage.seconds)} used this month (UTC) · unlimited`}
           {lowHours != null && <strong className="usage-low">{` · ${formatDuration(lowHours)} left`}</strong>}
+        </span>
+      </li>
+
+      <li className="settings-category-row">
+        <span className="settings-category-name">Model usage this month</span>
+        <span className="settings-category-detail">
+          {modelUsage.length === 0 ? "No model usage this month (UTC)." : (
+            <ul className="usage-model-list">
+              {modelUsage.map((row) => (
+                <li key={`${row.provider}-${row.kind}`}>
+                  <span>{monthlyUsageLabel(row)}</span>
+                  <span>{`$${(row.microUsd / 1_000_000).toFixed(2)} · ${formatTokens(row.inputTokens)} in / ${formatTokens(row.outputTokens)} out`}</span>
+                </li>
+              ))}
+            </ul>
+          )}
         </span>
       </li>
 

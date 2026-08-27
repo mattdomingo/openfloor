@@ -12,7 +12,8 @@ import { SelectMenu } from "@/components/session/SelectMenu";
 import { lowHoursRemaining, planLabel, type Plan, type PlanStatus } from "@/lib/plans";
 import { mergeVisibleOrder, parseSessionOrder, sortByStoredOrder } from "@/lib/session-order";
 import { branchSlug } from "@/lib/repository-refs";
-import type { CredentialProvider, ProviderCredentialSummary } from "@/lib/provider-credentials";
+import { monthlyUsageLabel, type CredentialProvider, type MonthlyProviderUsage, type ProviderCredentialSummary } from "@/lib/provider-credentials";
+import { formatTokens } from "@/components/session/data";
 import type { AccountGitHubRepositoryOption, AppUser, SessionSummary } from "@/lib/session-types";
 import { WaveField } from "@/app/entry-wave";
 import { AppHeader } from "./AppHeader";
@@ -160,12 +161,14 @@ export function HomeScreen({
   usage,
   initialCredentials,
   enabledProviders,
+  modelUsage,
 }: {
   user: AppUser;
   sessions: SessionSummary[];
   usage: Usage;
   initialCredentials: ProviderCredentialSummary[];
   enabledProviders: CredentialProvider[];
+  modelUsage: MonthlyProviderUsage[];
 }) {
   const [sessions, setSessions] = useState(initialSessions);
   // router.refresh() (after delete) re-renders this Server Component prop without
@@ -331,6 +334,21 @@ export function HomeScreen({
                 )}
                 <p className="usage-card-stat">{usageStatLine}</p>
                 {liveOwnedSessions > 1 && <p className="usage-card-note">{usageLiveLine}</p>}
+              </div>
+              <div className="usage-card">
+                <p className="usage-card-plan">Model usage this month (UTC)</p>
+                {modelUsage.length === 0 ? (
+                  <p className="usage-card-stat">No model usage this month.</p>
+                ) : (
+                  <ul className="usage-model-list">
+                    {modelUsage.map((row) => (
+                      <li key={`${row.provider}-${row.kind}`}>
+                        <span>{monthlyUsageLabel(row)}</span>
+                        <span>{`$${(row.microUsd / 1_000_000).toFixed(2)} · ${formatTokens(row.inputTokens)} in / ${formatTokens(row.outputTokens)} out`}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
               </div>
             </div>
           ) : tab === "active" ? (

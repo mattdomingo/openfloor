@@ -106,7 +106,27 @@ export type ProviderCredentialSummary = {
   // set — the meter still shows spend, just with no ceiling to warn against.
   monthSpendMicroUsd: number;
   monthlyLimitMicroUsd: number | null;
+  // Same-month token totals from the same rollup row. Input and output only —
+  // cache tokens are metered into cost but not rolled up per month.
+  monthInputTokens: number;
+  monthOutputTokens: number;
 };
+
+// One row of provider_spend_months for the current UTC month, as the model
+// usage views on Home and Settings read it. kind "server" is openfloor's
+// fallback key — it has no credential row, so it only ever surfaces here.
+export type MonthlyProviderUsage = {
+  provider: CredentialProvider;
+  kind: CredentialKind | "server";
+  microUsd: number;
+  inputTokens: number;
+  outputTokens: number;
+};
+
+export function monthlyUsageLabel(row: Pick<MonthlyProviderUsage, "provider" | "kind">): string {
+  const kind = row.kind === "server" ? "openfloor key" : credentialKindLabel(row.provider, row.kind);
+  return `${providerLabel(row.provider)} · ${kind}`;
+}
 
 export function parseCredentialProvider(value: unknown): CredentialProvider | null {
   return CREDENTIAL_PROVIDERS.includes(value as CredentialProvider) ? (value as CredentialProvider) : null;
