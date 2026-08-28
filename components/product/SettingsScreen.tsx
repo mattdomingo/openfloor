@@ -436,9 +436,6 @@ function ConnectionsSection({ initialCredentials, initialGithubInstallations }: 
         <li className="settings-category-row">
           <span className="settings-category-name">GitHub</span>
           <span className="settings-category-detail">Connected installations supply repositories when creating sessions. Removing one affects future selection only; existing session connections remain intact.</span>
-          {installations.length === 0 && (
-            <button className="button" data-variant="primary" disabled={busy != null} onClick={() => void connectGitHub()}>{busy === "connect" ? "Opening…" : "Add GitHub access"}</button>
-          )}
           {installations.length > 0 && (
             <ul className="settings-github-installations">
               {installations.map((installation) => (
@@ -450,6 +447,9 @@ function ConnectionsSection({ initialCredentials, initialGithubInstallations }: 
               ))}
             </ul>
           )}
+          {/* Always offered — a second personal account or organization can
+              be connected at any time, not just before the first one. */}
+          <button className="button" data-variant={installations.length === 0 ? "primary" : undefined} disabled={busy != null} onClick={() => void connectGitHub()}>Add GitHub access</button>
         </li>
         {error && <li><p className="form-error" role="alert">{error}</p></li>}
       </ul>

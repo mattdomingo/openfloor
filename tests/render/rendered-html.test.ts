@@ -400,7 +400,9 @@ describe("settings page", () => {
 });
 
 describe("plan-selection onboarding", () => {
-  it("requires direct signups to choose Free, Pro, or Max and displays Enterprise", async () => {
+  // The plan step is hidden for now (everyone enrolls on Free) — onboarding
+  // is profile + GitHub, then AI connections, with no plan picker rendered.
+  it("renders profile + GitHub and AI connections with no plan step", async () => {
     const headers = {
       accept: "text/html", host: "localhost",
       "x-openfloor-dev-user-id": "plan-choice-new",
@@ -414,13 +416,12 @@ describe("plan-selection onboarding", () => {
     expect(html).toContain("Account setup progress");
     expect(html).toContain('aria-current="step"');
     expect(html).toContain("Create your profile");
+    expect(html).toContain("GitHub access");
     expect(html).toContain("Connect AI providers");
     expect(html).toContain("Anthropic");
-    expect(html).toContain("Choose your plan");
-    expect(html).toMatch(/\$<!-- -->30<!-- -->\/seat\/month|\$30\/seat\/month/);
-    expect(html).toMatch(/\$<!-- -->50<!-- -->\/seat\/month|\$50\/seat\/month/);
-    expect(html).toContain("Contact sales");
-    expect(html).toContain('href="mailto:hello@opnflr.com"');
+    expect(html).not.toContain("Choose your plan");
+    expect(html).not.toContain("/seat/month");
+    expect(html).not.toContain("Contact sales");
   });
 
   it("rejects a direct signup until a plan is explicitly selected", async () => {
@@ -470,8 +471,10 @@ describe("plan-selection onboarding", () => {
     const onboardingUrl = `http://localhost/onboarding?return_to=${encodeURIComponent(invitePath)}`;
     const page = await SELF.fetch(onboardingUrl, { headers });
     const html = await page.text();
-    expect(html).toContain("Your invite includes Free");
-    expect(html).toContain("This invite includes a Free openfloor account");
+    // With the plan step hidden, an invitee sees the same two-step
+    // onboarding as everyone else — Free enrollment happens on submit.
+    expect(html).toContain("Create your profile");
+    expect(html).not.toContain("Choose your plan");
 
     await completeTestOnboarding(headers, "Invite", "New", invitePath);
     expect((await SELF.fetch(`http://localhost${invitePath}`, { headers })).status).toBe(200);
@@ -500,14 +503,14 @@ describe("sign-out", () => {
 // tests/worker/access-paths.test.ts, tests/worker/access-login.test.ts, and
 // tests/worker/signin-code-route.test.ts instead.
 describe("custom sign-in", () => {
-  it("renders the extracted email form and a Google link at the real protected path", async () => {
+  it("renders the GitHub link at the real protected path and the extracted email form", async () => {
     const response = await SELF.fetch(`http://localhost/signin?return_to=${encodeURIComponent("/session/private-room")}`, {
       headers: { accept: "text/html" },
     });
     expect(response.status).toBe(200);
     const html = await response.text();
     expect(html).toContain('name="action" value="https://openfloor-render-test.cloudflareaccess.com/cdn-cgi/access/verify-code/app.opnflr.com?kid=render-fixture&amp;meta=render-fixture"');
-    expect(html).toContain('href="/session/private-room">Continue with Google');
+    expect(html).toContain('href="/session/private-room">Continue with GitHub');
     expect(html).toContain('action="/signin/code?return_to=%2Fsession%2Fprivate-room"');
   });
 

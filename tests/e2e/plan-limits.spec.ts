@@ -26,9 +26,7 @@ test("free-tier seat cap refuses a fourth member with the session already full",
   await owner.getByRole("button", { name: /^Active/ }).click();
   await owner.getByRole("button", { name: "New session" }).click();
   await owner.getByLabel("Task").fill("Free tier session");
-  await owner.getByRole("button", { name: "Continue" }).click();
   await expect(owner.getByLabel("Candidate branch name")).toHaveValue("Free tier session");
-  await owner.getByRole("button", { name: "Continue" }).click();
   await owner.getByRole("button", { name: "Create session" }).click();
   // A ready provision lands on the agent floor; the invite link lives on
   // the lobby, so navigate back there for it.
