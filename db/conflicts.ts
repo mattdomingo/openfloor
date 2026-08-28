@@ -1,11 +1,11 @@
-import type { MergeConflictCase, MergeConflictQuestion } from "@/lib/floor-types";
+import type { ConflictChoice, MergeConflictCase, MergeConflictQuestion } from "@/lib/floor-types";
 import type { CredentialProvider } from "@/lib/provider-credentials";
 import { getDb } from "./index";
 import { getActiveMembershipRole, getMembershipRole } from "./sessions";
 
 export const MAX_AUTOMATIC_CONFLICT_ATTEMPTS = 2;
 
-type CaseRow = Omit<MergeConflictCase, "conflictPaths" | "questions" | "prompts" | "attempts"> & { conflictPaths: string };
+type CaseRow = Omit<MergeConflictCase, "conflictPaths" | "questions" | "prompts" | "attempts" | "hasSnapshot"> & { conflictPaths: string; hasSnapshot: number };
 
 function paths(value: string | null): string[] {
   try {
@@ -24,7 +24,12 @@ export async function getMergeConflictCases(sessionId: string, database = getDb(
             COALESCE(source.conflict_reason, 'The run conflicts with the latest candidate branch.') AS conflictReason,
             mc.explanation, mc.conflict_paths AS conflictPaths, mc.automatic_attempts AS automaticAttempts,
             mc.failure_reason AS failureReason, mc.created_at AS createdAt, mc.updated_at AS updatedAt,
-            mc.resolved_at AS resolvedAt
+            mc.resolved_at AS resolvedAt,
+            EXISTS (
+              SELECT 1 FROM merge_conflict_attempts mca JOIN agent_run_artifacts ar
+                ON ar.run_id = mca.run_id AND ar.kind = 'conflict_snapshot'
+              WHERE mca.case_id = mc.id
+            ) AS hasSnapshot
      FROM merge_conflict_cases mc
      JOIN agent_runs source ON source.id = mc.source_run_id
      JOIN floor_agents a ON a.id = source.agent_id
@@ -88,10 +93,142 @@ export async function getMergeConflictCases(sessionId: string, database = getDb(
     automaticAttempts: Number(row.automaticAttempts),
     failureReason: row.failureReason ?? null,
     resolvedAt: row.resolvedAt ?? null,
+    hasSnapshot: Boolean(row.hasSnapshot),
     questions: byCase.get(row.id) ?? [],
     prompts: promptsByCase.get(row.id) ?? [],
     attempts: attemptsByCase.get(row.id) ?? [],
   }));
+}
+
+/** Shared authorization for the "human decision" surfaces (free-text answers
+ * and, now, per-hunk selections): the session owner, or a user who authored
+ * at least one prompt on the case's original source queue item. Returns the
+ * active membership role ("missing" callers get a concealed 404), or null
+ * when the caller has no access at all. */
+async function authorizeConflictDecision(sessionId: string, caseId: string, userId: string, database: ReturnType<typeof getDb>): Promise<boolean> {
+  const role = await getActiveMembershipRole(sessionId, userId, database);
+  if (!role) return false;
+  if (role === "owner") return true;
+  const authored = await database.prepare(
+    `SELECT 1 AS allowed FROM merge_conflict_cases mc
+     JOIN agent_runs source ON source.id = mc.source_run_id
+     JOIN floor_queue_prompts p ON p.queue_item_id = source.queue_item_id
+     WHERE mc.id = ? AND mc.session_id = ? AND p.author_user_id = ? LIMIT 1`,
+  ).bind(caseId, sessionId, userId).first<{ allowed: number }>();
+  return Boolean(authored);
+}
+
+/** The resolver attempt whose conflict_snapshot artifact is current for a
+ * case — always the most recently captured one, since every attempt (manual
+ * or automatic) captures its own. Null means no attempt has ever produced a
+ * snapshot (nothing for the manual dialog to show yet). */
+async function getLatestConflictSnapshotRunId(caseId: string, database: ReturnType<typeof getDb>): Promise<string | null> {
+  const row = await database.prepare(
+    `SELECT mca.run_id AS runId FROM merge_conflict_attempts mca
+     JOIN agent_run_artifacts ar ON ar.run_id = mca.run_id AND ar.kind = 'conflict_snapshot'
+     WHERE mca.case_id = ? ORDER BY ar.created_at DESC, mca.run_id DESC LIMIT 1`,
+  ).bind(caseId).first<{ runId: string }>();
+  return row?.runId ?? null;
+}
+
+export type ConflictSnapshotArtifactAccess = {
+  runId: string;
+  r2Key: string;
+  conflictPaths: string[];
+  existingSelections: Array<{ path: string; hunkIndex: number; choice: ConflictChoice }>;
+};
+
+/** Authorizes and locates the R2 object for a case's current snapshot, plus
+ * any selections already recorded against it (so a reopened dialog can
+ * prefill). Route-layer reads the R2 body itself (db/ stays D1-only, same
+ * split as every other run-artifact route). */
+export async function getConflictSnapshotArtifact(sessionId: string, caseId: string, userId: string, database = getDb()): Promise<ConflictSnapshotArtifactAccess | "forbidden" | "not_found"> {
+  if (!(await authorizeConflictDecision(sessionId, caseId, userId, database))) return "forbidden";
+  const runId = await getLatestConflictSnapshotRunId(caseId, database);
+  if (!runId) return "not_found";
+  const artifact = await database.prepare(
+    "SELECT r2_key AS r2Key FROM agent_run_artifacts WHERE run_id = ? AND kind = 'conflict_snapshot'",
+  ).bind(runId).first<{ r2Key: string }>();
+  if (!artifact) return "not_found";
+  const [caseRow, selections] = await Promise.all([
+    database.prepare("SELECT conflict_paths AS conflictPaths FROM merge_conflict_cases WHERE id = ?").bind(caseId).first<{ conflictPaths: string }>(),
+    database.prepare(
+      "SELECT path, hunk_index AS hunkIndex, choice FROM merge_conflict_selections WHERE snapshot_run_id = ? ORDER BY path, hunk_index",
+    ).bind(runId).all<{ path: string; hunkIndex: number; choice: string }>(),
+  ]);
+  return {
+    runId, r2Key: artifact.r2Key,
+    conflictPaths: paths(caseRow?.conflictPaths ?? null),
+    existingSelections: selections.results.map((row) => ({ path: row.path, hunkIndex: Number(row.hunkIndex), choice: row.choice as ConflictChoice })),
+  };
+}
+
+export type ConflictSelectionInput = { path: string; hunkIndex: number; choice: ConflictChoice };
+
+/** Records one human's complete set of per-hunk choices for the case's
+ * current snapshot and resumes the case for a deterministic resolver
+ * attempt — same authorization and "first complete submission against the
+ * current snapshot wins" staleness rule as answerConflictQuestions. The
+ * caller (the API route) is responsible for having already verified that
+ * `selections` covers every hunk the snapshot actually has; this function
+ * only re-derives "is snapshotRunId still current" atomically against the
+ * write, which a route-layer check alone cannot guarantee under a race. */
+export async function recordConflictSelections(
+  sessionId: string,
+  caseId: string,
+  userId: string,
+  snapshotRunId: string,
+  selections: ConflictSelectionInput[],
+  database = getDb(),
+): Promise<"recorded" | "stale" | "missing"> {
+  if (!(await authorizeConflictDecision(sessionId, caseId, userId, database))) return "missing";
+  const exists = await database.prepare("SELECT id FROM merge_conflict_cases WHERE id = ? AND session_id = ?")
+    .bind(caseId, sessionId).first<{ id: string }>();
+  if (!exists) return "missing";
+  const now = Date.now();
+  const latestSnapshotSubquery = `(
+    SELECT mca.run_id FROM merge_conflict_attempts mca
+    JOIN agent_run_artifacts ar ON ar.run_id = mca.run_id AND ar.kind = 'conflict_snapshot'
+    WHERE mca.case_id = ? ORDER BY ar.created_at DESC, mca.run_id DESC LIMIT 1
+  )`;
+  const statements = selections.map((selection) => database.prepare(
+    `INSERT INTO merge_conflict_selections (id, case_id, snapshot_run_id, path, hunk_index, choice, selected_by, created_at)
+     SELECT ?, ?, ?, ?, ?, ?, ?, ? WHERE ? = ${latestSnapshotSubquery}
+     ON CONFLICT(snapshot_run_id, path, hunk_index) DO UPDATE SET
+       choice = excluded.choice, selected_by = excluded.selected_by, created_at = excluded.created_at`,
+  ).bind(crypto.randomUUID(), caseId, snapshotRunId, selection.path, selection.hunkIndex, selection.choice, userId, now, snapshotRunId, caseId));
+  const results = await database.batch([
+    ...statements,
+    database.prepare(
+      `UPDATE merge_conflict_cases SET status = 'pending', resume_requested = 1, failure_reason = NULL,
+              current_resolver_run_id = NULL, updated_at = ?
+       WHERE id = ? AND session_id = ? AND status IN ('failed', 'awaiting_input') AND ? = ${latestSnapshotSubquery}`,
+    ).bind(now, caseId, sessionId, snapshotRunId, caseId),
+    database.prepare(
+      `UPDATE sessions SET floor_revision = floor_revision + 1, updated_at = ?
+       WHERE id = ? AND EXISTS (SELECT 1 FROM merge_conflict_cases WHERE id = ? AND resume_requested = 1 AND status = 'pending')`,
+    ).bind(now, sessionId, caseId),
+  ]);
+  const caseChanges = Number(results[statements.length]?.meta?.changes ?? 0) === 1;
+  return caseChanges ? "recorded" : "stale";
+}
+
+/** What a resolver run should deterministically apply instead of invoking an
+ * agent — the case's current snapshot's selections, if any exist. Null means
+ * either no manual selections were ever recorded (an ordinary automatic
+ * attempt) or the case has no snapshot at all; the workflow falls back to
+ * running the agent normally in both cases. */
+export async function getConflictSelectionsForCase(
+  caseId: string,
+  database = getDb(),
+): Promise<{ snapshotRunId: string; selections: ConflictSelectionInput[] } | null> {
+  const snapshotRunId = await getLatestConflictSnapshotRunId(caseId, database);
+  if (!snapshotRunId) return null;
+  const rows = await database.prepare(
+    "SELECT path, hunk_index AS hunkIndex, choice FROM merge_conflict_selections WHERE snapshot_run_id = ? ORDER BY path, hunk_index",
+  ).bind(snapshotRunId).all<{ path: string; hunkIndex: number; choice: string }>();
+  if (rows.results.length === 0) return null;
+  return { snapshotRunId, selections: rows.results.map((row) => ({ path: row.path, hunkIndex: Number(row.hunkIndex), choice: row.choice as ConflictChoice })) };
 }
 
 /** Creates one stable case for an original conflict, or advances the same

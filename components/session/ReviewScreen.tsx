@@ -12,6 +12,8 @@ import { TeamChat } from "./TeamChat";
 import type { RollbackIntent } from "./RollbackImpactDialog";
 import { useReviewContributionDetail, useReviewContributions } from "./useReviewContributions";
 import type { RepositorySource } from "./useRepositoryTree";
+import { ConflictResolver } from "./ConflictResolver";
+import type { ConflictChoice } from "@/lib/floor-types";
 
 type PendingAction = { type: "merge"; deleteCandidateBranch: boolean } | { type: "deleteBranch" } | { type: "abandon"; deleteBranch: boolean };
 type Selection = { kind: "changed"; id: string } | { kind: "repo"; path: string };
@@ -41,7 +43,7 @@ function MergeGateRow({ review }: { review: FloorReviewSnapshot }) {
   </div>;
 }
 
-export function ReviewScreen({ sessionId, revision, review, repository, repositoryTree, selectedConflictCaseId, promptRequest, owner, busy, blockingRunId, onRequestRollback, onReady, onMerge, onDeleteBranch, onAbandon, onCancelRun, onResolveConflict, onAnswerConflict, teamChat, onSendTeamMessage, participants, currentUserId, sessionFiles }: {
+export function ReviewScreen({ sessionId, revision, review, repository, repositoryTree, selectedConflictCaseId, promptRequest, owner, busy, blockingRunId, onRequestRollback, onReady, onMerge, onDeleteBranch, onAbandon, onCancelRun, onResolveConflict, onAnswerConflict, onSubmitConflictSelections, teamChat, onSendTeamMessage, participants, currentUserId, sessionFiles }: {
   sessionId: string;
   revision: number;
   review: FloorReviewSnapshot | null;
@@ -60,6 +62,7 @@ export function ReviewScreen({ sessionId, revision, review, repository, reposito
   onCancelRun: (runId: string) => Promise<void>;
   onResolveConflict: (caseId: string) => Promise<boolean>;
   onAnswerConflict: (caseId: string, answers: Array<{ questionId: string; answer: string }>) => Promise<boolean>;
+  onSubmitConflictSelections: (caseId: string, snapshotRunId: string, selections: Array<{ path: string; hunkIndex: number; choice: ConflictChoice }>) => Promise<boolean>;
   teamChat: FloorMessage[];
   sessionFiles: SessionFile[];
   onSendTeamMessage: (text: string, recipientUserId: string | null) => Promise<boolean>;
@@ -83,6 +86,7 @@ export function ReviewScreen({ sessionId, revision, review, repository, reposito
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [abandonConfirmOpen, setAbandonConfirmOpen] = useState(false);
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
+  const [resolverCaseId, setResolverCaseId] = useState<string | null>(null);
   const [retrying, setRetrying] = useState(false);
   const [handledPromptRequest, setHandledPromptRequest] = useState(promptRequest);
 
@@ -291,7 +295,7 @@ export function ReviewScreen({ sessionId, revision, review, repository, reposito
     <div className="review-pane-head"><SegmentedControl label="Panel" value={rightTab} onChange={setRightTabOverride} options={inspectorTabs} /></div>
     <div className="review-inspector-body" data-tab={rightTab}>
       {rightTab === "status" && <>
-        <ConflictCases conflicts={review.conflicts} selectedCaseId={effectiveSelectedConflictCaseId} owner={owner} currentUserId={currentUserId} busy={busy} onResolve={onResolveConflict} onAnswer={onAnswerConflict} />
+        <ConflictCases conflicts={review.conflicts} selectedCaseId={effectiveSelectedConflictCaseId} owner={owner} currentUserId={currentUserId} busy={busy} onResolve={onResolveConflict} onAnswer={onAnswerConflict} onOpenResolver={setResolverCaseId} />
         <section aria-label="Integration warnings"><div className="review-pane-head"><h3>Integration</h3><span>{review.warnings.length}</span></div>{review.warnings.length === 0 ? <p className="review-empty">No integration warnings.</p> : <ul className="review-warning-list">{review.warnings.map((warning) => <li key={warning.id} data-severity={warning.severity}><strong>{warning.title}</strong><p>{warning.detail}</p></li>)}</ul>}</section>
         <section aria-label="Checks"><div className="review-pane-head"><h3>Checks</h3><span>{review.checks.length}</span></div>{review.checks.length === 0 ? <p className="review-empty">No checks reported by GitHub or openfloor.</p> : <ul className="review-check-list">{review.checks.map((check) => <li key={check.id}><span className="check-mark" aria-label={check.state}>{check.state === "passed" ? "✓" : check.state === "failed" ? "!" : "…"}</span><div><strong>{check.name}</strong>{check.detail && <span>{check.detail}</span>}</div></li>)}</ul>}</section>
         {(isMerged || isAbandoned) && <section aria-label="Branch cleanup"><div className="review-pane-head"><h3>Branch cleanup</h3><span>{review.cleanupStatus ?? "pending"}</span></div><p className="review-empty">{isAbandoned && !review.cleanupStatus ? "This candidate was abandoned without attempting to delete its branch." : review.cleanupStatus === "complete" ? "Recorded candidate and run branches were deleted after exact-SHA verification." : "Any branch that did not match its recorded SHA was preserved."}</p>{owner && !review.branchDeletedAt && <div className="review-actions"><button type="button" className="button danger-button" disabled={busy || retrying} onClick={() => isMerged ? setDeleteConfirmOpen(true) : void runAbandon(true)}>Delete candidate branch</button></div>}</section>}
@@ -316,6 +320,7 @@ export function ReviewScreen({ sessionId, revision, review, repository, reposito
     {deleteConfirmOpen && <DeleteBranchConfirmDialog branch={review.branch} busy={busy} onClose={() => setDeleteConfirmOpen(false)} onConfirm={runDeleteBranch} />}
     {abandonConfirmOpen && <AbandonConfirmDialog branch={review.branch} busy={busy} onClose={() => setAbandonConfirmOpen(false)} onConfirm={runAbandon} />}
     {blockingRunId && pendingAction && <IntegrationBlockedDialog retrying={retrying} onClose={() => setPendingAction(null)} onConfirm={cancelBlockingRunAndRetry} />}
+    {resolverCaseId && <ConflictResolver sessionId={sessionId} caseId={resolverCaseId} busy={busy} onClose={() => setResolverCaseId(null)} onSubmit={onSubmitConflictSelections} />}
   </section>;
 }
 
@@ -387,7 +392,7 @@ function ContributorList({ title, facets, selectedId, owner, scope, onFilter, on
   return <section className="review-pane"><div className="review-pane-head"><h3>{title}</h3><span>{facets.length}</span></div>{facets.length === 0 ? <p className="review-empty">No active contributors.</p> : <ul className="review-contributor-list">{facets.map((facet) => <li key={facet.id} data-selected={selectedId === facet.id ? "true" : undefined}><button type="button" className="review-contributor-filter" aria-pressed={selectedId === facet.id} onClick={() => onFilter(selectedId === facet.id ? null : facet.id)}><strong>{facet.name}</strong><small>{facet.activePromptGroups} group{facet.activePromptGroups === 1 ? "" : "s"} · {facet.activeFiles} file{facet.activeFiles === 1 ? "" : "s"}</small></button>{owner && <button type="button" className="button danger-button" data-size="sm" onClick={() => onRollback({ scope, subjectId: facet.id })}>Remove all changes</button>}</li>)}</ul>}</section>;
 }
 
-function ConflictCases({ conflicts, selectedCaseId, owner, currentUserId, busy, onResolve, onAnswer }: {
+function ConflictCases({ conflicts, selectedCaseId, owner, currentUserId, busy, onResolve, onAnswer, onOpenResolver }: {
   conflicts: MergeConflictCase[];
   selectedCaseId: string | null;
   owner: boolean;
@@ -395,13 +400,14 @@ function ConflictCases({ conflicts, selectedCaseId, owner, currentUserId, busy, 
   busy: boolean;
   onResolve: (caseId: string) => Promise<boolean>;
   onAnswer: (caseId: string, answers: Array<{ questionId: string; answer: string }>) => Promise<boolean>;
+  onOpenResolver: (caseId: string) => void;
 }) {
   if (conflicts.length === 0) return null;
   const ordered = [...conflicts].sort((a, b) => Number(b.id === selectedCaseId) - Number(a.id === selectedCaseId) || b.updatedAt - a.updatedAt);
-  return <section className="conflict-cases" aria-label="Merge conflicts"><div className="review-pane-head"><h3>Merge conflicts</h3><span>{conflicts.length}</span></div><ul className="conflict-case-list">{ordered.map((conflict) => <ConflictCaseCard key={conflict.id} conflict={conflict} selected={conflict.id === selectedCaseId} owner={owner} canAnswer={owner || conflict.prompts.some((prompt) => prompt.authorUserId === currentUserId)} busy={busy} onResolve={onResolve} onAnswer={onAnswer} />)}</ul></section>;
+  return <section className="conflict-cases" aria-label="Merge conflicts"><div className="review-pane-head"><h3>Merge conflicts</h3><span>{conflicts.length}</span></div><ul className="conflict-case-list">{ordered.map((conflict) => <ConflictCaseCard key={conflict.id} conflict={conflict} selected={conflict.id === selectedCaseId} owner={owner} canAnswer={owner || conflict.prompts.some((prompt) => prompt.authorUserId === currentUserId)} busy={busy} onResolve={onResolve} onAnswer={onAnswer} onOpenResolver={onOpenResolver} />)}</ul></section>;
 }
 
-function ConflictCaseCard({ conflict, selected, owner, canAnswer, busy, onResolve, onAnswer }: {
+function ConflictCaseCard({ conflict, selected, owner, canAnswer, busy, onResolve, onAnswer, onOpenResolver }: {
   conflict: MergeConflictCase;
   selected: boolean;
   owner: boolean;
@@ -409,6 +415,7 @@ function ConflictCaseCard({ conflict, selected, owner, canAnswer, busy, onResolv
   busy: boolean;
   onResolve: (caseId: string) => Promise<boolean>;
   onAnswer: (caseId: string, answers: Array<{ questionId: string; answer: string }>) => Promise<boolean>;
+  onOpenResolver: (caseId: string) => void;
 }) {
   const unanswered = conflict.questions.filter((question) => question.answer === null);
   const [answers, setAnswers] = useState<Record<string, string>>({});
@@ -431,7 +438,17 @@ function ConflictCaseCard({ conflict, selected, owner, canAnswer, busy, onResolv
     {conflict.questions.some((question) => question.answer !== null) && <ul className="conflict-answer-audit">{conflict.questions.filter((question) => question.answer !== null).map((question) => <li key={question.id}><strong>{question.question}</strong><p>{question.answer}</p><small>Answered by {question.answeredByName ?? "former member"}{question.answeredAt && <> · <LocalDateTime timestamp={question.answeredAt} /></>}</small></li>)}</ul>}
     {conflict.status === "awaiting_input" && unanswered.length > 0 && canAnswer && <form className="conflict-answer-form" onSubmit={submitAnswers}>{unanswered.map((question) => <label key={question.id}><span>{question.question}</span><textarea required maxLength={2000} value={answers[question.id] ?? ""} onChange={(event) => setAnswers((current) => ({ ...current, [question.id]: event.target.value }))} /></label>)}<button type="submit" className="button primary-button" disabled={busy || submitting || !canSubmit}>Submit answers</button><small>First complete submission wins. Team chat remains available for discussion.</small></form>}
     {conflict.status === "awaiting_input" && unanswered.length > 0 && !canAnswer && <p className="review-empty">Waiting for the session owner or an original prompt author to answer. Team chat remains available for discussion.</p>}
-    {owner && (conflict.status === "failed" || conflict.status === "pending") && <button type="button" className="button" disabled={busy} onClick={() => void onResolve(conflict.id)}>{conflict.status === "failed" ? "Retry Merge Resolver" : "Start Merge Resolver"}</button>}
+    <div className="conflict-case-actions">
+      {owner && (conflict.status === "failed" || conflict.status === "pending") && <button type="button" className="button" disabled={busy} onClick={() => void onResolve(conflict.id)}>{conflict.status === "failed" ? "Retry Merge Resolver" : "Start Merge Resolver"}</button>}
+      {/* Manual resolution needs the same snapshot the automatic resolver
+          leaves behind on any attempt, and the same authorization as a
+          free-text answer — the owner, or whoever's prompt is in conflict. */}
+      {conflict.hasSnapshot && canAnswer && (conflict.status === "failed" || conflict.status === "awaiting_input") && (
+        <button type="button" className="button" data-variant="quiet" disabled={busy} onClick={() => onOpenResolver(conflict.id)}>
+          Resolve manually
+        </button>
+      )}
+    </div>
     {conflict.failureReason && <p className="objective-error">{conflict.failureReason}</p>}
   </li>;
 }

@@ -146,6 +146,8 @@ export function usePersistentFloorData(sessionId: string, initialFloor: FloorSna
     resolveConflict: (caseId: string) => request(`/conflicts/${encodeURIComponent(caseId)}/resolve`, "POST"),
     answerConflict: (caseId: string, answers: Array<{ questionId: string; answer: string }>) =>
       request(`/conflicts/${encodeURIComponent(caseId)}/answers`, "POST", { answers }),
+    submitConflictSelections: (caseId: string, snapshotRunId: string, selections: Array<{ path: string; hunkIndex: number; choice: import("@/lib/floor-types").ConflictChoice }>) =>
+      request(`/conflicts/${encodeURIComponent(caseId)}/selections`, "POST", { snapshotRunId, selections }),
     cancelRun: (runId: string) => request(`/runs/${encodeURIComponent(runId)}/cancel`, "POST"),
     discardRun: (runId: string) => request(`/runs/${encodeURIComponent(runId)}/discard`, "POST"),
     rollbackRun: (runId: string) => request(`/runs/${encodeURIComponent(runId)}/rollback`, "POST"),

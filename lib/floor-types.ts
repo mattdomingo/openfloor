@@ -1,5 +1,8 @@
+import type { ConflictChoice, ConflictHunk } from "./conflict-hunks";
 import type { CredentialKind, CredentialProvider } from "./provider-credentials";
 import type { RepositoryCandidate, RepositoryConnection, RepositoryPreflight } from "./session-types";
+
+export type { ConflictChoice, ConflictHunk };
 
 export type FloorDomain = "agents" | "assignments" | "messages" | "queue" | "repository" | "runs" | "review";
 
@@ -274,6 +277,42 @@ export type MergeConflictCase = {
   createdAt: number;
   updatedAt: number;
   resolvedAt: number | null;
+  // Whether some resolver attempt on this case captured a conflict_snapshot
+  // artifact — the manual resolver dialog needs at least one to have anything
+  // to show. Cheap to derive alongside the rest of this row (an EXISTS join
+  // in getMergeConflictCases), so the card can offer "Resolve manually"
+  // without a round trip to fetch and parse the snapshot first.
+  hasSnapshot: boolean;
+};
+
+// A single conflicted file from a resolver attempt's snapshot, already split
+// into hunks server-side (lib/conflict-hunks.ts). "content" is the common
+// case — real marker hunks in `hunks`. The three special kinds have exactly
+// one synthetic hunk at index 0 representing a whole-file decision (no
+// in-file markers exist to split): "delete_modify" (this side deleted it,
+// the other modified it — choice is ours=delete/theirs=keep-their-content),
+// "modify_delete" (the mirror), and "binary" (no text diff to show). A file
+// that failed to parse (malformed markers) has `hunks: []` and
+// `unparseable: true` — it stays visible in the file list but is not
+// editable in this dialog.
+export type ConflictFileKind = "content" | "delete_modify" | "modify_delete" | "binary";
+
+export type ConflictFileSnapshot = {
+  path: string;
+  kind: ConflictFileKind;
+  hunks: ConflictHunk[];
+  unparseable: boolean;
+  truncated: boolean;
+};
+
+export type ConflictSnapshot = {
+  snapshotRunId: string;
+  files: ConflictFileSnapshot[];
+  // Paths recorded on the case but dropped from `files` by the snapshot's
+  // own per-attempt cap (worker/agent-run-workflow.ts's MAX_SNAPSHOT_FILES) —
+  // shown in the dialog as "N files too large to load for manual editing."
+  omittedPaths: string[];
+  existingSelections: Array<{ path: string; hunkIndex: number; choice: ConflictChoice }>;
 };
 
 export type ReviewContributor = {
