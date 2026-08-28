@@ -6,7 +6,7 @@ function conflict(status: MergeConflictCase["status"]): MergeConflictCase {
   return {
     id: "case-1", status, sourceRunId: "run-1", latestSourceRunId: "run-1", currentResolverRunId: null,
     queueItemId: "queue-1", agentId: "agent-1", agentName: "Lumen", conflictReason: "conflict", explanation: null,
-    conflictPaths: ["a.ts"], automaticAttempts: 0, failureReason: null, questions: [], prompts: [], attempts: [], createdAt: 1, updatedAt: 2, resolvedAt: null,
+    conflictPaths: ["a.ts"], automaticAttempts: 0, failureReason: null, questions: [], prompts: [], attempts: [], createdAt: 1, updatedAt: 2, resolvedAt: null, hasSnapshot: false,
   };
 }
 

@@ -1506,6 +1506,40 @@
   color: var(--agent-color, var(--text-primary));
 }
 
+/* The floor card's own affordance for an open merge conflict on this agent —
+   sits in normal flow (unlike .agent-reply-bubble's overlay) since it
+   replaces the activity line rather than floating over it. Color follows
+   the same [data-status] this agent-card/spotlight already carries: amber
+   while a person is needed, red while the resolver is still working. */
+.agent-conflict-strip {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid color-mix(in srgb, var(--status-attention) 45%, transparent);
+  border-radius: var(--radius-sm);
+  background: var(--status-attention-soft);
+  color: var(--status-attention);
+  font: inherit;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.agent-card[data-status="blocked"] .agent-conflict-strip,
+.spotlight[data-status="blocked"] .agent-conflict-strip {
+  border-color: color-mix(in srgb, var(--status-blocked) 45%, transparent);
+  background: var(--status-blocked-soft);
+  color: var(--status-blocked);
+}
+
+.agent-conflict-strip:hover,
+.agent-conflict-strip:focus-visible {
+  filter: brightness(0.96);
+}
+
 @container (max-width: 430px) {
   .agent-chat-label {
     display: none;
@@ -4524,6 +4558,139 @@
 @media (max-width: 720px) {
   .conflict-panes {
     grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Manual conflict resolver dialog ---------------------------------------
+   Real per-hunk data (lib/conflict-hunks.ts), same .conflict-panes /
+   .conflict-pane[data-side] / .review-line[data-diverges] chrome as the
+   block above. Two-column body: a file rail on the left, the selected
+   file's sections stacked on the right. */
+
+.conflict-resolver-body {
+  display: grid;
+  grid-template-columns: minmax(160px, 220px) minmax(0, 1fr);
+  gap: var(--space-4);
+  min-height: 320px;
+  max-height: 60vh;
+}
+
+.conflict-file-list {
+  overflow-y: auto;
+  border-right: 1px solid var(--line-soft);
+  padding-right: var(--space-3);
+}
+
+.conflict-file-list ul {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.conflict-file-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-2);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--text-xs);
+  text-align: left;
+  cursor: pointer;
+}
+
+.conflict-file-item code {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+}
+
+.conflict-file-item[data-selected="true"] {
+  border-color: var(--line-strong);
+  background: var(--surface-panel);
+  color: var(--text-primary);
+}
+
+.conflict-file-detail {
+  overflow-y: auto;
+  display: grid;
+  gap: var(--space-3);
+  align-content: start;
+}
+
+.conflict-file-bulk {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 1px dashed var(--line-soft);
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+}
+
+.conflict-hunk {
+  display: grid;
+  gap: var(--space-2);
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.conflict-hunk:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.conflict-hunk-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.conflict-hunk-head strong {
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+
+.conflict-hunk[data-decided="true"] .conflict-hunk-head strong::before {
+  content: "✓ ";
+  color: var(--status-running);
+}
+
+.conflict-progress {
+  margin-right: auto;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+}
+
+.conflict-case-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+@media (max-width: 720px) {
+  .conflict-resolver-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .conflict-file-list {
+    max-height: 160px;
+    border-right: none;
+    border-bottom: 1px solid var(--line-soft);
+    padding-right: 0;
+    padding-bottom: var(--space-3);
   }
 }
 

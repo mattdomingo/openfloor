@@ -840,7 +840,11 @@ export const agentRunArtifacts = sqliteTable(
   {
     id: text("id").primaryKey(),
     runId: text("run_id").notNull().references(() => agentRuns.id, { onDelete: "cascade" }),
-    kind: text("kind", { enum: ["codex_log", "diff", "prompt"] }).notNull(),
+    // "conflict_snapshot" (a resolver attempt's raw base/ours/theirs/merged
+    // file bodies, captured for the manual resolver dialog) is additive to
+    // this TS-only Drizzle enum — no SQL CHECK exists on this column, so
+    // widening it needs no migration.
+    kind: text("kind", { enum: ["codex_log", "diff", "prompt", "conflict_snapshot"] }).notNull(),
     r2Key: text("r2_key").notNull(),
     contentType: text("content_type").notNull(),
     sizeBytes: integer("size_bytes").notNull(),
@@ -911,6 +915,35 @@ export const mergeConflictQuestions = sqliteTable(
   (table) => [
     uniqueIndex("idx_merge_conflict_questions_run_position").on(table.requestedByRunId, table.position),
     index("idx_merge_conflict_questions_case").on(table.caseId, table.requestedAt),
+  ],
+);
+
+// A human's per-hunk choice for one manual conflict resolution, keyed by the
+// resolver attempt whose conflict_snapshot artifact showed the hunk (see
+// agent_run_artifacts above). "Latest snapshot for this case" is always
+// derived from merge_conflict_attempts + agent_run_artifacts at read/write
+// time (db/conflicts.ts), never stored redundantly here — that keeps a
+// selection naturally orphaned (never read, never re-validated) the moment a
+// newer resolver attempt captures its own snapshot, instead of needing an
+// explicit "stale" flag on this table.
+export const mergeConflictSelections = sqliteTable(
+  "merge_conflict_selections",
+  {
+    id: text("id").primaryKey(),
+    caseId: text("case_id").notNull().references(() => mergeConflictCases.id, { onDelete: "cascade" }),
+    snapshotRunId: text("snapshot_run_id").notNull().references(() => agentRuns.id, { onDelete: "cascade" }),
+    path: text("path").notNull(),
+    hunkIndex: integer("hunk_index").notNull(),
+    // No SQL CHECK, same convention as merge_conflict_attempts.launch_kind's
+    // sibling columns elsewhere in this file that stay TS-only — see
+    // lib/conflict-hunks.ts's ConflictChoice for the validated union.
+    choice: text("choice").notNull(),
+    selectedBy: text("selected_by").references(() => users.id, { onDelete: "set null" }),
+    createdAt: integer("created_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("idx_merge_conflict_selections_snapshot_hunk").on(table.snapshotRunId, table.path, table.hunkIndex),
+    index("idx_merge_conflict_selections_case").on(table.caseId, table.createdAt),
   ],
 );
 
