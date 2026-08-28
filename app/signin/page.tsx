@@ -64,6 +64,17 @@ export default async function SignInPage({ searchParams }: { searchParams: Promi
       </div>
       <div className="entry-card signin-card">
         <SignInMark />
+        {/* GitHub is the primary path. A plain link into Access's own picker,
+            not a proxied flow — its OAuth callback needs a CF_Session cookie
+            only a direct browser visit to the team domain can carry (see
+            lib/access-login.ts's header comment). With GitHub the sole IdP on
+            the Access app and instant auth on, this lands straight on
+            GitHub's authorize screen. */}
+        <a className="signin-button signin-oauth" href={destination}>Continue with GitHub</a>
+        <div className="signin-divider" role="separator" aria-label="or">or</div>
+        {/* Email one-time code stays as the universal fallback: accounts key
+            on email, so this always reaches the account no matter which
+            method created it. */}
         <form className="signin-email-form" method="POST" action={`/signin/code?return_to=${encodeURIComponent(destination)}`}>
           <input type="hidden" name="action" value={target.emailAction} />
           <label className="sr-only" htmlFor="signin-email">Email</label>
@@ -74,13 +85,10 @@ export default async function SignInPage({ searchParams }: { searchParams: Promi
             name="email"
             placeholder="you@company.com"
             autoComplete="email"
-            autoFocus
             required
           />
-          <button className="signin-button" type="submit">Email me a code</button>
+          <button className="signin-button" data-variant="quiet" type="submit">Email me a code</button>
         </form>
-        <div className="signin-divider" role="separator" aria-label="or">or</div>
-        <a className="signin-google" href={destination}>Continue with Google</a>
       </div>
     </main>
   );

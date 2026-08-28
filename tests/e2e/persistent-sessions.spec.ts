@@ -26,15 +26,13 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
 
   await owner.goto("/home");
   await owner.getByRole("button", { name: "New session" }).click();
-  // Step 1 of the create-session dialog: task + goal.
+  // The create-session dialog is one page: task + goal, repository (the
+  // single test repository auto-selects, and the candidate branch name
+  // defaults to the task title until edited), and an optional AI
+  // connection — create without connecting one.
   await owner.getByLabel("Task").fill("Release coordination");
   await owner.getByLabel(/Goal/).fill("Ship persistent multiplayer sessions");
-  await owner.getByRole("button", { name: "Continue" }).click();
-  // Step 2: repository — the single test repository auto-selects, and the
-  // candidate branch name defaults to the task title until edited.
   await expect(owner.getByLabel("Candidate branch name")).toHaveValue("Release coordination");
-  await owner.getByRole("button", { name: "Continue" }).click();
-  // Step 3: AI connection is optional — create without connecting one.
   await owner.getByRole("button", { name: "Create session" }).click();
   // A ready provision lands straight on the agent floor; navigate back to
   // the lobby to run this journey's lobby-state assertions before entering
@@ -640,10 +638,8 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   // The New session tile only renders on the Active tab.
   await owner.getByRole("button", { name: /^Active/ }).click();
   await owner.getByRole("button", { name: "New session" }).click();
-  // #219's 3-step wizard: task/goal, repo + candidate name, AI connection.
+  // One-page create dialog: only the task is required.
   await owner.getByLabel("Task").fill("Disposable session");
-  await owner.getByRole("button", { name: "Continue" }).click();
-  await owner.getByRole("button", { name: "Continue" }).click();
   await owner.getByRole("button", { name: "Create session" }).click();
   // Creation routes straight to the floor; End session lives in the lobby.
   await expect(owner).toHaveURL(/\/session\/[0-9a-f-]+\/floor$/);

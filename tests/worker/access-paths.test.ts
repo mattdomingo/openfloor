@@ -30,7 +30,7 @@ describe("accessSignInPath", () => {
 });
 
 describe("protectedAccessPath", () => {
-  it("always resolves to the real Access-protected path, ignoring the flag — /signin's Google link and fallbacks depend on this", () => {
+  it("always resolves to the real Access-protected path, ignoring the flag — /signin's GitHub link and fallbacks depend on this", () => {
     (env as unknown as Record<string, unknown>).ACCESS_CUSTOM_LOGIN_ENABLED = "true";
     expect(protectedAccessPath("/session/private-room")).toBe("/session/private-room");
   });

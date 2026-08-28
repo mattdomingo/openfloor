@@ -220,6 +220,7 @@ input.avatar-file-input { width: 1px; height: 1px; padding: 0; }
 .tour-bubble { position: fixed; z-index: 85; display: grid; gap: var(--space-2); padding: var(--space-4); border: 1px solid var(--line-soft); border-radius: var(--radius-md); background: var(--surface-raised); color: var(--text-primary); box-shadow: 0 12px 32px rgb(0 0 0 / .18); }
 .tour-bubble:focus { outline: none; }
 .tour-bubble p { margin: 0; color: var(--text-secondary); font-size: var(--text-sm); line-height: 1.5; }
+.tour-bubble .tour-hint { color: var(--accent); font-size: var(--text-xs); }
 .tour-controls { display: flex; align-items: center; gap: var(--space-2); }
 .tour-count { margin-right: auto; color: var(--text-tertiary); font-size: var(--text-xs); }
 

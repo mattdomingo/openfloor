@@ -19,13 +19,10 @@ test("a direct user keeps profile state across steps and completes Free onboardi
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await expect.poll(() => page.locator(".field-grid").evaluate((element) => getComputedStyle(element).gridTemplateColumns.split(" ").length)).toBe(1);
 
+  // GitHub lives on the profile step now — Continue refuses until it's
+  // connected, then the device-flow dialog links the fake installation.
   await page.getByRole("button", { name: "Continue", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Connect GitHub" })).toBeFocused();
-  await page.getByRole("button", { name: "Back" }).click();
-  await expect(page.getByLabel("First name")).toHaveValue("Ada");
-  await expect(page.getByLabel("Last name")).toHaveValue("Lovelace");
-
-  await page.getByRole("button", { name: "Continue", exact: true }).click();
+  await expect(page.getByRole("alert")).toHaveText("Connect GitHub to continue.");
   await page.getByRole("button", { name: "Connect GitHub" }).click();
   // ENG-163: Connect GitHub runs the device-flow dialog now; test mode links
   // the fake installation on the first poll, then Done dismisses the modal.
@@ -35,39 +32,41 @@ test("a direct user keeps profile state across steps and completes Free onboardi
   await page.getByRole("button", { name: "Continue", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Connect AI providers" })).toBeFocused();
   await expect(page.getByText("Anthropic")).toBeVisible();
+
+  // Back keeps the saved profile state.
+  await page.getByRole("button", { name: "Back" }).click();
+  await expect(page.getByLabel("First name")).toHaveValue("Ada");
+  await expect(page.getByLabel("Last name")).toHaveValue("Lovelace");
   await page.getByRole("button", { name: "Continue", exact: true }).click();
-  await page.getByRole("button", { name: /^Free/ }).click();
+
   await expect.poll(() => page.locator(".onboarding-plan-actions:visible").evaluate((element) => getComputedStyle(element).flexDirection)).toBe("column-reverse");
+  // No plan step — Finish enrolls the account on Free.
   await page.getByRole("button", { name: "Finish setup" }).click();
   await expect(page).toHaveURL(/\/home$/);
 
-  await context.close();
-});
-
-test("paid plan selection exposes seat controls bounded by its catalog", async ({ browser }) => {
-  const context = await browser.newContext({ extraHTTPHeaders: identityHeaders("onboarding-paid", "onboarding-paid@example.com", "Paid Person") });
-  const page = await context.newPage();
-
-  await page.goto("/onboarding");
-  await page.getByRole("button", { name: "Continue", exact: true }).click();
-  await page.getByRole("button", { name: "Connect GitHub" }).click();
-  await expect(page.getByText("Connected. openfloor can reach:")).toBeVisible();
-  await page.getByRole("button", { name: "Done" }).click();
-  await page.getByRole("button", { name: "Continue", exact: true }).click();
-  await page.getByRole("button", { name: "Continue", exact: true }).click();
-  await page.getByRole("button", { name: /^Pro/ }).click();
-  await expect(page.getByText("Seats per session: 3")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Remove one seat" })).toBeDisabled();
-  await page.getByRole("button", { name: "Add one seat" }).click();
-  await page.getByRole("button", { name: "Add one seat" }).click();
-  await expect(page.getByText("Seats per session: 5")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Add one seat" })).toBeDisabled();
-  await expect(page.getByRole("button", { name: "Continue to payment" })).toBeEnabled();
+  // This context never set the tour's seen-it flag, so the first-visit
+  // guided tour opens on /home. It advances only by clicking the
+  // highlighted element itself (GuidedTour.tsx): the tabs first, then the
+  // New session tile — whose click both ends the tour and opens the
+  // one-page create dialog.
+  const tour = page.getByRole("dialog", { name: "Your sessions" });
+  await expect(tour).toBeVisible();
+  await expect(tour.getByRole("button", { name: "Next" })).toHaveCount(0);
+  await page.getByRole("button", { name: /^Active/ }).click();
+  await expect(page.getByRole("dialog", { name: "Start a session" })).toBeVisible();
+  await page.getByRole("button", { name: "New session" }).click();
+  await expect(page.locator(".tour-bubble")).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Name the session" })).toBeVisible();
+  // The whole create form is one page: task, repository, branch, and the
+  // AI connection are all present with a single Create submit.
+  await expect(page.getByLabel("Task")).toBeVisible();
+  await expect(page.getByLabel("Candidate branch name")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Create session" })).toBeVisible();
 
   await context.close();
 });
 
-test("a valid invite locks onboarding to Free and still requires explicit membership", async ({ browser }) => {
+test("a valid invite completes Free onboarding and still requires explicit membership", async ({ browser }) => {
   const ownerContext = await authenticatedContext(browser, "onboarding-invite-owner", "onboarding-invite-owner@example.com", "Invite", "Owner");
   const repositories = await (await ownerContext.request.get("/api/account/github/repositories")).json() as {
     repositories: Array<{ id: string; accountInstallationId: string }>;
@@ -87,15 +86,11 @@ test("a valid invite locks onboarding to Free and still requires explicit member
   const invitee = await inviteeContext.newPage();
   await invitee.goto(invitePath);
   await expect(invitee).toHaveURL(/\/onboarding\?return_to=/);
-  await invitee.getByRole("button", { name: "Continue", exact: true }).click();
   await invitee.getByRole("button", { name: "Connect GitHub" }).click();
   await expect(invitee.getByText("Connected. openfloor can reach:")).toBeVisible();
   await invitee.getByRole("button", { name: "Done" }).click();
   await invitee.getByRole("button", { name: "Continue", exact: true }).click();
-  await invitee.getByRole("button", { name: "Continue", exact: true }).click();
-  await expect(invitee.getByRole("heading", { name: "Your invite includes Free" })).toBeFocused();
-  await expect(invitee.getByText("This invite includes a Free openfloor account.")).toBeVisible();
-  await expect(invitee.getByRole("button", { name: /^Pro/ })).toHaveCount(0);
+  await expect(invitee.getByRole("heading", { name: "Connect AI providers" })).toBeFocused();
   await invitee.getByRole("button", { name: "Finish setup" }).click();
   await expect(invitee).toHaveURL(invitePath);
   await expect(invitee.getByRole("button", { name: "Join session" })).toBeVisible();

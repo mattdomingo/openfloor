@@ -1156,16 +1156,11 @@
 .session-lobby-shell .lobby-bottom-controls { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 20px 24px; background: transparent; }
 .session-lobby-shell .lobby-bottom-controls p:last-child { margin-top: 5px; color: var(--muted); font-size: 13px; }
 
-/* Shared by HomeScreen's CreateSessionDialog (.shop-shell, three steps —
-   session, repository/candidate, AI connection) and, for the credential-row
-   rules only, the lobby's ModelConnectionCard (.session-lobby-shell) —
-   unscoped so both shells pick it up. */
+/* Shared by HomeScreen's CreateSessionDialog (.shop-shell, one page —
+   task/goal, repository/candidate, AI connection) and, for the
+   credential-row rules only, the lobby's ModelConnectionCard
+   (.session-lobby-shell) — unscoped so both shells pick it up. */
 .setup-dialog-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 30px; }
-.setup-step-list { display: flex; gap: 24px; margin: 0; padding: 0; list-style: none; }
-.setup-step-list li { display: grid; align-content: start; gap: 4px; padding-top: 6px; border-top: 2px solid var(--rule); color: var(--steel); font: 650 10px var(--mono); letter-spacing: .07em; text-transform: uppercase; }
-.setup-step-list li[data-current="true"] { border-color: var(--accent-ink); color: var(--ink); }
-.setup-step-list li[data-complete="true"] { border-color: #25805f; }
-.setup-step-list span { font-size: 9px; font-weight: 500; }
 .setup-credentials > p { margin-bottom: 20px; color: var(--muted); line-height: 1.6; }
 .provider-credential-row .settings-category-name { display: grid; gap: 3px; }
 .provider-credential-row .settings-category-name small { color: var(--steel); font: 500 9px var(--mono); text-transform: none; }
@@ -1174,7 +1169,6 @@
 .provider-credential-row .form-actions { align-self: end; }
 .provider-credential-row .form-error { grid-column: 1 / -1; }
 .setup-dialog-foot { justify-content: space-between; }
-.setup-dialog-nav { display: flex; gap: 10px; }
 
 @media (max-width: 860px) {
   .session-lobby-shell .lobby-team-access,
@@ -1198,7 +1192,6 @@
   .setup-step-list li { flex: 1; }
   .provider-credential-row form { grid-template-columns: 1fr; }
   .setup-dialog-foot { align-items: stretch; flex-direction: column; }
-  .setup-dialog-nav { justify-content: flex-end; }
 }
 
 /* ── Create-session dialog (HomeScreen's centered modal) ───────────────

@@ -293,15 +293,19 @@
   background: color-mix(in srgb, var(--entry-ink) 18%, transparent);
 }
 
-/* Shared by page.tsx's Google link and route.ts's "Use a different email"
-   link — both are secondary, text-only exits from the primary form. */
-.signin-google {
-  color: var(--entry-ink-muted);
-  font-family: var(--font-brand-sans);
-  font-size: 14px;
-  text-decoration: none;
+/* The GitHub control is an <a> wearing the shared .signin-button skin —
+   flex centering and no underline make the anchor read as the one primary
+   action. The email submit steps back to a quiet outline (same border
+   treatment as .signin-input) so the page has a single obvious path.
+   route.ts's "Use a different email" link inlines its own copy of the old
+   .signin-google secondary style; only this stylesheet dropped it. */
+.signin-oauth { display: flex; align-items: center; justify-content: center; width: 100%; text-decoration: none; }
+.signin-button[data-variant="quiet"] {
+  border: 1px solid color-mix(in srgb, var(--entry-ink) 30%, transparent);
+  background: transparent;
+  color: var(--entry-ink);
 }
-.signin-google:hover, .signin-google:focus-visible { color: var(--entry-ink); text-decoration: underline; }
+.signin-button[data-variant="quiet"]:hover { background: color-mix(in srgb, var(--entry-ink) 8%, transparent); }
 
 .signin-code-body {
   margin: 0;

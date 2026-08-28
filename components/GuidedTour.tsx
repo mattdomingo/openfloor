@@ -6,8 +6,10 @@ import { createPortal } from "react-dom";
 /* A step-through tutorial that spotlights real UI (ENG-17). Each step names a
    selector; the bubble sits beside the live element with a highlight ring
    around it, so the tour teaches the actual controls rather than screenshots.
-   Portaled to <body> for the same reason HoverTip is (ancestor
-   backdrop-filter/transform would break position: fixed).
+   Steps advance only when the user clicks the highlighted element itself —
+   doing the thing is the Next button. Portaled to <body> for the same reason
+   HoverTip is (ancestor backdrop-filter/transform would break position:
+   fixed).
 
    Whether it has been seen is per-device localStorage, the same deliberate
    choice as the theme (AGENTS.md "UI state that is intentionally local"): the
@@ -42,6 +44,39 @@ export function GuidedTour({ storageKey, steps }: { storageKey: string; steps: T
   const bubbleRef = useRef<HTMLDivElement>(null);
 
   const step = !dismissed && !closed ? steps[index] : null;
+  const last = index === steps.length - 1;
+
+  const finish = () => {
+    try {
+      localStorage.setItem(storageKey, "done");
+    } catch {
+      // Without storage the dismissal only lasts this page view.
+    }
+    setClosed(true);
+  };
+
+  // The tour advances only when the user clicks the element it is pointing
+  // at — doing the thing is the Next button. Capture phase so the advance
+  // happens even when the anchor's own handler stops propagation.
+  useEffect(() => {
+    if (!step) return;
+    const onClick = (event: MouseEvent) => {
+      const anchor = document.querySelector(step.selector);
+      if (!anchor || !(event.target instanceof Node) || !anchor.contains(event.target)) return;
+      if (last) {
+        try {
+          localStorage.setItem(storageKey, "done");
+        } catch {
+          // Without storage the dismissal only lasts this page view.
+        }
+        setClosed(true);
+      } else {
+        setIndex((current) => current + 1);
+      }
+    };
+    document.addEventListener("click", onClick, true);
+    return () => document.removeEventListener("click", onClick, true);
+  }, [step, last, storageKey]);
 
   useLayoutEffect(() => {
     if (!step) return;
@@ -64,16 +99,6 @@ export function GuidedTour({ storageKey, steps }: { storageKey: string; steps: T
   }, [step]);
 
   if (!step || typeof document === "undefined") return null;
-
-  const finish = () => {
-    try {
-      localStorage.setItem(storageKey, "done");
-    } catch {
-      // Without storage the dismissal only lasts this page view.
-    }
-    setClosed(true);
-  };
-  const last = index === steps.length - 1;
 
   // Below the anchor when there's room, above it otherwise; centered when the
   // anchor is missing. Clamped so the bubble never leaves the viewport.
@@ -98,15 +123,18 @@ export function GuidedTour({ storageKey, steps }: { storageKey: string; steps: T
       <div className="tour-bubble" role="dialog" aria-label={step.title} tabIndex={-1} ref={bubbleRef} style={style}>
         <strong>{step.title}</strong>
         <p>{step.body}</p>
+        {rect && <p className="tour-hint">Click the highlighted area to continue.</p>}
         <div className="tour-controls">
           <span className="tour-count">{index + 1} of {steps.length}</span>
           <button type="button" className="button" data-variant="quiet" data-size="sm" onClick={finish}>Skip</button>
-          {index > 0 && (
-            <button type="button" className="button" data-size="sm" onClick={() => setIndex(index - 1)}>Back</button>
+          {/* Only a missing anchor (a control this role doesn't render) gets a
+              button to move on — otherwise clicking the real element is the
+              only way forward. */}
+          {!rect && (
+            <button type="button" className="button" data-variant="primary" data-size="sm" onClick={() => (last ? finish() : setIndex(index + 1))}>
+              {last ? "Done" : "Next"}
+            </button>
           )}
-          <button type="button" className="button" data-variant="primary" data-size="sm" onClick={() => (last ? finish() : setIndex(index + 1))}>
-            {last ? "Done" : "Next"}
-          </button>
         </div>
       </div>
     </div>,
