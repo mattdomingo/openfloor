@@ -99,8 +99,8 @@ export function ConflictResolverBody({ sessionId, caseId, busy, onExit, onSubmit
   const activeFile = snapshot?.files.find((file) => file.path === selectedPath) ?? null;
 
   return <>
+    <p className="conflict-center-step">Choose ours, theirs, or both for every conflicting section. Applying is instant — no agent runs.</p>
     <div className="conflict-resolver-body">
-      <p className="conflict-center-step">Choose ours, theirs, or both for every conflicting section. Applying is instant — no agent runs.</p>
       {loading ? <p className="review-empty">Loading conflicting sections…</p>
         : loadError ? <p className="review-empty" role="alert">{loadError}</p>
         : snapshot && <>
@@ -133,7 +133,7 @@ export function ConflictResolverBody({ sessionId, caseId, busy, onExit, onSubmit
       {snapshot && required.size > 0 && <span className="conflict-progress">{decidedCount}/{required.size} sections decided</span>}
       {submitError && <p className="objective-error">{submitError}</p>}
       <button type="button" className="button" data-variant="quiet" onClick={onExit} disabled={busy || submitting}>Back</button>
-      <button type="button" className="button primary-button" disabled={!canSubmit || busy || submitting} onClick={() => void submit()}>{submitting ? "Applying…" : "Apply resolution"}</button>
+      <button type="button" className="button" data-variant="primary" disabled={!canSubmit || busy || submitting} onClick={() => void submit()}>{submitting ? "Applying…" : "Apply resolution"}</button>
     </div>
   </>;
 }
@@ -189,11 +189,11 @@ function ConflictHunkEditor({ hunk, index, total, wholeFile, choice, onChoice }:
       } />
     </div>
     <div className="conflict-panes">
-      <section className="conflict-pane" data-side="ours">
+      <section className="conflict-pane" data-side="ours" data-selected={choice === "ours" || choice === "both" ? "true" : undefined}>
         <div className="conflict-pane-head"><strong>{hunk.oursLabel || "Ours"}</strong></div>
         <pre className="review-code">{hunk.oursLines.length === 0 ? <span className="review-line"><i> </i><code>(no content)</code></span> : hunk.oursLines.map((text, lineIndex) => <span key={lineIndex} className="review-line" data-diverges={!theirsDiverges.has(text) ? "true" : undefined}><i>{choice === "ours" || choice === "both" ? "+" : " "}</i><code>{text}</code></span>)}</pre>
       </section>
-      <section className="conflict-pane" data-side="theirs">
+      <section className="conflict-pane" data-side="theirs" data-selected={choice === "theirs" || choice === "both" ? "true" : undefined}>
         <div className="conflict-pane-head"><strong>{hunk.theirsLabel || "Theirs"}</strong></div>
         <pre className="review-code">{hunk.theirsLines.length === 0 ? <span className="review-line"><i> </i><code>(no content)</code></span> : hunk.theirsLines.map((text, lineIndex) => <span key={lineIndex} className="review-line" data-diverges={!diverges.has(text) ? "true" : undefined}><i>{choice === "theirs" || choice === "both" ? "+" : " "}</i><code>{text}</code></span>)}</pre>
       </section>

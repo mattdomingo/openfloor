@@ -285,6 +285,15 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
           if (!merge.success) throw new Error(`Conflict workspace reconstruction failed with exit code ${merge.exitCode}`);
           conflictPaths = merge.stdout.split("\n").map((path) => path.trim()).filter(Boolean);
           await recordConflictPaths(runId, conflictPaths, this.env.DB);
+          // Read any recorded human selections against whatever snapshot is
+          // current BEFORE this attempt captures its own — getConflictSelectionsForCase
+          // resolves "current" as the newest conflict_snapshot artifact for
+          // the case, and this run is about to write one of its own below.
+          // Calling it after that write would make it resolve to this run's
+          // own brand-new (and necessarily selection-less) snapshot instead
+          // of the prior attempt's snapshot the human actually chose
+          // ours/theirs/both against, silently discarding their decision.
+          const record = await getConflictSelectionsForCase(context.conflictCaseId, this.env.DB);
           // Captured on every attempt (automatic or manual) so a manual
           // resolution is available the moment automation fails, without
           // needing a fresh sandbox — see AGENTS.md's Merge Resolver section.
@@ -308,14 +317,14 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
               }
             }
           }
-          // A prior human decision (merge_conflict_selections) applies only
-          // when it covers every currently-conflicted path against THIS
-          // attempt's own fresh hunk parse. Any mismatch — a path the
-          // capture couldn't reach, a hunk count that no longer lines up
-          // because the candidate moved between the snapshot and this retry
-          // — falls back to running the resolver agent normally rather than
-          // guessing which of the human's choices still apply.
-          const record = await getConflictSelectionsForCase(context.conflictCaseId, this.env.DB);
+          // A prior human decision (merge_conflict_selections, fetched above
+          // before this attempt's own snapshot capture) applies only when it
+          // covers every currently-conflicted path against THIS attempt's
+          // own fresh hunk parse. Any mismatch — a path the capture couldn't
+          // reach, a hunk count that no longer lines up because the
+          // candidate moved between the snapshot and this retry — falls back
+          // to running the resolver agent normally rather than guessing
+          // which of the human's choices still apply.
           if (record && conflictPaths.length > 0 && conflictPaths.every((path) => snapshotFiles.some((file) => file.path === path))) {
             const decisionsByPath = new Map<string, Array<{ hunkIndex: number; choice: ConflictChoice }>>();
             for (const selection of record.selections) {
