@@ -107,17 +107,22 @@ export async function PUT(request: Request) {
     return Response.json({ error: "GitHub declined the authorization" }, { status: 400 });
   }
 
-  // One use, then dropped: list the installations this member can reach.
-  const installationsResponse = await fetch("https://api.github.com/user/installations?per_page=100", {
-    headers: {
-      accept: "application/vnd.github+json",
-      authorization: `Bearer ${token.access_token}`,
-      "user-agent": "openfloor",
-    },
-  });
+  // One use, then dropped: list the installations this member can reach, and
+  // read the profile so onboarding can prefill the display name. Neither call
+  // stores the token.
+  const githubHeaders = {
+    accept: "application/vnd.github+json",
+    authorization: `Bearer ${token.access_token}`,
+    "user-agent": "openfloor",
+  };
+  const installationsResponse = await fetch("https://api.github.com/user/installations?per_page=100", { headers: githubHeaders });
   if (!installationsResponse.ok) {
     return Response.json({ error: "GitHub installations could not be listed" }, { status: 502 });
   }
+  const profileResponse = await fetch("https://api.github.com/user", { headers: githubHeaders });
+  const profile = profileResponse.ok
+    ? await profileResponse.json().catch(() => null) as { login?: string; name?: string | null } | null
+    : null;
   const payload = await installationsResponse.json() as {
     installations?: Array<{ id: number; account?: { login?: string; type?: string } | null }>;
   };
@@ -132,5 +137,6 @@ export async function PUT(request: Request) {
     connected: true,
     installed: found.length > 0,
     installations: await listUserGitHubInstallations(user.id),
+    githubUser: profile?.login ? { login: profile.login, name: profile.name ?? null } : null,
   });
 }

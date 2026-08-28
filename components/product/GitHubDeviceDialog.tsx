@@ -17,10 +17,11 @@ type Phase =
 // github.com/login/device in the browser, poll until GitHub confirms, link
 // the member's installations. When the server has no device-flow client id
 // (501) this falls back to the classic App-install redirect automatically.
-export function GitHubDeviceDialog({ purpose, returnTo, onConnected, onClose }: {
+export function GitHubDeviceDialog({ purpose, returnTo, onConnected, onIdentity, onClose }: {
   purpose: "onboarding" | "settings";
   returnTo: string;
   onConnected: (installations: UserGitHubInstallationSummary[]) => void;
+  onIdentity?: (user: { login: string; name: string | null }) => void;
   onClose: () => void;
 }) {
   const { dismiss, dialogProps } = useDialogDismiss(onClose);
@@ -73,7 +74,7 @@ export function GitHubDeviceDialog({ purpose, returnTo, onConnected, onClose }: 
           body: JSON.stringify({ deviceCode: start.deviceCode }),
         });
         const body = await response.json().catch(() => null) as
-          { pending?: boolean; interval?: number; expired?: boolean; connected?: boolean; installed?: boolean; installations?: UserGitHubInstallationSummary[]; error?: string } | null;
+          { pending?: boolean; interval?: number; expired?: boolean; connected?: boolean; installed?: boolean; installations?: UserGitHubInstallationSummary[]; githubUser?: { login?: string; name?: string | null } | null; error?: string } | null;
         if (stopped.current) return;
         if (body?.pending) {
           if (body.interval) interval = body.interval;
@@ -88,6 +89,7 @@ export function GitHubDeviceDialog({ purpose, returnTo, onConnected, onClose }: 
           setPhase({ name: "error", message: body?.error ?? "GitHub declined the authorization." });
           return;
         }
+        if (body.githubUser?.login) onIdentity?.({ login: body.githubUser.login, name: body.githubUser.name ?? null });
         const installations = body.installations ?? [];
         if (body.installed === false || installations.length === 0) {
           setPhase({ name: "authorized-no-install" });

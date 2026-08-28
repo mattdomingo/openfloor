@@ -133,6 +133,15 @@ export function OnboardingScreen({
     setDeviceDialogOpen(true);
   }
 
+  // GitHub authorization already names the person; only fill fields the user
+  // hasn't typed in, and fall back to the login when no display name is set.
+  function prefillNameFromGitHub(githubUser: { login: string; name: string | null }) {
+    if (firstName.trim() || lastName.trim()) return;
+    const parts = splitName(githubUser.name ?? githubUser.login);
+    setFirstName(parts.firstName);
+    setLastName(parts.lastName);
+  }
+
   function submit(event: FormEvent) {
     event.preventDefault();
     void continueToConnections();
@@ -229,7 +238,7 @@ export function OnboardingScreen({
                   </>
                 )}
               </div>
-              {deviceDialogOpen && <GitHubDeviceDialog purpose="onboarding" returnTo={returnTo} onConnected={setGithubInstallations} onClose={() => setDeviceDialogOpen(false)} />}
+              {deviceDialogOpen && <GitHubDeviceDialog purpose="onboarding" returnTo={returnTo} onConnected={setGithubInstallations} onIdentity={prefillNameFromGitHub} onClose={() => setDeviceDialogOpen(false)} />}
 
               {profileError && <p className="form-error" role="alert">{profileError}</p>}
               <div className="form-actions"><button type="submit" className="button" data-variant="primary" data-size="lg" disabled={submitting}>{submitting ? "Saving…" : "Continue"}</button></div>
