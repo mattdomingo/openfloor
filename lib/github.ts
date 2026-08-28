@@ -35,6 +35,23 @@ export type GitHubPullRequestReview = {
   checks: Array<{ sourceId: string; name: string; detail: string | null; state: "passed" | "waiting" | "failed" }>;
 };
 
+// Feedback facts for the candidate PR: what lib/candidate-feedback.ts turns
+// into nudges. One GraphQL query, re-fetched after every qualifying webhook
+// (payloads are per-check/per-comment and lack thread resolution, bot typing,
+// and the full check rollup).
+export type GitHubPullRequestFeedback = {
+  number: number;
+  nodeId: string;
+  url: string;
+  state: "open" | "closed";
+  merged: boolean;
+  headSha: string;
+  reviewDecision: "approved" | "changes_requested" | "review_required" | null;
+  failedChecks: Array<{ name: string; status: string; url: string | null }>;
+  unresolvedThreads: Array<{ threadId: string; comments: Array<{ id: string; author: string; body: string; path: string | null; line: number | null; url: string }> }>;
+  changesRequested: Array<{ id: string; author: string; body: string; url: string }>;
+};
+
 export type GitHubAppConfig = {
   appId: string;
   privateKey: string;
@@ -63,6 +80,13 @@ type TestPullRequest = {
   headRef: string; baseRef: string; mergeCommitSha: string | null;
 };
 const testPullRequests = new Map<string, TestPullRequest>();
+const testPullRequestFeedback = new Map<string, Partial<GitHubPullRequestFeedback>>();
+
+/** Test-adapter seam for getPullRequestFeedback: facts for `repositoryId` PR
+    `number`, merged over an empty observation (open, no failures, no threads). */
+export function setTestPullRequestFeedback(repositoryId: string, number: number, feedback: Partial<GitHubPullRequestFeedback>): void {
+  testPullRequestFeedback.set(`${repositoryId}:${number}`, feedback);
+}
 
 /** The repos inside one installation that a member's own user token can
     reach — GitHub already intersects installation grants with user
@@ -447,6 +471,106 @@ export async function getPullRequestReview(
     files,
     checks,
   };
+}
+
+const PULL_REQUEST_FEEDBACK_QUERY = `
+query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      number id url state merged headRefOid reviewDecision
+      reviewThreads(first: 100) {
+        nodes {
+          id isResolved isOutdated
+          comments(first: 50) { nodes { databaseId url body path line author { __typename login } } }
+        }
+      }
+      latestOpinionatedReviews(first: 50) { nodes { databaseId state body url author { __typename login } } }
+      commits(last: 1) {
+        nodes { commit { oid statusCheckRollup { contexts(first: 100) { nodes {
+          __typename
+          ... on CheckRun { name status conclusion detailsUrl }
+          ... on StatusContext { context state targetUrl }
+        } } } } }
+      }
+    }
+  }
+}`;
+
+export type PullRequestFeedbackPayload = {
+  repository?: {
+    pullRequest?: {
+      number?: number; id?: string; url?: string; state?: string; merged?: boolean; headRefOid?: string; reviewDecision?: string | null;
+      reviewThreads?: { nodes?: Array<{
+        id?: string; isResolved?: boolean; isOutdated?: boolean;
+        comments?: { nodes?: Array<{ databaseId?: number; url?: string; body?: string; path?: string | null; line?: number | null; author?: { __typename?: string; login?: string } | null }> };
+      }> };
+      latestOpinionatedReviews?: { nodes?: Array<{ databaseId?: number; state?: string; body?: string; url?: string; author?: { __typename?: string; login?: string } | null }> };
+      commits?: { nodes?: Array<{ commit?: { oid?: string; statusCheckRollup?: { contexts?: { nodes?: Array<{
+        __typename?: string; name?: string; status?: string; conclusion?: string | null; detailsUrl?: string | null;
+        context?: string; state?: string; targetUrl?: string | null;
+      }> } } | null } }> };
+    } | null;
+  } | null;
+};
+
+const FAILING_CHECK_CONCLUSIONS = new Set(["FAILURE", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED", "STARTUP_FAILURE"]);
+const FAILING_STATUS_STATES = new Set(["FAILURE", "ERROR"]);
+
+// Pure GraphQL → facts mapping (agent-orchestrator's adapters/scm/github
+// rules): failure-class conclusions only, resolved/outdated threads dropped,
+// bot authors dropped by __typename (never by a login substring), and only
+// CHANGES_REQUESTED opinionated reviews kept.
+export function mapPullRequestFeedback(payload: PullRequestFeedbackPayload): GitHubPullRequestFeedback {
+  const pr = payload.repository?.pullRequest;
+  if (!pr?.number || !pr.id || !pr.url || !pr.headRefOid) throw new GitHubApiError("GitHub returned an incomplete pull request", 502);
+  const contexts = pr.commits?.nodes?.[0]?.commit?.statusCheckRollup?.contexts?.nodes ?? [];
+  const failedChecks: GitHubPullRequestFeedback["failedChecks"] = [];
+  for (const context of contexts) {
+    if (context.__typename === "CheckRun" && context.status === "COMPLETED" && FAILING_CHECK_CONCLUSIONS.has(context.conclusion ?? "")) {
+      failedChecks.push({ name: context.name ?? "unnamed check", status: (context.conclusion ?? "failure").toLowerCase(), url: context.detailsUrl ?? null });
+    } else if (context.__typename === "StatusContext" && FAILING_STATUS_STATES.has(context.state ?? "")) {
+      failedChecks.push({ name: context.context ?? "unnamed status", status: (context.state ?? "failure").toLowerCase(), url: context.targetUrl ?? null });
+    }
+  }
+  const unresolvedThreads: GitHubPullRequestFeedback["unresolvedThreads"] = [];
+  for (const thread of pr.reviewThreads?.nodes ?? []) {
+    if (!thread.id || thread.isResolved || thread.isOutdated) continue;
+    const comments = (thread.comments?.nodes ?? [])
+      .filter((comment) => comment.databaseId && comment.url && comment.author?.__typename !== "Bot")
+      .map((comment) => ({
+        id: String(comment.databaseId), author: comment.author?.login ?? "", body: (comment.body ?? "").slice(0, 2_000),
+        path: comment.path ?? null, line: comment.line ?? null, url: comment.url!,
+      }));
+    if (comments.length > 0) unresolvedThreads.push({ threadId: thread.id, comments });
+  }
+  const changesRequested = (pr.latestOpinionatedReviews?.nodes ?? [])
+    .filter((review) => review.databaseId && review.url && review.state === "CHANGES_REQUESTED" && review.author?.__typename !== "Bot")
+    .map((review) => ({ id: String(review.databaseId), author: review.author?.login ?? "", body: (review.body ?? "").slice(0, 2_000), url: review.url! }));
+  const decision = pr.reviewDecision === "APPROVED" ? "approved" : pr.reviewDecision === "CHANGES_REQUESTED" ? "changes_requested" : pr.reviewDecision === "REVIEW_REQUIRED" ? "review_required" : null;
+  return {
+    number: pr.number, nodeId: pr.id, url: pr.url, state: pr.state === "OPEN" ? "open" : "closed", merged: pr.merged === true,
+    headSha: pr.headRefOid, reviewDecision: decision, failedChecks, unresolvedThreads, changesRequested,
+  };
+}
+
+export async function getPullRequestFeedback(
+  config: GitHubAppConfig,
+  installationId: string,
+  repository: GitHubRepositoryOption,
+  pullRequestNumber: number,
+): Promise<GitHubPullRequestFeedback> {
+  if (config.testData) {
+    const match = config.testData.repositories.find((item) => item.id === repository.id);
+    if (!match || installationId !== config.testData.installationId) throw new GitHubApiError("Repository is not available", 404);
+    return {
+      number: pullRequestNumber, nodeId: `PR_${pullRequestNumber}`, url: `https://github.com/${repository.fullName}/pull/${pullRequestNumber}`,
+      state: "open", merged: false, headSha: "0".repeat(40), reviewDecision: null, failedChecks: [], unresolvedThreads: [], changesRequested: [],
+      ...testPullRequestFeedback.get(`${repository.id}:${pullRequestNumber}`),
+    };
+  }
+  const token = await createInstallationToken(config, installationId, repository.id);
+  const data = await githubGraphql<PullRequestFeedbackPayload>(token, PULL_REQUEST_FEEDBACK_QUERY, { owner: repository.owner, name: repository.name, number: pullRequestNumber });
+  return mapPullRequestFeedback(data);
 }
 
 export async function markPullRequestReadyForReview(
@@ -856,6 +980,21 @@ async function githubFetch(url: string, token: string): Promise<Response> {
   const response = await fetch(url, { headers: githubHeaders(token) });
   if (!response.ok) throw await githubError(response);
   return response;
+}
+
+// Installation tokens are valid for GraphQL with the same Bearer header;
+// GraphQL reports failures as a 200 with `errors`, so both are checked.
+async function githubGraphql<T>(token: string, query: string, variables: Record<string, unknown>): Promise<T> {
+  const response = await fetch(`${API_ROOT}/graphql`, {
+    method: "POST",
+    headers: { ...githubHeaders(token), "Content-Type": "application/json" },
+    body: JSON.stringify({ query, variables }),
+  });
+  if (!response.ok) throw await githubError(response);
+  const body = await response.json() as { data?: T; errors?: Array<{ message?: string }> };
+  if (body.errors?.length) throw new GitHubApiError(body.errors.map((error) => error.message ?? "GraphQL error").join("; ").slice(0, 500), 502);
+  if (!body.data) throw new GitHubApiError("GitHub returned no GraphQL data", 502);
+  return body.data;
 }
 
 function githubHeaders(token: string): HeadersInit {

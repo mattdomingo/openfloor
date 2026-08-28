@@ -107,6 +107,10 @@ export type FloorQueuePrompt = {
 // this column existed, or not yet visited by a routing tick; treat as "task".
 export type PromptIntent = "task" | "question" | "noise";
 
+// Why a system-originated queue item exists; null for human-authored items.
+// The kinds are PR feedback nudges — see lib/pr-feedback.ts.
+export type QueueItemOrigin = "ci_failure" | "review_comments" | "changes_requested";
+
 // A question/noise item's reply text, kept on the queue item itself (sourced
 // from its own most recent reply run) rather than only reachable by matching
 // FloorSnapshot.runs by queueItemId — that array is capped at 20 rows and the
@@ -128,6 +132,7 @@ export type FloorQueueItem = {
   assignedBy: "user" | "router" | null;
   assignedReason: string | null;
   intent: PromptIntent | null;
+  origin: QueueItemOrigin | null;
   rollback: QueueRollbackDescriptor | null;
   answer: QueueItemAnswer | null;
   prompts: FloorQueuePrompt[];
@@ -209,6 +214,13 @@ export type AgentRun = {
   outputTokens: number | null;
   cacheReadTokens: number | null;
   cacheWriteTokens: number | null;
+  // Thread resume (lib/run-resume.ts): the earlier run whose provider thread
+  // this run continued, its attempt number, and whether the provider
+  // actually resumed (1), fell back to a fresh thread (0), or no resume was
+  // attempted (null).
+  resumedFromRunId: string | null;
+  resumedFromAttempt: number | null;
+  providerThreadResumed: number | null;
   createdBy: string;
   createdAt: number;
   startedAt: number | null;
@@ -418,6 +430,7 @@ export type FloorSnapshot = {
   effectiveAutoAgentProvider: CredentialProvider | null;
   autoAgentProviderState: "selected" | "single_connected" | "openai_fallback" | "selection_required";
   autoResolveConflicts: boolean;
+  autoInjectFeedback: boolean;
   agents: FloorAgent[];
   assignments: FloorAssignment[];
   messages: FloorMessage[];

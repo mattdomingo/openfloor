@@ -125,6 +125,9 @@ export const AgentSpotlight = memo(function AgentSpotlight({ agent, tone, sessio
         </div>
       )}
       <div className="spotlight-row"><span className="label">Task</span>{agent.kind ? <p className="agent-detail-line">{agent.task}</p> : <AgentTaskEditor key={`${agent.id}-${agent.updatedAt}`} agent={agent} onSave={(agentId, task) => onUpdateSettings(agentId, { task })} />}</div>
+      {latestRun?.resumedFromAttempt != null && (
+        <div className="spotlight-row"><span className="label">Thread</span><p className="agent-detail-line">{latestRun.providerThreadResumed === 0 ? `Could not resume attempt ${latestRun.resumedFromAttempt}; started a fresh thread` : `Resumed from attempt ${latestRun.resumedFromAttempt}`}</p></div>
+      )}
       {/* Same gate as the task editor: system-managed agents render read-only
           detail only. Both selects apply on change — the pattern this
           component already uses; no Apply-button form for two selects. */}

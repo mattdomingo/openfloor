@@ -153,6 +153,8 @@ export function usePersistentFloorData(sessionId: string, initialFloor: FloorSna
     request("/routing", "PATCH", { autoAgentProvider }), [request]);
   const setAutoResolveConflicts = useCallback((autoResolveConflicts: boolean) =>
     request("/routing", "PATCH", { autoResolveConflicts }), [request]);
+  const setAutoInjectFeedback = useCallback((autoInjectFeedback: boolean) =>
+    request("/routing", "PATCH", { autoInjectFeedback }), [request]);
   const resolveConflict = useCallback((caseId: string) =>
     request(`/conflicts/${encodeURIComponent(caseId)}/resolve`, "POST"), [request]);
   const answerConflict = useCallback((caseId: string, answers: Array<{ questionId: string; answer: string }>) =>
@@ -212,6 +214,7 @@ export function usePersistentFloorData(sessionId: string, initialFloor: FloorSna
     setAutoProvisionAgents,
     setAutoAgentProvider,
     setAutoResolveConflicts,
+    setAutoInjectFeedback,
     resolveConflict,
     answerConflict,
     submitConflictSelections,
@@ -254,6 +257,7 @@ export function usePersistentFloorData(sessionId: string, initialFloor: FloorSna
     setAutoProvisionAgents,
     setAutoAgentProvider,
     setAutoResolveConflicts,
+    setAutoInjectFeedback,
     resolveConflict,
     answerConflict,
     submitConflictSelections,

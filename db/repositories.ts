@@ -412,16 +412,24 @@ export async function findRepositoryWebhookTargets(
   installationId: string | null,
   repositoryId: string | null,
   database = getDb(),
-): Promise<Array<{ sessionId: string; repositoryId: string; baseBranch: string; candidateBranch: string | null; candidateSha: string | null; integrationRunId: string | null }>> {
+): Promise<Array<{
+  sessionId: string; repositoryId: string; baseBranch: string; candidateBranch: string | null; candidateSha: string | null;
+  remoteCandidateSha: string | null; integrationRunId: string | null; pullRequestNumber: number | null; pullRequestNodeId: string | null;
+}>> {
   if (!installationId) return [];
   const result = await database.prepare(
     `SELECT rc.session_id AS sessionId, rc.repository_id AS repositoryId, rc.base_branch AS baseBranch,
-            c.branch_name AS candidateBranch, c.candidate_sha AS candidateSha, c.integration_run_id AS integrationRunId
+            c.branch_name AS candidateBranch, c.candidate_sha AS candidateSha, c.remote_candidate_sha AS remoteCandidateSha,
+            c.integration_run_id AS integrationRunId,
+            c.pull_request_number AS pullRequestNumber, c.pull_request_node_id AS pullRequestNodeId
      FROM repository_connections rc
      LEFT JOIN repository_candidates c ON c.session_id = rc.session_id AND c.status = 'active' AND c.merged_at IS NULL AND c.abandoned_at IS NULL
      WHERE rc.installation_id = ? AND rc.status != 'disconnected' AND (? IS NULL OR rc.repository_id = ?)`,
-  ).bind(installationId, repositoryId, repositoryId).all<{ sessionId: string; repositoryId: string; baseBranch: string; candidateBranch: string | null; candidateSha: string | null; integrationRunId: string | null }>();
-  return result.results;
+  ).bind(installationId, repositoryId, repositoryId).all<{
+    sessionId: string; repositoryId: string; baseBranch: string; candidateBranch: string | null; candidateSha: string | null;
+    remoteCandidateSha: string | null; integrationRunId: string | null; pullRequestNumber: number | null; pullRequestNodeId: string | null;
+  }>();
+  return result.results.map((row) => ({ ...row, pullRequestNumber: row.pullRequestNumber === null ? null : Number(row.pullRequestNumber) }));
 }
 
 export async function updateRepositoryPushState(

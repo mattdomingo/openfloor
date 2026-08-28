@@ -29,6 +29,9 @@ export type SessionContextQueueItem = {
   status: string;
   agentName: string | null;
   assignedReason: string | null;
+  // Set for system-originated PR feedback nudges (lib/pr-feedback.ts); the
+  // nudge text is the whole task, so it renders past the usual prompt cap.
+  origin: string | null;
   prompts: SessionContextPrompt[];
 };
 
@@ -96,10 +99,16 @@ export type SessionContextViewer = {
   queueItemId: string;
   attempt: number;
   candidateSha: string;
+  // Set when this run resumes an earlier attempt's provider thread
+  // (lib/run-resume.ts): the brief then opens with a short preamble that
+  // reconciles the thread's memory with the freshly checked-out workspace.
+  resume?: { fromAttempt: number; fromStatus: string };
 };
 
 export const SESSION_CONTEXT_LIMITS = {
   promptChars: 300,
+  // ponytail: the nudge text is the task; every other prompt stays at promptChars.
+  feedbackPromptChars: 3_000,
   summaryChars: 300,
   filesPerRun: 10,
   editsPerRun: 6,
@@ -136,8 +145,8 @@ function truncate(text: string, max: number): string {
   return trimmed.length > max ? `${trimmed.slice(0, max)}…` : trimmed;
 }
 
-function renderPrompts(prompts: SessionContextPrompt[]): string {
-  return prompts.map((prompt) => `${prompt.authorName}: ${truncate(prompt.text, SESSION_CONTEXT_LIMITS.promptChars)}`).join("\n   ");
+function renderPrompts(prompts: SessionContextPrompt[], max = SESSION_CONTEXT_LIMITS.promptChars): string {
+  return prompts.map((prompt) => `${prompt.authorName}: ${truncate(prompt.text, max)}`).join("\n   ");
 }
 
 function renderList(items: string[], cap: number, totalCount: number, emptyLine: string): string {
@@ -152,7 +161,7 @@ function renderYourRequest(snapshot: SessionContextSnapshot, viewer: SessionCont
   const lines: string[] = [];
   lines.push(`Your standing responsibility as ${viewer.agentName}: ${truncate(viewer.agentTask, SESSION_CONTEXT_LIMITS.summaryChars)}`);
   lines.push(`Queue position: ${item ? `#${item.position}` : "unknown"} · Attempt: ${viewer.attempt}`);
-  lines.push(`   ${item ? renderPrompts(item.prompts) : "(request text unavailable)"}`);
+  lines.push(`   ${item ? renderPrompts(item.prompts, item.origin ? SESSION_CONTEXT_LIMITS.feedbackPromptChars : SESSION_CONTEXT_LIMITS.promptChars) : "(request text unavailable)"}`);
   if (snapshot.priorAttempts.length > 0) {
     lines.push("Prior attempts on this same request:");
     for (const attempt of snapshot.priorAttempts) {
@@ -287,7 +296,11 @@ export function renderSessionContext(snapshot: SessionContextSnapshot, viewer: S
   const yourRequest = `## Your request\n${renderYourRequest(snapshot, viewer)}`;
   const howToWork = `## How to work on this floor\n${COORDINATION_RULES}\n\n${SAFETY_RULES}`;
 
-  const fixed = [header, yourRequest].join("\n\n");
+  // Never dropped by the budget loop below, so it stays short on purpose.
+  const resumeNote = viewer.resume
+    ? `## Continuing your earlier thread\nThis run resumes your conversation from attempt ${viewer.resume.fromAttempt} (${viewer.resume.fromStatus}). Your workspace was checked out fresh at candidate ${viewer.candidateSha}; edits from that earlier attempt are NOT present unless they appear under "Already integrated". This brief is a new snapshot and supersedes the one earlier in this conversation. Re-read your request — it may have been edited.`
+    : null;
+  const fixed = [header, ...(resumeNote ? [resumeNote] : []), yourRequest].join("\n\n");
   const fixedFooter = howToWork;
 
   let body = sections.map((section) => `## ${section.title}\n${section.body}`).join("\n\n");

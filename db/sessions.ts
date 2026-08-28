@@ -742,7 +742,7 @@ export async function revokeInvite(
 export async function setSessionRoutingSettings(
   sessionId: string,
   ownerId: string,
-  input: { autoDispatch?: boolean; autoProvisionAgents?: boolean; autoAgentProvider?: CredentialProvider | null; autoResolveConflicts?: boolean },
+  input: { autoDispatch?: boolean; autoProvisionAgents?: boolean; autoAgentProvider?: CredentialProvider | null; autoResolveConflicts?: boolean; autoInjectFeedback?: boolean },
   database = getDb(),
 ): Promise<boolean> {
   if ((await getActiveMembershipRole(sessionId, ownerId, database)) !== "owner") return false;
@@ -758,6 +758,7 @@ export async function setSessionRoutingSettings(
        auto_provision_agents = COALESCE(?, auto_provision_agents),
        auto_agent_provider = CASE WHEN ? = 1 THEN ? ELSE auto_agent_provider END,
        auto_resolve_conflicts = COALESCE(?, auto_resolve_conflicts),
+       auto_inject_feedback = COALESCE(?, auto_inject_feedback),
        floor_revision = floor_revision + 1, updated_at = ?
      WHERE id = ? AND ended_at IS NULL`,
   ).bind(
@@ -766,6 +767,7 @@ export async function setSessionRoutingSettings(
     input.autoAgentProvider === undefined ? 0 : 1,
     input.autoAgentProvider ?? null,
     input.autoResolveConflicts === undefined ? null : input.autoResolveConflicts ? 1 : 0,
+    input.autoInjectFeedback === undefined ? null : input.autoInjectFeedback ? 1 : 0,
     Date.now(), sessionId,
   ).run();
   return Number(result.meta?.changes ?? 0) > 0;

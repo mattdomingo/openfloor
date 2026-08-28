@@ -1,5 +1,6 @@
 import type { AgentRun, AgentRunCheck, AgentRunFile, AgentRunStatus, RunActivityEvent } from "@/lib/floor-types";
 import { resolveRunModel, type CredentialProvider } from "@/lib/provider-credentials";
+import { pickResumeSource, type ResumeCandidateRow } from "@/lib/run-resume";
 import { normalizeRunUsage } from "@/lib/run-usage";
 import { getDb, type D1DatabaseLike } from "./index";
 import { getActiveMembershipRole, getMembershipRole } from "./sessions";
@@ -24,6 +25,8 @@ export async function getAgentRuns(sessionId: string, database = getDb()): Promi
             r.model, r.summary, r.final_response AS finalResponse,
             r.input_tokens AS inputTokens, r.output_tokens AS outputTokens,
             r.cache_read_tokens AS cacheReadTokens, r.cache_write_tokens AS cacheWriteTokens,
+            r.resumed_from_run_id AS resumedFromRunId, prior.attempt AS resumedFromAttempt,
+            r.provider_thread_resumed AS providerThreadResumed,
             r.created_by AS createdBy,
             r.created_at AS createdAt, r.started_at AS startedAt, r.completed_at AS completedAt,
             r.published_at AS publishedAt, r.discarded_at AS discardedAt, r.branch_deleted_at AS branchDeletedAt,
@@ -39,6 +42,7 @@ export async function getAgentRuns(sessionId: string, database = getDb()): Promi
             rb.failure_reason AS rollbackFailureReason, rb.created_by AS rollbackBy,
             rb.created_at AS rollbackRequestedAt, rb.completed_at AS rollbackCompletedAt
      FROM agent_runs r JOIN floor_agents a ON a.id = r.agent_id
+     LEFT JOIN agent_runs prior ON prior.id = r.resumed_from_run_id
      LEFT JOIN merge_conflict_attempts mca ON mca.run_id = r.id
      LEFT JOIN merge_conflict_cases source_case ON source_case.source_run_id = r.id
      LEFT JOIN agent_run_rollbacks rb ON rb.id = (
@@ -98,7 +102,7 @@ export async function getQueueItemAgentBudgetContext(
 export async function createAgentRun(sessionId: string, queueItemId: string, userId: string, kind: "task" | "reply" = "task", database = getDb()): Promise<AgentRun> {
   if ((await getActiveMembershipRole(sessionId, userId, database)) !== "owner") throw new AgentRunNotReadyError("Session not found");
   const context = await database.prepare(
-    `SELECT q.id AS queueItemId, q.status AS queueStatus, q.agent_id AS agentId,
+    `SELECT q.id AS queueItemId, q.status AS queueStatus, q.agent_id AS agentId, q.source_run_id AS sourceRunId,
             a.provider AS agentProvider, a.model AS agentModel, a.kind AS agentKind,
             a.deprovisioned_at AS agentDeprovisionedAt,
             rc.id AS connectionId, rc.status AS connectionStatus,
@@ -109,7 +113,7 @@ export async function createAgentRun(sessionId: string, queueItemId: string, use
      LEFT JOIN repository_candidates c ON c.session_id = q.session_id AND c.status = 'active' AND c.merged_at IS NULL
      WHERE q.session_id = ? AND q.id = ?`,
   ).bind(sessionId, queueItemId).first<{
-    queueItemId: string; queueStatus: string; agentId: string | null; agentProvider: CredentialProvider | null;
+    queueItemId: string; queueStatus: string; agentId: string | null; sourceRunId: string | null; agentProvider: CredentialProvider | null;
     agentModel: string | null; agentKind: "answer" | "worker" | null; agentDeprovisionedAt: number | null; connectionId: string | null;
     connectionStatus: string | null; candidateId: string | null; candidateSha: string | null; remoteCandidateSha: string | null;
   }>();
@@ -128,6 +132,22 @@ export async function createAgentRun(sessionId: string, queueItemId: string, use
   const previous = await database.prepare("SELECT COALESCE(MAX(attempt), 0) AS attempt FROM agent_runs WHERE queue_item_id = ?")
     .bind(queueItemId).first<{ attempt: number }>();
   const attempt = Number(previous?.attempt ?? 0) + 1;
+  const model = resolveRunModel(context.agentProvider ?? "openai", context.agentModel);
+  // Thread resume: the newest eligible earlier run by this agent on this
+  // candidate (same item or the item's explicit source run) whose provider
+  // session store was persisted. Decided here, at the one seam every start
+  // path shares, and stored on the row so the workflow needs no new params.
+  const resumeRows = await database.prepare(
+    `SELECT r.id, r.queue_item_id AS queueItemId, r.attempt, r.model, r.kind, r.codex_thread_id AS providerThreadId,
+            s.r2_key AS sessionStoreKey, r.completed_at AS completedAt, r.created_at AS createdAt
+     FROM agent_runs r LEFT JOIN agent_run_artifacts s ON s.run_id = r.id AND s.kind = 'session_store'
+     WHERE r.session_id = ? AND r.agent_id = ? AND r.candidate_id = ?
+     ORDER BY r.created_at DESC, r.id DESC LIMIT 10`,
+  ).bind(sessionId, context.agentId, context.candidateId).all<ResumeCandidateRow>();
+  const resumeSource = pickResumeSource(
+    resumeRows.results.map((row) => ({ ...row, attempt: Number(row.attempt) })),
+    { queueItemId, model, kind: effectiveKind === "reply" ? "reply" : null, sourceRunId: context.sourceRunId, now: Date.now() },
+  );
   const id = crypto.randomUUID();
   // A reply run never publishes, so it never earns a real branch — reserving
   // the placeholder name here would leave the UI pointing at a branch that
@@ -139,10 +159,10 @@ export async function createAgentRun(sessionId: string, queueItemId: string, use
       database.prepare(
         `INSERT INTO agent_runs
          (id, session_id, queue_item_id, agent_id, candidate_id, candidate_sha, run_branch, attempt, status, model, kind,
-          workflow_instance_id, sandbox_id, created_by, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'provisioning', ?, ?, ?, ?, ?, ?, ?)`,
+          resumed_from_run_id, workflow_instance_id, sandbox_id, created_by, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'provisioning', ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).bind(id, sessionId, queueItemId, context.agentId, context.candidateId, context.candidateSha, runBranch, attempt,
-        resolveRunModel(context.agentProvider ?? "openai", context.agentModel), effectiveKind === "reply" ? "reply" : null, id, `run-${id}`, userId, now, now),
+        model, effectiveKind === "reply" ? "reply" : null, resumeSource?.id ?? null, id, `run-${id}`, userId, now, now),
       database.prepare("UPDATE floor_queue_items SET status = 'running', updated_at = ? WHERE id = ? AND session_id = ? AND status = 'queued'")
         .bind(now, queueItemId, sessionId),
       database.prepare("UPDATE sessions SET floor_revision = floor_revision + 1, updated_at = ? WHERE id = ?").bind(now, sessionId),
@@ -151,7 +171,7 @@ export async function createAgentRun(sessionId: string, queueItemId: string, use
     if (String(error).toLowerCase().includes("unique")) throw new AgentRunConflictError("This queue item already has an active run");
     throw error;
   }
-  await appendRunEvent(id, "queued", `Run attempt ${attempt} created.`, database);
+  await appendRunEvent(id, "queued", `Run attempt ${attempt} created${resumeSource ? `, resuming attempt ${resumeSource.attempt}'s thread` : ""}.`, database);
   return (await getAgentRun(id, database))!;
 }
 
@@ -164,6 +184,8 @@ export async function getAgentRun(runId: string, database = getDb()): Promise<Ag
             r.model, r.summary, r.final_response AS finalResponse,
             r.input_tokens AS inputTokens, r.output_tokens AS outputTokens,
             r.cache_read_tokens AS cacheReadTokens, r.cache_write_tokens AS cacheWriteTokens,
+            r.resumed_from_run_id AS resumedFromRunId, prior.attempt AS resumedFromAttempt,
+            r.provider_thread_resumed AS providerThreadResumed,
             r.created_by AS createdBy,
             r.created_at AS createdAt, r.started_at AS startedAt, r.completed_at AS completedAt,
             r.published_at AS publishedAt, r.discarded_at AS discardedAt, r.branch_deleted_at AS branchDeletedAt,
@@ -179,6 +201,7 @@ export async function getAgentRun(runId: string, database = getDb()): Promise<Ag
             rb.failure_reason AS rollbackFailureReason, rb.created_by AS rollbackBy,
             rb.created_at AS rollbackRequestedAt, rb.completed_at AS rollbackCompletedAt
      FROM agent_runs r JOIN floor_agents a ON a.id = r.agent_id
+     LEFT JOIN agent_runs prior ON prior.id = r.resumed_from_run_id
      LEFT JOIN merge_conflict_attempts mca ON mca.run_id = r.id
      LEFT JOIN merge_conflict_cases source_case ON source_case.source_run_id = r.id
      LEFT JOIN agent_run_rollbacks rb ON rb.id = (
@@ -205,13 +228,17 @@ export async function getRunExecutionContext(runId: string, database = getDb()) 
             rc.repository_owner AS repositoryOwner, rc.repository_name AS repositoryName,
             rc.repository_full_name AS repositoryFullName,
             c.branch_name AS candidateBranch,
-            mca.case_id AS conflictCaseId
+            mca.case_id AS conflictCaseId,
+            prior.codex_thread_id AS resumeThreadId, prior.attempt AS resumedFromAttempt, prior.status AS resumedFromStatus,
+            store.r2_key AS resumeSessionStoreKey
      FROM agent_runs r
      JOIN sessions s ON s.id = r.session_id
      JOIN floor_agents a ON a.id = r.agent_id
      JOIN repository_candidates c ON c.id = r.candidate_id
      JOIN repository_connections rc ON rc.id = c.connection_id
      LEFT JOIN merge_conflict_attempts mca ON mca.run_id = r.id
+     LEFT JOIN agent_runs prior ON prior.id = r.resumed_from_run_id
+     LEFT JOIN agent_run_artifacts store ON store.run_id = prior.id AND store.kind = 'session_store'
      WHERE r.id = ?`,
   ).bind(runId).first<{
     id: string; sessionId: string; queueItemId: string; agentId: string; candidateSha: string; attempt: number; status: AgentRunStatus;
@@ -221,6 +248,7 @@ export async function getRunExecutionContext(runId: string, database = getDb()) 
     agentName: string; agentRole: string; agentTask: string; provider: CredentialProvider; installationId: string; repositoryId: string;
     repositoryOwner: string; repositoryName: string; repositoryFullName: string; candidateBranch: string;
     conflictCaseId: string | null;
+    resumeThreadId: string | null; resumedFromAttempt: number | null; resumedFromStatus: AgentRunStatus | null; resumeSessionStoreKey: string | null;
   }>();
   if (!run) return null;
   const prompts = await database.prepare(
@@ -231,6 +259,7 @@ export async function getRunExecutionContext(runId: string, database = getDb()) 
     .bind(runId).all<{ id: string; position: number; command: string }>();
   return {
     ...run,
+    resumedFromAttempt: run.resumedFromAttempt === null ? null : Number(run.resumedFromAttempt),
     prompts: prompts.results,
     checks: checks.results.map((check) => ({ ...check, position: Number(check.position) })),
     files: await getRunFiles(runId, database),
@@ -338,6 +367,17 @@ export async function recordRunUsage(
   ).run();
 }
 
+// Records the provider thread id for every outcome (markRunChecking and
+// finishAgentReply only see successes), plus whether a requested resume
+// actually happened: null = no resume attempted, 1 = resumed, 0 = the runner
+// fell back to a fresh thread. COALESCE keeps an id an earlier call stored
+// when result.json could not be read (a killed runner that never flushed).
+export async function setRunProviderThreadId(runId: string, threadId: string | null, resumed: boolean | null, database = getDb()): Promise<void> {
+  await database.prepare(
+    "UPDATE agent_runs SET codex_thread_id = COALESCE(?, codex_thread_id), provider_thread_resumed = ?, updated_at = ? WHERE id = ?",
+  ).bind(threadId, resumed === null ? null : resumed ? 1 : 0, Date.now(), runId).run();
+}
+
 export async function markRunChecking(runId: string, threadId: string | null, finalResponse: string | null, database = getDb()): Promise<void> {
   const now = Date.now();
   await database.prepare(
@@ -359,7 +399,7 @@ export async function replaceRunFiles(runId: string, files: Array<Omit<AgentRunF
   ]);
 }
 
-export async function recordRunArtifact(runId: string, kind: "codex_log" | "diff" | "prompt" | "conflict_snapshot", r2Key: string, contentType: string, sizeBytes: number, database = getDb()): Promise<void> {
+export async function recordRunArtifact(runId: string, kind: "codex_log" | "diff" | "prompt" | "conflict_snapshot" | "session_store", r2Key: string, contentType: string, sizeBytes: number, database = getDb()): Promise<void> {
   await database.prepare(
     `INSERT INTO agent_run_artifacts (id, run_id, kind, r2_key, content_type, size_bytes, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -697,7 +737,8 @@ export async function getRunArtifactKeysForMember(sessionId: string, runId: stri
   if (!(await getMembershipRole(sessionId, userId, database))) return null;
   const rows = await database.prepare(
     `SELECT a.kind, a.r2_key AS r2Key, a.content_type AS contentType
-     FROM agent_run_artifacts a JOIN agent_runs r ON r.id = a.run_id WHERE r.id = ? AND r.session_id = ? ORDER BY a.kind`,
+     FROM agent_run_artifacts a JOIN agent_runs r ON r.id = a.run_id
+     WHERE r.id = ? AND r.session_id = ? AND a.kind != 'session_store' ORDER BY a.kind`,
   ).bind(runId, sessionId).all<{ kind: string; r2Key: string; contentType: string }>();
   return rows.results;
 }

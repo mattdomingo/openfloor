@@ -19,6 +19,8 @@ export function QueueOrderMenu({
   onAutoDispatch,
   autoResolveConflicts,
   onAutoResolveConflicts,
+  autoInjectFeedback,
+  onAutoInjectFeedback,
   browserConflictAlerts,
   onBrowserConflictAlerts,
   busy,
@@ -31,6 +33,8 @@ export function QueueOrderMenu({
   onAutoDispatch: (enabled: boolean) => Promise<void>;
   autoResolveConflicts: boolean;
   onAutoResolveConflicts: (enabled: boolean) => Promise<void>;
+  autoInjectFeedback: boolean;
+  onAutoInjectFeedback: (enabled: boolean) => Promise<void>;
   browserConflictAlerts: boolean;
   onBrowserConflictAlerts: (enabled: boolean) => Promise<void>;
   busy: boolean;
@@ -85,6 +89,11 @@ export function QueueOrderMenu({
     setOpen(false);
   }
 
+  function chooseFeedbackInjection(next: boolean) {
+    void onAutoInjectFeedback(next);
+    setOpen(false);
+  }
+
   function chooseBrowserAlerts(next: boolean) {
     void onBrowserConflictAlerts(next);
     setOpen(false);
@@ -132,6 +141,16 @@ export function QueueOrderMenu({
           <ul>
             <li><button type="button" data-selected={autoResolveConflicts ? "true" : "false"} aria-pressed={autoResolveConflicts} disabled={busy} onClick={() => chooseConflictResolution(true)}><span>Automatic</span><small>Prioritize a Merge Resolver when GitHub reports a real conflict</small></button></li>
             <li><button type="button" data-selected={!autoResolveConflicts ? "true" : "false"} aria-pressed={!autoResolveConflicts} disabled={busy} onClick={() => chooseConflictResolution(false)}><span>Manual</span><small>Record conflicts and wait for the owner to start resolution</small></button></li>
+          </ul>
+        </>
+      )}
+
+      {owner && (
+        <>
+          <span className="queue-order-label" aria-hidden="true">PR feedback</span>
+          <ul>
+            <li><button type="button" data-selected={autoInjectFeedback ? "true" : "false"} aria-pressed={autoInjectFeedback} disabled={busy} onClick={() => chooseFeedbackInjection(true)}><span>Nudge agents</span><small>Queue CI failures and review comments from the candidate PR for the responsible agent</small></button></li>
+            <li><button type="button" data-selected={!autoInjectFeedback ? "true" : "false"} aria-pressed={!autoInjectFeedback} disabled={busy} onClick={() => chooseFeedbackInjection(false)}><span>Skip</span><small>Leave PR feedback for people to relay</small></button></li>
           </ul>
         </>
       )}

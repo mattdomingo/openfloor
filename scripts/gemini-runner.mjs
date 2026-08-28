@@ -2,6 +2,11 @@ import { spawn } from "node:child_process";
 import { readFile, writeFile } from "node:fs/promises";
 import { createInterface } from "node:readline";
 
+// Thread resume (OPENFLOOR_RESUME_THREAD_ID, see the Codex/Claude runners) is
+// deliberately not wired here: the pinned gemini-cli's resume support is
+// unverified, so worker/agent-run-workflow.ts never passes the variable to
+// this runner and never persists a Gemini session store.
+
 const promptPath = process.env.OPENFLOOR_PROMPT_PATH;
 const resultPath = process.env.OPENFLOOR_RESULT_PATH;
 const workspace = process.env.OPENFLOOR_WORKSPACE;

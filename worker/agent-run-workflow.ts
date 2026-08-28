@@ -3,6 +3,7 @@ import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloud
 import { NonRetryableError } from "cloudflare:workflows";
 import type { D1DatabaseLike } from "../db";
 import {
+  appendRunEvent,
   bumpAgentRunRevision,
   beginRunIntegration,
   cancelRunIntegration,
@@ -22,6 +23,7 @@ import {
   recordRunUsage,
   replaceRunFiles,
   setRunProcessId,
+  setRunProviderThreadId,
   setRunSandboxId,
 } from "../db/runs";
 import { claimPoolSandbox, releasePoolSandbox, retirePoolSandbox } from "../db/sandbox-pool";
@@ -35,7 +37,7 @@ import { getEnabledMcpServersForRun } from "../db/mcp-servers";
 import { getSessionSkillsForRun } from "../db/skills";
 import { serializeMcpServersForClaude } from "../lib/mcp-config";
 import { buildGeminiSrtSettings, buildGeminiSystemSettings } from "../lib/gemini-settings";
-import { usesClaudeRunner } from "../lib/provider-credentials";
+import { usesClaudeRunner, type CredentialProvider } from "../lib/provider-credentials";
 import { buildClaudeSandboxSettings } from "../lib/claude-sandbox-settings";
 import { notifyFloorChanged } from "../lib/presence-server";
 import { pokeSessionRouter } from "../lib/router-server";
@@ -66,7 +68,7 @@ import { rollbackSandboxIds } from "../lib/rollback-sandbox";
 import { ROLLBACK_PREPARE_COMMAND, ROLLBACK_PUBLISH_COMMAND, redactRollbackOutput } from "../lib/rollback-git";
 
 type R2BucketLike = {
-  put(key: string, value: string, options?: unknown): Promise<unknown>;
+  put(key: string, value: string | Uint8Array, options?: unknown): Promise<unknown>;
   get(key: string): Promise<{ body: ReadableStream<Uint8Array> } | null>;
 };
 
@@ -157,13 +159,20 @@ const PUBLISHER_SANDBOX_IMAGE_VERSION = "v2";
 // Namespacing the pool key by image version makes old-image entries
 // unreachable immediately; the existing idle sweep reclaims them.
 // Bump this whenever Dockerfile.sandbox's run-sandbox contents change.
-const RUN_SANDBOX_IMAGE_VERSION = "v4";
+const RUN_SANDBOX_IMAGE_VERSION = "v5";
 // Non-Codex runs get a fresh HOME per run, inside the per-run scratch tree
 // that prepare wipes and the release reset removes. Pool sandboxes outlive
 // sessions, so everything a CLI persists under its home — transcripts, todos,
 // ~/.claude.json, ~/.gemini state, whatever the next version adds — must die
 // with the run by construction, not by enumerating state paths.
 const RUN_AGENT_HOME = "/tmp/openfloor/agent-home";
+// Thread resume: the prior attempt's provider session directory travels
+// through private R2 as a tar.gz (agent_run_artifacts kind session_store),
+// restored into the runner's HOME before it starts and re-captured at run
+// end. The cap keeps a runaway transcript from turning every retry into a
+// multi-megabyte R2 round trip; over it, the next attempt starts fresh.
+const SESSION_STORE_PATH = "/tmp/openfloor/session-store.tgz";
+const MAX_SESSION_STORE_BYTES = 8 * 1024 * 1024;
 
 export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Params> {
   async run(event: Readonly<WorkflowEvent<Params>>, step: WorkflowStep): Promise<{ status: string }> {
@@ -226,7 +235,7 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
       // OPENFLOOR_SKILLS is the same snapshot — a second D1 read there could
       // observe a skill imported mid-provisioning and enable a name whose
       // SKILL.md was never written.
-      const { materializedSkills: skillNames, manualApplied, manualApplySummary } = await step.do("prepare exact workspace", { retries: { limit: 2, delay: "5 seconds", backoff: "exponential" }, timeout: "5 minutes" }, async () => {
+      const { materializedSkills: skillNames, manualApplied, manualApplySummary, resumeThreadId } = await step.do("prepare exact workspace", { retries: { limit: 2, delay: "5 seconds", backoff: "exponential" }, timeout: "5 minutes" }, async () => {
         const sourceToken = await signRunGatewayToken({
           runId, sessionId: context.sessionId, repositoryId: context.repositoryId,
           candidateSha: context.candidateSha, operation: "source",
@@ -366,7 +375,26 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
             }
           }
         }
-        let prompt = await buildRunPrompt(context, this.env.DB);
+        // Thread resume: restore the prior attempt's provider session store
+        // so the runner can continue that conversation (eligibility decided
+        // in createAgentRun via lib/run-resume.ts). Best-effort by design —
+        // a missing object or failed extraction means a fresh thread, never
+        // a failed run. Gemini is excluded: its CLI's resume support is
+        // unverified at the pinned version.
+        let resumeThreadId: string | null = null;
+        if (!manualApplied && context.resumeThreadId && context.resumeSessionStoreKey && context.provider !== "gemini") {
+          const store = await this.env.PREFLIGHT_LOGS.get(context.resumeSessionStoreKey);
+          if (store?.body) {
+            await sandbox.writeFile(SESSION_STORE_PATH, store.body);
+            const home = usesClaudeRunner(context.provider) ? RUN_AGENT_HOME : "${HOME:-/root}";
+            const restored = await sandbox.exec(
+              `mkdir -p ${home} && tar -xzf ${SESSION_STORE_PATH} -C ${home} && rm -f ${SESSION_STORE_PATH}`,
+              { timeout: 60_000 },
+            );
+            if (restored.success) resumeThreadId = context.resumeThreadId;
+          }
+        }
+        let prompt = await buildRunPrompt(context, this.env.DB, resumeThreadId !== null);
         if (usesClaudeRunner(context.provider)) {
           // The target repository's CLAUDE.md is useful context, but it is
           // deliberately NOT loaded as a settings source — user-scope keeps
@@ -484,7 +512,7 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
           );
           if (!prepared.success) throw new Error(`Gemini runtime preparation failed with exit code ${prepared.exitCode}`);
         }
-        return { materializedSkills, conflictPaths, manualApplied, manualApplySummary };
+        return { materializedSkills, conflictPaths, manualApplied, manualApplySummary, resumeThreadId };
       });
 
       const processId = `codex-${runId}`;
@@ -502,7 +530,7 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
         }
         await markRunRunning(runId, null, this.env.DB);
         await this.notify(runId);
-        codexResult = { ok: true, threadId: null, finalResponse: manualApplySummary, error: null, usage: null, modelUsage: null, totalCostUsd: null };
+        codexResult = { ok: true, threadId: null, resumed: null, finalResponse: manualApplySummary, error: null, usage: null, modelUsage: null, totalCostUsd: null };
       } else {
       await step.do("start Codex", { retries: { limit: 1, delay: "5 seconds" }, timeout: "2 minutes" }, async () => {
         const existing = await sandbox.getProcess(processId);
@@ -584,6 +612,7 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
               // regardless. Each runner uses this to select a read-only
               // permission/sandbox/approval mode.
               OPENFLOOR_RUN_MODE: context.kind === "reply" ? "reply" : "task",
+              ...(resumeThreadId ? { OPENFLOOR_RESUME_THREAD_ID: resumeThreadId } : {}),
               OPENFLOOR_EVENTS_URL: `${this.env.OPENFLOOR_RUNTIME_ORIGIN}/runtime/run/events`,
               OPENFLOOR_EVENTS_TOKEN: eventsToken,
               OPENFLOOR_CONTEXT_URL: `${this.env.OPENFLOOR_RUNTIME_ORIGIN}/runtime/run/context`,
@@ -613,6 +642,9 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
           }
           if (await isRunCancellationRequested(runId, this.env.DB)) {
             await process.kill("SIGTERM");
+            // Give the runner its shutdown window to flush result.json (its
+            // thread id) and the provider transcript the next attempt resumes.
+            await process.waitForExit(10_000).catch(() => {});
             return { awaitingInput: false, cancelled: true, exitCode: 130, stdout: "", stderr: "Agent run cancelled." };
           }
           // Hold an exit-event stream instead of polling: one request per 15s
@@ -638,6 +670,17 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
       const codexLogKey = `runs/${runId}/codex.log`;
       await this.env.PREFLIGHT_LOGS.put(codexLogKey, codexLog, { httpMetadata: { contentType: "text/plain; charset=utf-8" } });
       await recordRunArtifact(runId, "codex_log", codexLogKey, "text/plain; charset=utf-8", codexLog.length, this.env.DB);
+      // Read result.json before the awaiting-input/cancelled returns below:
+      // a killed or failed run still has a thread id worth keeping and a
+      // transcript worth persisting, so the next attempt can resume it.
+      const resultFile = await sandbox.exec("cat /tmp/openfloor/result.json", { timeout: 10_000 });
+      codexResult = parseRunResult(resultFile.stdout);
+      const resumeAttempted = resumeThreadId !== null;
+      await setRunProviderThreadId(runId, codexResult.threadId, resumeAttempted ? codexResult.resumed === true : null, this.env.DB);
+      if (resumeAttempted && codexResult.resumed !== true) {
+        await appendRunEvent(runId, "resume_failed", "The provider could not resume the earlier thread; this attempt started a fresh one.", this.env.DB);
+      }
+      await this.persistSessionStore(runId, context.provider, codexResult.threadId, sandbox);
       if (processResult.awaitingInput || context.conflictCaseId && await isConflictInputRequested(runId, this.env.DB)) {
         await finishResolverAwaitingInput(runId, this.env.DB);
         await this.notify(runId);
@@ -648,8 +691,6 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
         summary = "Agent run cancelled. No repository changes were published.";
         return await this.complete(runId, finalStatus, summary);
       }
-      const resultFile = await sandbox.exec("cat /tmp/openfloor/result.json", { timeout: 10_000 });
-      codexResult = parseRunResult(resultFile.stdout);
       // Recorded even when the run went on to fail below (ok: false, or a
       // nonzero exit code) — a failed run still spent real tokens against
       // the owner's budget, and skipping it here would let a crashlooping
@@ -853,6 +894,40 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
   private async notify(runId: string) {
     const update = await bumpAgentRunRevision(runId, this.env.DB);
     if (update) await notifyFloorChanged(update.sessionId, update.revision, ["queue", "runs", "review"]);
+  }
+
+  // Tars the provider's session directory — the transcript the next attempt
+  // resumes from — into private R2 as a session_store artifact. Best-effort
+  // and never throws: a missing directory, an oversized archive, or an R2
+  // hiccup just means the next attempt starts a fresh thread. The per-run
+  // HOME (Claude runner) and the release reset (Codex's ~/.codex) guarantee
+  // the directory holds only this run's transcript plus the one it resumed.
+  private async persistSessionStore(runId: string, provider: CredentialProvider, threadId: string | null, sandbox: ReturnType<typeof getSandbox<Sandbox>>) {
+    if (!threadId || provider === "gemini") return;
+    try {
+      const home = usesClaudeRunner(provider) ? RUN_AGENT_HOME : "${HOME:-/root}";
+      const subdir = usesClaudeRunner(provider) ? ".claude/projects" : ".codex/sessions";
+      const packed = await sandbox.exec(
+        `cd ${home} && test -d ${subdir} && tar -czf ${SESSION_STORE_PATH} ${subdir} && wc -c < ${SESSION_STORE_PATH}`,
+        { timeout: 60_000 },
+      );
+      if (!packed.success) return;
+      const size = Number(packed.stdout.trim());
+      if (!Number.isFinite(size) || size <= 0) return;
+      if (size > MAX_SESSION_STORE_BYTES) {
+        await appendRunEvent(runId, "session_store_skipped", `The session transcript is ${size} bytes, over the ${MAX_SESSION_STORE_BYTES}-byte limit; the next attempt starts a fresh thread.`, this.env.DB);
+        return;
+      }
+      // ponytail: base64 through the DO RPC is fine under the 8 MB cap; move
+      // to the bundle-upload route pattern if the cap ever needs to grow.
+      const file = await sandbox.readFile(SESSION_STORE_PATH, { encoding: "base64" });
+      const bytes = Uint8Array.from(atob(file.content), (char) => char.charCodeAt(0));
+      const key = `runs/${runId}/session-store.tgz`;
+      await this.env.PREFLIGHT_LOGS.put(key, bytes, { httpMetadata: { contentType: "application/gzip" } });
+      await recordRunArtifact(runId, "session_store", key, "application/gzip", size, this.env.DB);
+    } catch {
+      // Best-effort by contract; see the method comment.
+    }
   }
 
   private async rollback(runId: string, rollbackId: string, step: WorkflowStep, grouped = false): Promise<{ status: string }> {
@@ -1138,10 +1213,19 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
 // candidate SHA) as the viewer. See lib/session-context.ts for the rendered
 // template and the rationale for what is and isn't included (direct messages
 // never are).
-async function buildRunPrompt(context: NonNullable<Awaited<ReturnType<typeof getRunExecutionContext>>>, database: D1DatabaseLike): Promise<string> {
+async function buildRunPrompt(context: NonNullable<Awaited<ReturnType<typeof getRunExecutionContext>>>, database: D1DatabaseLike, resumed = false): Promise<string> {
   const snapshot = await getSessionContext(context.sessionId, { runId: context.id, queueItemId: context.queueItemId }, database);
   if (!snapshot) throw new Error("Session context is unavailable for this run");
-  const sessionBrief = renderSessionContext(snapshot, viewerFromRunContext(context));
+  // On a resumed thread the brief carries a preamble: the model's history
+  // says "I edited X", but the workspace was re-checked-out at the candidate
+  // SHA, so those edits are gone unless they were integrated.
+  const viewer = {
+    ...viewerFromRunContext(context),
+    ...(resumed && context.resumedFromAttempt !== null
+      ? { resume: { fromAttempt: context.resumedFromAttempt, fromStatus: context.resumedFromStatus ?? "unknown" } }
+      : {}),
+  };
+  const sessionBrief = renderSessionContext(snapshot, viewer);
   if (context.conflictCaseId) {
     const [runContext, cases] = await Promise.all([
       getConflictRunContext(context.id, database),
@@ -1171,7 +1255,7 @@ async function buildRunPrompt(context: NonNullable<Awaited<ReturnType<typeof get
 // parsing here would be the second editable copy the codebase's open-enum
 // convention exists to avoid.
 function parseRunResult(value: string): {
-  ok: boolean; threadId: string | null; finalResponse: string | null; error: string | null;
+  ok: boolean; threadId: string | null; resumed: boolean | null; finalResponse: string | null; error: string | null;
   usage: unknown; modelUsage: Record<string, { inputTokens: number; outputTokens: number; cacheReadInputTokens: number; cacheCreationInputTokens: number; costUSD: number }> | null;
   totalCostUsd: number | null;
 } {
@@ -1180,6 +1264,8 @@ function parseRunResult(value: string): {
     return {
       ok: parsed.ok === true,
       threadId: typeof parsed.threadId === "string" ? parsed.threadId : null,
+      // Only a runner that was asked to resume reports this; null otherwise.
+      resumed: parsed.resumed === true ? true : parsed.resumed === false ? false : null,
       finalResponse: typeof parsed.finalResponse === "string" ? parsed.finalResponse.slice(0, 20_000) : null,
       error: typeof parsed.error === "string" ? parsed.error.slice(0, 1_000) : null,
       usage: parsed.usage ?? null,
@@ -1187,7 +1273,7 @@ function parseRunResult(value: string): {
       totalCostUsd: typeof parsed.totalCostUsd === "number" ? parsed.totalCostUsd : null,
     };
   } catch {
-    return { ok: false, threadId: null, finalResponse: null, error: "The agent did not produce a valid result", usage: null, modelUsage: null, totalCostUsd: null };
+    return { ok: false, threadId: null, resumed: null, finalResponse: null, error: "The agent did not produce a valid result", usage: null, modelUsage: null, totalCostUsd: null };
   }
 }
 
