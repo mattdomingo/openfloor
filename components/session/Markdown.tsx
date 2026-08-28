@@ -1,5 +1,6 @@
 "use client";
 
+import { memo } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -17,7 +18,7 @@ import remarkGfm from "remark-gfm";
 
    GFM is on for tables, task lists, strikethrough, and autolinks — the
    dialects models actually emit. */
-export function Markdown({ children, className }: { children: string; className?: string }) {
+export const Markdown = memo(function Markdown({ children, className }: { children: string; className?: string }) {
   return (
     <div className={className ? `markdown ${className}` : "markdown"}>
       <ReactMarkdown
@@ -35,4 +36,4 @@ export function Markdown({ children, className }: { children: string; className?
       </ReactMarkdown>
     </div>
   );
-}
+});

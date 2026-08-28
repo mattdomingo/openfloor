@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type DragEvent, type MouseEvent as ReactMouseEvent } from "react";
+import { memo, useMemo, useState, type DragEvent, type MouseEvent as ReactMouseEvent } from "react";
 import type { AgentRun, FloorAgent, FloorQueueItem } from "@/lib/floor-types";
 import { LocalDateTime } from "@/components/LocalDateTime";
 import type { QueueOrderMode, QueueScope } from "./data";
@@ -13,7 +13,7 @@ import { QueueOrderMenu } from "./QueueOrderMenu";
 
 const scopeOptions: { value: QueueScope; label: string }[] = [{ value: "mine", label: "You" }, { value: "team", label: "Team" }];
 
-export function PromptQueue({ chrome, items, runs, agents, owner, runEnabled, busy, autoDispatch, onAutoDispatch, autoResolveConflicts, onAutoResolveConflicts, browserConflictAlerts, onBrowserConflictAlerts, onRun, onCancel, onDiscard, onRollback, onRetry, onEditPrompt, onPause, onDelete, onSetAgent, currentUserId, scope, onScope, orderMode, onOrderMode, draggedItemId, onItemDragStart, onItemDragEnd, onItemDrop, onFocusAgent, onOpenReview }: {
+export const PromptQueue = memo(function PromptQueue({ chrome, items, runs, agents, owner, runEnabled, busy, autoDispatch, onAutoDispatch, autoResolveConflicts, onAutoResolveConflicts, browserConflictAlerts, onBrowserConflictAlerts, onRun, onCancel, onDiscard, onRollback, onRetry, onEditPrompt, onPause, onDelete, onSetAgent, currentUserId, scope, onScope, orderMode, onOrderMode, draggedItemId, onItemDragStart, onItemDragEnd, onItemDrop, onFocusAgent, onOpenReview }: {
   chrome: PanelChrome;
   items: FloorQueueItem[];
   runs: AgentRun[];
@@ -55,12 +55,25 @@ export function PromptQueue({ chrome, items, runs, agents, owner, runEnabled, bu
   const [draftText, setDraftText] = useState("");
   const canReorder = scope === "team";
   const manual = orderMode === "manual" && canReorder;
-  const scoped = scope === "mine" ? items.filter((item) => item.prompts.some((prompt) => prompt.authorUserId === currentUserId)) : items;
-  const isDone = (item: FloorQueueItem) => {
-    const run = runs.find((candidate) => candidate.queueItemId === item.id);
-    return runStatusToken(run) === "integrated" || item.rollback?.status === "completed" || runStatusToken(run) === "answered" || item.status === "cancelled";
-  };
-  const visible = [...scoped].sort((a, b) => Number(isDone(a)) - Number(isDone(b)));
+
+  const runsByQueueItemId = useMemo(() => {
+    const map = new Map<string, AgentRun>();
+    for (const run of runs) {
+      if (!map.has(run.queueItemId)) {
+        map.set(run.queueItemId, run);
+      }
+    }
+    return map;
+  }, [runs]);
+
+  const visible = useMemo(() => {
+    const scoped = scope === "mine" ? items.filter((item) => item.prompts.some((prompt) => prompt.authorUserId === currentUserId)) : items;
+    const isDone = (item: FloorQueueItem) => {
+      const run = runsByQueueItemId.get(item.id);
+      return runStatusToken(run) === "integrated" || item.rollback?.status === "completed" || runStatusToken(run) === "answered" || item.status === "cancelled";
+    };
+    return [...scoped].sort((a, b) => Number(isDone(a)) - Number(isDone(b)));
+  }, [items, scope, currentUserId, runsByQueueItemId]);
 
   return <Panel chrome={chrome} title="Queue" meta={`${visible.length} waiting`} actions={<>
     <QueueOrderMenu mode={orderMode} onChange={onOrderMode} canReorder={canReorder} owner={owner} autoDispatch={autoDispatch} onAutoDispatch={onAutoDispatch} autoResolveConflicts={autoResolveConflicts} onAutoResolveConflicts={onAutoResolveConflicts} browserConflictAlerts={browserConflictAlerts} onBrowserConflictAlerts={onBrowserConflictAlerts} busy={busy} />
@@ -70,7 +83,7 @@ export function PromptQueue({ chrome, items, runs, agents, owner, runEnabled, bu
       const open = expanded[item.id] === true;
       const long = item.prompts.length > 3 || item.prompts.some((prompt) => prompt.text.length > 110);
       const first = item.prompts[0];
-      const run = runs.find((candidate) => candidate.queueItemId === item.id);
+      const run = runsByQueueItemId.get(item.id);
       const cancellable = run && ["provisioning", "running", "checking", "cancel_requested"].includes(run.status);
       // A resumed prompt goes back to "queued"/"paused" immediately, but its last
       // run row (if any) can still carry a stale failed/cancelled status — the
@@ -132,7 +145,7 @@ export function PromptQueue({ chrome, items, runs, agents, owner, runEnabled, bu
       </li>;
     })}</ul>}
   </Panel>;
-}
+});
 
 // A failed/conflicted/cancelled/answered run has no other spot in the
 // queue — the saved reason the agent (or the run pipeline) recorded, inline

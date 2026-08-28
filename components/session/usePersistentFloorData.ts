@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { BASE_PATH } from "@/components/basePath";
 import type { AgentRunRollbackScope, CreateFloorAgentInput, FloorParticipant, FloorSnapshot } from "@/lib/floor-types";
 import type { AppUser, SessionMember } from "@/lib/session-types";
@@ -107,60 +107,153 @@ export function usePersistentFloorData(sessionId: string, initialFloor: FloorSna
     }
   }, [onMissing, sessionId]);
 
-  return {
+  const clearError = useCallback(() => setError(null), []);
+  const createAgent = useCallback((input: CreateFloorAgentInput) => request("/agents", "POST", input), [request]);
+  const updateAgentSettings = useCallback((agentId: string, patch: import("@/lib/floor-types").FloorAgentSettingsPatch) =>
+    request(`/agents/${encodeURIComponent(agentId)}`, "PATCH", patch), [request]);
+  const pauseAgent = useCallback((agentId: string, paused: boolean) =>
+    request(`/agents/${encodeURIComponent(agentId)}/pause`, "PATCH", { paused }), [request]);
+  const stopAgent = useCallback((agentId: string) =>
+    request(`/agents/${encodeURIComponent(agentId)}/stop`, "POST"), [request]);
+  const deleteAgent = useCallback((agentId: string) =>
+    request(`/agents/${encodeURIComponent(agentId)}`, "DELETE"), [request]);
+  const pauseAllAgents = useCallback(() => request("/agents/pause-all", "POST"), [request]);
+  const resumeAllAgents = useCallback(() => request("/agents/resume-all", "POST"), [request]);
+  const stopAllAgents = useCallback(() => request("/agents/stop-all", "POST"), [request]);
+  const updateAssignment = useCallback((memberId: string, task: string | null) =>
+    request(`/assignments/${encodeURIComponent(memberId)}`, "PATCH", { task }), [request]);
+  const sendMessage = useCallback((text: string, recipientUserId: string | null, attachmentIds?: string[]) =>
+    request("/messages", "POST", { text, recipientUserId, ...(attachmentIds?.length ? { attachmentIds } : {}) }), [request]);
+  const addQueueItem = useCallback((prompt: string, agentId: string | null) =>
+    request("/queue", "POST", { prompt, agentId }), [request]);
+  const reorderQueue = useCallback((itemIds: string[]) =>
+    request("/queue/order", "PATCH", { itemIds }), [request]);
+  const setQueueItemAgent = useCallback((queueItemId: string, agentId: string) =>
+    request(`/queue/${encodeURIComponent(queueItemId)}`, "PATCH", { agentId }), [request]);
+  const runQueueItem = useCallback((queueItemId: string) =>
+    request(`/queue/${encodeURIComponent(queueItemId)}/run`, "POST"), [request]);
+  const editQueuePrompt = useCallback((queueItemId: string, promptId: string, text: string) =>
+    request(`/queue/${encodeURIComponent(queueItemId)}/prompts/${encodeURIComponent(promptId)}`, "PATCH", { text }), [request]);
+  const setQueueItemPaused = useCallback((queueItemId: string, paused: boolean) =>
+    request(`/queue/${encodeURIComponent(queueItemId)}/pause`, "PATCH", { paused }), [request]);
+  const deleteQueueItem = useCallback((queueItemId: string) =>
+    request(`/queue/${encodeURIComponent(queueItemId)}`, "DELETE"), [request]);
+  const setAutoDispatch = useCallback((autoDispatch: boolean) =>
+    request("/routing", "PATCH", { autoDispatch }), [request]);
+  const setAutoProvisionAgents = useCallback((autoProvisionAgents: boolean) =>
+    request("/routing", "PATCH", { autoProvisionAgents }), [request]);
+  const setAutoAgentProvider = useCallback((autoAgentProvider: import("@/lib/provider-credentials").CredentialProvider | null) =>
+    request("/routing", "PATCH", { autoAgentProvider }), [request]);
+  const setAutoResolveConflicts = useCallback((autoResolveConflicts: boolean) =>
+    request("/routing", "PATCH", { autoResolveConflicts }), [request]);
+  const resolveConflict = useCallback((caseId: string) =>
+    request(`/conflicts/${encodeURIComponent(caseId)}/resolve`, "POST"), [request]);
+  const answerConflict = useCallback((caseId: string, answers: Array<{ questionId: string; answer: string }>) =>
+    request(`/conflicts/${encodeURIComponent(caseId)}/answers`, "POST", { answers }), [request]);
+  const cancelRun = useCallback((runId: string) =>
+    request(`/runs/${encodeURIComponent(runId)}/cancel`, "POST"), [request]);
+  const discardRun = useCallback((runId: string) =>
+    request(`/runs/${encodeURIComponent(runId)}/discard`, "POST"), [request]);
+  const rollbackRun = useCallback((runId: string) =>
+    request(`/runs/${encodeURIComponent(runId)}/rollback`, "POST"), [request]);
+  const rollbackReviewChanges = useCallback((input: {
+    scope: AgentRunRollbackScope;
+    subjectId: string;
+    expectedCandidateSha: string;
+    expectedRunIds: string[];
+  }) => request("/review/rollbacks", "POST", input), [request]);
+  const retryRun = useCallback((runId: string) =>
+    request(`/runs/${encodeURIComponent(runId)}/retry`, "POST"), [request]);
+  const readyReview = useCallback(() => request("/review/ready", "POST"), [request]);
+  const squashMergeReview = useCallback((deleteCandidateBranch: boolean) =>
+    request("/review/merge", "POST", { deleteCandidateBranch }), [request]);
+  const deleteReviewBranch = useCallback(() => request("/review/branch", "DELETE"), [request]);
+  const abandonCandidate = useCallback((deleteBranch: boolean) =>
+    request("/repository/candidate", "DELETE", { deleteBranch }), [request]);
+
+  return useMemo(() => ({
     kind: "persistent" as const,
     floor,
     busy,
     error,
     blockingRunId,
     setError,
-    clearError: () => setError(null),
+    clearError,
     refresh,
-    createAgent: (input: CreateFloorAgentInput) => request("/agents", "POST", input),
-    updateAgentSettings: (agentId: string, patch: import("@/lib/floor-types").FloorAgentSettingsPatch) =>
-      request(`/agents/${encodeURIComponent(agentId)}`, "PATCH", patch),
-    pauseAgent: (agentId: string, paused: boolean) => request(`/agents/${encodeURIComponent(agentId)}/pause`, "PATCH", { paused }),
-    stopAgent: (agentId: string) => request(`/agents/${encodeURIComponent(agentId)}/stop`, "POST"),
-    deleteAgent: (agentId: string) => request(`/agents/${encodeURIComponent(agentId)}`, "DELETE"),
-    pauseAllAgents: () => request("/agents/pause-all", "POST"),
-    resumeAllAgents: () => request("/agents/resume-all", "POST"),
-    stopAllAgents: () => request("/agents/stop-all", "POST"),
-    updateAssignment: (memberId: string, task: string | null) => request(`/assignments/${encodeURIComponent(memberId)}`, "PATCH", { task }),
-    sendMessage: (text: string, recipientUserId: string | null, attachmentIds?: string[]) =>
-      request("/messages", "POST", { text, recipientUserId, ...(attachmentIds?.length ? { attachmentIds } : {}) }),
+    createAgent,
+    updateAgentSettings,
+    pauseAgent,
+    stopAgent,
+    deleteAgent,
+    pauseAllAgents,
+    resumeAllAgents,
+    stopAllAgents,
+    updateAssignment,
+    sendMessage,
     uploadFiles,
-    addQueueItem: (prompt: string, agentId: string | null) => request("/queue", "POST", { prompt, agentId }),
-    reorderQueue: (itemIds: string[]) => request("/queue/order", "PATCH", { itemIds }),
-    setQueueItemAgent: (queueItemId: string, agentId: string) =>
-      request(`/queue/${encodeURIComponent(queueItemId)}`, "PATCH", { agentId }),
-    runQueueItem: (queueItemId: string) => request(`/queue/${encodeURIComponent(queueItemId)}/run`, "POST"),
-    editQueuePrompt: (queueItemId: string, promptId: string, text: string) =>
-      request(`/queue/${encodeURIComponent(queueItemId)}/prompts/${encodeURIComponent(promptId)}`, "PATCH", { text }),
-    setQueueItemPaused: (queueItemId: string, paused: boolean) =>
-      request(`/queue/${encodeURIComponent(queueItemId)}/pause`, "PATCH", { paused }),
-    deleteQueueItem: (queueItemId: string) => request(`/queue/${encodeURIComponent(queueItemId)}`, "DELETE"),
-    setAutoDispatch: (autoDispatch: boolean) => request("/routing", "PATCH", { autoDispatch }),
-    setAutoProvisionAgents: (autoProvisionAgents: boolean) => request("/routing", "PATCH", { autoProvisionAgents }),
-    setAutoAgentProvider: (autoAgentProvider: import("@/lib/provider-credentials").CredentialProvider | null) => request("/routing", "PATCH", { autoAgentProvider }),
-    setAutoResolveConflicts: (autoResolveConflicts: boolean) => request("/routing", "PATCH", { autoResolveConflicts }),
-    resolveConflict: (caseId: string) => request(`/conflicts/${encodeURIComponent(caseId)}/resolve`, "POST"),
-    answerConflict: (caseId: string, answers: Array<{ questionId: string; answer: string }>) =>
-      request(`/conflicts/${encodeURIComponent(caseId)}/answers`, "POST", { answers }),
-    cancelRun: (runId: string) => request(`/runs/${encodeURIComponent(runId)}/cancel`, "POST"),
-    discardRun: (runId: string) => request(`/runs/${encodeURIComponent(runId)}/discard`, "POST"),
-    rollbackRun: (runId: string) => request(`/runs/${encodeURIComponent(runId)}/rollback`, "POST"),
-    rollbackReviewChanges: (input: {
-      scope: AgentRunRollbackScope;
-      subjectId: string;
-      expectedCandidateSha: string;
-      expectedRunIds: string[];
-    }) => request("/review/rollbacks", "POST", input),
-    retryRun: (runId: string) => request(`/runs/${encodeURIComponent(runId)}/retry`, "POST"),
-    readyReview: () => request("/review/ready", "POST"),
-    squashMergeReview: (deleteCandidateBranch: boolean) => request("/review/merge", "POST", { deleteCandidateBranch }),
-    deleteReviewBranch: () => request("/review/branch", "DELETE"),
-    abandonCandidate: (deleteBranch: boolean) => request("/repository/candidate", "DELETE", { deleteBranch }),
-  };
+    addQueueItem,
+    reorderQueue,
+    setQueueItemAgent,
+    runQueueItem,
+    editQueuePrompt,
+    setQueueItemPaused,
+    deleteQueueItem,
+    setAutoDispatch,
+    setAutoProvisionAgents,
+    setAutoAgentProvider,
+    setAutoResolveConflicts,
+    resolveConflict,
+    answerConflict,
+    cancelRun,
+    discardRun,
+    rollbackRun,
+    rollbackReviewChanges,
+    retryRun,
+    readyReview,
+    squashMergeReview,
+    deleteReviewBranch,
+    abandonCandidate,
+  }), [
+    floor,
+    busy,
+    error,
+    blockingRunId,
+    clearError,
+    refresh,
+    createAgent,
+    updateAgentSettings,
+    pauseAgent,
+    stopAgent,
+    deleteAgent,
+    pauseAllAgents,
+    resumeAllAgents,
+    stopAllAgents,
+    updateAssignment,
+    sendMessage,
+    uploadFiles,
+    addQueueItem,
+    reorderQueue,
+    setQueueItemAgent,
+    runQueueItem,
+    editQueuePrompt,
+    setQueueItemPaused,
+    deleteQueueItem,
+    setAutoDispatch,
+    setAutoProvisionAgents,
+    setAutoAgentProvider,
+    setAutoResolveConflicts,
+    resolveConflict,
+    answerConflict,
+    cancelRun,
+    discardRun,
+    rollbackRun,
+    rollbackReviewChanges,
+    retryRun,
+    readyReview,
+    squashMergeReview,
+    deleteReviewBranch,
+    abandonCandidate,
+  ]);
 }
 
 export type PersistentFloorDataSource = ReturnType<typeof usePersistentFloorData>;

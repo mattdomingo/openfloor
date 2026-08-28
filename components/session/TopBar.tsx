@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { AccountMenu } from "@/components/product/AccountMenu";
 import { Brand } from "@/components/product/Brand";
 import { LocalDateTime } from "@/components/LocalDateTime";
@@ -42,7 +42,7 @@ function SessionTimer({ base, running }: { base: number; running: boolean }) {
   );
 }
 
-export function TopBar({
+export const TopBar = memo(function TopBar({
   screen,
   onScreen,
   onNotice,
@@ -224,4 +224,4 @@ export function TopBar({
       {inviting && <InviteDialog session={session} members={members} onNotice={onNotice} onClose={closeInvite} />}
     </header>
   );
-}
+});

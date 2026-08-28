@@ -429,7 +429,9 @@ function ConnectionsSection({ initialCredentials, initialGithubInstallations }: 
     if (github !== "connected" && github !== "verify") return;
     params.delete("github");
     window.history.replaceState(null, "", `${window.location.pathname}?${params.toString()}`);
-    if (github === "verify") setDeviceDialogOpen(true);
+    if (github === "verify") {
+      queueMicrotask(() => setDeviceDialogOpen(true));
+    }
   }, []);
 
   async function removeGitHub(id: string) {
