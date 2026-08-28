@@ -31,11 +31,12 @@ Create a private GitHub App in GitHub settings with:
 
 - GitHub App name: a unique name, such as `openfloor`.
 - Homepage URL: `https://app.opnflr.com`.
-- Setup URL: `https://app.opnflr.com/api/github/callback`.
+- Callback URL: `https://app.opnflr.com/api/github/callback`.
+- Request user authorization during installation: enabled. (GitHub greys out the Setup URL field when this is on and redirects installs to the Callback URL instead — same route, same query params plus a one-time OAuth `code` the callback exchanges to capture the installer's repo scope. Without it every install returns `?github=verify` and the user is walked through a second device code.)
 - Redirect on update: enabled.
 - Webhook URL: `https://app.opnflr.com/webhooks/github`.
 - Webhook secret: a new random value used only by this App.
-- Request user authorization during installation: disabled.
+- Generate a client secret on the App's General settings page; it becomes the `GITHUB_CLIENT_SECRET` Worker secret below.
 - Enable Device Flow: enabled (checkbox below the Client ID on the App's General settings page). Device-flow sign-in refuses to start without it and the login dialog falls back to the install redirect.
 
 Repository permissions:
@@ -54,18 +55,19 @@ Generate and download a private key. Create a disposable repository with at leas
 
 ## Configure secrets
 
-The existing production Worker already has the Access and invite secrets. Add the six GitHub App secrets:
+The existing production Worker already has the Access and invite secrets. Add the seven GitHub App secrets:
 
 ```bash
 npx wrangler secret put GITHUB_APP_ID
 npx wrangler secret put GITHUB_APP_SLUG
 npx wrangler secret put GITHUB_APP_CLIENT_ID
+npx wrangler secret put GITHUB_CLIENT_SECRET
 npx wrangler secret put GITHUB_STATE_SECRET
 npx wrangler secret put GITHUB_WEBHOOK_SECRET
 npx wrangler secret put GITHUB_APP_PRIVATE_KEY < /absolute/path/to/downloaded-private-key.pem
 ```
 
-The Client ID (`Iv23…`) is shown at the top of the App's General settings page; it is what the device flow polls GitHub with, so without it device-flow sign-in cannot start. Pipe the downloaded PEM file into Wrangler as shown. Do not type its path as the secret value and do not paste only the first PEM line. openfloor accepts both GitHub's downloaded `RSA PRIVATE KEY` (PKCS#1) format and PKCS#8 `PRIVATE KEY` format. Generate an independent random state secret; do not reuse the webhook secret.
+The Client ID (`Iv23…`) is shown at the top of the App's General settings page; it is what the device flow polls GitHub with, so without it device-flow sign-in cannot start. The client secret is generated on that same page; the install callback exchanges the redirect's OAuth `code` with it to capture the installer's repo scope — without it every install falls back to `?github=verify` and a second device code. Pipe the downloaded PEM file into Wrangler as shown. Do not type its path as the secret value and do not paste only the first PEM line. openfloor accepts both GitHub's downloaded `RSA PRIVATE KEY` (PKCS#1) format and PKCS#8 `PRIVATE KEY` format. Generate an independent random state secret; do not reuse the webhook secret.
 
 Create and store an independent runtime-gateway secret:
 

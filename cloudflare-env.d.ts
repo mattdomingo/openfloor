@@ -8,6 +8,7 @@ declare global {
       INVITE_SIGNING_SECRET: string;
       GITHUB_APP_ID: string;
       GITHUB_APP_CLIENT_ID?: string;
+      GITHUB_CLIENT_SECRET?: string;
       GITHUB_APP_SLUG: string;
       GITHUB_APP_PRIVATE_KEY: string;
       GITHUB_STATE_SECRET: string;
