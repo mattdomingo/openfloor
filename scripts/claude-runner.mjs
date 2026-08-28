@@ -170,9 +170,12 @@ const mcpServers = contextUrl && contextToken && mcpServerPath ? {
   ...userMcpServers,
 } : (userMcpServerNames.length > 0 ? userMcpServers : undefined);
 
-const response = query({
-  prompt,
-  options: {
+// Thread resume: worker/agent-run-workflow.ts restores the prior attempt's
+// ~/.claude/projects transcript into this run's HOME and names the session
+// to continue. No forkSession — the one transcript keeps growing, so the
+// newest run's session_store artifact is always the full chain.
+const resumeThreadId = process.env.OPENFLOOR_RESUME_THREAD_ID || null;
+const baseOptions = {
     cwd: workspace,
     model,
     // Never blocks: "dontAsk" resolves every would-be permission prompt as a
@@ -221,8 +224,10 @@ const response = query({
       // read it. The CLI's own model traffic keeps the token.
       CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: "1",
     },
-  },
-});
+};
+let response = query({ prompt, options: { ...baseOptions, ...(resumeThreadId ? { resume: resumeThreadId } : {}) } });
+let resumed = Boolean(resumeThreadId);
+let sawInit = false;
 
 let aborted = false;
 function requestStop() {
@@ -247,9 +252,12 @@ let usage = null;
 let modelUsage = null;
 let totalCostUsd = null;
 let resultError = null;
-try {
+async function consume() {
   for await (const message of response) {
-    if (message.type === "system" && message.subtype === "init") threadId = message.session_id ?? threadId;
+    if (message.type === "system" && message.subtype === "init") {
+      sawInit = true;
+      threadId = message.session_id ?? threadId;
+    }
     if (message.type === "assistant") {
       for (const block of message.message?.content ?? []) normalizeAssistantBlock(block);
     }
@@ -267,18 +275,43 @@ try {
     const encoded = JSON.stringify(message);
     process.stdout.write(`${encoded.length > 20_000 ? `${encoded.slice(0, 20_000)}…` : encoded}\n`);
   }
+}
+// A resume whose session file is missing fails before the init message —
+// as a thrown error or as a non-success result, depending on SDK version —
+// so either shape before init falls back to a fresh thread. Anything after
+// init is a real outcome.
+function startFresh(reason) {
+  emitActivity("error", `Could not resume session ${resumeThreadId} (${firstLine(reason)}); starting a fresh thread.`);
+  resumed = false;
+  resultError = null;
+  threadId = null;
+  response = query({ prompt, options: baseOptions });
+}
+try {
+  try {
+    await consume();
+  } catch (error) {
+    if (!resumed || sawInit || aborted) throw error;
+    startFresh(error instanceof Error ? error.message : String(error));
+    await consume();
+  }
+  if (resumed && !sawInit && !aborted) {
+    startFresh(resultError ?? "no session init");
+    await consume();
+  }
+  resumed = resumed && sawInit && threadId === resumeThreadId;
   await drainActivity();
   if (resultError) {
-    await writeFile(resultPath, JSON.stringify({ ok: false, threadId, finalResponse, usage, modelUsage, totalCostUsd, error: `Claude run ended: ${resultError}` }), "utf8");
+    await writeFile(resultPath, JSON.stringify({ ok: false, threadId, resumed, finalResponse, usage, modelUsage, totalCostUsd, error: `Claude run ended: ${resultError}` }), "utf8");
     process.exitCode = aborted ? 130 : 1;
   } else {
-    await writeFile(resultPath, JSON.stringify({ ok: true, threadId, finalResponse, usage, modelUsage, totalCostUsd }), "utf8");
+    await writeFile(resultPath, JSON.stringify({ ok: true, threadId, resumed, finalResponse, usage, modelUsage, totalCostUsd }), "utf8");
   }
 } catch (error) {
   const message = error instanceof Error ? error.message : String(error);
   emitActivity("error", firstLine(message));
   await drainActivity().catch(() => {});
-  await writeFile(resultPath, JSON.stringify({ ok: false, threadId, finalResponse, usage, modelUsage, totalCostUsd, error: message }), "utf8");
+  await writeFile(resultPath, JSON.stringify({ ok: false, threadId, resumed, finalResponse, usage, modelUsage, totalCostUsd, error: message }), "utf8");
   process.stderr.write(`${message}\n`);
   process.exitCode = aborted ? 130 : 1;
 }

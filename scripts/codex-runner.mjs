@@ -146,21 +146,31 @@ const mcpServers = contextUrl && contextToken && mcpServerPath ? {
   },
 } : undefined;
 const codex = new Codex({ baseUrl: gatewayUrl, apiKey: gatewayToken, ...(mcpServers ? { config: { mcp_servers: mcpServers } } : {}) });
-const thread = codex.startThread({
+const threadOptions = {
   model,
   workingDirectory: workspace,
   sandboxMode: isReply ? "read-only" : "workspace-write",
   approvalPolicy: "never",
   networkAccessEnabled: false,
   webSearchMode: "disabled",
-});
+};
+// Thread resume: worker/agent-run-workflow.ts restores the prior attempt's
+// ~/.codex/sessions rollouts before this process starts and names the
+// thread to continue. A missing rollout fails before the CLI emits any
+// event ("no rollout found for thread id"), so that one case falls back to
+// a fresh thread; a failure after events started flowing is a real failure.
+const resumeThreadId = process.env.OPENFLOOR_RESUME_THREAD_ID || null;
+let thread = resumeThreadId ? codex.resumeThread(resumeThreadId, threadOptions) : codex.startThread(threadOptions);
+let resumed = Boolean(resumeThreadId);
+let sawEvent = false;
 
 let threadId = null;
 let finalResponse = null;
 let usage = null;
-try {
+async function runTurn() {
   const streamed = await thread.runStreamed(prompt, { signal: controller.signal });
   for await (const event of streamed.events) {
+    sawEvent = true;
     if (event.type === "thread.started") threadId = event.thread_id;
     if (event.type === "turn.completed") usage = event.usage;
     if (event.type === "item.completed" && event.item.type === "agent_message") finalResponse = event.item.text;
@@ -170,13 +180,25 @@ try {
     const encoded = JSON.stringify(event);
     process.stdout.write(`${encoded.length > 20_000 ? `${encoded.slice(0, 20_000)}…` : encoded}\n`);
   }
+}
+try {
+  try {
+    await runTurn();
+  } catch (error) {
+    if (!resumed || sawEvent || controller.signal.aborted) throw error;
+    emitActivity("error", `Could not resume thread ${resumeThreadId}; starting a fresh thread.`);
+    resumed = false;
+    threadId = null;
+    thread = codex.startThread(threadOptions);
+    await runTurn();
+  }
   await drainActivity();
-  await writeFile(resultPath, JSON.stringify({ ok: true, threadId: threadId ?? thread.id, finalResponse, usage }), "utf8");
+  await writeFile(resultPath, JSON.stringify({ ok: true, threadId: threadId ?? thread.id, resumed, finalResponse, usage }), "utf8");
 } catch (error) {
   const message = error instanceof Error ? error.message : String(error);
   emitActivity("error", firstLine(message));
   await drainActivity().catch(() => {});
-  await writeFile(resultPath, JSON.stringify({ ok: false, threadId: threadId ?? thread.id, finalResponse, error: message }), "utf8");
+  await writeFile(resultPath, JSON.stringify({ ok: false, threadId: threadId ?? thread.id, resumed, finalResponse, error: message }), "utf8");
   process.stderr.write(`${message}\n`);
   process.exitCode = controller.signal.aborted ? 130 : 1;
 }

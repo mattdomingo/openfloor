@@ -49,7 +49,7 @@ Repository permissions:
 - Administration: no access.
 - Workflows: no access.
 
-Subscribe to `installation`, `installation_repositories`, `repository`, `push`, `pull_request`, `check_run`, `check_suite`, and `status` events. Phase 2 authenticates and deduplicates deliveries, updates access and repository identity, and invalidates repository/review state for pushes, pull requests, checks, and statuses.
+Subscribe to `installation`, `installation_repositories`, `repository`, `push`, `pull_request`, `check_run`, `check_suite`, `status`, `pull_request_review`, and `pull_request_review_comment` events. Phase 2 authenticates and deduplicates deliveries, updates access and repository identity, and invalidates repository/review state for pushes, pull requests, checks, and statuses. The two review events (plus completed checks and statuses) also feed PR feedback nudges — GitHub silently never sends an unsubscribed event, so without them review comments never reach an agent. The current permission set already covers the feedback GraphQL read; CI log tails would additionally need Actions: read and are deliberately not fetched.
 
 Generate and download a private key. Create a disposable repository with at least one commit on its default branch, then install the App during onboarding. The callback must return to the initiating signed-in account; Settings → Connections can add or remove further account installations. Removal only removes future repository-selection access, while a GitHub-side uninstall or suspension revokes affected live session state through the signed webhook.
 
