@@ -5,6 +5,12 @@
 
 // The stored display_name is always "First L." — never the raw full name —
 // so onboarding and account settings can never disagree on the format.
+/** "1 repository" / "3 repositories"; null (legacy unscoped link) shows nothing. */
+export function repoCountLabel(repoCount: number | null): string | null {
+  if (repoCount == null) return null;
+  return repoCount === 1 ? "1 repository" : `${repoCount} repositories`;
+}
+
 export function displayNameFrom(firstName: string, lastName: string): string {
   return `${firstName} ${lastName.charAt(0)}.`;
 }

@@ -39,26 +39,54 @@ export async function cloudflareAccessIdentity(
   headers: Headers,
   environment: IdentityEnvironment,
 ): Promise<AuthenticatedIdentity | null> {
-  const token = headers.get(ACCESS_JWT_HEADER)?.trim();
   const teamDomain = normalizedTeamDomain(environment.CF_ACCESS_TEAM_DOMAIN);
   const audience = parseAudienceList(environment.CF_ACCESS_AUD);
-  if (!token || !teamDomain || !audience) return null;
+  if (!teamDomain || !audience) return null;
 
-  try {
-    const jwksUrl = `${teamDomain}/cdn-cgi/access/certs`;
-    let keySet = remoteKeySets.get(jwksUrl);
-    if (!keySet) {
-      keySet = createRemoteJWKSet(new URL(jwksUrl));
-      remoteKeySets.set(jwksUrl, keySet);
-    }
-    const { payload } = await jwtVerify(token, keySet, {
-      issuer: teamDomain,
-      audience,
-    });
-    return identityFromVerifiedAccessClaims(payload);
-  } catch {
-    return null;
+  // The injected header only exists on paths Access itself gates. Page paths
+  // are deliberately outside Access (so signed-out visitors reach our own
+  // /signin instead of the hosted login screen), so the same JWT is read
+  // from the CF_Authorization cookie the auth flow set — and verified with
+  // the identical signature/issuer/audience checks, which is the entire
+  // trust the header carried.
+  const headerToken = headers.get(ACCESS_JWT_HEADER)?.trim();
+  const candidates = headerToken ? [headerToken] : accessCookieTokens(headers.get("cookie"));
+  if (candidates.length === 0) return null;
+
+  const jwksUrl = `${teamDomain}/cdn-cgi/access/certs`;
+  let keySet = remoteKeySets.get(jwksUrl);
+  if (!keySet) {
+    keySet = createRemoteJWKSet(new URL(jwksUrl));
+    remoteKeySets.set(jwksUrl, keySet);
   }
+  for (const token of candidates) {
+    try {
+      const { payload } = await jwtVerify(token, keySet, {
+        issuer: teamDomain,
+        audience,
+      });
+      const identity = identityFromVerifiedAccessClaims(payload);
+      if (identity) return identity;
+    } catch {
+      // An expired or foreign-audience token; try the next candidate.
+    }
+  }
+  return null;
+}
+
+// A request can carry several CF_Authorization cookies (the team domain and
+// path-scoped app copies); every value is a candidate until one verifies.
+function accessCookieTokens(cookieHeader: string | null): string[] {
+  if (!cookieHeader) return [];
+  const tokens: string[] = [];
+  for (const part of cookieHeader.split(";")) {
+    const separator = part.indexOf("=");
+    if (separator === -1) continue;
+    if (part.slice(0, separator).trim() !== "CF_Authorization") continue;
+    const value = part.slice(separator + 1).trim();
+    if (value) tokens.push(value);
+  }
+  return tokens;
 }
 
 export function identityFromVerifiedAccessClaims(payload: JWTPayload): AuthenticatedIdentity | null {

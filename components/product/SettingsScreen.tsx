@@ -12,7 +12,7 @@ import { ThemeToggle } from "@/components/ThemeToggle";
 import { ACCEPTED_AVATAR_TYPES, MAX_AVATAR_BYTES } from "@/lib/avatar-constraints";
 import { formatDuration } from "@/lib/date-format";
 import { LocalDateTime } from "@/components/LocalDateTime";
-import { initialsFromParts } from "@/lib/display-name";
+import { initialsFromParts, repoCountLabel } from "@/lib/display-name";
 import { lowHoursRemaining, PAID_PLAN_CATALOG, planLabel, planLimitsSummary, type PaidPlan, type Plan, type PlanStatus } from "@/lib/plans";
 import {
   CREDENTIAL_PROVIDERS,
@@ -419,15 +419,17 @@ function ConnectionsSection({ initialCredentials, initialGithubInstallations }: 
     setDeviceDialogOpen(true);
   }
 
-  // Returning from the App-install redirect: that path links with an empty
-  // repo scope (no user token to verify access), so reopen the device dialog
-  // to capture the member's real scope.
+  // Returning from the App-install redirect. "verify" means the callback
+  // couldn't capture the installer's repo scope (no OAuth code configured, or
+  // the exchange failed) — reopen the device dialog to capture it;
+  // "connected" means the scope landed and there is nothing left to do.
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    if (params.get("github") !== "connected") return;
+    const github = params.get("github");
+    if (github !== "connected" && github !== "verify") return;
     params.delete("github");
     window.history.replaceState(null, "", `${window.location.pathname}?${params.toString()}`);
-    setDeviceDialogOpen(true);
+    if (github === "verify") setDeviceDialogOpen(true);
   }, []);
 
   async function removeGitHub(id: string) {
@@ -454,7 +456,7 @@ function ConnectionsSection({ initialCredentials, initialGithubInstallations }: 
               {installations.map((installation) => (
                 <li className="settings-github-installation" key={installation.id}>
                   <span className="settings-category-name">{installation.accountLogin}</span>
-                  <span className="settings-category-detail">{installation.accountType} · {installation.status === "active" ? "Connected" : "Access revoked"}</span>
+                  <span className="settings-category-detail">{[installation.accountType, repoCountLabel(installation.repoCount), installation.status === "active" ? "Connected" : "Access revoked"].filter(Boolean).join(" · ")}</span>
                   <button className="button danger-button" disabled={busy != null} onClick={() => void removeGitHub(installation.id)}>{busy === installation.id ? "Removing…" : "Remove"}</button>
                 </li>
               ))}

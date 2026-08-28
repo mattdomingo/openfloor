@@ -105,6 +105,46 @@ describe("Cloudflare Access identity", () => {
     )).resolves.toBeNull();
   });
 
+  it("falls back to the CF_Authorization cookie when the Access header is absent — pages outside Access depend on this", async () => {
+    // Distinct team domain again: the remote JWKS is cached by URL.
+    const teamDomain = "https://openfloor-unit-test-cookie.cloudflareaccess.com";
+    const audience = "openfloor-cookie-audience";
+    const { privateKey, publicKey } = await generateKeyPair("RS256");
+    const publicJwk = await exportJWK(publicKey);
+    Object.assign(publicJwk, { kid: "test-key", alg: "RS256", use: "sig" });
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ keys: [publicJwk] })));
+
+    const validToken = await new SignJWT({ email: "owner@example.com", name: "Owner Example" })
+      .setProtectedHeader({ alg: "RS256", kid: "test-key" })
+      .setIssuer(teamDomain)
+      .setAudience(audience)
+      .setSubject("access-owner")
+      .setIssuedAt()
+      .setExpirationTime("5m")
+      .sign(privateKey);
+    const environment = { CF_ACCESS_TEAM_DOMAIN: teamDomain, CF_ACCESS_AUD: audience };
+
+    // Several CF_Authorization cookies can ride one request (team-domain and
+    // path-scoped app copies); a garbage first candidate must not mask a
+    // valid later one.
+    await expect(cloudflareAccessIdentity(
+      new Headers({ cookie: `other=1; CF_Authorization=garbage; CF_Authorization=${validToken}` }),
+      environment,
+    )).resolves.toMatchObject({ providerUserId: "cloudflare-access:access-owner" });
+
+    await expect(cloudflareAccessIdentity(
+      new Headers({ cookie: "CF_Authorization=garbage" }),
+      environment,
+    )).resolves.toBeNull();
+
+    // The injected header, when present, wins over the cookie: Access has
+    // already validated it for this exact request.
+    await expect(cloudflareAccessIdentity(
+      new Headers({ "cf-access-jwt-assertion": validToken, cookie: "CF_Authorization=garbage" }),
+      environment,
+    )).resolves.toMatchObject({ providerUserId: "cloudflare-access:access-owner" });
+  });
+
   it("does not trust identity metadata without a JWT", async () => {
     await expect(cloudflareAccessIdentity(
       new Headers({ "cf-access-authenticated-user-email": "person@example.com" }),

@@ -38,7 +38,11 @@ export default async function LandingPage({ searchParams }: { searchParams: Prom
   const params = await searchParams;
   const authRequired = params.auth === "required" && !user;
   const returnTo = safeAppReturnPath(params.return_to);
-  const primaryHref = user ? `${BASE_PATH}/home` : returnTo ?? accessSignInPath("/home");
+  // Signed out, the mark must enter the sign-in flow carrying the return
+  // target — pointing straight at the target looped back here now that page
+  // paths sit outside Access and can't start a login themselves.
+  const signInHref = accessSignInPath(returnTo ?? "/home");
+  const primaryHref = user ? `${BASE_PATH}/home` : signInHref;
   return (
     <main className="entry-shell">
       <EntryReplay />
@@ -52,9 +56,14 @@ export default async function LandingPage({ searchParams }: { searchParams: Prom
       <div className="entry-card">
         <SignInMark href={primaryHref} label={user ? "Open your sessions" : "Sign in"} />
         {authRequired && (
-          <p className="entry-note entry-anim" role="status">
-            Sign in to continue. You will be sent back to what you were opening.
-          </p>
+          <>
+            <p className="entry-note entry-anim" role="status">
+              Sign in to continue. You will be sent back to what you were opening.
+            </p>
+            {/* The bracket mark is also the sign-in link, but nobody guesses
+                that mid-bounce — the notice carries an explicit button. */}
+            <a className="button entry-anim" data-variant="primary" href={signInHref}>Sign in</a>
+          </>
         )}
       </div>
     </main>

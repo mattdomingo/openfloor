@@ -817,6 +817,7 @@ function CreateSessionDialog({ repositories, repositoriesLoading, loadError, ini
                 value={repositoryId}
                 onChange={setRepositoryId}
                 disabled={repositoriesLoading}
+                searchable
                 options={repositories.map((repository) => ({ value: repository.id, label: repository.fullName }))}
               />
             ) : repositoriesLoading ? <small>Loading GitHub repositories…</small> : (

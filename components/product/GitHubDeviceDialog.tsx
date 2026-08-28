@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { BASE_PATH } from "@/components/basePath";
 import { Icon, Spinner, useDialogDismiss } from "@/components/session/primitives";
+import { repoCountLabel } from "@/lib/display-name";
 import type { UserGitHubInstallationSummary } from "@/lib/session-types";
 
 type Phase =
@@ -157,9 +158,18 @@ export function GitHubDeviceDialog({ purpose, returnTo, onConnected, onIdentity,
             <p>Connected. openfloor can reach:</p>
             <ul className="device-dialog-installations">
               {phase.installations.filter((installation) => installation.status === "active").map((installation) => (
-                <li key={installation.id}><strong>{installation.accountLogin}</strong> <span>{installation.accountType}</span></li>
+                <li key={installation.id}>
+                  <strong>{installation.accountLogin}</strong>{" "}
+                  <span>{[installation.accountType, repoCountLabel(installation.repoCount)].filter(Boolean).join(" · ")}</span>
+                </li>
               ))}
             </ul>
+            <p className="device-dialog-hint">
+              Missing an account? Install openfloor on it — your own account included — then connect again.
+            </p>
+            <button type="button" className="button" data-variant="quiet" disabled={installBusy} onClick={() => void openInstallPage()}>
+              {installBusy ? <><Spinner />Opening…</> : "Install on another GitHub account"}
+            </button>
           </>
         )}
         {phase.name === "authorized-no-install" && (

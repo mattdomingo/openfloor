@@ -42,6 +42,13 @@ export type GitHubAppConfig = {
   /** The GitHub App's OAuth client id — public, used only for the device
       flow. Empty when GITHUB_APP_CLIENT_ID is not configured. */
   clientId?: string;
+  /** The App's OAuth client secret, for exchanging the one-time `code` the
+      install redirect carries when "Request user authorization during
+      installation" is enabled — so the callback can verify the installer's
+      repo scope in one step. Empty when GITHUB_CLIENT_SECRET is not set;
+      the callback then links with an empty scope and the device flow
+      verifies instead. */
+  clientSecret?: string;
   stateSecret: string;
   webhookSecret: string;
   testData: { installationId: string; accountLogin?: string; accountType?: string; repositories: GitHubTestRepository[] } | null;
@@ -56,6 +63,36 @@ type TestPullRequest = {
   headRef: string; baseRef: string; mergeCommitSha: string | null;
 };
 const testPullRequests = new Map<string, TestPullRequest>();
+
+/** The repos inside one installation that a member's own user token can
+    reach — GitHub already intersects installation grants with user
+    permissions here. Null (rather than a guess) on any error. Used by both
+    connect paths: the device flow and the install-redirect code exchange. */
+export async function listUserInstallationRepositoryIds(
+  accessToken: string,
+  installationId: string,
+): Promise<string[] | null> {
+  const headers = {
+    accept: "application/vnd.github+json",
+    authorization: `Bearer ${accessToken}`,
+    "user-agent": "openfloor",
+  };
+  const ids: string[] = [];
+  let page = 1;
+  while (true) {
+    const response = await fetch(
+      `${API_ROOT}/user/installations/${encodeURIComponent(installationId)}/repositories?per_page=100&page=${page}`,
+      { headers },
+    );
+    if (!response.ok) return null;
+    const body = await response.json().catch(() => null) as { repositories?: Array<{ id?: number }> } | null;
+    if (!body) return null;
+    const repositories = body.repositories ?? [];
+    ids.push(...repositories.filter((repository) => repository.id != null).map((repository) => String(repository.id)));
+    if (repositories.length < 100 || page >= 10) return ids;
+    page += 1;
+  }
+}
 
 export function githubInstallationUrl(config: GitHubAppConfig, state: string): string {
   if (config.testData) {
