@@ -620,6 +620,24 @@ export async function markCandidateReviewReady(
   return getFloorRevision(sessionId, database);
 }
 
+// Converting back to draft keeps review_ready_at/review_ready_by untouched:
+// they audit the first time the candidate was marked ready, not its current state.
+export async function markCandidateReviewDraft(
+  sessionId: string,
+  candidateId: string,
+  database = getDb(),
+): Promise<number> {
+  const now = Date.now();
+  await database.batch([
+    database.prepare(
+      `UPDATE repository_candidates SET pull_request_draft = 1, updated_at = ?
+       WHERE id = ? AND session_id = ? AND status = 'active' AND merged_at IS NULL AND abandoned_at IS NULL`,
+    ).bind(now, candidateId, sessionId),
+    database.prepare("UPDATE sessions SET floor_revision = floor_revision + 1, updated_at = ? WHERE id = ?").bind(now, sessionId),
+  ]);
+  return getFloorRevision(sessionId, database);
+}
+
 export async function markCandidateMerged(
   sessionId: string,
   candidateId: string,
