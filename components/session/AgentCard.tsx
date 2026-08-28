@@ -49,23 +49,28 @@ export const AgentCard = memo(function AgentCard({ agent, tone, latestRun, activ
         <span className="agent-head-trailing"><span className="agent-state">{stateLabel}</span><button type="button" className="button agent-chat-button" data-size="sm" onClick={(event) => { event.stopPropagation(); onHistory(); }}><Icon name="message" size={12} /><span className="agent-chat-label">Prompts</span></button></span>
       </div>
       <div className="agent-task"><strong title={agent.task}>{agent.task}</strong></div>
-      {conflictStatus === "needs-input" && conflict && onOpenConflict ? (
-        <button type="button" className="agent-conflict-strip" onClick={(event) => { event.stopPropagation(); onOpenConflict(conflict.caseId); }}>
-          <Icon name="alert" size={12} />
-          {conflict.status === "failed" ? "Automatic resolution failed — resolve it" : "Waiting on your answer"}
-        </button>
-      ) : latestEvent && (
+      {conflictStatus !== "needs-input" && latestEvent && (
         <div className="agent-activity-line" data-kind={latestEvent.kind} title={latestEvent.detail}>
           <span className="agent-activity-glyph" aria-hidden="true">{glyphFor(latestEvent.kind)}</span>
           <span className="agent-activity-detail">{latestEvent.detail}</span>
         </div>
       )}
       {!conflictStatus && reply && <AgentReplyBubble agentName={agent.name} reply={reply} onOpen={onFocus} />}
-      {controllable && (
+      {(controllable || (conflictStatus === "needs-input" && conflict && onOpenConflict)) && (
         <div className="agent-controls" onClick={(event) => event.stopPropagation()}>
-          <button type="button" className="button" data-size="sm" title={paused ? "Resume" : "Pause"} aria-label={paused ? `Resume ${agent.name}` : `Pause ${agent.name}`} onClick={() => onPause(agent.id, !paused)}><Icon name={paused ? "play" : "pause"} size={12} /></button>
-          <button type="button" className="button" data-size="sm" title={owner ? "Stop: pause future work and cancel the current run" : "Stop: pause future work; the current run will finish"} aria-label={`Stop ${agent.name}`} onClick={() => onStop(agent.id)}><Icon name="stop" size={12} /></button>
-          {!agent.kind && <button type="button" className="button danger-button" data-size="sm" title="Delete" aria-label={`Delete ${agent.name}`} onClick={() => onDelete(agent.id)}><Icon name="trash" size={12} /></button>}
+          {conflictStatus === "needs-input" && conflict && onOpenConflict && (
+            <button type="button" className="agent-conflict-strip" onClick={(event) => { event.stopPropagation(); onOpenConflict(conflict.caseId); }}>
+              <Icon name="alert" size={12} />
+              {conflict.status === "failed" ? "Automatic resolution failed — resolve it" : "Waiting on your answer"}
+            </button>
+          )}
+          {controllable && (
+            <>
+              <button type="button" className="button" data-size="sm" title={paused ? "Resume" : "Pause"} aria-label={paused ? `Resume ${agent.name}` : `Pause ${agent.name}`} onClick={() => onPause(agent.id, !paused)}><Icon name={paused ? "play" : "pause"} size={12} /></button>
+              <button type="button" className="button" data-size="sm" title={owner ? "Stop: pause future work and cancel the current run" : "Stop: pause future work; the current run will finish"} aria-label={`Stop ${agent.name}`} onClick={() => onStop(agent.id)}><Icon name="stop" size={12} /></button>
+              {!agent.kind && <button type="button" className="button danger-button" data-size="sm" title="Delete" aria-label={`Delete ${agent.name}`} onClick={() => onDelete(agent.id)}><Icon name="trash" size={12} /></button>}
+            </>
+          )}
         </div>
       )}
       <div className="agent-foot"><span>Owned by {agent.ownerName}</span><span className="agent-cost" title={cost.title}>{cost.label}</span><span><LocalDateTime timestamp={agent.createdAt} /></span></div>
@@ -100,19 +105,23 @@ export const AgentSpotlight = memo(function AgentSpotlight({ agent, tone, sessio
         <div className="agent-identity"><h3>{agent.name}{agent.kind && <em className="kind-tag" data-kind="auto">Auto-generated</em>}</h3><span>{agent.role} · {AGENT_PROVIDER_LABELS[agent.provider]}{agent.model ? ` · ${agent.model}` : ""}{agent.credentialKind ? ` · ${credentialKindLabel(agent.provider, agent.credentialKind)}` : ""} · owned by {agent.ownerName}</span></div>
         <span className="agent-state">{stateLabel}</span>
       </div>
-      {conflict && conflictStatus && onOpenConflict && (
-        <button type="button" className="agent-conflict-strip" onClick={() => onOpenConflict(conflict.caseId)}>
-          <Icon name="alert" size={12} />
-          {conflictStatus === "needs-input"
-            ? conflict.status === "failed" ? "Automatic resolution failed — resolve it in Review" : "Waiting on your answer — open Review"
-            : "Resolving a merge conflict in Review"}
-        </button>
-      )}
-      {controllable && (
+      {(controllable || (conflict && conflictStatus && onOpenConflict)) && (
         <div className="agent-controls">
-          <button type="button" className="button" data-size="sm" onClick={() => onPause(agent.id, !paused)}><Icon name={paused ? "play" : "pause"} size={12} />{paused ? "Resume" : "Pause"}</button>
-          <button type="button" className="button" data-size="sm" title={owner ? "Pause future work and cancel the current run" : "Pause future work; the current run will finish"} onClick={() => onStop(agent.id)}><Icon name="stop" size={12} />Stop</button>
-          {!agent.kind && <button type="button" className="button danger-button" data-size="sm" onClick={() => onDelete(agent.id)}><Icon name="trash" size={12} />Delete</button>}
+          {conflict && conflictStatus && onOpenConflict && (
+            <button type="button" className="agent-conflict-strip" onClick={() => onOpenConflict(conflict.caseId)}>
+              <Icon name="alert" size={12} />
+              {conflictStatus === "needs-input"
+                ? conflict.status === "failed" ? "Automatic resolution failed — resolve it in Review" : "Waiting on your answer — open Review"
+                : "Resolving a merge conflict in Review"}
+            </button>
+          )}
+          {controllable && (
+            <>
+              <button type="button" className="button" data-size="sm" onClick={() => onPause(agent.id, !paused)}><Icon name={paused ? "play" : "pause"} size={12} />{paused ? "Resume" : "Pause"}</button>
+              <button type="button" className="button" data-size="sm" title={owner ? "Pause future work and cancel the current run" : "Pause future work; the current run will finish"} onClick={() => onStop(agent.id)}><Icon name="stop" size={12} />Stop</button>
+              {!agent.kind && <button type="button" className="button danger-button" data-size="sm" onClick={() => onDelete(agent.id)}><Icon name="trash" size={12} />Delete</button>}
+            </>
+          )}
         </div>
       )}
       <div className="spotlight-row"><span className="label">Task</span>{agent.kind ? <p className="agent-detail-line">{agent.task}</p> : <AgentTaskEditor key={`${agent.id}-${agent.updatedAt}`} agent={agent} onSave={(agentId, task) => onUpdateSettings(agentId, { task })} />}</div>
