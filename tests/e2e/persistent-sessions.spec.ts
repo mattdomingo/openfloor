@@ -3,7 +3,7 @@ import { createHmac } from "node:crypto";
 import { authenticatedContext, skipTourIfOpen } from "./fixtures";
 
 test("owner and member persist, share live presence, reconnect, and leave", async ({ browser }) => {
-  test.setTimeout(180_000);
+  test.setTimeout(300_000);
   const ownerContext = await authenticatedContext(browser, "owner-e2e", "owner@example.com", "Owner", "Example");
   const memberContext = await authenticatedContext(browser, "member-e2e", "member@example.com", "Member", "Example");
   const owner = await ownerContext.newPage();
@@ -392,6 +392,8 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await owner.getByRole("button", { name: "Add to queue" }).click();
   const secondPublishedItem = owner.locator("li.queue-item", { hasText: "Create a second published change" });
   await secondPublishedItem.getByRole("button", { name: "Run", exact: true }).click();
+  // Integrated prompts fold into their collapsed section; open the bar first.
+  await owner.locator(".queue-group-bar", { hasText: "Integrated" }).click();
   await expect(secondPublishedItem.getByText("integrated", { exact: true })).toBeVisible();
   await expect(firstPublishedItem.locator("code.queue-run-branch")).toHaveCount(1);
   await expect(secondPublishedItem.locator("code.queue-run-branch")).toHaveCount(1);
@@ -418,13 +420,16 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await expect(rollbackImpact.getByText("Create a member rollback change", { exact: true })).toBeVisible();
   await rollbackImpact.getByRole("button", { name: "Remove changes" }).click();
   await expect(memberRollbackItem.getByText("rolled back", { exact: true })).toBeVisible();
+  // The owner's queue remounted collapsed after the Review detour above.
+  await owner.locator(".queue-group-bar", { hasText: "Integrated" }).click();
   await expect(ownerRollbackItem.getByText("rolled back", { exact: true })).toBeVisible();
   await owner.getByRole("button", { name: /Review/ }).first().click();
   await expect(owner.getByText("member-change.ts", { exact: true })).toHaveCount(0);
   await owner.getByRole("button", { name: "Prompts", exact: true }).click();
   await owner.getByRole("button", { name: "History", exact: true }).click();
   const rollbackHistoryItem = owner.locator(".review-prompt-item", { hasText: "Create a member rollback change" });
-  await expect(rollbackHistoryItem).toBeVisible();
+  // The Prompts tab pages contributions over the network; allow for a slow fetch.
+  await expect(rollbackHistoryItem).toBeVisible({ timeout: 30_000 });
   await expect(rollbackHistoryItem.getByText(/Rolled back/)).toBeVisible();
   await owner.getByRole("button", { name: "Workspace" }).click();
 
@@ -435,6 +440,8 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   const conflictItem = owner.locator("li.queue-item", { hasText: "Create a deliberate integration conflict" });
   await conflictItem.getByRole("button", { name: "Run", exact: true }).click();
   await expect(conflictItem.getByText("Merge Resolver", { exact: true })).toBeVisible({ timeout: 15_000 });
+  // Resolution folds the item into the collapsed Integrated section.
+  await owner.locator(".queue-group-bar", { hasText: "Integrated" }).click();
   await expect(conflictItem.getByText("integrated", { exact: true })).toBeVisible();
   await expect(member.getByRole("button", { name: "Retry against latest candidate" })).toHaveCount(0);
   await expect(conflictItem.getByRole("button", { name: "Retry against latest candidate" })).toHaveCount(0);
@@ -472,8 +479,6 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await expect(member.getByText("Merge conflict needs a decision", { exact: true })).toBeVisible();
   await owner.reload();
   await expect(owner.getByText("Merge conflict needs a decision", { exact: true })).toBeVisible();
-  // Section expand state resets on reload — reopen Integrated for later asserts.
-  await owner.locator(".queue-group-bar", { hasText: "Integrated" }).click();
   await member.evaluate(() => {
     Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
     document.dispatchEvent(new Event("visibilitychange"));
@@ -524,7 +529,11 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await owner.getByRole("button", { name: "Add to queue" }).click();
   const movementItem = owner.locator("li.queue-item", { hasText: "Create a candidate movement conflict" });
   await movementItem.getByRole("button", { name: "Run", exact: true }).click();
-  await expect(movementItem.getByText("integrated", { exact: true })).toBeVisible();
+  // Integrated prompts fold into their collapsed section; open the bar first.
+  await owner.locator(".queue-group-bar", { hasText: "Integrated" }).click();
+  // This item's first resolver attempt conflicts again, so integration takes
+  // two resolver runs plus router hops — well past the default timeout.
+  await expect(movementItem.getByText("integrated", { exact: true })).toBeVisible({ timeout: 60_000 });
   await owner.getByRole("button", { name: /Review/ }).first().click();
   await owner.getByRole("button", { name: /Conflicts/ }).click();
   const movementCenter = owner.getByRole("dialog", { name: "Merge conflicts" });
@@ -541,7 +550,11 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await owner.getByRole("button", { name: "Add to queue" }).click();
   const resolverCheckItem = owner.locator("li.queue-item", { hasText: "Create a resolver check failure" });
   await resolverCheckItem.getByRole("button", { name: "Run", exact: true }).click();
-  await expect(resolverCheckItem.getByText("integrated", { exact: true })).toBeVisible();
+  // Integrated prompts fold into their collapsed section; open the bar first.
+  await owner.locator(".queue-group-bar", { hasText: "Integrated" }).click();
+  // The first resolver attempt fails its checks, so integration takes a
+  // second automatic attempt — past the default timeout under parallel load.
+  await expect(resolverCheckItem.getByText("integrated", { exact: true })).toBeVisible({ timeout: 60_000 });
   await owner.getByRole("button", { name: /Review/ }).first().click();
   await owner.getByRole("button", { name: /Conflicts/ }).click();
   const resolverCheckCenter = owner.getByRole("dialog", { name: "Merge conflicts" });
@@ -628,12 +641,33 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await member.getByRole("button", { name: /Review/ }).first().click();
   await expect(member.getByRole("button", { name: "Ready for review" })).toHaveCount(0);
   await expect(member.getByRole("button", { name: "Squash merge" })).toHaveCount(0);
+  // The ready action confirms through a dialog before touching GitHub, and
+  // cancelling that dialog leaves the pull request a draft.
   await owner.getByRole("button", { name: "Ready for review" }).click();
+  await owner.getByRole("dialog", { name: "Mark this pull request ready for review?" })
+    .getByRole("button", { name: "Cancel" }).click();
+  // Wait for the dialog to actually unmount — otherwise the next unscoped
+  // "Ready for review" click can resolve to both the hero and dialog buttons.
+  await expect(owner.getByRole("dialog", { name: "Mark this pull request ready for review?" })).toHaveCount(0);
+  await expect(owner.getByRole("link", { name: /Draft PR #1 on GitHub/ })).toBeVisible();
+  await owner.getByRole("button", { name: "Ready for review" }).click();
+  await owner.getByRole("dialog", { name: "Mark this pull request ready for review?" })
+    .getByRole("button", { name: "Ready for review" }).click();
   // PR #217 split the link ("PR #1 on GitHub") from the state line ("open").
   await expect(owner.getByRole("link", { name: /PR #1 on GitHub/ })).toBeVisible();
   await expect(owner.getByText("open", { exact: true })).toBeVisible();
   await expect(owner.getByText("clean", { exact: true })).toBeVisible();
   await expect(owner.getByText("passing", { exact: true })).toBeVisible();
+  // A ready pull request can be converted back to a draft — also behind a
+  // confirmation — and then marked ready again.
+  await owner.getByRole("button", { name: "Mark as not ready" }).click();
+  await owner.getByRole("dialog", { name: "Convert this pull request back to a draft?" })
+    .getByRole("button", { name: "Mark as not ready" }).click();
+  await expect(owner.getByRole("link", { name: /Draft PR #1 on GitHub/ })).toBeVisible();
+  await owner.getByRole("button", { name: "Ready for review" }).click();
+  await owner.getByRole("dialog", { name: "Mark this pull request ready for review?" })
+    .getByRole("button", { name: "Ready for review" }).click();
+  await expect(owner.getByRole("button", { name: "Mark as not ready" })).toBeVisible();
   await owner.getByRole("button", { name: "Squash merge" }).click();
   await owner.getByRole("dialog", { name: "Squash merge this candidate?" })
     .getByRole("button", { name: "Merge, delete branch" }).click();
@@ -674,6 +708,8 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   expect(endedRun.status()).toBe(409);
   const endedReview = await owner.request.post(`/api/sessions/${repositorySessionId}/review/ready`);
   expect(endedReview.status()).toBe(409);
+  const endedReviewDraft = await owner.request.post(`/api/sessions/${repositorySessionId}/review/draft`);
+  expect(endedReviewDraft.status()).toBe(409);
 
   await owner.goto("/home");
   await owner.getByRole("button", { name: /^Ended/ }).click();

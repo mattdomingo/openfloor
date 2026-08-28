@@ -13,7 +13,7 @@ import { QueueOrderMenu } from "./QueueOrderMenu";
 
 const scopeOptions: { value: QueueScope; label: string }[] = [{ value: "mine", label: "You" }, { value: "team", label: "Team" }];
 
-export const PromptQueue = memo(function PromptQueue({ chrome, items, runs, agents, owner, runEnabled, busy, autoDispatch, onAutoDispatch, autoResolveConflicts, onAutoResolveConflicts, browserConflictAlerts, onBrowserConflictAlerts, onRun, onCancel, onDiscard, onRollback, onRetry, onEditPrompt, onPause, onDelete, onSetAgent, currentUserId, scope, onScope, orderMode, onOrderMode, draggedItemId, onItemDragStart, onItemDragEnd, onItemDrop, onFocusAgent, onOpenReview, groupOpen, onToggleGroup }: {
+export const PromptQueue = memo(function PromptQueue({ chrome, items, runs, agents, owner, runEnabled, busy, autoDispatch, onAutoDispatch, autoResolveConflicts, onAutoResolveConflicts, browserConflictAlerts, onBrowserConflictAlerts, onRun, onCancel, onDiscard, onRollback, onRetry, onEditPrompt, onPause, onDelete, onSetAgent, currentUserId, scope, onScope, orderMode, onOrderMode, draggedItemId, onItemDragStart, onItemDragEnd, onItemDrop, onFocusAgent, onOpenReview }: {
   chrome: PanelChrome;
   items: FloorQueueItem[];
   runs: AgentRun[];
@@ -47,8 +47,6 @@ export const PromptQueue = memo(function PromptQueue({ chrome, items, runs, agen
   onItemDrop: (targetId: string) => void;
   onFocusAgent: (agentId: string) => void;
   onOpenReview: (runId: string, status: "active" | "rolled_back") => void;
-  groupOpen: Partial<Record<QueueGroupId, boolean>>;
-  onToggleGroup: (groupId: QueueGroupId) => void;
 }) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [detailOpen, setDetailOpen] = useState<Record<string, boolean>>({});
@@ -71,6 +69,10 @@ export const PromptQueue = memo(function PromptQueue({ chrome, items, runs, agen
   const groups = useMemo(() => groupQueueItems(items, runsByQueueItemId, scope, currentUserId), [items, runsByQueueItemId, scope, currentUserId]);
   const liveGroup = groups[0];
   const totalVisible = groups.reduce((count, group) => count + group.items.length, 0);
+  // Section expand state is local-only (resets on reload). Conflicted starts
+  // open because it always carries an action; the finished sections start
+  // collapsed. Live has no bar and is always expanded.
+  const [groupOpen, setGroupOpen] = useState<Partial<Record<QueueGroupId, boolean>>>({ conflicted: true });
 
   function renderQueueItem(item: FloorQueueItem, groupId: QueueGroupId) {
     // Drag reorder edits position, which is dispatch order — only meaningful
@@ -151,7 +153,7 @@ export const PromptQueue = memo(function PromptQueue({ chrome, items, runs, agen
         if (group.items.length === 0) return null;
         const groupExpanded = groupOpen[group.id] === true;
         return <section key={group.id} className="queue-group">
-          <button type="button" className="queue-group-bar" data-status={group.id} aria-expanded={groupExpanded} onClick={() => onToggleGroup(group.id)}>
+          <button type="button" className="queue-group-bar" data-status={group.id} aria-expanded={groupExpanded} onClick={() => setGroupOpen((current) => ({ ...current, [group.id]: !groupExpanded }))}>
             <Icon name="chevronDown" size={12} className="queue-group-chevron" />
             <span className="queue-group-label">{group.label}</span>
             <span className="queue-group-count">{group.items.length}</span>

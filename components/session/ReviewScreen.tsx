@@ -45,7 +45,7 @@ function MergeGateRow({ review }: { review: FloorReviewSnapshot }) {
   </div>;
 }
 
-export const ReviewScreen = memo(function ReviewScreen({ sessionId, revision, review, repository, repositoryTree, selectedConflictCaseId, promptRequest, owner, busy, blockingRunId, onRequestRollback, onReady, onMerge, onDeleteBranch, onAbandon, onCancelRun, onResolveConflict, onAnswerConflict, onSubmitConflictSelections, teamChat, onSendTeamMessage, participants, currentUserId, sessionFiles }: {
+export const ReviewScreen = memo(function ReviewScreen({ sessionId, revision, review, repository, repositoryTree, selectedConflictCaseId, promptRequest, owner, busy, blockingRunId, onRequestRollback, onReady, onUnready, onMerge, onDeleteBranch, onAbandon, onCancelRun, onResolveConflict, onAnswerConflict, onSubmitConflictSelections, teamChat, onSendTeamMessage, participants, currentUserId, sessionFiles }: {
   sessionId: string;
   revision: number;
   review: FloorReviewSnapshot | null;
@@ -58,6 +58,7 @@ export const ReviewScreen = memo(function ReviewScreen({ sessionId, revision, re
   blockingRunId: string | null;
   onRequestRollback: (intent: RollbackIntent) => void;
   onReady: () => Promise<void>;
+  onUnready: () => Promise<void>;
   onMerge: (deleteCandidateBranch: boolean) => Promise<boolean>;
   onDeleteBranch: () => Promise<boolean>;
   onAbandon: (deleteBranch: boolean) => Promise<boolean>;
@@ -87,6 +88,8 @@ export const ReviewScreen = memo(function ReviewScreen({ sessionId, revision, re
   const [mergeConfirmOpen, setMergeConfirmOpen] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [abandonConfirmOpen, setAbandonConfirmOpen] = useState(false);
+  const [readyConfirmOpen, setReadyConfirmOpen] = useState(false);
+  const [unreadyConfirmOpen, setUnreadyConfirmOpen] = useState(false);
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
   // The conflict center opens deep-linked when Workspace hands us a case id
   // (attention banner, agent card, notification click), or unlinked (case
@@ -241,6 +244,16 @@ export const ReviewScreen = memo(function ReviewScreen({ sessionId, revision, re
     await onAbandon(deleteBranch);
   }
 
+  async function runReady() {
+    setReadyConfirmOpen(false);
+    await onReady();
+  }
+
+  async function runUnready() {
+    setUnreadyConfirmOpen(false);
+    await onUnready();
+  }
+
   async function cancelBlockingRunAndRetry() {
     if (!blockingRunId || !pendingAction) return;
     setRetrying(true);
@@ -356,10 +369,12 @@ export const ReviewScreen = memo(function ReviewScreen({ sessionId, revision, re
     <header className="review-hero">
       <div className="review-hero-copy"><div className="review-title-row"><h2 className="review-title">Review</h2>{review.pullRequest && <a className="button" data-size="sm" href={review.pullRequest.url} target="_blank" rel="noreferrer"><Icon name="external" size={14} />{review.pullRequest.draft ? "Draft " : ""}PR #{review.pullRequest.number} on GitHub</a>}<button type="button" className="button conflicts-button" data-size="sm" data-attention={conflictAttention} onClick={() => setConflictCenter({ caseId: null })}><Icon name="alert" size={14} />Conflicts{openConflicts.length > 0 ? ` (${openConflicts.length})` : ""}</button></div><div className="review-branch-summary"><span className="label">Candidate branch</span><h3><Icon name="branch" size={16} />{review.branch}</h3><p>{review.pullRequest ? `${review.pullRequest.merged ? "Merged" : review.pullRequest.state}` : "Waiting for the candidate pull request."}</p></div></div>
       <div className="review-hero-facts"><div><span className="label">Commit</span><strong className="value" title={review.commitSha ?? undefined}>{commitLabel}</strong></div><div><span className="label">Base</span><strong className="value">{review.baseBranch}</strong></div><div><span className="label">Diff</span><strong><span className="add">+{additions}</span> <span className="del">−{deletions}</span></strong></div><div><span className="label">Status</span><strong>{review.status}</strong></div><div><span className="label">Mergeability</span><strong>{review.pullRequest?.mergeable == null ? "unknown" : review.pullRequest.mergeable ? review.pullRequest.mergeableState ?? "mergeable" : "blocked"}</strong></div><div><span className="label">GitHub checks</span><strong>{review.githubChecksPassing == null ? "not synchronized" : review.githubChecksPassing ? "passing" : "blocked"}</strong></div></div>
-      {owner && !isMerged && !isAbandoned && <div className="review-actions">{review.pullRequest && <button type="button" className="button" disabled={busy} onClick={() => void onReady()}>{review.status === "draft" ? "Ready for review" : "Refresh GitHub status"}</button>}{review.pullRequest && <button type="button" className="button primary-button" disabled={busy || !canMerge} title={canMerge ? "Squash merge through GitHub" : "See the merge gate below"} onClick={() => setMergeConfirmOpen(true)}>Squash merge</button>}<button type="button" className="button danger-button" disabled={busy} title={review.integrationRunId ? "The candidate is still being updated" : "Retire this candidate without merging"} onClick={() => setAbandonConfirmOpen(true)}>Abandon candidate</button></div>}
+      {owner && !isMerged && !isAbandoned && <div className="review-actions">{review.pullRequest && review.status === "draft" && <button type="button" className="button" disabled={busy} onClick={() => setReadyConfirmOpen(true)}>Ready for review</button>}{review.pullRequest && review.status === "ready" && <button type="button" className="button" disabled={busy} onClick={() => setUnreadyConfirmOpen(true)}>Mark as not ready</button>}{review.pullRequest && <button type="button" className="button" data-variant="quiet" disabled={busy} title="Reconcile the pull request state from GitHub" onClick={() => void onReady()}>Refresh GitHub status</button>}{review.pullRequest && <button type="button" className="button primary-button" disabled={busy || !canMerge} title={canMerge ? "Squash merge through GitHub" : "See the merge gate below"} onClick={() => setMergeConfirmOpen(true)}>Squash merge</button>}<button type="button" className="button danger-button" disabled={busy} title={review.integrationRunId ? "The candidate is still being updated" : "Retire this candidate without merging"} onClick={() => setAbandonConfirmOpen(true)}>Abandon candidate</button></div>}
       {!isMerged && !isAbandoned && review.pullRequest && <MergeGateRow review={review} />}
     </header>
     <div className="review-grid" style={reviewGridStyle}>{leftPane}{mainCenterPane}<aside className="review-side">{rightPane}</aside>{reviewResizeHandles}</div>
+    {readyConfirmOpen && <ReadyConfirmDialog busy={busy} onClose={() => setReadyConfirmOpen(false)} onConfirm={runReady} />}
+    {unreadyConfirmOpen && <UnreadyConfirmDialog busy={busy} onClose={() => setUnreadyConfirmOpen(false)} onConfirm={runUnready} />}
     {mergeConfirmOpen && <MergeConfirmDialog busy={busy} onClose={() => setMergeConfirmOpen(false)} onConfirm={runMerge} />}
     {deleteConfirmOpen && <DeleteBranchConfirmDialog branch={review.branch} busy={busy} onClose={() => setDeleteConfirmOpen(false)} onConfirm={runDeleteBranch} />}
     {abandonConfirmOpen && <AbandonConfirmDialog branch={review.branch} busy={busy} onClose={() => setAbandonConfirmOpen(false)} onConfirm={runAbandon} />}
@@ -512,6 +527,36 @@ function FileAttribution({ contributors, expanded }: { contributors: ReviewContr
   if (expanded) return <span className="review-attribution" data-expanded="true">{contributors.map((contributor) => <span key={contributor.agentId} className="review-attribution-row" data-tone={agentTone(contributor.agentId)}><span className="queue-chip" data-kind="agent" data-tone={agentTone(contributor.agentId)}>{contributor.agentName}</span><span className="review-attribution-who">asked by {requesterLabel(contributor.requestedBy)}</span></span>)}</span>;
   const [first, ...rest] = contributors;
   return <span className="review-attribution" data-tone={agentTone(first.agentId)} title={contributorTitle(contributors)}><span className="queue-chip" data-kind="agent" data-tone={agentTone(first.agentId)}>{first.agentName}</span><span className="review-attribution-who">asked by {requesterLabel(first.requestedBy)}</span>{rest.length > 0 && <span className="review-attribution-more">+{rest.length}</span>}</span>;
+}
+
+function ReadyConfirmDialog({ busy, onClose, onConfirm }: { busy: boolean; onClose: () => void; onConfirm: () => Promise<void> }) {
+  const { dismiss, dialogProps } = useDialogDismiss(onClose);
+  return (
+    <dialog className="dialog" {...dialogProps} aria-labelledby="ready-confirm-title">
+      <div className="dialog-head">
+        <div className="dialog-title"><h2 id="ready-confirm-title">Mark this pull request ready for review?</h2><p>GitHub converts the draft pull request into a normal pull request, signaling to reviewers that the candidate is ready. You can convert it back to a draft afterward.</p></div>
+      </div>
+      <div className="dialog-foot">
+        <button type="button" className="button" data-variant="quiet" onClick={dismiss} disabled={busy}>Cancel</button>
+        <button type="button" className="button primary-button" onClick={() => void onConfirm()} disabled={busy}>Ready for review</button>
+      </div>
+    </dialog>
+  );
+}
+
+function UnreadyConfirmDialog({ busy, onClose, onConfirm }: { busy: boolean; onClose: () => void; onConfirm: () => Promise<void> }) {
+  const { dismiss, dialogProps } = useDialogDismiss(onClose);
+  return (
+    <dialog className="dialog" {...dialogProps} aria-labelledby="unready-confirm-title">
+      <div className="dialog-head">
+        <div className="dialog-title"><h2 id="unready-confirm-title">Convert this pull request back to a draft?</h2><p>GitHub marks the pull request as a draft again, signaling the candidate is no longer ready for review. You can mark it ready again at any time.</p></div>
+      </div>
+      <div className="dialog-foot">
+        <button type="button" className="button" data-variant="quiet" onClick={dismiss} disabled={busy}>Cancel</button>
+        <button type="button" className="button" onClick={() => void onConfirm()} disabled={busy}>Mark as not ready</button>
+      </div>
+    </dialog>
+  );
 }
 
 function MergeConfirmDialog({ busy, onClose, onConfirm }: { busy: boolean; onClose: () => void; onConfirm: (deleteCandidateBranch: boolean) => Promise<void> }) {

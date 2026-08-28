@@ -167,6 +167,7 @@ export function usePersistentFloorData(sessionId: string, initialFloor: FloorSna
   const retryRun = useCallback((runId: string) =>
     request(`/runs/${encodeURIComponent(runId)}/retry`, "POST"), [request]);
   const readyReview = useCallback(() => request("/review/ready", "POST"), [request]);
+  const unreadyReview = useCallback(() => request("/review/draft", "POST"), [request]);
   const squashMergeReview = useCallback((deleteCandidateBranch: boolean) =>
     request("/review/merge", "POST", { deleteCandidateBranch }), [request]);
   const deleteReviewBranch = useCallback(() => request("/review/branch", "DELETE"), [request]);
@@ -213,6 +214,7 @@ export function usePersistentFloorData(sessionId: string, initialFloor: FloorSna
     rollbackReviewChanges,
     retryRun,
     readyReview,
+    unreadyReview,
     squashMergeReview,
     deleteReviewBranch,
     abandonCandidate,
@@ -254,6 +256,7 @@ export function usePersistentFloorData(sessionId: string, initialFloor: FloorSna
     rollbackReviewChanges,
     retryRun,
     readyReview,
+    unreadyReview,
     squashMergeReview,
     deleteReviewBranch,
     abandonCandidate,
