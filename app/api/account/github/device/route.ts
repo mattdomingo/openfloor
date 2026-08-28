@@ -12,35 +12,11 @@
 // GitHub entirely and links the fake installation on the first poll.
 import { getGitHubAppConfig } from "@/db";
 import { linkUserGitHubInstallation, listUserGitHubInstallations } from "@/db/github-installations";
-import { getInstallationAccount } from "@/lib/github";
+import { getInstallationAccount, listUserInstallationRepositoryIds } from "@/lib/github";
 import { isApiError, requireApiUser } from "@/lib/server-auth";
 
 const GITHUB_ACCEPT = { accept: "application/json", "content-type": "application/json" };
 const TEST_DEVICE_CODE = "test-device-code";
-
-/** The repos inside one installation that the member's own token can reach —
-    GitHub already intersects installation grants with user permissions here.
-    Null (rather than a guess) on any error. */
-async function listUserInstallationRepositoryIds(
-  headers: Record<string, string>,
-  installationId: string,
-): Promise<string[] | null> {
-  const ids: string[] = [];
-  let page = 1;
-  while (true) {
-    const response = await fetch(
-      `https://api.github.com/user/installations/${encodeURIComponent(installationId)}/repositories?per_page=100&page=${page}`,
-      { headers },
-    );
-    if (!response.ok) return null;
-    const body = await response.json().catch(() => null) as { repositories?: Array<{ id?: number }> } | null;
-    if (!body) return null;
-    const repositories = body.repositories ?? [];
-    ids.push(...repositories.filter((repository) => repository.id != null).map((repository) => String(repository.id)));
-    if (repositories.length < 100 || page >= 10) return ids;
-    page += 1;
-  }
-}
 
 export async function POST() {
   const user = await requireApiUser();
@@ -157,7 +133,7 @@ export async function PUT(request: Request) {
     // repos, but the app token sees them all — so capture which repos THIS
     // member's token can reach and scope the link to exactly those. A failed
     // scope read skips the link rather than guessing.
-    const repoScope = await listUserInstallationRepositoryIds(githubHeaders, String(installation.id));
+    const repoScope = await listUserInstallationRepositoryIds(token.access_token, String(installation.id));
     if (repoScope == null) continue;
     await linkUserGitHubInstallation(user.id, String(installation.id), {
       login: installation.account?.login ?? "unknown",

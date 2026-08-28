@@ -419,15 +419,17 @@ function ConnectionsSection({ initialCredentials, initialGithubInstallations }: 
     setDeviceDialogOpen(true);
   }
 
-  // Returning from the App-install redirect: that path links with an empty
-  // repo scope (no user token to verify access), so reopen the device dialog
-  // to capture the member's real scope.
+  // Returning from the App-install redirect. "verify" means the callback
+  // couldn't capture the installer's repo scope (no OAuth code configured, or
+  // the exchange failed) — reopen the device dialog to capture it;
+  // "connected" means the scope landed and there is nothing left to do.
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    if (params.get("github") !== "connected") return;
+    const github = params.get("github");
+    if (github !== "connected" && github !== "verify") return;
     params.delete("github");
     window.history.replaceState(null, "", `${window.location.pathname}?${params.toString()}`);
-    setDeviceDialogOpen(true);
+    if (github === "verify") setDeviceDialogOpen(true);
   }, []);
 
   async function removeGitHub(id: string) {

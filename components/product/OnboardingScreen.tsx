@@ -79,15 +79,17 @@ export function OnboardingScreen({
     if (avatarPreview) URL.revokeObjectURL(avatarPreview);
   }, [avatarPreview]);
 
-  // Returning from the App-install redirect: that path can't verify which
-  // repos this member can reach (no user token), so the link landed with an
-  // empty scope — reopen the device dialog to capture the real one.
+  // Returning from the App-install redirect. "verify" means the callback
+  // couldn't capture the installer's repo scope (no OAuth code configured, or
+  // the exchange failed) — reopen the device dialog to capture it;
+  // "connected" means the scope landed and there is nothing left to do.
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    if (params.get("github") !== "connected") return;
+    const github = params.get("github");
+    if (github !== "connected" && github !== "verify") return;
     params.delete("github");
     router.replace(`${pathname}?${params.toString()}`, { scroll: false });
-    setDeviceDialogOpen(true);
+    if (github === "verify") setDeviceDialogOpen(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
