@@ -1,8 +1,9 @@
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import { POST as receiveStripeWebhook } from "@/app/webhooks/stripe/route";
-import { saveStripeCustomer } from "@/db/billing";
+import { saveStripeCustomer, saveStripeSubscription } from "@/db/billing";
 import { acceptInvite, createSession, findUserById, getInvitePreview, getUsageForUser, upsertUser } from "@/db/sessions";
+import { cancelStripeSubscriptionsForAccount, type StripeSubscriptionGateway } from "@/lib/stripe-billing";
 
 function identity(id: string) {
   return { providerUserId: `stripe-${id}`, email: `${id}@example.com`, displayName: `Stripe ${id}`, fullName: `Stripe ${id}` };
@@ -67,6 +68,77 @@ describe("Stripe entitlement reconciliation", () => {
 
     const event = stripeEvent("evt_deleted_cancel", 500, subscription(user.id, "canceled", "price_test_pro", 3, "cus_deleted"));
     expect((await receiveStripeWebhook(await signedRequest(event))).status).toBe(202);
+  });
+});
+
+// Account deletion's cancel loop must settle rows Stripe already stopped
+// billing — an out-of-band cancellation or a subscription Stripe no longer
+// knows (deleted test-mode data, a key-mode switch) — instead of wedging
+// deletion forever, while a genuinely live subscription that fails to
+// cancel still fails deletion closed.
+describe("account-deletion subscription cancellation", () => {
+  const missing = () => Object.assign(new Error("No such subscription"), { code: "resource_missing" });
+
+  async function seededUser(id: string, status = "active") {
+    const user = await upsertUser(identity(id), env.DB);
+    await saveStripeSubscription({
+      id: `sub_${user.id}`, userId: user.id, customerId: `cus_${id}`, priceId: "price_legacy",
+      plan: null, quantity: 1, status, currentPeriodEnd: null, cancelAtPeriodEnd: false, eventCreated: 100,
+    }, env.DB);
+    return user;
+  }
+
+  async function storedStatus(userId: string): Promise<string | undefined> {
+    const row = await env.DB.prepare("SELECT status FROM stripe_subscriptions WHERE user_id = ?").bind(userId).first<{ status: string }>();
+    return row?.status;
+  }
+
+  it("cancels a live subscription and records the terminal row, even on a price reconcile no longer accepts", async () => {
+    const user = await seededUser("cancel-live");
+    const gateway: StripeSubscriptionGateway = {
+      subscriptions: {
+        cancel: async () => ({ status: "canceled" }),
+        retrieve: async () => { throw new Error("not called"); },
+      },
+    };
+    await expect(cancelStripeSubscriptionsForAccount(user.id, gateway)).resolves.toBeUndefined();
+    await expect(storedStatus(user.id)).resolves.toBe("canceled");
+  });
+
+  it("settles a subscription already canceled out-of-band by reading it back", async () => {
+    const user = await seededUser("cancel-already");
+    const gateway: StripeSubscriptionGateway = {
+      subscriptions: {
+        cancel: async () => { throw new Error("This subscription is already canceled."); },
+        retrieve: async () => ({ status: "canceled" }),
+      },
+    };
+    await expect(cancelStripeSubscriptionsForAccount(user.id, gateway)).resolves.toBeUndefined();
+    await expect(storedStatus(user.id)).resolves.toBe("canceled");
+  });
+
+  it("settles a subscription Stripe no longer knows at all", async () => {
+    const user = await seededUser("cancel-gone");
+    const gateway: StripeSubscriptionGateway = {
+      subscriptions: {
+        cancel: async () => { throw missing(); },
+        retrieve: async () => { throw missing(); },
+      },
+    };
+    await expect(cancelStripeSubscriptionsForAccount(user.id, gateway)).resolves.toBeUndefined();
+    await expect(storedStatus(user.id)).resolves.toBe("canceled");
+  });
+
+  it("still fails closed when the subscription is live and the cancel genuinely failed", async () => {
+    const user = await seededUser("cancel-refused");
+    const gateway: StripeSubscriptionGateway = {
+      subscriptions: {
+        cancel: async () => { throw new Error("stripe is down"); },
+        retrieve: async () => ({ status: "active" }),
+      },
+    };
+    await expect(cancelStripeSubscriptionsForAccount(user.id, gateway)).rejects.toThrow("stripe is down");
+    await expect(storedStatus(user.id)).resolves.toBe("active");
   });
 });
 

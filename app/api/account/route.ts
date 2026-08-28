@@ -34,7 +34,8 @@ export async function DELETE(request: Request) {
   }
   try {
     await cancelStripeSubscriptionsForAccount(user.id);
-  } catch {
+  } catch (error) {
+    console.error(`account deletion: billing cancel failed for ${user.id}`, error);
     return Response.json({ error: "Unable to cancel billing. Your account was not deleted." }, { status: 502 });
   }
 

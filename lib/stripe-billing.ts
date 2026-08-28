@@ -4,6 +4,7 @@ import {
   getStripeCustomerId,
   getUserIdForStripeCustomer,
   listNonTerminalStripeSubscriptionIds,
+  markStripeSubscriptionTerminal,
   saveStripeCustomer,
   saveStripeSubscription,
   type BillingSummary,
@@ -231,13 +232,66 @@ export async function createStripePlanChange(
   })).url;
 }
 
-export async function cancelStripeSubscriptionsForAccount(userId: string): Promise<void> {
+const TERMINAL_STRIPE_STATUSES = new Set(["canceled", "incomplete_expired"]);
+
+function terminalStripeStatus(status: string): "canceled" | "incomplete_expired" {
+  return status === "incomplete_expired" ? "incomplete_expired" : "canceled";
+}
+
+// Stripe's "that id doesn't exist" shape — thrown for deleted test-mode
+// data and for ids minted under the other key mode.
+function isMissingResourceError(error: unknown): boolean {
+  return typeof error === "object" && error != null && (error as { code?: unknown }).code === "resource_missing";
+}
+
+// The minimal surface the cancel loop touches; worker tests hand in a stub
+// (same convention as GitHubAppConfig.testData), production always resolves
+// the configured client.
+export type StripeSubscriptionGateway = {
+  subscriptions: {
+    cancel(id: string, params: { prorate: boolean }): Promise<{ status: string }>;
+    retrieve(id: string): Promise<{ status: string }>;
+  };
+};
+
+// Stripe refuses to cancel a subscription that is already canceled, and
+// cannot cancel one it no longer knows. Either way nothing is billing —
+// which is all account deletion needs — so read the subscription back and
+// settle the local row; anything genuinely live (or unreachable) rethrows
+// the original cancel failure so deletion still fails closed.
+async function settledTerminalStatus(stripe: StripeSubscriptionGateway, id: string, cancelError: unknown): Promise<"canceled" | "incomplete_expired"> {
+  if (isMissingResourceError(cancelError)) return "canceled";
+  let current: { status: string } | null;
+  try {
+    current = await stripe.subscriptions.retrieve(id);
+  } catch (retrieveError) {
+    if (!isMissingResourceError(retrieveError)) throw cancelError;
+    current = null;
+  }
+  if (current && !TERMINAL_STRIPE_STATUSES.has(current.status)) throw cancelError;
+  return terminalStripeStatus(current?.status ?? "canceled");
+}
+
+// Deliberately NOT reconcileStripeSubscription here: reconcile enforces
+// purchase-shaped invariants (a currently configured price, a valid seat
+// quantity) that a legacy or test-mode subscription no longer satisfies,
+// and a terminal subscription only needs its local row marked terminal.
+// Routing cancellation through reconcile wedged account deletion forever:
+// the Stripe-side cancel succeeded on the first attempt, reconcile threw
+// before the D1 write, and every retry then failed on re-canceling an
+// already-canceled subscription.
+export async function cancelStripeSubscriptionsForAccount(userId: string, client?: StripeSubscriptionGateway): Promise<void> {
   const ids = await listNonTerminalStripeSubscriptionIds(userId);
   if (ids.length === 0) return;
-  const stripe = getStripeClient();
+  const stripe = client ?? getStripeClient();
   for (const id of ids) {
-    const subscription = await stripe.subscriptions.cancel(id, { prorate: false });
-    await reconcileStripeSubscription(subscription, userId);
+    let status: "canceled" | "incomplete_expired";
+    try {
+      status = terminalStripeStatus((await stripe.subscriptions.cancel(id, { prorate: false })).status);
+    } catch (cancelError) {
+      status = await settledTerminalStatus(stripe, id, cancelError);
+    }
+    await markStripeSubscriptionTerminal(id, userId, status);
   }
 }
 
