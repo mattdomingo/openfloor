@@ -39,7 +39,7 @@ describe("server rendering", () => {
     expect(response.status).toBe(200);
     const html = await response.text();
     expect(html).toContain("Sign in to continue. You will be sent back to what you were opening.");
-    expect(html).toContain('href="/signin?return_to=%2Fsession%2Fprivate-room"');
+    expect(html).toContain(`href="${BASE_PATH}/signin?return_to=%2Fsession%2Fprivate-room"`);
     // Without the params the landing stays quiet.
     const plain = await (await render()).text();
     expect(plain).not.toContain("Sign in to open that page");

@@ -738,3 +738,11 @@ Separately, the lobby's `SessionSetupDialog`/`setupRequested`/`?setup=1` are del
 
 **Consequences:** Casual question phrasings ("hey what does this screenshot show", "so how does the auth flow work", "describe this image") now reach the reply-run path (Concierge or the targeted agent answering read-only) and complete with the answer visible instead of failing as no-change task runs. The classifier remains the documented intentionally-lexical placeholder; other answer-shaped openers ("show me", "tell me", "list") were deliberately left `task`-default to bound the reverse-misclassification surface, and the brief's "change nothing and say so in your final message" instruction remains in tension with the no-change failure for task runs generally — a deliberate follow-up, not part of this fix. New cases pinned in `tests/worker/routing.test.ts`'s `classifyPrompt` table.
 
+### 2026-08-28 — Slim session brief chat context and compact live edit events
+
+**Decision:** In `lib/session-context.ts` and `db/session-context.ts`, team chat injected into the agent's prompt brief is pruned to relevant signal: messages mentioning the agent (via `@Name` or name match) are prioritized, followed by the latest team messages up to a cap of 6 messages at 150 characters each (down from 20 messages x 300 characters). D1's chat query bound is reduced from 30 to 15. In-flight run telemetry deduplicates and compacts live file edit paths to prevent event floods, and the overall brief character ceiling is reduced from 24,000 to 6,000 characters.
+
+**Rationale:** Passing up to 30 raw team messages into every agent turn caused context bloat and token consumption without providing actionable task instructions. Most conversational messages in team chat are unrelated to a given agent unless they explicitly mention that agent. Agents who need full room history can still invoke the stdio `openfloor_session_context` MCP tool mid-run.
+
+**Consequences:** Substantially lowers per-run prompt token usage and cost across all provider runs while preserving floor coordination, conflict avoidance, and honest empty states.
+

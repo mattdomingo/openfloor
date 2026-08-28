@@ -99,19 +99,19 @@ export type SessionContextViewer = {
 };
 
 export const SESSION_CONTEXT_LIMITS = {
-  promptChars: 400,
-  summaryChars: 400,
-  filesPerRun: 12,
-  editsPerRun: 8,
-  editChars: 200,
-  integratedRuns: 15,
-  inFlightRuns: 10,
-  blockedRuns: 10,
-  queuedItems: 20,
-  chatMessages: 20,
-  chatChars: 300,
-  sharedFiles: 20,
-  totalChars: 24_000,
+  promptChars: 300,
+  summaryChars: 300,
+  filesPerRun: 10,
+  editsPerRun: 6,
+  editChars: 150,
+  integratedRuns: 10,
+  inFlightRuns: 8,
+  blockedRuns: 6,
+  queuedItems: 10,
+  chatMessages: 6,
+  chatChars: 150,
+  sharedFiles: 15,
+  totalChars: 6_000,
 };
 
 const SAFETY_RULES = [
@@ -186,8 +186,12 @@ function renderIntegrated(snapshot: SessionContextSnapshot): string {
 
 function renderInFlight(snapshot: SessionContextSnapshot): string {
   const lines = snapshot.inFlightRuns.map((run) => {
-    const edits = run.recentEdits.slice(0, SESSION_CONTEXT_LIMITS.editsPerRun).map((edit) => truncate(edit, SESSION_CONTEXT_LIMITS.editChars));
-    const editLines = edits.length > 0 ? edits.map((edit) => `      ${edit}`).join("\n") : "      (no file activity reported yet)";
+    // Deduplicate and compact file paths being edited to avoid flooding token context with raw telemetry lines
+    const rawEdits = run.recentEdits.slice(0, SESSION_CONTEXT_LIMITS.editsPerRun);
+    const compactEdits = Array.from(new Set(rawEdits.map((edit) => truncate(edit, SESSION_CONTEXT_LIMITS.editChars))));
+    const editLines = compactEdits.length > 0
+      ? compactEdits.map((edit) => `      ${edit}`).join("\n")
+      : "      (no file activity reported yet)";
     return [
       `- ${run.agentName} (${run.status}) — ${renderPrompts(run.prompts) || "(no prompt recorded)"}`,
       editLines,
@@ -211,8 +215,31 @@ function renderBlocked(snapshot: SessionContextSnapshot): string {
   return renderList(lines, SESSION_CONTEXT_LIMITS.blockedRuns, snapshot.blockedRuns.length, "No blocked or failed runs.");
 }
 
-function renderChat(snapshot: SessionContextSnapshot): string {
-  const lines = snapshot.chat.map((message) => `- ${message.authorName}: ${truncate(message.text, SESSION_CONTEXT_LIMITS.chatChars)}`);
+function renderChat(snapshot: SessionContextSnapshot, viewer: SessionContextViewer): string {
+  // Filter chat to keep relevant signal without flooding tokens:
+  // 1. Messages mentioning this agent (@Name or Name case-insensitive)
+  // 2. Plus the most recent messages up to the cap
+  const normalizedAgentName = viewer.agentName.trim().toLowerCase();
+  const mentionsViewer = (msg: SessionContextChatMessage) => {
+    const lower = msg.text.toLowerCase();
+    return lower.includes(`@${normalizedAgentName}`) || lower.includes(normalizedAgentName);
+  };
+
+  const mentionedMessages = snapshot.chat.filter(mentionsViewer);
+  const mentionedSet = new Set(mentionedMessages);
+  const otherMessages = snapshot.chat.filter((msg) => !mentionedSet.has(msg));
+
+  // Combine mentions first, then fill remaining slots with the latest team messages
+  const selected: SessionContextChatMessage[] = [];
+  for (const msg of mentionedMessages) {
+    if (selected.length < SESSION_CONTEXT_LIMITS.chatMessages) selected.push(msg);
+  }
+  for (let i = otherMessages.length - 1; i >= 0; i--) {
+    if (selected.length >= SESSION_CONTEXT_LIMITS.chatMessages) break;
+    selected.unshift(otherMessages[i]);
+  }
+
+  const lines = selected.map((message) => `- ${message.authorName}: ${truncate(message.text, SESSION_CONTEXT_LIMITS.chatChars)}`);
   return renderList(lines, SESSION_CONTEXT_LIMITS.chatMessages, snapshot.chat.length, "No recent team chat.");
 }
 
@@ -254,7 +281,7 @@ export function renderSessionContext(snapshot: SessionContextSnapshot, viewer: S
     { title: "Waiting in the queue", priority: 4, body: renderQueue(snapshot, viewer) },
     { title: "Blocked or failed earlier", priority: 3, body: renderBlocked(snapshot) },
     { title: "Files the team shared (already copied to these paths in your sandbox)", priority: 2, body: renderSharedFiles(snapshot) },
-    { title: "Recent team chat", priority: 1, body: renderChat(snapshot) },
+    { title: "Recent team chat", priority: 1, body: renderChat(snapshot, viewer) },
   ];
 
   const yourRequest = `## Your request\n${renderYourRequest(snapshot, viewer)}`;
