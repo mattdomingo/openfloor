@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { BASE_PATH } from "@/components/basePath";
 import { Icon, Spinner, useDialogDismiss } from "@/components/session/primitives";
+import { allowTrustedNavigation } from "@/components/product/useOnboardingExit";
 import { repoCountLabel } from "@/lib/display-name";
 import type { UserGitHubInstallationSummary } from "@/lib/session-types";
 
@@ -46,6 +47,9 @@ export function GitHubDeviceDialog({ purpose, returnTo, onConnected, onIdentity,
       setInstallBusy(false);
       return;
     }
+    // Same-tab redirect to github.com — expected during onboarding, not an
+    // abandonment (see useOnboardingExit; a no-op outside onboarding).
+    allowTrustedNavigation();
     window.location.assign(body.installUrl);
   }
 

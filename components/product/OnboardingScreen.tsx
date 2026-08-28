@@ -13,6 +13,7 @@ import type { OnboardingStep } from "@/lib/onboarding-plan";
 import { Brand } from "./Brand";
 import { ProviderCredentials } from "./ProviderCredentials";
 import { GitHubDeviceDialog } from "@/components/product/GitHubDeviceDialog";
+import { allowTrustedNavigation, useOnboardingExit } from "@/components/product/useOnboardingExit";
 import type { UserGitHubInstallationSummary } from "@/lib/session-types";
 
 function splitName(fullName: string | null): { firstName: string; lastName: string } {
@@ -27,7 +28,7 @@ function splitName(fullName: string | null): { firstName: string; lastName: stri
 // posts plan=free; lib/onboarding-plan.ts carries the same note).
 export function OnboardingScreen({
   fullName, firstName: savedFirstName, lastName: savedLastName, githubHandle: savedGithubHandle, returnTo,
-  githubInstallations: initialGithubInstallations, initialCredentials, initialStep,
+  githubInstallations: initialGithubInstallations, initialCredentials, initialStep, teamLogoutUrl,
 }: {
   fullName: string | null;
   firstName: string | null;
@@ -37,20 +38,29 @@ export function OnboardingScreen({
   githubInstallations: UserGitHubInstallationSummary[];
   initialCredentials: ProviderCredentialSummary[];
   initialStep: OnboardingStep | null;
+  teamLogoutUrl: string | null;
 }) {
   const router = useRouter();
   const pathname = usePathname();
   const initial = splitName(fullName);
   const [step, setStep] = useState<OnboardingStep>(initialStep ?? 1);
 
+  // Leaving this page — back button or closing the tab — signs the person
+  // out, so someone who wants a different GitHub account isn't stuck
+  // re-authenticating the one already onboarding. See useOnboardingExit.
+  useOnboardingExit(teamLogoutUrl);
+
   // Every step change replaces `step` in the URL so a refresh — or the one
   // someone reaches for when a provider-key "Connect" looks stuck — lands
-  // back on the step it was taken from, not always step 1.
+  // back on the step it was taken from, not always step 1. Uses
+  // history.replaceState directly, not router.replace: router.replace
+  // consumes the sentinel history entry useOnboardingExit pushed, which
+  // would disarm the back-button exit after the first step change.
   function changeStep(next: OnboardingStep) {
     setStep(next);
     const params = new URLSearchParams(window.location.search);
     params.set("step", String(next));
-    router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+    window.history.replaceState(null, "", `${pathname}?${params.toString()}`);
   }
   const [firstName, setFirstName] = useState(savedFirstName ?? initial.firstName);
   const [lastName, setLastName] = useState(savedLastName ?? initial.lastName);
@@ -88,7 +98,9 @@ export function OnboardingScreen({
     const github = params.get("github");
     if (github !== "connected" && github !== "verify") return;
     params.delete("github");
-    router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+    // Same history.replaceState reasoning as changeStep above — keep the
+    // back-button exit trap armed.
+    window.history.replaceState(null, "", `${pathname}?${params.toString()}`);
     if (github === "verify") setDeviceDialogOpen(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -179,6 +191,8 @@ export function OnboardingScreen({
       return;
     }
     const body = await response.json() as { url: string };
+    // Setup is finished — this navigation away is expected, not abandonment.
+    allowTrustedNavigation();
     const destination = new URL(body.url, window.location.origin);
     if (destination.origin !== window.location.origin) {
       window.location.assign(destination.toString());

@@ -70,6 +70,47 @@ test("a direct user keeps profile state across steps and completes Free onboardi
   await context.close();
 });
 
+test("leaving onboarding via the back button signs the person out", async ({ browser }) => {
+  const context = await browser.newContext({
+    extraHTTPHeaders: identityHeaders("onboarding-back-exit", "onboarding-back-exit@example.com", "Back Exit"),
+  });
+  const page = await context.newPage();
+
+  await page.goto("/onboarding?return_to=%2Fhome");
+  await expect(page.getByRole("heading", { name: "Create your profile" })).toBeVisible();
+  await page.goBack();
+  // /signout has no team domain configured in the test server, so it 302s
+  // straight to the landing page rather than running its team-logout script.
+  await expect(page).toHaveURL(/\/$/);
+
+  await context.close();
+});
+
+test("the back-button exit stays armed after a step change", async ({ browser }) => {
+  const context = await browser.newContext({
+    extraHTTPHeaders: identityHeaders("onboarding-back-exit-step2", "onboarding-back-exit-step2@example.com", "Back Exit Two"),
+  });
+  const page = await context.newPage();
+
+  await page.goto("/onboarding?return_to=%2Fhome");
+  await page.getByLabel("First name").fill("Grace");
+  await page.getByLabel("Last name").fill("Hopper");
+  await page.getByRole("button", { name: "Continue", exact: true }).click();
+  await expect(page.getByRole("alert")).toHaveText("Connect GitHub to continue.");
+  await page.getByRole("button", { name: "Connect GitHub" }).click();
+  await expect(page.getByText("Connected. openfloor can reach:")).toBeVisible();
+  await page.getByRole("button", { name: "Done" }).click();
+  await page.getByRole("button", { name: "Continue", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Connect AI providers" })).toBeFocused();
+
+  // changeStep uses history.replaceState (not router.replace), which must
+  // not consume the exit-trap's sentinel history entry.
+  await page.goBack();
+  await expect(page).toHaveURL(/\/$/);
+
+  await context.close();
+});
+
 test("a valid invite completes Free onboarding and still requires explicit membership", async ({ browser }) => {
   const ownerContext = await authenticatedContext(browser, "onboarding-invite-owner", "onboarding-invite-owner@example.com", "Invite", "Owner");
   const repositories = await (await ownerContext.request.get("/api/account/github/repositories")).json() as {
