@@ -230,14 +230,16 @@ function ProfileSection({ user, onSaved }: { user: AppUser; onSaved: (user: AppU
         <div className="field">
           <span className="label">Profile picture <em>optional</em></span>
           <div className="onboarding-avatar-picker">
-            <Avatar
-              userId={removeAvatar ? undefined : user.id}
-              version={user.updatedAt}
-              initials={initialsFromParts(firstName, lastName)}
-              tone="you"
-              previewSrc={avatarPreview ?? undefined}
-            />
-            <AvatarFileButton hasPicture={Boolean(avatarPreview) || (!removeAvatar && user.avatarKey != null)} onPick={pickAvatar} />
+            <label htmlFor="settings-avatar-input" className="onboarding-avatar-tile" aria-label="Choose profile picture">
+              <Avatar
+                userId={removeAvatar ? undefined : user.id}
+                version={user.updatedAt}
+                initials={initialsFromParts(firstName, lastName)}
+                tone="you"
+                previewSrc={avatarPreview ?? undefined}
+              />
+            </label>
+            <AvatarFileButton hasPicture={Boolean(avatarPreview) || (!removeAvatar && user.avatarKey != null)} onPick={pickAvatar} inputId="settings-avatar-input" />
             {showRemove && (
               <button type="button" className="button" data-variant="quiet" data-size="sm" onClick={pickRemoveAvatar}>Remove picture</button>
             )}
@@ -416,6 +418,17 @@ function ConnectionsSection({ initialCredentials, initialGithubInstallations }: 
     setError(null);
     setDeviceDialogOpen(true);
   }
+
+  // Returning from the App-install redirect: that path links with an empty
+  // repo scope (no user token to verify access), so reopen the device dialog
+  // to capture the member's real scope.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("github") !== "connected") return;
+    params.delete("github");
+    window.history.replaceState(null, "", `${window.location.pathname}?${params.toString()}`);
+    setDeviceDialogOpen(true);
+  }, []);
 
   async function removeGitHub(id: string) {
     setBusy(id);

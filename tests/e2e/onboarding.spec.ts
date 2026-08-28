@@ -55,13 +55,17 @@ test("a direct user keeps profile state across steps and completes Free onboardi
   await page.getByRole("button", { name: /^Active/ }).click();
   await expect(page.getByRole("dialog", { name: "Start a session" })).toBeVisible();
   await page.getByRole("button", { name: "New session" }).click();
-  await expect(page.locator(".tour-bubble")).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "Name the session" })).toBeVisible();
+  // The tour follows into the create dialog: its last step anchors the
+  // Create submit, and only a real create — or Skip — ends it.
+  await expect(page.getByRole("dialog", { name: "Name it, pick a repository, create" })).toBeVisible();
   // The whole create form is one page: task, repository, branch, and the
   // AI connection are all present with a single Create submit.
   await expect(page.getByLabel("Task")).toBeVisible();
   await expect(page.getByLabel("Candidate branch name")).toBeVisible();
   await expect(page.getByRole("button", { name: "Create session" })).toBeVisible();
+  await page.getByRole("button", { name: "Skip" }).click();
+  await expect(page.locator(".tour-bubble")).toHaveCount(0);
 
   await context.close();
 });

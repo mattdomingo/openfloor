@@ -79,6 +79,18 @@ export function OnboardingScreen({
     if (avatarPreview) URL.revokeObjectURL(avatarPreview);
   }, [avatarPreview]);
 
+  // Returning from the App-install redirect: that path can't verify which
+  // repos this member can reach (no user token), so the link landed with an
+  // empty scope — reopen the device dialog to capture the real one.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("github") !== "connected") return;
+    params.delete("github");
+    router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+    setDeviceDialogOpen(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   function pickAvatar(file: File | undefined) {
     if (!file) return;
     if (!ACCEPTED_AVATAR_TYPES.has(file.type)) {
@@ -131,6 +143,15 @@ export function OnboardingScreen({
   function connectGitHub() {
     setProfileError(null);
     setDeviceDialogOpen(true);
+  }
+
+  // GitHub authorization already names the person; only fill fields the user
+  // hasn't typed in, and fall back to the login when no display name is set.
+  function prefillNameFromGitHub(githubUser: { login: string; name: string | null }) {
+    if (firstName.trim() || lastName.trim()) return;
+    const parts = splitName(githubUser.name ?? githubUser.login);
+    setFirstName(parts.firstName);
+    setLastName(parts.lastName);
   }
 
   function submit(event: FormEvent) {
@@ -201,8 +222,12 @@ export function OnboardingScreen({
               <div className="field onboarding-avatar-field">
                 <span className="label">Profile picture <em>optional</em></span>
                 <div className="onboarding-avatar-picker">
-                  <Avatar initials={initialsFromParts(firstName, lastName)} tone="you" previewSrc={avatarPreview ?? undefined} />
-                  <div><AvatarFileButton hasPicture={Boolean(avatarPreview)} onPick={pickAvatar} /><small>PNG, JPEG, or WebP. 5MB maximum.</small></div>
+                  {/* The tile is what people click first, so it drives the same
+                      file input as the button — natively, via the label. */}
+                  <label htmlFor="onboarding-avatar-input" className="onboarding-avatar-tile" aria-label="Choose profile picture">
+                    <Avatar initials={initialsFromParts(firstName, lastName)} tone="you" previewSrc={avatarPreview ?? undefined} />
+                  </label>
+                  <div><AvatarFileButton hasPicture={Boolean(avatarPreview)} onPick={pickAvatar} inputId="onboarding-avatar-input" /><small>PNG, JPEG, or WebP. 5MB maximum.</small></div>
                 </div>
               </div>
               {cropSource && <AvatarCropper file={cropSource} onCancel={() => setCropSource(null)} onCropped={applyCrop} />}
@@ -229,7 +254,7 @@ export function OnboardingScreen({
                   </>
                 )}
               </div>
-              {deviceDialogOpen && <GitHubDeviceDialog purpose="onboarding" returnTo={returnTo} onConnected={setGithubInstallations} onClose={() => setDeviceDialogOpen(false)} />}
+              {deviceDialogOpen && <GitHubDeviceDialog purpose="onboarding" returnTo={returnTo} onConnected={setGithubInstallations} onIdentity={prefillNameFromGitHub} onClose={() => setDeviceDialogOpen(false)} />}
 
               {profileError && <p className="form-error" role="alert">{profileError}</p>}
               <div className="form-actions"><button type="submit" className="button" data-variant="primary" data-size="lg" disabled={submitting}>{submitting ? "Saving…" : "Continue"}</button></div>

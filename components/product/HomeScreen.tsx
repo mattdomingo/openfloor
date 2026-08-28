@@ -365,7 +365,9 @@ export function HomeScreen({
         </div>
       </section>
       {pendingDelete && <DeleteSessionDialog session={pendingDelete} onClose={() => setPendingDelete(null)} />}
-      <GuidedTour storageKey="openfloor:tutorial:home" steps={HOME_TOUR} />
+      {/* Keyed per account so a recreated account sees the tour again; the
+          dismissal itself stays device-local like the theme. */}
+      <GuidedTour storageKey={`openfloor:tutorial:home:${user.id}`} steps={HOME_TOUR} />
     </main>
   );
 }
@@ -384,6 +386,11 @@ const HOME_TOUR: TourStep[] = [
     selector: '[aria-label="New session"]',
     title: "Start a session",
     body: "A session is one room for one goal. Click + to name the task, pick the GitHub repository, and optionally connect an AI provider — all on one page.",
+  },
+  {
+    selector: '.create-dialog button[type="submit"]',
+    title: "Name it, pick a repository, create",
+    body: "Fill in the task, choose the GitHub repository the agents work in, then click Create session. You land on the agent floor — it walks you through itself the first time.",
   },
 ];
 

@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { authenticatedContext } from "./fixtures";
+import { authenticatedContext, skipTourIfOpen } from "./fixtures";
 
 // Reproduces the reported bug end to end, through the real browser and
 // worker: a user signs in once (simulating a one-time-code login), creates
@@ -16,6 +16,7 @@ test("returning through a different login method reaches the same session, not a
   const firstLogin = await firstLoginContext.newPage();
 
   await firstLogin.goto("/home");
+  await skipTourIfOpen(firstLogin);
   await firstLogin.getByRole("button", { name: "New session" }).click();
   await firstLogin.getByLabel("Task").fill("Session from the first login");
   await expect(firstLogin.getByLabel("Candidate branch name")).toHaveValue("Session from the first login");
@@ -43,6 +44,7 @@ test("a genuine stranger with a different email still cannot open the session", 
   const ownerContext = await authenticatedContext(browser, "stranger-test-owner", "stranger-test-owner@example.com", "Owner", "Example");
   const owner = await ownerContext.newPage();
   await owner.goto("/home");
+  await skipTourIfOpen(owner);
   await owner.getByRole("button", { name: "New session" }).click();
   await owner.getByLabel("Task").fill("Private to the owner");
   await expect(owner.getByLabel("Candidate branch name")).toHaveValue("Private to the owner");

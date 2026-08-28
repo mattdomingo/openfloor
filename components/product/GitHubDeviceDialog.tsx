@@ -17,10 +17,11 @@ type Phase =
 // github.com/login/device in the browser, poll until GitHub confirms, link
 // the member's installations. When the server has no device-flow client id
 // (501) this falls back to the classic App-install redirect automatically.
-export function GitHubDeviceDialog({ purpose, returnTo, onConnected, onClose }: {
+export function GitHubDeviceDialog({ purpose, returnTo, onConnected, onIdentity, onClose }: {
   purpose: "onboarding" | "settings";
   returnTo: string;
   onConnected: (installations: UserGitHubInstallationSummary[]) => void;
+  onIdentity?: (user: { login: string; name: string | null }) => void;
   onClose: () => void;
 }) {
   const { dismiss, dialogProps } = useDialogDismiss(onClose);
@@ -61,8 +62,9 @@ export function GitHubDeviceDialog({ purpose, returnTo, onConnected, onClose }: 
         return;
       }
       const verificationUri = start.verificationUri ?? "https://github.com/login/device";
+      // No auto-open: the person reads the code first, then follows the
+      // button — a tab appearing before the code is visible just confuses.
       setPhase({ name: "waiting", userCode: start.userCode, verificationUri });
-      window.open(verificationUri, "_blank", "noopener");
 
       let interval = Math.max(1, start.interval ?? 5);
       const poll = async () => {
@@ -73,7 +75,7 @@ export function GitHubDeviceDialog({ purpose, returnTo, onConnected, onClose }: 
           body: JSON.stringify({ deviceCode: start.deviceCode }),
         });
         const body = await response.json().catch(() => null) as
-          { pending?: boolean; interval?: number; expired?: boolean; connected?: boolean; installed?: boolean; installations?: UserGitHubInstallationSummary[]; error?: string } | null;
+          { pending?: boolean; interval?: number; expired?: boolean; connected?: boolean; installed?: boolean; installations?: UserGitHubInstallationSummary[]; githubUser?: { login?: string; name?: string | null } | null; error?: string } | null;
         if (stopped.current) return;
         if (body?.pending) {
           if (body.interval) interval = body.interval;
@@ -88,6 +90,7 @@ export function GitHubDeviceDialog({ purpose, returnTo, onConnected, onClose }: 
           setPhase({ name: "error", message: body?.error ?? "GitHub declined the authorization." });
           return;
         }
+        if (body.githubUser?.login) onIdentity?.({ login: body.githubUser.login, name: body.githubUser.name ?? null });
         const installations = body.installations ?? [];
         if (body.installed === false || installations.length === 0) {
           setPhase({ name: "authorized-no-install" });
@@ -120,8 +123,11 @@ export function GitHubDeviceDialog({ purpose, returnTo, onConnected, onClose }: 
           <>
             <p className="device-dialog-code" aria-label="Device code">{phase.userCode}</p>
             <p className="device-dialog-hint">
-              Enter this code at <a href={phase.verificationUri} target="_blank" rel="noopener noreferrer">github.com/login/device</a>. We opened it in your browser.
+              Copy this code, then enter it on GitHub to connect.
             </p>
+            <a className="button" data-variant="primary" href={phase.verificationUri} target="_blank" rel="noopener noreferrer">
+              Open github.com/login/device
+            </a>
             <p className="device-dialog-status"><Spinner /> Waiting for GitHub…</p>
           </>
         )}

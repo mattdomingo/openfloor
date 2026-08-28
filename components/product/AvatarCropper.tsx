@@ -171,7 +171,7 @@ export function AvatarCropper({ file, onCancel, onCropped }: {
    — renaming it after the field's caption. The input stays out of the tab order
    so the button is the only stop. Clearing value on change lets the same file be
    chosen again after a cancelled crop. */
-export function AvatarFileButton({ hasPicture, onPick }: { hasPicture: boolean; onPick: (file: File | undefined) => void }) {
+export function AvatarFileButton({ hasPicture, onPick, inputId }: { hasPicture: boolean; onPick: (file: File | undefined) => void; inputId?: string }) {
   const inputRef = useRef<HTMLInputElement>(null);
   return (
     <>
@@ -180,6 +180,7 @@ export function AvatarFileButton({ hasPicture, onPick }: { hasPicture: boolean; 
       </button>
       <input
         ref={inputRef}
+        id={inputId}
         type="file"
         className="sr-only avatar-file-input"
         tabIndex={-1}
