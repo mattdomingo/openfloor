@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { BASE_PATH } from "@/components/basePath";
 import { Spinner, useDialogDismiss } from "@/components/session/primitives";
+import { repoCountLabel } from "@/lib/display-name";
 import type { UserGitHubInstallationSummary } from "@/lib/session-types";
 
 type Phase =
@@ -136,7 +137,10 @@ export function GitHubDeviceDialog({ purpose, returnTo, onConnected, onIdentity,
             <p>Connected. openfloor can reach:</p>
             <ul className="device-dialog-installations">
               {phase.installations.filter((installation) => installation.status === "active").map((installation) => (
-                <li key={installation.id}><strong>{installation.accountLogin}</strong> <span>{installation.accountType}</span></li>
+                <li key={installation.id}>
+                  <strong>{installation.accountLogin}</strong>{" "}
+                  <span>{[installation.accountType, repoCountLabel(installation.repoCount)].filter(Boolean).join(" · ")}</span>
+                </li>
               ))}
             </ul>
           </>

@@ -12,7 +12,7 @@ import { ThemeToggle } from "@/components/ThemeToggle";
 import { ACCEPTED_AVATAR_TYPES, MAX_AVATAR_BYTES } from "@/lib/avatar-constraints";
 import { formatDuration } from "@/lib/date-format";
 import { LocalDateTime } from "@/components/LocalDateTime";
-import { initialsFromParts } from "@/lib/display-name";
+import { initialsFromParts, repoCountLabel } from "@/lib/display-name";
 import { lowHoursRemaining, PAID_PLAN_CATALOG, planLabel, planLimitsSummary, type PaidPlan, type Plan, type PlanStatus } from "@/lib/plans";
 import {
   CREDENTIAL_PROVIDERS,
@@ -454,7 +454,7 @@ function ConnectionsSection({ initialCredentials, initialGithubInstallations }: 
               {installations.map((installation) => (
                 <li className="settings-github-installation" key={installation.id}>
                   <span className="settings-category-name">{installation.accountLogin}</span>
-                  <span className="settings-category-detail">{installation.accountType} · {installation.status === "active" ? "Connected" : "Access revoked"}</span>
+                  <span className="settings-category-detail">{[installation.accountType, repoCountLabel(installation.repoCount), installation.status === "active" ? "Connected" : "Access revoked"].filter(Boolean).join(" · ")}</span>
                   <button className="button danger-button" disabled={busy != null} onClick={() => void removeGitHub(installation.id)}>{busy === installation.id ? "Removing…" : "Remove"}</button>
                 </li>
               ))}

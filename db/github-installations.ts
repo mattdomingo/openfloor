@@ -113,6 +113,7 @@ export async function listUserGitHubInstallations(
 ): Promise<UserGitHubInstallationSummary[]> {
   const rows = await database.prepare(
     `SELECT id, account_login AS accountLogin, account_type AS accountType, status,
+            json_array_length(repo_scope) AS repoCount,
             connected_at AS connectedAt, updated_at AS updatedAt
      FROM user_github_installations WHERE user_id = ?
      ORDER BY account_login COLLATE NOCASE, connected_at`,

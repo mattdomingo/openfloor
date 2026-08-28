@@ -7,7 +7,7 @@ import { BASE_PATH } from "@/components/basePath";
 import { AvatarCropper, AvatarFileButton } from "@/components/product/AvatarCropper";
 import { Avatar, Spinner } from "@/components/session/primitives";
 import { ACCEPTED_AVATAR_TYPES, MAX_AVATAR_BYTES } from "@/lib/avatar-constraints";
-import { initialsFromParts } from "@/lib/display-name";
+import { initialsFromParts, repoCountLabel } from "@/lib/display-name";
 import { CREDENTIAL_PROVIDERS, type ProviderCredentialSummary } from "@/lib/provider-credentials";
 import type { OnboardingStep } from "@/lib/onboarding-plan";
 import { Brand } from "./Brand";
@@ -242,7 +242,7 @@ export function OnboardingScreen({
                 {githubReady ? (
                   <div className="onboarding-invite-plan" role="status">
                     {githubInstallations.filter((installation) => installation.status === "active").map((installation) => (
-                      <div key={installation.id}><strong>{installation.accountLogin}</strong><span>{installation.accountType}</span></div>
+                      <div key={installation.id}><strong>{installation.accountLogin}</strong><span>{[installation.accountType, repoCountLabel(installation.repoCount)].filter(Boolean).join(" · ")}</span></div>
                     ))}
                     <p>GitHub access connected. More installations can be added later from Settings.</p>
                   </div>

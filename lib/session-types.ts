@@ -192,6 +192,10 @@ export type UserGitHubInstallationSummary = {
   accountLogin: string;
   accountType: string;
   status: "active" | "revoked";
+  // How many of the installation's repositories this member's own GitHub
+  // permissions reach (the stored repo_scope length); null for legacy
+  // unscoped rows.
+  repoCount: number | null;
   connectedAt: number;
   updatedAt: number;
 };
