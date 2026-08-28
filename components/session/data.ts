@@ -1,4 +1,27 @@
-import type { AgentRun, AgentRunStatus, FloorAgent, FloorQueueItem } from "@/lib/floor-types";
+import type { AgentRun, AgentRunStatus, FloorAgent, FloorQueueItem, MergeConflictStatus } from "@/lib/floor-types";
+
+// The open merge conflict case belonging to one floor agent (source.agentId
+// on the case — see db/conflicts.ts), if any. Workspace.tsx builds one of
+// these per agent from the review snapshot; AgentCard/AgentSpotlight use it
+// to override their ordinary run-status display with conflict state.
+export type AgentConflictInfo = { caseId: string; status: MergeConflictStatus };
+
+// Reuses the agent card's existing status-overlay states (see
+// legacy-floor-components.css's "Agent status states" block) rather than
+// inventing new ones: "needs-input" is the same amber breathing ring already
+// used elsewhere for "a person must act," "blocked" is the same red ring
+// already used for "stuck." A resolved case stops overriding the card —
+// the agent's own latest-run status takes back over once nothing is open.
+export function conflictCardStatus(conflict: AgentConflictInfo | null | undefined): "needs-input" | "blocked" | null {
+  if (!conflict) return null;
+  if (conflict.status === "awaiting_input" || conflict.status === "failed") return "needs-input";
+  if (conflict.status === "pending" || conflict.status === "resolving") return "blocked";
+  return null;
+}
+
+export function conflictStateLabel(status: "needs-input" | "blocked"): string {
+  return status === "needs-input" ? "Needs your decision" : "Resolving merge conflict";
+}
 
 export type PanelId = "brief" | "floor" | "queue";
 export type RailId = Exclude<PanelId, "floor">;

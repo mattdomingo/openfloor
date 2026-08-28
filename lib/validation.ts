@@ -32,6 +32,7 @@ export type QueuePromptInput = { prompt: string; agentId: string | null };
 export type RoutingSettingsInput = { autoDispatch?: boolean; autoProvisionAgents?: boolean; autoAgentProvider?: CredentialProvider | null; autoResolveConflicts?: boolean };
 export type ConflictInputRequest = { explanation: string; questions: string[] };
 export type ConflictAnswersInput = { answers: Array<{ questionId: string; answer: string }> };
+export type ConflictSelectionsInput = { snapshotRunId: string; selections: Array<{ path: string; hunkIndex: number; choice: "ours" | "theirs" | "both" }> };
 export type QueueOrderInput = { itemIds: string[] };
 export type QueuePromptTextInput = { text: string };
 export type QueueItemPauseInput = { paused: boolean };
@@ -237,6 +238,28 @@ export function parseConflictAnswersInput(value: unknown): ConflictAnswersInput 
   }
   if (new Set(parsed.map((answer) => answer.questionId)).size !== parsed.length) return null;
   return { answers: parsed };
+}
+
+const MAX_CONFLICT_SELECTIONS = 500; // matches the worker's MAX_SNAPSHOT_FILES x a generous per-file hunk bound
+const CONFLICT_CHOICES = new Set(["ours", "theirs", "both"]);
+
+export function parseConflictSelectionsInput(value: unknown): ConflictSelectionsInput | null {
+  if (!value || typeof value !== "object") return null;
+  const input = value as Record<string, unknown>;
+  if (typeof input.snapshotRunId !== "string" || !input.snapshotRunId.trim()) return null;
+  if (!Array.isArray(input.selections) || input.selections.length < 1 || input.selections.length > MAX_CONFLICT_SELECTIONS) return null;
+  const parsed: ConflictSelectionsInput["selections"] = [];
+  for (const item of input.selections) {
+    if (!item || typeof item !== "object") return null;
+    const selection = item as Record<string, unknown>;
+    if (typeof selection.path !== "string" || !selection.path.trim() || selection.path.length > 1_000) return null;
+    if (typeof selection.hunkIndex !== "number" || !Number.isInteger(selection.hunkIndex) || selection.hunkIndex < 0) return null;
+    if (typeof selection.choice !== "string" || !CONFLICT_CHOICES.has(selection.choice)) return null;
+    parsed.push({ path: selection.path, hunkIndex: selection.hunkIndex, choice: selection.choice as ConflictSelectionsInput["selections"][number]["choice"] });
+  }
+  const keys = new Set(parsed.map((selection) => `${selection.path} ${selection.hunkIndex}`));
+  if (keys.size !== parsed.length) return null;
+  return { snapshotRunId: input.snapshotRunId.trim(), selections: parsed };
 }
 
 export function parseQueueOrderInput(value: unknown): QueueOrderInput | null {

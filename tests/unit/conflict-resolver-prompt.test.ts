@@ -10,7 +10,7 @@ describe("Merge Resolver prompt", () => {
       explanation: "Need compatibility policy", conflictPaths: ["src/api.ts", "src/types.ts"], automaticAttempts: 1,
       failureReason: null, prompts: [{ id: "prompt-1", authorUserId: "user-1", authorName: "Ada", text: "Keep clients working" }], attempts: [],
       questions: [{ id: "q1", question: "Keep legacy fields?", answer: "Yes, deprecate first", answeredByUserId: "user-1", answeredByName: "Ada", requestedAt: 1, answeredAt: 2 }],
-      createdAt: 1, updatedAt: 2, resolvedAt: null,
+      createdAt: 1, updatedAt: 2, resolvedAt: null, hasSnapshot: false,
     };
     const prompt = renderConflictResolverPrompt({ conflict, sourceSummary: "Changed API", sourceConflictReason: "409 conflict", sessionBrief: "## Session objective\nShip safely" });
     expect(prompt).toContain("# Merge Resolver system run");
