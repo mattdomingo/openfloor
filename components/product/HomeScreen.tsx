@@ -377,11 +377,11 @@ export function HomeScreen({
 // the tile's click straight into the create dialog and walks every field in
 // form order, ending on the real Create session click — that final click
 // both ends the tour and creates the session, landing on the agent floor
-// where FLOOR_TOUR picks up. The five field steps are gated (isSatisfied):
-// each waits for the field to actually be filled — a task typed, an
-// objective typed, a repository selected, a candidate branch name present,
-// a provider actually connected — rather than advancing on a bare click,
-// and Enter is the step's own "continue" once it is.
+// where FLOOR_TOUR picks up. Task, Goal, Repository, and Candidate branch
+// name are gated (isSatisfied): each waits for the field to actually be
+// filled in rather than advancing on a bare click, and Enter is the step's
+// own "continue" once it is. The AI connection is optional, same as real
+// session creation, so that step stays a plain click-to-advance.
 const HOME_TOUR: TourStep[] = [
   {
     selector: ".shop-tabs",
@@ -410,6 +410,7 @@ const HOME_TOUR: TourStep[] = [
     title: "Pick the repository",
     body: "The GitHub repository agents clone and push to. No repositories listed? Add GitHub access in Account Settings.",
     isSatisfied: () => Boolean(document.querySelector('.create-dialog [aria-label="Session repository"] span')?.textContent?.trim()),
+    placement: "side",
   },
   {
     selector: '.create-dialog [data-tour="candidate-name"]',
@@ -420,8 +421,7 @@ const HOME_TOUR: TourStep[] = [
   {
     selector: '.create-dialog section[aria-label="AI connection"]',
     title: "Check your AI is connected",
-    body: "Agents refuse to run with no connected provider. Expand the one you want and connect it.",
-    isSatisfied: () => Boolean(document.querySelector('.create-dialog section[aria-label="AI connection"] [data-connected="true"]')),
+    body: "Agents refuse to run with no connected provider. Expand the one you want and confirm it reads CONNECTED — or skip this and add one later in Settings.",
   },
   {
     selector: '.create-dialog button[type="submit"]',
