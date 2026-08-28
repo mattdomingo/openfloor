@@ -44,13 +44,15 @@ export default async function SignInPage({ searchParams }: { searchParams: Promi
     redirect(destination);
   }
 
+  // The email one-time-code form needs the Access flow's form action, which
+  // only exists while One-time PIN is among the app's login methods. When the
+  // scrape finds nothing (e.g. GitHub is the sole method), the page still
+  // renders with the GitHub button alone — bailing to the hosted screen here
+  // defeated the entire custom page.
   const teamDomain = normalizedTeamDomain(env.CF_ACCESS_TEAM_DOMAIN);
   const target = await fetchAccessLoginTarget(`https://app.opnflr.com${destination}`, teamDomain, {
     testHtml: bindings.OPENFLOOR_TEST_ACCESS_LOGIN_HTML,
   });
-  if (!target.ok) {
-    redirect(destination);
-  }
 
   return (
     <main className="entry-shell signin-shell">
@@ -71,24 +73,28 @@ export default async function SignInPage({ searchParams }: { searchParams: Promi
             the Access app and instant auth on, this lands straight on
             GitHub's authorize screen. */}
         <a className="signin-button signin-oauth" href={destination}>Continue with GitHub</a>
-        <div className="signin-divider" role="separator" aria-label="or">or</div>
-        {/* Email one-time code stays as the universal fallback: accounts key
-            on email, so this always reaches the account no matter which
-            method created it. */}
-        <form className="signin-email-form" method="POST" action={`/signin/code?return_to=${encodeURIComponent(destination)}`}>
-          <input type="hidden" name="action" value={target.emailAction} />
-          <label className="sr-only" htmlFor="signin-email">Email</label>
-          <input
-            id="signin-email"
-            className="signin-input"
-            type="email"
-            name="email"
-            placeholder="you@company.com"
-            autoComplete="email"
-            required
-          />
-          <button className="signin-button" data-variant="quiet" type="submit">Email me a code</button>
-        </form>
+        {target.ok && (
+          <>
+            <div className="signin-divider" role="separator" aria-label="or">or</div>
+            {/* Email one-time code stays as the universal fallback: accounts
+                key on email, so this always reaches the account no matter
+                which method created it. */}
+            <form className="signin-email-form" method="POST" action={`/signin/code?return_to=${encodeURIComponent(destination)}`}>
+              <input type="hidden" name="action" value={target.emailAction} />
+              <label className="sr-only" htmlFor="signin-email">Email</label>
+              <input
+                id="signin-email"
+                className="signin-input"
+                type="email"
+                name="email"
+                placeholder="you@company.com"
+                autoComplete="email"
+                required
+              />
+              <button className="signin-button" data-variant="quiet" type="submit">Email me a code</button>
+            </form>
+          </>
+        )}
       </div>
     </main>
   );
