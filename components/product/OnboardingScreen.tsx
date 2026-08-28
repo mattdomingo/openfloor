@@ -101,6 +101,7 @@ export function OnboardingScreen({
     // Same history.replaceState reasoning as changeStep above — keep the
     // back-button exit trap armed.
     window.history.replaceState(null, "", `${pathname}?${params.toString()}`);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (github === "verify") setDeviceDialogOpen(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

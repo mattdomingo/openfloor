@@ -429,6 +429,7 @@ function ConnectionsSection({ initialCredentials, initialGithubInstallations }: 
     if (github !== "connected" && github !== "verify") return;
     params.delete("github");
     window.history.replaceState(null, "", `${window.location.pathname}?${params.toString()}`);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (github === "verify") setDeviceDialogOpen(true);
   }, []);
 

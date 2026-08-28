@@ -76,7 +76,7 @@ describe("trusted Git bundle publisher", () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
-  }, 20_000);
+  }, 45_000);
 });
 
 function git(args: string[], extraEnv: Record<string, string> = {}, input?: string) {

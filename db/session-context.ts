@@ -21,11 +21,11 @@ import { getRunExecutionContext } from "./runs";
 // the way getFloorSnapshot's member-facing query is. Bounded, fixed number
 // of queries — never N+1 over agents, runs, or queue items.
 
-const RUN_LIMIT = 40;
-const QUEUE_LIMIT = 40;
-const CHAT_LIMIT = 30;
-const AGENT_LIMIT = 50;
-const SHARED_FILE_LIMIT = 20;
+const RUN_LIMIT = 25;
+const QUEUE_LIMIT = 25;
+const CHAT_LIMIT = 15;
+const AGENT_LIMIT = 30;
+const SHARED_FILE_LIMIT = 15;
 
 // One reader for the shared-file list (ENG-113): the brief's section and the
 // workflow's sandbox materialization must agree on which files exist, so

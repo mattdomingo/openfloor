@@ -90,10 +90,26 @@ describe("renderSessionContext", () => {
   it("caps a section at its documented limit and leaves an explicit remaining count", () => {
     const chat = Array.from({ length: SESSION_CONTEXT_LIMITS.chatMessages + 3 }, (_, index) => ({ authorName: "Member Example", text: `message ${index}` }));
     const text = renderSessionContext(baseSnapshot({ chat }), viewer);
-    expect(text).toContain("message 0");
-    expect(text).toContain(`message ${SESSION_CONTEXT_LIMITS.chatMessages - 1}`);
-    expect(text).not.toContain(`message ${SESSION_CONTEXT_LIMITS.chatMessages}`);
+    // Since message 3..8 are the newest 6 messages, they fill the slots
+    expect(text).toContain("message 3");
+    expect(text).toContain(`message ${SESSION_CONTEXT_LIMITS.chatMessages + 2}`);
+    expect(text).not.toContain("message 0");
     expect(text).toContain("(3 more not shown)");
+  });
+
+  it("prioritizes messages that mention the agent in team chat", () => {
+    const chat = [
+      { authorName: "Member 1", text: "general chatter 1" },
+      { authorName: "Member 2", text: "hey @Builder please check this endpoint" },
+      { authorName: "Member 3", text: "general chatter 2" },
+      { authorName: "Member 4", text: "general chatter 3" },
+      { authorName: "Member 5", text: "general chatter 4" },
+      { authorName: "Member 6", text: "general chatter 5" },
+      { authorName: "Member 7", text: "general chatter 6" },
+      { authorName: "Member 8", text: "general chatter 7" },
+    ];
+    const text = renderSessionContext(baseSnapshot({ chat }), viewer);
+    expect(text).toContain("hey @Builder please check this endpoint");
   });
 
   it("drops whole lower-priority sections with a budget marker when the brief exceeds the character budget, keeping higher-priority sections intact", () => {

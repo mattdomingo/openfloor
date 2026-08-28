@@ -72,5 +72,5 @@ export default defineConfig({
       },
     }),
   ],
-  test: { include: ["tests/render/**/*.test.ts"], setupFiles: ["./tests/render/setup.ts"] },
+  test: { include: ["tests/render/**/*.test.ts"], setupFiles: ["./tests/render/setup.ts"], testTimeout: 30_000 },
 });

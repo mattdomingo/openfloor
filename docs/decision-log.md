@@ -721,3 +721,12 @@ Separately, the lobby's `SessionSetupDialog`/`setupRequested`/`?setup=1` are del
 
 **Consequences:** A user who clicks through Task/Repository without typing reaches a disabled Create submit that cannot advance the tour (a disabled button emits no click); Skip remains the only escape hatch there, deliberately, rather than adding a second fallback path alongside missing-anchor's Next button. Clicking the Repository trigger opens its dropdown and simultaneously advances to the next step, so that highlight sits under the open menu until a repository is picked or the menu is dismissed — accepted, not fixed. `tests/e2e/onboarding.spec.ts` walks all 8 steps through a real create. `tests/e2e/fixtures.ts`'s `authenticatedContext` now reads the account's internal id from `/api/bootstrap/home` before seeding the tour's seen-it keys, since they are suffixed `:<userId>` (this was already true after the account-per-tour-key change and had silently drifted out of sync with the fixture).
 
+### 2026-08-28 — Slim session brief chat context and compact live edit events
+
+**Decision:** In `lib/session-context.ts` and `db/session-context.ts`, team chat injected into the agent's prompt brief is pruned to relevant signal: messages mentioning the agent (via `@Name` or name match) are prioritized, followed by the latest team messages up to a cap of 6 messages at 150 characters each (down from 20 messages x 300 characters). D1's chat query bound is reduced from 30 to 15. In-flight run telemetry deduplicates and compacts live file edit paths to prevent event floods, and the overall brief character ceiling is reduced from 24,000 to 6,000 characters.
+
+**Rationale:** Passing up to 30 raw team messages into every agent turn caused context bloat and token consumption without providing actionable task instructions. Most conversational messages in team chat are unrelated to a given agent unless they explicitly mention that agent. Agents who need full room history can still invoke the stdio `openfloor_session_context` MCP tool mid-run.
+
+**Consequences:** Substantially lowers per-run prompt token usage and cost across all provider runs while preserving floor coordination, conflict avoidance, and honest empty states.
+
+
