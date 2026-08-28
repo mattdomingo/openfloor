@@ -268,9 +268,15 @@ input.avatar-file-input { width: 1px; height: 1px; padding: 0; }
 .repo-gate-checklist li span:first-child { display: grid; flex: none; place-items: center; width: 20px; height: 20px; border-radius: 50%; border: 1px solid var(--line-strong); color: var(--text-tertiary); font-size: var(--text-xs); }
 .repo-gate-checklist li[data-done="true"] { color: var(--text-primary); }
 .repo-gate-checklist li[data-done="true"] span:first-child { border-color: var(--status-running); background: var(--status-running-soft); color: var(--status-running); }
-.queue-run-row { display: flex; align-items: center; justify-content: flex-end; gap: .45rem; margin-top: .6rem; }
+/* Wraps like .queue-item-head: with justify-content: flex-end, content wider
+   than the card spills out the row's LEFT edge (and past the card border), so
+   excess items must move to a new line instead. */
+.queue-run-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: .45rem; margin-top: .6rem; }
 .queue-run-row .queue-chip[data-status="answered"] { margin-right: auto; }
-.queue-run-branch { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-tertiary); font-size: .68rem; }
+/* Zero flex-basis keeps the branch out of wrap decisions (its full width would
+   otherwise force premature wrapping); it grows into free space up to its
+   content width and ellipsizes below it, exactly as before. */
+.queue-run-branch { flex: 1 1 0; max-width: max-content; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-tertiary); font-size: .68rem; }
 .queue-item[data-clickable="true"] { cursor: pointer; }
 .queue-item[data-clickable="true"]:hover { border-color: color-mix(in srgb, var(--accent) 40%, var(--line-strong)); }
 .queue-detail { display: grid; gap: var(--space-2); padding: var(--space-3); border-radius: var(--radius-sm); background: var(--surface-panel); }
