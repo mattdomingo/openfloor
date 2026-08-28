@@ -3,6 +3,7 @@
 import { useCallback, useMemo, useState } from "react";
 import { BASE_PATH } from "@/components/basePath";
 import type { AgentRunRollbackScope, CreateFloorAgentInput, FloorParticipant, FloorSnapshot } from "@/lib/floor-types";
+import { sessionUploadErrorMessage, validateSessionFileUploads } from "@/lib/session-file-constraints";
 import type { AppUser, SessionMember } from "@/lib/session-types";
 import { initials } from "./data";
 
@@ -62,6 +63,11 @@ export function usePersistentFloorData(sessionId: string, initialFloor: FloorSna
   // link them to the message it sends next.
   const uploadFiles = useCallback(async (files: File[]) => {
     if (files.length === 0) return [] as string[];
+    const validationError = validateSessionFileUploads(files);
+    if (validationError) {
+      setError(validationError);
+      return null;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -72,14 +78,15 @@ export function usePersistentFloorData(sessionId: string, initialFloor: FloorSna
         onMissing();
         return null;
       }
+      const text = await response.text();
       let result: (MutationResult & { fileIds?: string[] }) | null = null;
       try {
-        result = (await response.json()) as MutationResult & { fileIds?: string[] };
+        result = text ? (JSON.parse(text) as MutationResult & { fileIds?: string[] }) : null;
       } catch {
         result = null;
       }
       if (!response.ok || !result?.floor || !result.fileIds) {
-        setError(result?.error ?? `The upload failed (${response.status}).`);
+        setError(sessionUploadErrorMessage(response.status, result?.error));
         return null;
       }
       setFloor(result.floor);

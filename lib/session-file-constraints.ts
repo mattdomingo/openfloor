@@ -24,3 +24,34 @@ export function sanitizeSessionFileName(name: string): string {
   flat = flat.replace(/\s+/g, " ").trim().slice(0, MAX_SESSION_FILE_NAME_CHARS).trim();
   return flat || "file";
 }
+
+export function formatSessionFileSize(bytes: number): string {
+  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+}
+
+export function validateSessionFileUploads(files: Array<{ name: string; size: number }>): string | null {
+  if (files.length > MAX_SESSION_FILES_PER_UPLOAD) {
+    return `You can upload at most ${MAX_SESSION_FILES_PER_UPLOAD} files at a time.`;
+  }
+  const oversized = files.find((file) => file.size > MAX_SESSION_FILE_BYTES);
+  if (oversized) {
+    return `"${oversized.name}" is too large (${formatSessionFileSize(oversized.size)}). Files must be 8MB or smaller.`;
+  }
+  const empty = files.find((file) => file.size === 0);
+  if (empty) {
+    return `"${empty.name}" is empty. Files must be at least 1 byte.`;
+  }
+  return null;
+}
+
+export function sessionUploadErrorMessage(status: number, serverError?: string | null): string {
+  if (serverError && serverError.trim().length > 0) return serverError;
+  if (status === 413) return "The upload is too large. Each file must be 8MB or smaller.";
+  if (status === 400) return "The upload request was invalid. Each file must be between 1 byte and 8MB.";
+  if (status === 401 || status === 403) return "You do not have permission to upload files to this session.";
+  if (status === 404) return "Session not found.";
+  if (status === 408 || status === 504) return "The upload timed out. Please try again.";
+  if (status === 502 || status === 503) return "File upload is temporarily unavailable. Please try again shortly.";
+  return "The upload could not be completed. Please try again.";
+}
