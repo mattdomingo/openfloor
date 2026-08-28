@@ -34,20 +34,29 @@ export function safeAppReturnPath(value: unknown): string | null {
 // application-owned password flow, and Google is untouched by this switch —
 // see protectedAccessPath and the 2026-08-25 decision log.
 export function accessSignInPath(returnTo: string): string {
-  const path = protectedAccessPath(returnTo);
   const bindings = env as unknown as { ACCESS_CUSTOM_LOGIN_ENABLED?: string };
   if (bindings.ACCESS_CUSTOM_LOGIN_ENABLED === "true") {
-    return `/signin?return_to=${encodeURIComponent(path)}`;
+    // The plain target, not the anchored one — /signin runs the target
+    // through protectedAccessPath itself, and passing the anchored form
+    // here would nest /auth/complete inside its own return_to.
+    return `/signin?return_to=${encodeURIComponent(appPath(safeRelativeReturnPath(returnTo)))}`;
   }
-  return path;
+  return protectedAccessPath(returnTo);
 }
 
-// The real Access-protected path for a return target, bypassing /signin
+// The Access-protected entry for a return target, bypassing /signin
 // entirely. /signin itself must use this — never accessSignInPath — for its
 // Google link and its upstream-failure fallback, or it would loop back to
 // itself whenever the custom page is enabled.
+//
+// This is the one path that stays inside the pages Access application:
+// every other page lives outside Access (so a signed-out direct hit reaches
+// the Worker, which sends it to our own landing/signin instead of the
+// hosted login screen), and every sign-in flow anchors here to mint the
+// CF_Authorization cookie before /auth/complete bounces to the target.
 export function protectedAccessPath(returnTo: string): string {
-  return appPath(safeRelativeReturnPath(returnTo));
+  const target = appPath(safeRelativeReturnPath(returnTo));
+  return `${BASE_PATH}/auth/complete?return_to=${encodeURIComponent(target)}`;
 }
 
 export function accessRequiredPath(returnTo: string): string {
