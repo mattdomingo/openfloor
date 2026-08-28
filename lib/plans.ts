@@ -27,17 +27,23 @@ export const PAID_PLAN_CATALOG: Record<PaidPlan, {
   max: { unitAmountCents: 5_000, currency: "usd", minimumSeats: 3, maximumSeats: 10 },
 };
 
-// Internal @opnflr.com accounts always test at enterprise's unlimited
-// seats/hours, independent of the row's stored plan/plan_status — this is
-// the one seam every limit check already passes through (effectivePlan /
-// effectiveSeatLimit), so no quota call site needs its own bypass. Email is
-// matched case-insensitively even though upsertUser only ever stores
-// normalizeEmail's lowercase output, since this is a security-relevant
-// default worth not depending on that invariant.
+// Internal @opnflr.com accounts, plus a short allowlist of individual
+// testing addresses, always test at enterprise's unlimited seats/hours,
+// independent of the row's stored plan/plan_status — this is the one seam
+// every limit check already passes through (effectivePlan /
+// effectiveSeatLimit), so no quota call site needs its own bypass, and
+// deleting + re-signing-up with the same address doesn't lose it either —
+// there is no row-stored flag to lose. Email is matched case-insensitively
+// even though upsertUser only ever stores normalizeEmail's lowercase output,
+// since this is a security-relevant default worth not depending on that
+// invariant.
 const UNLIMITED_TESTING_EMAIL_SUFFIX = "@opnflr.com";
+const UNLIMITED_TESTING_EMAILS = new Set(["matthew.domingo2022@gmail.com", "alha3308@colorado.edu"]);
 
 function isUnlimitedTestingEmail(email: string | null | undefined): boolean {
-  return typeof email === "string" && email.toLowerCase().endsWith(UNLIMITED_TESTING_EMAIL_SUFFIX);
+  if (typeof email !== "string") return false;
+  const normalized = email.toLowerCase();
+  return normalized.endsWith(UNLIMITED_TESTING_EMAIL_SUFFIX) || UNLIMITED_TESTING_EMAILS.has(normalized);
 }
 
 // A purchased plan only grants its limits while status is "active";
