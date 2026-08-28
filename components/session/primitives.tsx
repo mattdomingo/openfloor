@@ -65,6 +65,13 @@ export function useDialogDismiss(onClose: () => void) {
     dialogProps: {
       ref: dialogRef,
       onClose,
+      // A native <dialog> doesn't close on backdrop click by default. The
+      // click target is the <dialog> element itself only when it lands on
+      // the backdrop (any content inside is a descendant element), so this
+      // never fires for a click inside the dialog's own content.
+      onClick: (event: ReactMouseEvent<HTMLDialogElement>) => {
+        if (event.target === dialogRef.current) dialogRef.current?.close();
+      },
       onCancel: (event: SyntheticEvent) => {
         event.preventDefault();
         dialogRef.current?.close();

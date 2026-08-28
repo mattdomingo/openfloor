@@ -4555,6 +4555,19 @@
   border-bottom-color: color-mix(in srgb, var(--agent-color) 35%, var(--line-soft));
 }
 
+/* The side the human has chosen for this hunk (ours/theirs/both) gets a
+   visible border/head tint on the whole pane, not just the diverging lines —
+   same --accent "selected" language as .conflict-file-item and
+   .conflict-center-case elsewhere in this file. */
+.conflict-pane[data-selected="true"] {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.conflict-pane[data-selected="true"] .conflict-pane-head {
+  background: color-mix(in srgb, var(--accent) 16%, var(--surface-header));
+}
+
 .conflict-pane-head strong {
   display: inline-flex;
   align-items: center;
