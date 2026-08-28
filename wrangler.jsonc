@@ -78,6 +78,10 @@
 		}
 	],
 	"vars": {
+		// RPC transport is required for sandbox.writeFile() calls that pass a
+		// ReadableStream body (session shared-file copies in agent-run-workflow.ts) —
+		// HTTP/WebSocket transports don't support writeFileStream.
+		"SANDBOX_TRANSPORT": "rpc",
 		"OPENFLOOR_RUNTIME_ORIGIN": "https://app.opnflr.com",
 		"PREFLIGHT_ENABLED": "false",
 		"AGENT_RUN_ENABLED": "true",
