@@ -143,6 +143,12 @@ export function GitHubDeviceDialog({ purpose, returnTo, onConnected, onIdentity,
                 </li>
               ))}
             </ul>
+            <p className="device-dialog-hint">
+              Missing an account? Install openfloor on it — your own account included — then connect again.
+            </p>
+            <button type="button" className="button" data-variant="quiet" disabled={installBusy} onClick={() => void openInstallPage()}>
+              {installBusy ? <><Spinner />Opening…</> : "Install on another GitHub account"}
+            </button>
           </>
         )}
         {phase.name === "authorized-no-install" && (
