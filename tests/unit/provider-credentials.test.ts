@@ -16,6 +16,7 @@ import {
   resolveRunCredentialSource,
   resolveRunModel,
   usesClaudeRunner,
+  usesQwenRunner,
   type ProviderCredentialSummary,
 } from "@/lib/provider-credentials";
 import { validateProviderApiKey, validateProviderOauthSecret } from "@/lib/provider-validation";
@@ -28,6 +29,8 @@ describe("provider parsing and labels", () => {
     expect(parseCredentialProvider("kimi")).toBe("kimi");
     expect(parseCredentialProvider("gemini")).toBe("gemini");
     expect(parseCredentialProvider("glm")).toBe("glm");
+    expect(parseCredentialProvider("qwen")).toBe("qwen");
+    expect(parseCredentialProvider("deepseek")).toBe("deepseek");
     expect(parseCredentialProvider("mistral")).toBeNull();
     expect(parseCredentialProvider("grok")).toBeNull();
     expect(parseCredentialProvider("")).toBeNull();
@@ -40,6 +43,8 @@ describe("provider parsing and labels", () => {
     expect(providerLabel("kimi")).toBe("Moonshot");
     expect(providerLabel("gemini")).toBe("Google");
     expect(providerLabel("glm")).toBe("Z.ai");
+    expect(providerLabel("qwen")).toBe("Alibaba Cloud");
+    expect(providerLabel("deepseek")).toBe("DeepSeek");
   });
 
   it("names agents per provider and routes kimi through the Claude runner", () => {
@@ -48,11 +53,25 @@ describe("provider parsing and labels", () => {
     expect(AGENT_PROVIDER_LABELS.kimi).toBe("Kimi");
     expect(AGENT_PROVIDER_LABELS.gemini).toBe("Gemini");
     expect(AGENT_PROVIDER_LABELS.glm).toBe("GLM");
+    expect(AGENT_PROVIDER_LABELS.qwen).toBe("Qwen");
+    expect(AGENT_PROVIDER_LABELS.deepseek).toBe("DeepSeek");
     expect(usesClaudeRunner("anthropic")).toBe(true);
     expect(usesClaudeRunner("kimi")).toBe(true);
     expect(usesClaudeRunner("glm")).toBe(true);
     expect(usesClaudeRunner("openai")).toBe(false);
     expect(usesClaudeRunner("gemini")).toBe(false);
+    expect(usesClaudeRunner("qwen")).toBe(false);
+    expect(usesClaudeRunner("deepseek")).toBe(false);
+  });
+
+  // The two chat-completions providers share the Qwen Code runner; every
+  // other provider has its own. A provider must never satisfy both
+  // predicates — the workflow branches on them in sequence.
+  it("routes qwen and deepseek through the Qwen runner, and nothing else", () => {
+    for (const provider of CREDENTIAL_PROVIDERS) {
+      expect(usesQwenRunner(provider)).toBe(provider === "qwen" || provider === "deepseek");
+      expect(usesQwenRunner(provider) && usesClaudeRunner(provider)).toBe(false);
+    }
   });
 
   it("fingerprints as the last four characters", () => {
@@ -72,6 +91,10 @@ describe("per-provider run models", () => {
     expect(resolveRunModel("gemini", null)).toBe("gemini-3.5-flash");
     // glm-5.3: the coding flagship id Z.ai's models endpoint returns.
     expect(resolveRunModel("glm", null)).toBe("glm-5.3");
+    // Doc-banked defaults (2026-08-28); Spikes Q2/D1 re-verify against each
+    // vendor's GET /models before the rollout flags flip.
+    expect(resolveRunModel("qwen", null)).toBe("qwen3-coder-plus");
+    expect(resolveRunModel("deepseek", null)).toBe("deepseek-v4-pro");
   });
 
   it("keeps the Codex default the historical AGENT_RUN_MODEL value", () => {

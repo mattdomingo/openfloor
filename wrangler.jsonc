@@ -105,6 +105,13 @@
 		// owner-connected key), and the per-provider acceptance runbook
 		// passes. No image bump — GLM reuses the Claude runner unchanged.
 		"GLM_RUN_ENABLED": "false",
+		// Qwen (Alibaba Cloud) and DeepSeek rollout gates: keep false until the
+		// deploy carrying the v6 image (Qwen Code CLI + runner), each gateway
+		// route, and a resolvable credential (DASHSCOPE_API_KEY /
+		// DEEPSEEK_API_KEY or an owner-connected key) are live and the
+		// per-provider acceptance runbook passes — Spikes Q2/D1 first.
+		"QWEN_RUN_ENABLED": "false",
+		"DEEPSEEK_RUN_ENABLED": "false",
 		// Custom sign-in page rollout gate: on per explicit ship decision
 		// 2026-08-25, ahead of the live production Access verification
 		// (real Google + real email-code sign-in, plus the upstream-

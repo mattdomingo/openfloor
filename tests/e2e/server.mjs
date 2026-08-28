@@ -30,6 +30,8 @@ const providerTestKeys = JSON.stringify({
   kimi: ["sk-kimi-e2e-accepted"],
   gemini: ["AIza-gemini-e2e-accepted"],
   glm: ["zai-glm-e2e-accepted"],
+  qwen: ["sk-qwen-e2e-accepted"],
+  deepseek: ["sk-deepseek-e2e-accepted"],
 });
 const agentRunTestData = process.env.OPENFLOOR_TEST_AGENT_RUN_DATA ?? JSON.stringify({
   holdPrompts: ["Hold for cancellation", "Hold persistent for auto provisioning", "Hold generated for auto provisioning"],

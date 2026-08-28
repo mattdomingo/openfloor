@@ -37,7 +37,7 @@ async function room(suffix: string) {
 
 async function connectKey(
   userId: string,
-  provider: "anthropic" | "openai" | "kimi" | "gemini" | "glm",
+  provider: "anthropic" | "openai" | "kimi" | "gemini" | "glm" | "qwen" | "deepseek",
   apiKey: string,
   kind: "api_key" | "oauth" = "api_key",
 ) {

@@ -134,7 +134,7 @@ export const sessions = sqliteTable("sessions", {
   // available. Null means resolve from the owner's current credential set:
   // one provider selects itself, none falls back to OpenAI, several require
   // an explicit selection before generated agents can start.
-  autoAgentProvider: text("auto_agent_provider", { enum: ["anthropic", "openai", "kimi", "gemini"] }),
+  autoAgentProvider: text("auto_agent_provider", { enum: ["anthropic", "openai", "kimi", "gemini", "glm", "qwen", "deepseek"] }),
   // Merge-conflict work is a separate queue automation from ordinary prompt
   // dispatch. Existing and new sessions opt in by default; owners may turn it
   // off without changing auto_dispatch.
@@ -180,7 +180,7 @@ export const providerSpendMonths = sqliteTable(
   "provider_spend_months",
   {
     userId: text("user_id").notNull(),
-    provider: text("provider", { enum: ["anthropic", "openai", "kimi", "gemini", "glm"] }).notNull(),
+    provider: text("provider", { enum: ["anthropic", "openai", "kimi", "gemini", "glm", "qwen", "deepseek"] }).notNull(),
     kind: text("kind", { enum: ["api_key", "oauth", "server"] }).notNull(),
     month: text("month").notNull(), // "YYYY-MM", UTC
     microUsd: integer("micro_usd").notNull().default(0),
@@ -256,7 +256,7 @@ export const floorAgents = sqliteTable(
     // Open enum, TS-only, no SQL CHECK (agent_run_artifacts.kind convention);
     // existing rows keep current behavior via the default. `model` null means
     // "use the provider's default" (lib/provider-credentials.ts).
-    provider: text("provider", { enum: ["anthropic", "openai", "kimi", "gemini", "glm"] }).notNull().default("openai"),
+    provider: text("provider", { enum: ["anthropic", "openai", "kimi", "gemini", "glm", "qwen", "deepseek"] }).notNull().default("openai"),
     // Which of the owner's credential kinds pays for this agent's runs. Open
     // enum, nullable, no CHECK and no default: null means "the owner's
     // default" — api_key when connected, else whatever single row exists —
@@ -1110,7 +1110,7 @@ export const userProviderCredentials = sqliteTable(
   "user_provider_credentials",
   {
     userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
-    provider: text("provider", { enum: ["anthropic", "openai", "kimi", "gemini", "glm"] }).notNull(),
+    provider: text("provider", { enum: ["anthropic", "openai", "kimi", "gemini", "glm", "qwen", "deepseek"] }).notNull(),
     kind: text("kind", { enum: ["api_key", "oauth"] }).notNull().default("api_key"),
     ciphertext: text("ciphertext").notNull(),
     fingerprint: text("fingerprint").notNull(),

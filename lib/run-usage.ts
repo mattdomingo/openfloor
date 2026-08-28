@@ -3,7 +3,7 @@
 // db/runs.ts to persist. Pure and side-effect-free so it is unit-testable
 // against real captured fixtures without a sandbox.
 import { estimateCostMicroUsd } from "./model-pricing";
-import type { CredentialProvider } from "./provider-credentials";
+import { usesQwenRunner, type CredentialProvider } from "./provider-credentials";
 
 export type NormalizedRunUsage = {
   inputTokens: number | null;
@@ -55,6 +55,18 @@ type GeminiStats = {
   output_tokens: number;
 };
 
+// Qwen Code's stream-json `result.usage` (Spike Q1, 2026-08-28): the CLI sums
+// each chat-completions call's OpenAI `prompt_tokens` into `input_tokens`
+// (GROSS — the cached portion is included) and `prompt_tokens_details.
+// cached_tokens` into `cache_read_input_tokens`, so the net input is the
+// difference. No cache-write counter exists on the chat-completions wire.
+type QwenUsage = {
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_input_tokens?: number;
+  total_tokens?: number;
+};
+
 // A kimi/glm run rides the same Claude Agent SDK runner as anthropic
 // (usesClaudeRunner in lib/provider-credentials.ts), because those vendors'
 // APIs are Anthropic-Messages-compatible. The SDK still happily reports a
@@ -80,6 +92,9 @@ export function normalizeRunUsage(
   }
   if (provider === "gemini") {
     return normalizeGeminiUsage(model, raw.usage as GeminiStats | null | undefined);
+  }
+  if (usesQwenRunner(provider)) {
+    return normalizeQwenUsage(model, raw.usage as QwenUsage | null | undefined);
   }
   return EMPTY;
 }
@@ -134,6 +149,15 @@ function normalizeCodexUsage(model: string, usage: CodexUsage | null | undefined
   const outputTokens = usage.output_tokens ?? 0;
   const costMicroUsd = estimateCostMicroUsd(model, { inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens });
   return { inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens, costMicroUsd, costSource: "estimated" };
+}
+
+function normalizeQwenUsage(model: string, usage: QwenUsage | null | undefined): NormalizedRunUsage {
+  if (!usage) return EMPTY;
+  const cacheReadTokens = usage.cache_read_input_tokens ?? 0;
+  const inputTokens = Math.max(0, (usage.input_tokens ?? 0) - cacheReadTokens);
+  const outputTokens = usage.output_tokens ?? 0;
+  const costMicroUsd = estimateCostMicroUsd(model, { inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens: 0 });
+  return { inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens: 0, costMicroUsd, costSource: "estimated" };
 }
 
 function normalizeGeminiUsage(model: string, stats: GeminiStats | null | undefined): NormalizedRunUsage {
