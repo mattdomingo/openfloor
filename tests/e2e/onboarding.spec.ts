@@ -59,9 +59,10 @@ test("a direct user keeps profile state across steps and completes Free onboardi
 
   // Task, then Goal, then Repository, then the candidate branch name, then
   // the AI connection section, then the real Create session submit — eight
-  // steps in all. The five field steps are gated (GuidedTour.tsx
-  // isSatisfied): each waits for the field to actually be filled, and Enter
-  // — not a click — advances once it is.
+  // steps in all. Task/Goal/Repository/Candidate branch name are gated
+  // (GuidedTour.tsx isSatisfied): each waits for the field to actually be
+  // filled, and Enter — not a click — advances once it is. AI connection is
+  // optional, same as real session creation, so it stays click-to-advance.
   await expect(page.getByRole("dialog", { name: "Name the task" })).toBeVisible();
   await expect(page.locator(".tour-count")).toHaveText("3 of 8");
   await page.getByLabel("Task", { exact: true }).fill("Session from onboarding");
@@ -81,12 +82,7 @@ test("a direct user keeps profile state across steps and completes Free onboardi
   await page.keyboard.press("Enter");
 
   await expect(page.getByRole("dialog", { name: "Check your AI is connected" })).toBeVisible();
-  const credentialRow = page.locator('.create-dialog section[aria-label="AI connection"] .provider-credential-row').first();
-  await credentialRow.getByRole("button", { name: "Not connected" }).click();
-  await credentialRow.locator("input").fill("sk-ant-e2e-accepted");
-  await credentialRow.getByRole("button", { name: "Connect", exact: true }).click();
-  await expect(credentialRow.getByText("Connected", { exact: true })).toBeVisible();
-  await page.keyboard.press("Enter");
+  await page.getByText(/Optional: at least one connected provider/).click();
 
   await expect(page.getByRole("dialog", { name: "Create the session" })).toBeVisible();
   await expect(page.locator(".tour-count")).toHaveText("8 of 8");

@@ -23,12 +23,41 @@ import { createPortal } from "react-dom";
    still reaches the real control normally); once `isSatisfied()` is true,
    Enter advances instead. `isSatisfied` is a plain DOM check, matching
    `selector`, since controlled inputs keep the DOM node's `.value` in sync
-   with what's rendered — no need to thread React state out of the form. */
-export type TourStep = { selector: string; title: string; body: string; isSatisfied?: () => boolean };
+   with what's rendered — no need to thread React state out of the form.
+
+   `placement: "side"` opts an anchor into beside-instead-of-below bubble
+   placement — for an anchor whose own interaction (e.g. an open dropdown)
+   occupies the space directly below it, where the default placement would
+   otherwise sit on top of it. */
+export type TourStep = { selector: string; title: string; body: string; isSatisfied?: () => boolean; placement?: "side" };
 
 function subscribeStorage(callback: () => void) {
   window.addEventListener("storage", callback);
   return () => window.removeEventListener("storage", callback);
+}
+
+// Intersects `rect` with the bounds of the nearest ancestor that actually
+// clips overflow, so a tall anchor only partly scrolled into its container
+// (e.g. the create dialog's scrolling body) reports only its visible slice —
+// not the full, unclipped element, which would otherwise spotlight past the
+// scrollport and over whatever sits below it (a pinned footer). Returns null
+// when the anchor is fully scrolled out of that container's view.
+function clipToScrollableAncestor(rect: DOMRect, element: Element): DOMRect | null {
+  let node = element.parentElement;
+  while (node && node !== document.body) {
+    const style = getComputedStyle(node);
+    if (style.overflowY === "auto" || style.overflowY === "scroll") {
+      const bounds = node.getBoundingClientRect();
+      const top = Math.max(rect.top, bounds.top);
+      const bottom = Math.min(rect.bottom, bounds.bottom);
+      const left = Math.max(rect.left, bounds.left);
+      const right = Math.min(rect.right, bounds.right);
+      if (bottom <= top || right <= left) return null;
+      return new DOMRect(left, top, right - left, bottom - top);
+    }
+    node = node.parentElement;
+  }
+  return rect;
 }
 
 export function GuidedTour({ storageKey, steps }: { storageKey: string; steps: TourStep[] }) {
@@ -132,7 +161,13 @@ export function GuidedTour({ storageKey, steps }: { storageKey: string; steps: T
     if (!step) return;
     const measure = () => {
       const element = document.querySelector(step.selector);
-      const next = element ? element.getBoundingClientRect() : null;
+      // Clipped to the anchor's nearest scrollable ancestor (e.g. the create
+      // dialog's scrolling body): a tall section only partly scrolled into
+      // view otherwise reports its full, unclipped height, so the highlight
+      // and bubble would spill past the visible pane and over whatever sits
+      // below it (the dialog's pinned footer buttons). Fully scrolled out of
+      // view clips to nothing, same as a missing anchor.
+      const next = element ? clipToScrollableAncestor(element.getBoundingClientRect(), element) : null;
       // Same-box check so the MutationObserver below can't re-render forever.
       setRect((current) => {
         if (!next) return null;
@@ -162,14 +197,21 @@ export function GuidedTour({ storageKey, steps }: { storageKey: string; steps: T
   if (!step || typeof document === "undefined") return null;
 
   // Below the anchor when there's room, above it otherwise; centered when the
-  // anchor is missing. Clamped so the bubble never leaves the viewport.
+  // anchor is missing. Clamped so the bubble never leaves the viewport. A
+  // "side" step instead prefers beside the anchor — right first, then left —
+  // falling back to the same below/above stacking if neither side fits.
   const bubbleWidth = Math.min(340, window.innerWidth - 24);
+  const sideTop = Math.max(12, Math.min(rect?.top ?? 0, window.innerHeight - 200));
   const style = rect
-    ? {
-        left: Math.max(12, Math.min(rect.left, window.innerWidth - bubbleWidth - 12)),
-        top: rect.bottom + 200 < window.innerHeight ? rect.bottom + 12 : Math.max(12, rect.top - 12 - 180),
-        width: bubbleWidth,
-      }
+    ? step.placement === "side" && rect.right + 12 + bubbleWidth <= window.innerWidth
+      ? { left: rect.right + 12, top: sideTop, width: bubbleWidth }
+      : step.placement === "side" && rect.left - 12 - bubbleWidth >= 0
+        ? { left: rect.left - 12 - bubbleWidth, top: sideTop, width: bubbleWidth }
+        : {
+            left: Math.max(12, Math.min(rect.left, window.innerWidth - bubbleWidth - 12)),
+            top: rect.bottom + 200 < window.innerHeight ? rect.bottom + 12 : Math.max(12, rect.top - 12 - 180),
+            width: bubbleWidth,
+          }
     : { left: (window.innerWidth - bubbleWidth) / 2, top: window.innerHeight / 3, width: bubbleWidth };
 
   // An anchor inside a showModal() dialog lives in the top layer, where a
