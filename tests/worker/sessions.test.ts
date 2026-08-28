@@ -49,6 +49,7 @@ import {
   reserveRepositoryCandidate,
   markCandidateAbandoned,
   markCandidateMerged,
+  markCandidateReviewDraft,
   markCandidateReviewReady,
   updateRepositoryPushState,
 } from "@/db/repositories";
@@ -980,6 +981,18 @@ describe("D1 session persistence", () => {
       checks: [{ sourceId: "check:1", name: "CI", detail: "success", state: "passed" }],
     }, env.DB);
     await markCandidateReviewReady(created.session.id, candidateId, owner.id, env.DB);
+    // Converting back to a draft flips pull_request_draft without erasing the
+    // first-ready audit trail, and marking ready again keeps that original stamp.
+    await markCandidateReviewDraft(created.session.id, candidateId, env.DB);
+    floor = await getFloorSnapshot(created.session.id, owner.id, env.DB);
+    expect(floor?.review).toEqual(expect.objectContaining({ status: "draft", pullRequest: expect.objectContaining({ draft: true }) }));
+    const readyAudit = await env.DB.prepare("SELECT review_ready_at, review_ready_by FROM repository_candidates WHERE id = ?")
+      .bind(candidateId).first<{ review_ready_at: number | null; review_ready_by: string | null }>();
+    expect(readyAudit?.review_ready_at).not.toBeNull();
+    expect(readyAudit?.review_ready_by).toBe(owner.id);
+    await markCandidateReviewReady(created.session.id, candidateId, owner.id, env.DB);
+    floor = await getFloorSnapshot(created.session.id, owner.id, env.DB);
+    expect(floor?.review).toEqual(expect.objectContaining({ status: "ready", pullRequest: expect.objectContaining({ draft: false }) }));
     const squashSha = "6".repeat(40);
     await markCandidateMerged(created.session.id, candidateId, owner.id, squashSha, env.DB);
     await finishCandidateCleanup(created.session.id, candidateId, [run.id], true, true, env.DB);

@@ -476,6 +476,33 @@ export async function markPullRequestReadyForReview(
   }
 }
 
+export async function convertPullRequestToDraft(
+  config: GitHubAppConfig,
+  installationId: string,
+  repository: GitHubRepositoryOption,
+  nodeId: string,
+): Promise<void> {
+  if (config.testData) {
+    const pullRequest = [...testPullRequests.values()].find((item) => item.nodeId === nodeId);
+    if (!pullRequest) throw new GitHubApiError("Pull request is not available", 404);
+    pullRequest.draft = true;
+    return;
+  }
+  const token = await createInstallationToken(config, installationId, repository.id);
+  const response = await fetch("https://api.github.com/graphql", {
+    method: "POST",
+    headers: { ...githubHeaders(token), "content-type": "application/json" },
+    body: JSON.stringify({
+      query: "mutation ConvertToDraft($id: ID!) { convertPullRequestToDraft(input: { pullRequestId: $id }) { pullRequest { id isDraft } } }",
+      variables: { id: nodeId },
+    }),
+  });
+  const body = await response.json() as { data?: { convertPullRequestToDraft?: { pullRequest?: { isDraft?: boolean } } }; errors?: Array<{ message?: string }> };
+  if (!response.ok || body.errors?.length || body.data?.convertPullRequestToDraft?.pullRequest?.isDraft !== true) {
+    throw new GitHubApiError(body.errors?.[0]?.message ?? "GitHub did not convert the pull request to a draft", response.ok ? 422 : response.status);
+  }
+}
+
 // The squash commit's message body: one Co-authored-by trailer per session
 // member (ENG-65), so GitHub credits the whole team on the merged commit.
 // Deduped by email, name flattened to one trailer-safe line. Null when there
