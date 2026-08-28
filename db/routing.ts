@@ -106,6 +106,12 @@ const FILLER_OPENERS = new Set([
   "lol", "pls", "please", "sup", "bro", "bruh", "dude",
 ]);
 
+// Answer-shaped imperatives: "describe this image" / "explain the auth flow"
+// ask for an answer, not an edit. Only meaningful as the first content word —
+// task verbs are matched across the whole string first, so "describe the
+// feature and add it" still classifies as a task.
+const QUESTION_IMPERATIVES = new Set(["describe", "explain", "summarize", "summarise"]);
+
 export function classifyPrompt(text: string): PromptIntent {
   const normalized = text.normalize("NFKC").trim().replace(/\s+/g, " ").toLowerCase();
   if (normalized.length === 0) return "task";
@@ -122,7 +128,7 @@ export function classifyPrompt(text: string): PromptIntent {
   // it as a task dispatches a writable task run that hard-fails when the agent
   // answers without changing files.
   const firstContentWord = words.find((word) => !FILLER_OPENERS.has(word)) ?? "";
-  if (INTERROGATIVES.has(firstContentWord)) return "question";
+  if (INTERROGATIVES.has(firstContentWord) || QUESTION_IMPERATIVES.has(firstContentWord)) return "question";
 
   return "task";
 }
