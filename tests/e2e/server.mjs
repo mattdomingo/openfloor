@@ -44,6 +44,11 @@ const agentRunTestData = process.env.OPENFLOOR_TEST_AGENT_RUN_DATA ?? JSON.strin
   resolverQuestionPrompts: ["conflict needing a session decision"],
   resolverConflictFirstAttemptPrompts: ["candidate movement conflict"],
   resolverFailFirstAttemptPrompts: ["resolver check failure"],
+  // Pause briefly between run stages (and broadcast floor.changed at each) so
+  // the browser actually renders intermediate states — without this, runs
+  // execute faster than the client refetches and asserts on transient labels
+  // like "Merge Resolver" become a reload-speed race.
+  stageDelayMs: 250,
   changedPath: "src/agent-change.ts",
   pathByPrompt: { "second published": "src/second-change.ts", "member rollback": "src/member-change.ts" },
 });

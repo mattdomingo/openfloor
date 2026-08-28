@@ -3,7 +3,7 @@ import { createHmac } from "node:crypto";
 import { authenticatedContext, skipTourIfOpen } from "./fixtures";
 
 test("owner and member persist, share live presence, reconnect, and leave", async ({ browser }) => {
-  test.setTimeout(180_000);
+  test.setTimeout(300_000);
   const ownerContext = await authenticatedContext(browser, "owner-e2e", "owner@example.com", "Owner", "Example");
   const memberContext = await authenticatedContext(browser, "member-e2e", "member@example.com", "Member", "Example");
   const owner = await ownerContext.newPage();
@@ -428,7 +428,8 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await owner.getByRole("button", { name: "Prompts", exact: true }).click();
   await owner.getByRole("button", { name: "History", exact: true }).click();
   const rollbackHistoryItem = owner.locator(".review-prompt-item", { hasText: "Create a member rollback change" });
-  await expect(rollbackHistoryItem).toBeVisible();
+  // The Prompts tab pages contributions over the network; allow for a slow fetch.
+  await expect(rollbackHistoryItem).toBeVisible({ timeout: 30_000 });
   await expect(rollbackHistoryItem.getByText(/Rolled back/)).toBeVisible();
   await owner.getByRole("button", { name: "Workspace" }).click();
 
@@ -445,8 +446,27 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await expect(member.getByRole("button", { name: "Retry against latest candidate" })).toHaveCount(0);
   await expect(conflictItem.getByRole("button", { name: "Retry against latest candidate" })).toHaveCount(0);
   await owner.getByRole("button", { name: /Review/ }).first().click();
-  const automaticConflict = owner.locator(".conflict-case", { hasText: "Create a deliberate integration conflict" });
+
+  // The review grid is resizable like the workspace — two separator handles
+  // bound the files and inspector columns.
+  const reviewGrid = owner.locator(".review-grid");
+  const columnsBefore = await reviewGrid.evaluate((element) => getComputedStyle(element).gridTemplateColumns);
+  const inspectorHandle = owner.getByRole("separator", { name: "Resize inspector panel" });
+  await expect(owner.getByRole("separator", { name: "Resize files panel" })).toBeVisible();
+  await expect(inspectorHandle).toBeVisible();
+  const handleBox = await inspectorHandle.boundingBox();
+  await owner.mouse.move(handleBox!.x + 2, handleBox!.y + 200);
+  await owner.mouse.down();
+  await owner.mouse.move(handleBox!.x - 120, handleBox!.y + 200, { steps: 5 });
+  await owner.mouse.up();
+  await expect.poll(() => reviewGrid.evaluate((element) => getComputedStyle(element).gridTemplateColumns)).not.toBe(columnsBefore);
+
+  // Conflicts live behind the hero button now — no inline list in Status.
+  await owner.getByRole("button", { name: /Conflicts/ }).click();
+  const automaticCenter = owner.getByRole("dialog", { name: "Merge conflicts" });
+  const automaticConflict = automaticCenter.locator(".conflict-case", { hasText: "Create a deliberate integration conflict" });
   await expect(automaticConflict.getByText("resolved", { exact: true })).toBeVisible();
+  await automaticCenter.getByRole("button", { name: "Close" }).click();
   await expect(owner.getByLabel("Integration warnings").getByText("No integration warnings.")).toBeVisible();
 
   await owner.getByRole("button", { name: "Workspace" }).click();
@@ -468,23 +488,34 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
     (window as typeof window & { __conflictAlertTest: { notifications: Array<{ click: () => void }> } }).__conflictAlertTest.notifications[0].click();
   });
   await expect(member.getByRole("heading", { name: "Review", exact: true })).toBeVisible();
-  const memberQuestionConflict = member.locator(".conflict-case[data-selected='true']", { hasText: "Create a conflict needing a session decision" });
+  // The notification deep-link opens the conflict center straight onto the case.
+  const memberCenter = member.getByRole("dialog", { name: "Merge conflicts" });
+  await expect(memberCenter).toBeVisible();
+  const memberQuestionConflict = memberCenter.locator(".conflict-case", { hasText: "Create a conflict needing a session decision" });
   await expect(memberQuestionConflict).toBeVisible();
   const floorResponse = await member.request.get(new URL(member.url()).pathname.replace(/\/floor$/, "/floor").replace("/session/", "/api/sessions/"));
   const questionFloor = await floorResponse.json() as { floor: { review: { conflicts: Array<{ id: string; status: string; questions: Array<{ id: string; answer: string | null }> }> } | null } };
   const questionCase = questionFloor.floor.review?.conflicts.find((item) => item.status === "awaiting_input");
   expect(questionCase).toBeTruthy();
+  await expect(memberQuestionConflict.getByText(/Automatic resolution didn/)).toBeVisible();
   await expect(memberQuestionConflict.getByText(/Waiting for the session owner or an original prompt author/)).toBeVisible();
   await expect(memberQuestionConflict.locator("textarea")).toHaveCount(0);
+  await memberCenter.getByRole("button", { name: "Close" }).click();
   await owner.getByRole("button", { name: /Review/ }).first().click();
-  const ownerQuestionConflict = owner.locator(".conflict-case[data-selected='true']", { hasText: "Create a conflict needing a session decision" });
+  // An open case needing a person lights the hero button red (attention).
+  const ownerConflictsButton = owner.getByRole("button", { name: /Conflicts/ });
+  await expect(ownerConflictsButton).toHaveAttribute("data-attention", "action");
+  await ownerConflictsButton.click();
+  const ownerCenter = owner.getByRole("dialog", { name: "Merge conflicts" });
+  await ownerCenter.locator(".conflict-center-case", { hasText: "Create a conflict needing a session decision" }).click();
+  const ownerQuestionConflict = ownerCenter.locator(".conflict-case", { hasText: "Create a conflict needing a session decision" });
   const answerFields = ownerQuestionConflict.locator("textarea");
   await answerFields.nth(0).fill("Preserve the existing public behavior.");
   await answerFields.nth(1).fill("Do not remove the legacy path yet.");
   await ownerQuestionConflict.getByRole("button", { name: "Submit answers" }).click();
-  // Resolution clears the case's selected state, so assert on the case
-  // itself rather than the [data-selected] scope used to answer it.
-  await expect(owner.locator(".conflict-case", { hasText: "Create a conflict needing a session decision" }).getByText("resolved", { exact: true })).toBeVisible();
+  // The dialog stays open and follows the case through to resolved.
+  await expect(ownerQuestionConflict.getByText("resolved", { exact: true })).toBeVisible();
+  await ownerCenter.getByRole("button", { name: "Close" }).click();
   const staleAnswer = await owner.request.post(`/api/sessions/${new URL(owner.url()).pathname.split("/")[2]}/conflicts/${questionCase!.id}/answers`, {
     data: { answers: questionCase!.questions.map((question) => ({ questionId: question.id, answer: "Stale answer" })) },
   });
@@ -500,11 +531,17 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await movementItem.getByRole("button", { name: "Run", exact: true }).click();
   // Integrated prompts fold into their collapsed section; open the bar first.
   await owner.locator(".queue-group-bar", { hasText: "Integrated" }).click();
-  await expect(movementItem.getByText("integrated", { exact: true })).toBeVisible();
+  // This item's first resolver attempt conflicts again, so integration takes
+  // two resolver runs plus router hops — well past the default timeout.
+  await expect(movementItem.getByText("integrated", { exact: true })).toBeVisible({ timeout: 60_000 });
   await owner.getByRole("button", { name: /Review/ }).first().click();
-  const movementConflict = owner.locator(".conflict-case", { hasText: "Create a candidate movement conflict" });
+  await owner.getByRole("button", { name: /Conflicts/ }).click();
+  const movementCenter = owner.getByRole("dialog", { name: "Merge conflicts" });
+  await movementCenter.locator(".conflict-center-case", { hasText: "Create a candidate movement conflict" }).click();
+  const movementConflict = movementCenter.locator(".conflict-case", { hasText: "Create a candidate movement conflict" });
   await expect(movementConflict.getByText("Attempt 1 · automatic · conflicted", { exact: true })).toBeVisible();
   await expect(movementConflict.getByText("Attempt 2 · automatic · integrated", { exact: true })).toBeVisible();
+  await movementCenter.getByRole("button", { name: "Close" }).click();
 
   await owner.getByRole("button", { name: "Workspace" }).click();
   await owner.getByRole("region", { name: "Open floor" }).getByRole("combobox", { name: "Queue target" }).click();
@@ -515,11 +552,17 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await resolverCheckItem.getByRole("button", { name: "Run", exact: true }).click();
   // Integrated prompts fold into their collapsed section; open the bar first.
   await owner.locator(".queue-group-bar", { hasText: "Integrated" }).click();
-  await expect(resolverCheckItem.getByText("integrated", { exact: true })).toBeVisible();
+  // The first resolver attempt fails its checks, so integration takes a
+  // second automatic attempt — past the default timeout under parallel load.
+  await expect(resolverCheckItem.getByText("integrated", { exact: true })).toBeVisible({ timeout: 60_000 });
   await owner.getByRole("button", { name: /Review/ }).first().click();
-  const resolverCheckConflict = owner.locator(".conflict-case", { hasText: "Create a resolver check failure" });
+  await owner.getByRole("button", { name: /Conflicts/ }).click();
+  const resolverCheckCenter = owner.getByRole("dialog", { name: "Merge conflicts" });
+  await resolverCheckCenter.locator(".conflict-center-case", { hasText: "Create a resolver check failure" }).click();
+  const resolverCheckConflict = resolverCheckCenter.locator(".conflict-case", { hasText: "Create a resolver check failure" });
   await expect(resolverCheckConflict.getByText("Attempt 1 · automatic · failed", { exact: true })).toBeVisible();
   await expect(resolverCheckConflict.getByText("Attempt 2 · automatic · integrated", { exact: true })).toBeVisible();
+  await resolverCheckCenter.getByRole("button", { name: "Close" }).click();
 
   await owner.getByRole("button", { name: "Workspace" }).click();
   await owner.getByRole("button", { name: "Queue settings" }).click();
@@ -533,12 +576,20 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await expect(manualConflictItem.getByText("conflicted", { exact: true })).toBeVisible();
   await expect(manualConflictItem.getByRole("button", { name: "Retry against latest candidate" })).toHaveCount(0);
   await owner.getByRole("button", { name: /Review/ }).first().click();
-  const manualConflict = owner.locator(".conflict-case", { hasText: "Create a manual merge conflict" });
+  await owner.getByRole("button", { name: /Conflicts/ }).click();
+  const manualCenter = owner.getByRole("dialog", { name: "Merge conflicts" });
+  await manualCenter.locator(".conflict-center-case", { hasText: "Create a manual merge conflict" }).click();
+  const manualConflict = manualCenter.locator(".conflict-case", { hasText: "Create a manual merge conflict" });
   await expect(manualConflict.getByRole("button", { name: "Start Merge Resolver" })).toBeVisible();
   await member.getByRole("button", { name: /Review/ }).first().click();
-  await expect(member.locator(".conflict-case", { hasText: "Create a manual merge conflict" }).getByRole("button", { name: "Start Merge Resolver" })).toHaveCount(0);
+  await member.getByRole("button", { name: /Conflicts/ }).click();
+  const memberManualCenter = member.getByRole("dialog", { name: "Merge conflicts" });
+  await memberManualCenter.locator(".conflict-center-case", { hasText: "Create a manual merge conflict" }).click();
+  await expect(memberManualCenter.locator(".conflict-case", { hasText: "Create a manual merge conflict" }).getByRole("button", { name: "Start Merge Resolver" })).toHaveCount(0);
+  await memberManualCenter.getByRole("button", { name: "Close" }).click();
   await manualConflict.getByRole("button", { name: "Start Merge Resolver" }).click();
   await expect(manualConflict.getByText("resolved", { exact: true })).toBeVisible();
+  await manualCenter.getByRole("button", { name: "Close" }).click();
 
   await owner.getByRole("button", { name: "Workspace" }).click();
   await owner.getByRole("region", { name: "Open floor" }).getByRole("combobox", { name: "Queue target" }).click();
@@ -595,6 +646,9 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await owner.getByRole("button", { name: "Ready for review" }).click();
   await owner.getByRole("dialog", { name: "Mark this pull request ready for review?" })
     .getByRole("button", { name: "Cancel" }).click();
+  // Wait for the dialog to actually unmount — otherwise the next unscoped
+  // "Ready for review" click can resolve to both the hero and dialog buttons.
+  await expect(owner.getByRole("dialog", { name: "Mark this pull request ready for review?" })).toHaveCount(0);
   await expect(owner.getByRole("link", { name: /Draft PR #1 on GitHub/ })).toBeVisible();
   await owner.getByRole("button", { name: "Ready for review" }).click();
   await owner.getByRole("dialog", { name: "Mark this pull request ready for review?" })

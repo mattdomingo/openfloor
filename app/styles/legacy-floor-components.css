@@ -3898,11 +3898,34 @@
 
 .review-grid {
   display: grid;
-  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr) minmax(240px, 300px);
+  grid-template-columns: var(--review-files-w, 280px) minmax(0, 1fr) var(--review-inspector-w, 400px);
   gap: var(--space-3);
   align-items: stretch;
   flex: 1 1 auto;
   min-height: 0;
+  position: relative;
+}
+
+/* Drag handles live as absolute grid children (no extra tracks), centred on
+   the two column gaps — the same pattern .panel-slot uses in the workspace,
+   without making the panes themselves positioned. */
+.review-resize-handle {
+  top: 0;
+  bottom: 0;
+  right: auto;
+}
+
+.review-resize-handle[data-side="files"] {
+  left: calc(var(--review-files-w, 280px) - 1px);
+}
+
+.review-resize-handle[data-side="inspector"] {
+  left: auto;
+  right: calc(var(--review-inspector-w, 400px) - 1px);
+}
+
+.review-screen[data-resizing="true"] {
+  user-select: none;
 }
 
 .review-pane {
@@ -4484,7 +4507,8 @@
   width: min(880px, calc(100vw - 2 * var(--space-5)));
 }
 
-.conflict-resolver .dialog-title p {
+.conflict-resolver .dialog-title p,
+.conflict-center .dialog-title p {
   display: flex;
   align-items: center;
   gap: var(--space-2);
@@ -4556,7 +4580,8 @@
   color: color-mix(in srgb, var(--agent-color) 45%, var(--text-inverse));
 }
 
-.conflict-resolver .button[data-selected="true"] {
+.conflict-resolver .button[data-selected="true"],
+.conflict-center .button[data-selected="true"] {
   border-color: var(--accent);
   background: var(--accent-soft);
   color: var(--accent);
@@ -4736,6 +4761,121 @@
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-2);
+}
+
+/* Conflict center (hero Conflicts button + guided popup) ------------------- */
+
+/* The hero button is quiet when nothing is open, amber while the resolver is
+   working, red and breathing once a person has to act — the same attention
+   vocabulary as the agent cards. */
+.conflicts-button[data-attention="working"] {
+  border-color: var(--status-attention);
+  color: var(--status-attention);
+}
+
+.conflicts-button[data-attention="action"] {
+  border-color: var(--status-blocked);
+  color: var(--status-blocked);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .conflicts-button[data-attention="action"] {
+    animation: status-breathe 1.8s var(--ease-standard) infinite;
+  }
+}
+
+.conflict-center {
+  width: min(960px, calc(100vw - 2 * var(--space-5)));
+}
+
+.conflict-center-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-3);
+  align-items: start;
+}
+
+.conflict-center-body:has(.conflict-center-rail) {
+  grid-template-columns: 220px minmax(0, 1fr);
+}
+
+.conflict-center-rail ul {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.conflict-center-case {
+  display: grid;
+  gap: var(--space-1);
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-md);
+  background: var(--surface-panel);
+  text-align: left;
+  cursor: pointer;
+}
+
+.conflict-center-case:hover {
+  border-color: var(--line-strong);
+}
+
+.conflict-center-case[data-selected="true"] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.conflict-center-case[data-attention="action"] {
+  box-shadow: inset 3px 0 var(--status-blocked);
+}
+
+.conflict-center-case small {
+  color: var(--text-secondary);
+}
+
+.conflict-center-case-prompt {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  overflow-wrap: anywhere;
+}
+
+/* The detail reuses .conflict-case; in the dialog it isn't a list item, so
+   the list's top divider goes away. */
+.conflict-center-detail {
+  min-width: 0;
+  border-top: none;
+  padding: 0;
+}
+
+.conflict-center-nudge {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--status-attention);
+  border-radius: var(--radius-md);
+  background: var(--status-attention-soft);
+  font-size: var(--text-sm);
+}
+
+.conflict-center-step {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+}
+
+@media (max-width: 720px) {
+  .conflict-center-body:has(.conflict-center-rail) {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 @media (max-width: 720px) {
