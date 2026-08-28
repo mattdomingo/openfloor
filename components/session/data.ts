@@ -161,6 +161,74 @@ export function queueItemDestination(item: FloorQueueItem, run: AgentRun | null 
   return null;
 }
 
+// Fixed queue sections, top to bottom. Live is not collapsible and keeps
+// dispatch order (position ascending — the same order auto-dispatch and
+// drag-reorder act on); every other section is a collapsible bar sorted
+// newest-first. createdAt is the only stable recency key available in every
+// section: reorderFloorQueue bumps updated_at, and terminal runs age out of
+// getAgentRuns' 20-row window.
+export type QueueGroupId = "live" | "conflicted" | "failed" | "answered" | "integrated" | "cancelled";
+
+export const QUEUE_GROUP_ORDER: readonly QueueGroupId[] = ["live", "conflicted", "failed", "answered", "integrated", "cancelled"];
+
+export const QUEUE_GROUP_LABELS: Record<QueueGroupId, string> = {
+  live: "Live",
+  conflicted: "Conflicted",
+  failed: "Failed",
+  answered: "Answered",
+  integrated: "Integrated",
+  cancelled: "Cancelled",
+};
+
+export type QueueGroup = { id: QueueGroupId; label: string; items: FloorQueueItem[] };
+
+// Buckets one item the same way the queue card computes its status chip:
+// a queued/paused item's own state wins over a stale terminal run (the
+// resumed-item guard), and item.rollback/item.answer are the durable signals
+// that survive the run window. A discarded run folds into Live rather than
+// Cancelled — discard leaves the run published and the item parked, which is
+// where it already sat before grouping existed.
+export function queueItemGroup(item: FloorQueueItem, run: AgentRun | null | undefined): QueueGroupId {
+  if (item.status === "queued" || item.status === "paused") return "live";
+  if (item.rollback?.status === "requested" || item.rollback?.status === "running") return "live";
+  if (item.rollback?.status === "failed" || run?.rollbackStatus === "failed") return "failed";
+  if (run?.status === "conflicted") return "conflicted";
+  if (run) {
+    const token = runStatusToken(run);
+    if (token === "failed") return "failed";
+    if (token === "answered") return "answered";
+    if (token === "integrated" || token === "rolled_back") return "integrated";
+    if (token === "cancelled") return "cancelled";
+    return "live";
+  }
+  if (item.answer) return "answered";
+  if (item.rollback) return "integrated";
+  if (item.status === "completed") return "integrated";
+  if (item.status === "failed") return "failed";
+  if (item.status === "cancelled") return "cancelled";
+  return "live";
+}
+
+// Applies the mine/team scope filter, buckets the survivors, and returns all
+// sections in fixed order. Live sorts by position ascending (dispatch order);
+// every other section sorts newest-first by createdAt, id as tie-break.
+export function groupQueueItems(
+  items: FloorQueueItem[],
+  runsByQueueItemId: ReadonlyMap<string, AgentRun>,
+  scope: QueueScope,
+  currentUserId: string,
+): QueueGroup[] {
+  const scoped = scope === "mine" ? items.filter((item) => item.prompts.some((prompt) => prompt.authorUserId === currentUserId)) : items;
+  const buckets = new Map<QueueGroupId, FloorQueueItem[]>(QUEUE_GROUP_ORDER.map((id) => [id, []]));
+  for (const item of scoped) buckets.get(queueItemGroup(item, runsByQueueItemId.get(item.id)))!.push(item);
+  return QUEUE_GROUP_ORDER.map((id) => {
+    const list = buckets.get(id)!;
+    if (id === "live") list.sort((a, b) => a.position - b.position || a.createdAt - b.createdAt || a.id.localeCompare(b.id));
+    else list.sort((a, b) => b.createdAt - a.createdAt || b.id.localeCompare(a.id));
+    return { id, label: QUEUE_GROUP_LABELS[id], items: list };
+  });
+}
+
 export function canRollbackRun(input: {
   run: AgentRun | null | undefined;
   item: import("@/lib/floor-types").FloorQueueItem | null | undefined;
