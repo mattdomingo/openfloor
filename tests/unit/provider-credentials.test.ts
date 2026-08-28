@@ -15,6 +15,7 @@ import {
   providerLabel,
   resolveRunCredentialSource,
   resolveRunModel,
+  resumableProvider,
   usesClaudeRunner,
   usesQwenRunner,
   type ProviderCredentialSummary,
@@ -71,6 +72,14 @@ describe("provider parsing and labels", () => {
     for (const provider of CREDENTIAL_PROVIDERS) {
       expect(usesQwenRunner(provider)).toBe(provider === "qwen" || provider === "deepseek");
       expect(usesQwenRunner(provider) && usesClaudeRunner(provider)).toBe(false);
+    }
+  });
+
+  // Every runner but Gemini's persists and restores a session store; the
+  // workflow's resume paths key on this rather than on a provider id.
+  it("marks every provider but gemini as thread-resumable", () => {
+    for (const provider of CREDENTIAL_PROVIDERS) {
+      expect(resumableProvider(provider)).toBe(provider !== "gemini");
     }
   });
 

@@ -25,7 +25,7 @@ Every dispatched agent's prompt is a unified session brief (`db/session-context.
 
 ## Thread resume and PR feedback nudges
 
-A retry or re-run of a queue item (or a nudge naming its `source_run_id`) resumes the earlier attempt's provider thread when `lib/run-resume.ts` finds an eligible run with a persisted `session_store` artifact; Gemini runs always start fresh. Failing checks, unresolved review threads, and changes-requested reviews on the candidate PR become router-originated queue items through `lib/candidate-feedback.ts` after the matching webhook. Deliberately not built: a delta brief on resume (the full brief plus a preamble is sent), CI log tails in nudges (needs an Actions:read App permission), and a periodic PR-fact reconciler between webhooks.
+A retry or re-run of a queue item (or a nudge naming its `source_run_id`) resumes the earlier attempt's provider thread when `lib/run-resume.ts` finds an eligible run with a persisted `session_store` artifact (Codex, Claude, and Qwen Code runners — `resumableProvider`); Gemini runs always start fresh. Failing checks, unresolved review threads, and changes-requested reviews on the candidate PR become router-originated queue items through `lib/candidate-feedback.ts` after the matching webhook. Deliberately not built: a delta brief on resume (the full brief plus a preamble is sent), CI log tails in nudges (needs an Actions:read App permission), and a periodic PR-fact reconciler between webhooks.
 
 ## Credential kinds — deliberately deferred pieces
 

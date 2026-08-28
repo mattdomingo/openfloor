@@ -38,7 +38,7 @@ import { getSessionSkillsForRun } from "../db/skills";
 import { serializeMcpServersForClaude } from "../lib/mcp-config";
 import { buildGeminiSrtSettings, buildGeminiSystemSettings } from "../lib/gemini-settings";
 import { buildQwenSrtSettings, buildQwenSystemSettings } from "../lib/qwen-settings";
-import { usesClaudeRunner, usesQwenRunner, type CredentialProvider } from "../lib/provider-credentials";
+import { resumableProvider, usesClaudeRunner, usesQwenRunner, type CredentialProvider } from "../lib/provider-credentials";
 import { buildClaudeSandboxSettings } from "../lib/claude-sandbox-settings";
 import { notifyFloorChanged } from "../lib/presence-server";
 import { pokeSessionRouter } from "../lib/router-server";
@@ -173,6 +173,11 @@ const RUN_AGENT_HOME = "/tmp/openfloor/agent-home";
 // end. The cap keeps a runaway transcript from turning every retry into a
 // multi-megabyte R2 round trip; over it, the next attempt starts fresh.
 const SESSION_STORE_PATH = "/tmp/openfloor/session-store.tgz";
+// Where a resumable provider's session directory lives: the per-run agent
+// HOME for the non-root runners (Claude, Qwen Code), root's HOME for Codex.
+function sessionStoreHome(provider: CredentialProvider): string {
+  return usesClaudeRunner(provider) || usesQwenRunner(provider) ? RUN_AGENT_HOME : "${HOME:-/root}";
+}
 const MAX_SESSION_STORE_BYTES = 8 * 1024 * 1024;
 
 export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Params> {
@@ -380,14 +385,14 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
         // so the runner can continue that conversation (eligibility decided
         // in createAgentRun via lib/run-resume.ts). Best-effort by design —
         // a missing object or failed extraction means a fresh thread, never
-        // a failed run. Gemini is excluded: its CLI's resume support is
-        // unverified at the pinned version.
+        // a failed run. resumableProvider excludes Gemini: its CLI's resume
+        // support is unverified at the pinned version.
         let resumeThreadId: string | null = null;
-        if (!manualApplied && context.resumeThreadId && context.resumeSessionStoreKey && context.provider !== "gemini") {
+        if (!manualApplied && context.resumeThreadId && context.resumeSessionStoreKey && resumableProvider(context.provider)) {
           const store = await this.env.PREFLIGHT_LOGS.get(context.resumeSessionStoreKey);
           if (store?.body) {
             await sandbox.writeFile(SESSION_STORE_PATH, store.body);
-            const home = usesClaudeRunner(context.provider) ? RUN_AGENT_HOME : "${HOME:-/root}";
+            const home = sessionStoreHome(context.provider);
             const restored = await sandbox.exec(
               `mkdir -p ${home} && tar -xzf ${SESSION_STORE_PATH} -C ${home} && rm -f ${SESSION_STORE_PATH}`,
               { timeout: 60_000 },
@@ -922,13 +927,14 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
   // resumes from — into private R2 as a session_store artifact. Best-effort
   // and never throws: a missing directory, an oversized archive, or an R2
   // hiccup just means the next attempt starts a fresh thread. The per-run
-  // HOME (Claude runner) and the release reset (Codex's ~/.codex) guarantee
-  // the directory holds only this run's transcript plus the one it resumed.
+  // HOME (Claude and Qwen Code runners) and the release reset (Codex's
+  // ~/.codex) guarantee the directory holds only this run's transcript plus
+  // the one it resumed.
   private async persistSessionStore(runId: string, provider: CredentialProvider, threadId: string | null, sandbox: ReturnType<typeof getSandbox<Sandbox>>) {
-    if (!threadId || provider === "gemini") return;
+    if (!threadId || !resumableProvider(provider)) return;
     try {
-      const home = usesClaudeRunner(provider) ? RUN_AGENT_HOME : "${HOME:-/root}";
-      const subdir = usesClaudeRunner(provider) ? ".claude/projects" : ".codex/sessions";
+      const home = sessionStoreHome(provider);
+      const subdir = usesClaudeRunner(provider) ? ".claude/projects" : usesQwenRunner(provider) ? ".qwen/projects" : ".codex/sessions";
       const packed = await sandbox.exec(
         `cd ${home} && test -d ${subdir} && tar -czf ${SESSION_STORE_PATH} ${subdir} && wc -c < ${SESSION_STORE_PATH}`,
         { timeout: 60_000 },

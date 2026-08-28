@@ -9,9 +9,10 @@ import { createInterface } from "node:readline";
 // the CLI's stream-json vocabulary is Claude-Code-shaped rather than
 // gemini-cli's, so the normalizer below is its own (Spike Q1, 2026-08-28).
 //
-// Thread resume (OPENFLOOR_RESUME_THREAD_ID, see the Codex/Claude runners) is
-// not wired here yet: worker/agent-run-workflow.ts does not pass the variable
-// to this runner until the §5 hook-up lands.
+// Thread resume: worker/agent-run-workflow.ts restores the prior attempt's
+// ~/.qwen/projects store into this run's HOME and passes the session id in
+// OPENFLOOR_RESUME_THREAD_ID; the CLI continues it with --resume <id> (Spike
+// Q1 step 4: same session_id, prior turns replayed in the next request).
 
 const promptPath = process.env.OPENFLOOR_PROMPT_PATH;
 const resultPath = process.env.OPENFLOOR_RESULT_PATH;
@@ -22,6 +23,7 @@ const model = process.env.OPENFLOOR_MODEL;
 const eventsUrl = process.env.OPENFLOOR_EVENTS_URL;
 const eventsToken = process.env.OPENFLOOR_EVENTS_TOKEN;
 const systemSettingsPath = process.env.QWEN_CODE_SYSTEM_SETTINGS_PATH;
+const resumeThreadId = process.env.OPENFLOOR_RESUME_THREAD_ID || null;
 // ponytail: overridable only so the runner can be exercised keyless against
 // a stub outside the image; the workflow never sets it.
 const qwenBin = process.env.OPENFLOOR_QWEN_BIN || "/opt/openfloor/node_modules/.bin/qwen";
@@ -127,40 +129,46 @@ const prompt = await readFile(promptPath, "utf8");
 // OPENAI_BASE_URL points model traffic at the openfloor gateway. The CLI
 // honors srt's HTTP(S)_PROXY natively (Spike Q1 step 5, in-container on
 // Node 22), so no fetch preload is needed, unlike the Gemini runner.
-const child = spawn(
-  qwenBin,
-  ["-p", prompt, "--output-format", "stream-json", "--approval-mode", "yolo", "-m", model],
-  {
-    cwd: workspace,
-    env: {
-      PATH: process.env.PATH ?? "",
-      HOME: process.env.HOME ?? "",
-      OPENAI_API_KEY: gatewayToken,
-      OPENAI_BASE_URL: gatewayUrl,
-      QWEN_CODE_SUPPRESS_YOLO_WARNING: "1",
-      ...(systemSettingsPath ? { QWEN_CODE_SYSTEM_SETTINGS_PATH: systemSettingsPath } : {}),
-      // srt-injected proxy wiring, passed through so sandboxed egress works.
-      ...(process.env.HTTP_PROXY ? { HTTP_PROXY: process.env.HTTP_PROXY } : {}),
-      ...(process.env.HTTPS_PROXY ? { HTTPS_PROXY: process.env.HTTPS_PROXY } : {}),
-      ...(process.env.NO_PROXY ? { NO_PROXY: process.env.NO_PROXY } : {}),
-      ...(process.env.no_proxy ? { no_proxy: process.env.no_proxy } : {}),
+function spawnCli(resumeId) {
+  return spawn(
+    qwenBin,
+    ["-p", prompt, "--output-format", "stream-json", "--approval-mode", "yolo", "-m", model, ...(resumeId ? ["--resume", resumeId] : [])],
+    {
+      cwd: workspace,
+      env: {
+        PATH: process.env.PATH ?? "",
+        HOME: process.env.HOME ?? "",
+        OPENAI_API_KEY: gatewayToken,
+        OPENAI_BASE_URL: gatewayUrl,
+        QWEN_CODE_SUPPRESS_YOLO_WARNING: "1",
+        ...(systemSettingsPath ? { QWEN_CODE_SYSTEM_SETTINGS_PATH: systemSettingsPath } : {}),
+        // srt-injected proxy wiring, passed through so sandboxed egress works.
+        ...(process.env.HTTP_PROXY ? { HTTP_PROXY: process.env.HTTP_PROXY } : {}),
+        ...(process.env.HTTPS_PROXY ? { HTTPS_PROXY: process.env.HTTPS_PROXY } : {}),
+        ...(process.env.NO_PROXY ? { NO_PROXY: process.env.NO_PROXY } : {}),
+        ...(process.env.no_proxy ? { no_proxy: process.env.no_proxy } : {}),
+      },
+      stdio: ["ignore", "pipe", "pipe"],
     },
-    stdio: ["ignore", "pipe", "pipe"],
-  },
-);
+  );
+}
 
+let child = null;
 let aborted = false;
-process.on("SIGTERM", () => { aborted = true; child.kill("SIGTERM"); });
-process.on("SIGINT", () => { aborted = true; child.kill("SIGINT"); });
+process.on("SIGTERM", () => { aborted = true; child?.kill("SIGTERM"); });
+process.on("SIGINT", () => { aborted = true; child?.kill("SIGINT"); });
 
 let threadId = null;
+let sawInit = false;
 let finalResponse = null;
 let usage = null;
 let resultError = null;
+let stderrChunks = [];
 
 function handleEvent(event) {
   if (!event || typeof event !== "object") return;
   if (event.type === "system" && event.subtype === "init") {
+    sawInit = true;
     threadId = event.session_id ?? threadId;
   } else if (event.type === "assistant") {
     // One event per model turn, content blocks complete (no deltas).
@@ -195,37 +203,55 @@ function handleEvent(event) {
   }
 }
 
-const stderrChunks = [];
-child.stderr.on("data", (chunk) => {
-  stderrChunks.push(chunk);
-  process.stderr.write(chunk);
-});
+async function runCli(resumeId) {
+  child = spawnCli(resumeId);
+  child.stderr.on("data", (chunk) => {
+    stderrChunks.push(chunk);
+    process.stderr.write(chunk);
+  });
+  const lines = createInterface({ input: child.stdout });
+  lines.on("line", (line) => {
+    const trimmed = line.trim();
+    if (!trimmed) return;
+    let event = null;
+    try {
+      event = JSON.parse(trimmed);
+    } catch {
+      // Non-JSON CLI chatter: keep it in the raw log only.
+    }
+    if (event) handleEvent(event);
+    process.stdout.write(`${trimmed.length > 20_000 ? `${trimmed.slice(0, 20_000)}…` : trimmed}\n`);
+  });
+  return new Promise((resolve) => {
+    child.on("close", (code, signal) => resolve(signal ? 130 : code ?? 1));
+  });
+}
 
-const lines = createInterface({ input: child.stdout });
-lines.on("line", (line) => {
-  const trimmed = line.trim();
-  if (!trimmed) return;
-  let event = null;
-  try {
-    event = JSON.parse(trimmed);
-  } catch {
-    // Non-JSON CLI chatter: keep it in the raw log only.
-  }
-  if (event) handleEvent(event);
-  process.stdout.write(`${trimmed.length > 20_000 ? `${trimmed.slice(0, 20_000)}…` : trimmed}\n`);
-});
-
-const exitCode = await new Promise((resolve) => {
-  child.on("close", (code, signal) => resolve(signal ? 130 : code ?? 1));
-});
+let resumed = Boolean(resumeThreadId);
+let exitCode = await runCli(resumeThreadId);
+// A resume whose session file is missing exits 1 before the init event
+// (`No saved session found with title "<id>".`, Spike Q1) and makes no model
+// call — the Claude/Codex runners' fall-back-to-fresh contract applies:
+// report it and start a fresh thread rather than fail the run.
+if (resumed && !sawInit && !aborted && exitCode !== 0) {
+  emitActivity("error", `Could not resume session ${resumeThreadId} (${firstLine(Buffer.concat(stderrChunks).toString("utf8")) || `exit ${exitCode}`}); starting a fresh thread.`);
+  resumed = false;
+  stderrChunks = [];
+  threadId = null;
+  finalResponse = null;
+  usage = null;
+  resultError = null;
+  exitCode = await runCli(null);
+}
+resumed = resumed && sawInit && threadId === resumeThreadId;
 await drainActivity().catch(() => {});
 if (aborted || exitCode === 130) {
-  await writeFile(resultPath, JSON.stringify({ ok: false, threadId, finalResponse, usage, error: "Qwen Code run cancelled." }), "utf8");
+  await writeFile(resultPath, JSON.stringify({ ok: false, threadId, resumed, finalResponse, usage, error: "Qwen Code run cancelled." }), "utf8");
   process.exitCode = 130;
 } else if (resultError || exitCode !== 0) {
   const message = resultError ?? firstLine(Buffer.concat(stderrChunks).toString("utf8")) ?? `The Qwen Code CLI exited with code ${exitCode}`;
-  await writeFile(resultPath, JSON.stringify({ ok: false, threadId, finalResponse, usage, error: message }), "utf8");
+  await writeFile(resultPath, JSON.stringify({ ok: false, threadId, resumed, finalResponse, usage, error: message }), "utf8");
   process.exitCode = 1;
 } else {
-  await writeFile(resultPath, JSON.stringify({ ok: true, threadId, finalResponse, usage }), "utf8");
+  await writeFile(resultPath, JSON.stringify({ ok: true, threadId, resumed, finalResponse, usage }), "utf8");
 }

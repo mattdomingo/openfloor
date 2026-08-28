@@ -235,6 +235,16 @@ export function usesQwenRunner(provider: CredentialProvider): boolean {
   return provider === "qwen" || provider === "deepseek";
 }
 
+// Providers whose runner can continue an earlier attempt's thread from a
+// persisted session store (worker/agent-run-workflow.ts persistSessionStore /
+// restore, lib/run-resume.ts): Codex (`~/.codex/sessions`), the Claude
+// runner (`~/.claude/projects`), and the Qwen Code runner
+// (`~/.qwen/projects`, verified Spike Q1 step 4). Gemini is the exclusion —
+// its pinned CLI's resume support is unverified.
+export function resumableProvider(provider: CredentialProvider): boolean {
+  return provider !== "gemini";
+}
+
 // Stored and shown instead of the key itself; routes never return the key.
 export function credentialFingerprint(apiKey: string): string {
   return apiKey.slice(-4);
