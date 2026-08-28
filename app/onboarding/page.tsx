@@ -1,8 +1,10 @@
+import { env } from "cloudflare:workers";
 import { redirect } from "next/navigation";
 import { requireAccessUser, safeAppReturnPath } from "@/app/access-auth";
 import { BASE_PATH } from "@/components/basePath";
 import { upsertUser } from "@/db/sessions";
 import { OnboardingScreen } from "@/components/product/OnboardingScreen";
+import { normalizedTeamDomain } from "@/lib/identity";
 import { parseOnboardingStep } from "@/lib/onboarding-plan";
 import { listUserGitHubInstallations } from "@/db/github-installations";
 import { listProviderCredentials } from "@/db/provider-credentials";
@@ -23,6 +25,11 @@ export default async function OnboardingPage({
     listUserGitHubInstallations(user.id),
     listProviderCredentials(user.id),
   ]);
+  // Same team-domain validation app/signout/route.ts uses, so the
+  // back-button/tab-close exit (useOnboardingExit) can end that global
+  // Access session the same way an explicit sign-out does.
+  const teamDomain = normalizedTeamDomain(env.CF_ACCESS_TEAM_DOMAIN);
+  const teamLogoutUrl = teamDomain ? `${teamDomain}/cdn-cgi/access/logout` : null;
   return <OnboardingScreen
     fullName={identity.fullName}
     firstName={user.firstName}
@@ -32,5 +39,6 @@ export default async function OnboardingPage({
     githubInstallations={githubInstallations}
     initialCredentials={credentials}
     initialStep={parseOnboardingStep(step)}
+    teamLogoutUrl={teamLogoutUrl}
   />;
 }
