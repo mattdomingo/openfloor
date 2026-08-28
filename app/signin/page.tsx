@@ -73,6 +73,12 @@ export default async function SignInPage({ searchParams }: { searchParams: Promi
             the Access app and instant auth on, this lands straight on
             GitHub's authorize screen. */}
         <a className="signin-button signin-oauth" href={destination}>Continue with GitHub</a>
+        {/* GitHub's authorize screen auto-approves silently when the browser
+            already has a github.com session — there is no account-picker
+            prompt to force, on GitHub's side or Access's. Signing out of
+            openfloor only ends that session, not github.com's; this is the
+            one way out for someone who lands on the wrong account. */}
+        <p className="signin-github-note">Landed on the wrong GitHub account? <a href="https://github.com/logout" target="_blank" rel="noopener noreferrer">Log out of GitHub</a>, then try again.</p>
         {target.ok && (
           <>
             <div className="signin-divider" role="separator" aria-label="or">or</div>
