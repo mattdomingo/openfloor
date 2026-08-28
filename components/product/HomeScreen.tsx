@@ -365,7 +365,9 @@ export function HomeScreen({
         </div>
       </section>
       {pendingDelete && <DeleteSessionDialog session={pendingDelete} onClose={() => setPendingDelete(null)} />}
-      <GuidedTour storageKey="openfloor:tutorial:home" steps={HOME_TOUR} />
+      {/* Keyed per account so a recreated account sees the tour again; the
+          dismissal itself stays device-local like the theme. */}
+      <GuidedTour storageKey={`openfloor:tutorial:home:${user.id}`} steps={HOME_TOUR} />
     </main>
   );
 }

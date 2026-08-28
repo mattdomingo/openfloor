@@ -62,8 +62,9 @@ export function GitHubDeviceDialog({ purpose, returnTo, onConnected, onIdentity,
         return;
       }
       const verificationUri = start.verificationUri ?? "https://github.com/login/device";
+      // No auto-open: the person reads the code first, then follows the
+      // button — a tab appearing before the code is visible just confuses.
       setPhase({ name: "waiting", userCode: start.userCode, verificationUri });
-      window.open(verificationUri, "_blank", "noopener");
 
       let interval = Math.max(1, start.interval ?? 5);
       const poll = async () => {
@@ -122,8 +123,11 @@ export function GitHubDeviceDialog({ purpose, returnTo, onConnected, onIdentity,
           <>
             <p className="device-dialog-code" aria-label="Device code">{phase.userCode}</p>
             <p className="device-dialog-hint">
-              Enter this code at <a href={phase.verificationUri} target="_blank" rel="noopener noreferrer">github.com/login/device</a>. We opened it in your browser.
+              Copy this code, then enter it on GitHub to connect.
             </p>
+            <a className="button" data-variant="primary" href={phase.verificationUri} target="_blank" rel="noopener noreferrer">
+              Open github.com/login/device
+            </a>
             <p className="device-dialog-status"><Spinner /> Waiting for GitHub…</p>
           </>
         )}
