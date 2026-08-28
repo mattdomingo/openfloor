@@ -419,6 +419,17 @@ function ConnectionsSection({ initialCredentials, initialGithubInstallations }: 
     setDeviceDialogOpen(true);
   }
 
+  // Returning from the App-install redirect: that path links with an empty
+  // repo scope (no user token to verify access), so reopen the device dialog
+  // to capture the member's real scope.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("github") !== "connected") return;
+    params.delete("github");
+    window.history.replaceState(null, "", `${window.location.pathname}?${params.toString()}`);
+    setDeviceDialogOpen(true);
+  }, []);
+
   async function removeGitHub(id: string) {
     setBusy(id);
     setError(null);

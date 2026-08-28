@@ -79,6 +79,18 @@ export function OnboardingScreen({
     if (avatarPreview) URL.revokeObjectURL(avatarPreview);
   }, [avatarPreview]);
 
+  // Returning from the App-install redirect: that path can't verify which
+  // repos this member can reach (no user token), so the link landed with an
+  // empty scope — reopen the device dialog to capture the real one.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("github") !== "connected") return;
+    params.delete("github");
+    router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+    setDeviceDialogOpen(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   function pickAvatar(file: File | undefined) {
     if (!file) return;
     if (!ACCEPTED_AVATAR_TYPES.has(file.type)) {

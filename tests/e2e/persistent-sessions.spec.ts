@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { createHmac } from "node:crypto";
-import { authenticatedContext } from "./fixtures";
+import { authenticatedContext, skipTourIfOpen } from "./fixtures";
 
 test("owner and member persist, share live presence, reconnect, and leave", async ({ browser }) => {
   test.setTimeout(180_000);
@@ -25,6 +25,7 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   expect(acceptedWebhook.status()).toBe(200);
 
   await owner.goto("/home");
+  await skipTourIfOpen(owner);
   await owner.getByRole("button", { name: "New session" }).click();
   // The create-session dialog is one page: task + goal, repository (the
   // single test repository auto-selects, and the candidate branch name
@@ -38,6 +39,7 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   // the lobby to run this journey's lobby-state assertions before entering
   // the floor again further down, same as every other flow in this test.
   await expect(owner).toHaveURL(/\/session\/[0-9a-f-]+\/floor$/);
+  await skipTourIfOpen(owner);
   const createdSessionUrl = owner.url().replace(/\/floor$/, "");
   await owner.goto(createdSessionUrl);
   await expect(owner.getByText("Floor ready")).toBeVisible();
@@ -84,6 +86,7 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
 
   await owner.getByRole("link", { name: "Enter agent floor" }).click();
   await member.getByRole("link", { name: "Enter agent floor" }).click();
+  await skipTourIfOpen(member);
   await expect(owner).toHaveURL(/\/session\/[0-9a-f-]+\/floor$/);
   await expect(owner.getByRole("heading", { name: "Agent floor" })).toBeVisible();
   await expect(owner.getByRole("region", { name: "Team" }).locator(".avatar").filter({ hasText: "OE" })).toBeVisible();
@@ -298,6 +301,7 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await teamPanel.getByRole("button", { name: "Send message" }).click();
   await expect(teamPanel.getByText("The persistent floor is ready")).toBeVisible();
   const memberTeamPanel = member.getByRole("region", { name: "Team" });
+  await skipTourIfOpen(member);
   await memberTeamPanel.getByRole("button", { name: "Chat" }).click();
   await expect(memberTeamPanel.getByText("The persistent floor is ready")).toBeVisible();
 
@@ -637,6 +641,7 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
 
   // The New session tile only renders on the Active tab.
   await owner.getByRole("button", { name: /^Active/ }).click();
+  await skipTourIfOpen(owner);
   await owner.getByRole("button", { name: "New session" }).click();
   // One-page create dialog: only the task is required.
   await owner.getByLabel("Task").fill("Disposable session");

@@ -422,6 +422,13 @@ export const userGithubInstallations = sqliteTable(
     accountLogin: text("account_login").notNull(),
     accountType: text("account_type").notNull(),
     status: text("status", { enum: ["active", "revoked"] }).notNull(),
+    // JSON array of repository ids this user can reach inside the
+    // installation, captured from the user's own token at device-flow link
+    // time. NULL = unscoped (the install-redirect path, where the linker is
+    // the account's own admin) — GitHub lists an installation to anyone who
+    // can access even one of its repos, so without this scope a single
+    // shared repo granted the whole installation.
+    repoScope: text("repo_scope"),
     connectedAt: integer("connected_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
   },

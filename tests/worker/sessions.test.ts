@@ -120,6 +120,9 @@ describe("D1 session persistence", () => {
     await env.DB.prepare("DROP TABLE user_github_installations").run();
     const queries = JSON.parse(env.ACCOUNT_GITHUB_MIGRATION_QUERIES) as string[];
     await env.DB.batch(queries.map((query) => env.DB.prepare(query)));
+    // The 0032 replay rebuilt the table at its historical shape; restore the
+    // 0038 repo_scope column so later tests in this file see today's schema.
+    await env.DB.prepare("ALTER TABLE user_github_installations ADD `repo_scope` text").run();
 
     expect(await listUserGitHubInstallations(owner.id, env.DB)).toEqual([
       expect.objectContaining({ accountLogin: "acme", status: "active" }),
@@ -143,17 +146,17 @@ describe("D1 session persistence", () => {
     await env.DB.prepare("UPDATE github_account_connection_states SET expires_at = ? WHERE id = ?")
       .bind(Date.now() - 1, expiredStateId).run();
     await expect(consumeGitHubAccountConnectionState(
-      expiredStateId, owner.id, "installation-expired", { login: "expired", type: "Organization" }, env.DB,
+      expiredStateId, owner.id, "installation-expired", { login: "expired", type: "Organization" }, [], env.DB,
     )).resolves.toBeNull();
     const stateId = await createGitHubAccountConnectionState(owner.id, "onboarding", "/home", env.DB);
     await expect(consumeGitHubAccountConnectionState(
-      stateId, outsider.id, "installation-account", { login: "openfloor", type: "Organization" }, env.DB,
+      stateId, outsider.id, "installation-account", { login: "openfloor", type: "Organization" }, [], env.DB,
     )).resolves.toBeNull();
     await expect(consumeGitHubAccountConnectionState(
-      stateId, owner.id, "installation-account", { login: "openfloor", type: "Organization" }, env.DB,
+      stateId, owner.id, "installation-account", { login: "openfloor", type: "Organization" }, [], env.DB,
     )).resolves.toEqual({ purpose: "onboarding", returnTo: "/home" });
     await expect(consumeGitHubAccountConnectionState(
-      stateId, owner.id, "installation-account", { login: "openfloor", type: "Organization" }, env.DB,
+      stateId, owner.id, "installation-account", { login: "openfloor", type: "Organization" }, [], env.DB,
     )).resolves.toBeNull();
     const [installation] = await listUserGitHubInstallations(owner.id, env.DB);
     expect(installation).toEqual(expect.objectContaining({ accountLogin: "openfloor", status: "active" }));
