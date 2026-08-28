@@ -63,6 +63,8 @@ export default defineConfig({
             kimi: ["sk-kimi-render-accepted"],
             gemini: ["AIza-gemini-render-accepted"],
             glm: ["zai-glm-render-accepted"],
+            qwen: ["sk-qwen-render-accepted"],
+            deepseek: ["sk-deepseek-render-accepted"],
           }),
           ACCESS_CUSTOM_LOGIN_ENABLED: "true",
           OPENFLOOR_TEST_ACCESS_LOGIN_HTML: RENDER_TEST_LOGIN_HTML,

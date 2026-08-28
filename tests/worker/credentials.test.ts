@@ -1,10 +1,12 @@
 import { env } from "cloudflare:workers";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { POST as postAnthropicGateway } from "@/app/runtime/anthropic/[...path]/route";
+import { GET as getDeepseekGateway, POST as postDeepseekGateway } from "@/app/runtime/deepseek/[...path]/route";
 import { POST as postGeminiGateway } from "@/app/runtime/gemini/[...path]/route";
 import { GET as getGlmGateway, POST as postGlmGateway } from "@/app/runtime/glm/[...path]/route";
 import { GET as getKimiGateway, POST as postKimiGateway } from "@/app/runtime/kimi/[...path]/route";
 import { POST as postOpenAiGateway } from "@/app/runtime/openai/[...path]/route";
+import { GET as getQwenGateway, POST as postQwenGateway } from "@/app/runtime/qwen/[...path]/route";
 import { createFloorAgent, updateFloorAgentSettings } from "@/db/floor";
 import {
   deleteProviderCredential,
@@ -37,7 +39,7 @@ async function room(suffix: string) {
 
 async function connectKey(
   userId: string,
-  provider: "anthropic" | "openai" | "kimi" | "gemini" | "glm",
+  provider: "anthropic" | "openai" | "kimi" | "gemini" | "glm" | "qwen" | "deepseek",
   apiKey: string,
   kind: "api_key" | "oauth" = "api_key",
 ) {
@@ -764,6 +766,186 @@ describe("OpenAI gateway credential resolution", () => {
       { params: Promise.resolve({ path: ["v1", "messages"] }) },
     );
     expect(crossed.status).toBe(404);
+  });
+
+  // The OpenAI-chat-compat gateway (lib/openai-chat-compat-gateway.ts): the
+  // anthropic-compat handler's contract for the two Qwen-runner providers.
+  // The pinned Qwen Code CLI sends exactly POST /v1/chat/completions with the
+  // run JWT as `authorization: Bearer` (Spike Q1, 2026-08-28).
+  it("qwen gateway forwards chat completions to DashScope with Bearer auth, resolving owner before server key", async () => {
+    const { sessionId, owner, runId } = await runningRun("qwen-owner");
+    const captured: Array<{ url: string; bearer: string | null; accept: string | null }> = [];
+    vi.stubGlobal("fetch", async (url: string, init: { headers: Headers }) => {
+      captured.push({ url, bearer: init.headers.get("authorization"), accept: init.headers.get("accept") });
+      return new Response("data: {}\n\n", {
+        status: 200,
+        headers: { "content-type": "text/event-stream", "retry-after": "3", "x-ratelimit-remaining-requests": "99", "x-upstream-internal": "no" },
+      });
+    });
+    const token = await signRunGatewayToken(
+      { runId, sessionId, repositoryId: "repo", candidateSha: "sha-run", operation: "qwen" },
+      GATEWAY_SECRET,
+    );
+    function qwenRequest(path: string) {
+      return postQwenGateway(
+        new Request(`https://app.opnflr.com/runtime/qwen/${path}`, {
+          method: "POST",
+          headers: { authorization: `Bearer ${token}`, "content-type": "application/json", accept: "application/json" },
+          body: JSON.stringify({ model: "qwen3-coder-plus", stream: true }),
+        }),
+        { params: Promise.resolve({ path: path.split("/") }) },
+      );
+    }
+    // Server key resolves while the owner has no qwen credential.
+    (env as unknown as Record<string, unknown>).DASHSCOPE_API_KEY = "sk-dashscope-server-key";
+    const streamed = await qwenRequest("v1/chat/completions");
+    expect(streamed.status).toBe(200);
+    // SSE passthrough plus the vendor's rate-limit signals; nothing else leaks.
+    expect(streamed.headers.get("content-type")).toBe("text/event-stream");
+    expect(streamed.headers.get("retry-after")).toBe("3");
+    expect(streamed.headers.get("x-ratelimit-remaining-requests")).toBe("99");
+    expect(streamed.headers.get("x-upstream-internal")).toBeNull();
+    // A connected owner key takes over from the server key.
+    await connectKey(owner.id, "qwen", "sk-dashscope-owner-key");
+    expect((await qwenRequest("v1/chat/completions")).status).toBe(200);
+    // With or without the CLI's /v1 prefix, one upstream path.
+    expect((await qwenRequest("chat/completions")).status).toBe(200);
+    expect(captured.map((call) => call.url)).toEqual([
+      "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions",
+      "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions",
+      "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions",
+    ]);
+    expect(captured.map((call) => call.bearer)).toEqual([
+      "Bearer sk-dashscope-server-key",
+      "Bearer sk-dashscope-owner-key",
+      "Bearer sk-dashscope-owner-key",
+    ]);
+    expect(captured.every((call) => call.accept === "application/json")).toBe(true);
+    // Only the one path the CLI speaks: models, embeddings, and every GET
+    // are concealed, never forwarded.
+    expect((await qwenRequest("v1/models")).status).toBe(404);
+    expect((await qwenRequest("v1/embeddings")).status).toBe(404);
+    expect((await getQwenGateway(new Request("https://app.opnflr.com/runtime/qwen/v1/models"), { params: Promise.resolve({ path: ["v1", "models"] }) })).status).toBe(404);
+    expect(captured).toHaveLength(3);
+    delete (env as unknown as Record<string, unknown>).DASHSCOPE_API_KEY;
+  });
+
+  it("qwen gateway refuses without a credential, a wrong-operation token, and a run that stopped running", async () => {
+    const { sessionId, owner, runId } = await runningRun("qwen-none");
+    delete (env as unknown as Record<string, unknown>).DASHSCOPE_API_KEY;
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+    function qwenRequest(bearer: string) {
+      return postQwenGateway(
+        new Request("https://app.opnflr.com/runtime/qwen/v1/chat/completions", {
+          method: "POST",
+          headers: { authorization: `Bearer ${bearer}`, "content-type": "application/json" },
+          body: "{}",
+        }),
+        { params: Promise.resolve({ path: ["v1", "chat", "completions"] }) },
+      );
+    }
+    const token = await signRunGatewayToken(
+      { runId, sessionId, repositoryId: "repo", candidateSha: "sha-run", operation: "qwen" },
+      GATEWAY_SECRET,
+    );
+    const refused = await qwenRequest(token);
+    expect(refused.status).toBe(503);
+    expect(await refused.text()).toContain("No Alibaba Cloud credential");
+    // A deepseek-operation token must not open the qwen gateway — the two
+    // providers share a runner, never a credential.
+    const deepseekOperation = await signRunGatewayToken(
+      { runId, sessionId, repositoryId: "repo", candidateSha: "sha-run", operation: "deepseek" },
+      GATEWAY_SECRET,
+    );
+    expect((await qwenRequest(deepseekOperation)).status).toBe(404);
+    // Once the run leaves running/cancel_requested, a still-valid JWT is
+    // refused before any credential is resolved.
+    await connectKey(owner.id, "qwen", "sk-dashscope-owner-key");
+    await env.DB.prepare("UPDATE agent_runs SET status = 'failed' WHERE id = ?").bind(runId).run();
+    expect((await qwenRequest(token)).status).toBe(404);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("qwen gateway refuses an agent-named kind the owner lacks rather than billing the server key", async () => {
+    const { sessionId, owner } = await room("qwen-kind");
+    // A hand-written oauth row for an api_key-only provider must never be
+    // sent to the vendor, and its absence must never fall through to the
+    // server key either (the glm precedent; the Coding Plan kind is withheld
+    // until Spike Q2).
+    await connectKey(owner.id, "qwen", "sk-sp-evil", "oauth");
+    const input = parseAgentInput({ name: "Rogue", role: "R", task: "T", ownerUserId: owner.id, provider: "qwen" });
+    if (!input) throw new Error("Invalid test agent");
+    const floor = await createFloorAgent(sessionId, owner.id, { ...input, credentialKind: "oauth" }, env.DB);
+    const agent = floor?.agents.find((candidate) => candidate.name === "Rogue");
+    if (!agent) throw new Error("Agent was not created");
+    const runId = await insertRunRow(sessionId, agent.id, owner.id, "running");
+    (env as unknown as Record<string, unknown>).DASHSCOPE_API_KEY = "sk-dashscope-server-key";
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+    const token = await signRunGatewayToken(
+      { runId, sessionId, repositoryId: "repo", candidateSha: "sha-run", operation: "qwen" },
+      GATEWAY_SECRET,
+    );
+    const refused = await postQwenGateway(
+      new Request("https://app.opnflr.com/runtime/qwen/v1/chat/completions", {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+        body: "{}",
+      }),
+      { params: Promise.resolve({ path: ["v1", "chat", "completions"] }) },
+    );
+    expect(refused.status).toBe(503);
+    expect(await refused.text()).toContain("No Alibaba Cloud credential");
+    expect(fetchSpy).not.toHaveBeenCalled();
+    delete (env as unknown as Record<string, unknown>).DASHSCOPE_API_KEY;
+  });
+
+  it("deepseek gateway is the qwen route against api.deepseek.com with its own secret and operation", async () => {
+    const { sessionId, owner, runId } = await runningRun("deepseek-owner");
+    const captured: Array<{ url: string; bearer: string | null }> = [];
+    vi.stubGlobal("fetch", async (url: string, init: { headers: Headers }) => {
+      captured.push({ url, bearer: init.headers.get("authorization") });
+      return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+    });
+    const token = await signRunGatewayToken(
+      { runId, sessionId, repositoryId: "repo", candidateSha: "sha-run", operation: "deepseek" },
+      GATEWAY_SECRET,
+    );
+    function deepseekRequest(path: string, bearer = token) {
+      return postDeepseekGateway(
+        new Request(`https://app.opnflr.com/runtime/deepseek/${path}`, {
+          method: "POST",
+          headers: { authorization: `Bearer ${bearer}`, "content-type": "application/json" },
+          body: JSON.stringify({ model: "deepseek-v4-pro" }),
+        }),
+        { params: Promise.resolve({ path: path.split("/") }) },
+      );
+    }
+    (env as unknown as Record<string, unknown>).DEEPSEEK_API_KEY = "sk-deepseek-server-key";
+    expect((await deepseekRequest("v1/chat/completions")).status).toBe(200);
+    await connectKey(owner.id, "deepseek", "sk-deepseek-owner-key");
+    expect((await deepseekRequest("chat/completions")).status).toBe(200);
+    expect(captured.map((call) => call.url)).toEqual([
+      "https://api.deepseek.com/chat/completions",
+      "https://api.deepseek.com/chat/completions",
+    ]);
+    expect(captured.map((call) => call.bearer)).toEqual(["Bearer sk-deepseek-server-key", "Bearer sk-deepseek-owner-key"]);
+    expect((await deepseekRequest("v1/models")).status).toBe(404);
+    expect((await getDeepseekGateway(new Request("https://app.opnflr.com/runtime/deepseek/v1/models"), { params: Promise.resolve({ path: ["v1", "models"] }) })).status).toBe(404);
+    // A qwen-operation token must not open the deepseek gateway.
+    const qwenOperation = await signRunGatewayToken(
+      { runId, sessionId, repositoryId: "repo", candidateSha: "sha-run", operation: "qwen" },
+      GATEWAY_SECRET,
+    );
+    expect((await deepseekRequest("v1/chat/completions", qwenOperation)).status).toBe(404);
+    expect(captured).toHaveLength(2);
+    // No credential at all refuses by name.
+    delete (env as unknown as Record<string, unknown>).DEEPSEEK_API_KEY;
+    await deleteProviderCredential(owner.id, "deepseek", "api_key", env.DB);
+    const refused = await deepseekRequest("v1/chat/completions");
+    expect(refused.status).toBe(503);
+    expect(await refused.text()).toContain("No DeepSeek credential");
   });
 
   it("bills exactly the credential kind each agent names, through the gateway", async () => {

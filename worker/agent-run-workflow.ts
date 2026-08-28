@@ -37,7 +37,8 @@ import { getEnabledMcpServersForRun } from "../db/mcp-servers";
 import { getSessionSkillsForRun } from "../db/skills";
 import { serializeMcpServersForClaude } from "../lib/mcp-config";
 import { buildGeminiSrtSettings, buildGeminiSystemSettings } from "../lib/gemini-settings";
-import { usesClaudeRunner, type CredentialProvider } from "../lib/provider-credentials";
+import { buildQwenSrtSettings, buildQwenSystemSettings } from "../lib/qwen-settings";
+import { resumableProvider, usesClaudeRunner, usesQwenRunner, type CredentialProvider } from "../lib/provider-credentials";
 import { buildClaudeSandboxSettings } from "../lib/claude-sandbox-settings";
 import { notifyFloorChanged } from "../lib/presence-server";
 import { pokeSessionRouter } from "../lib/router-server";
@@ -159,7 +160,7 @@ const PUBLISHER_SANDBOX_IMAGE_VERSION = "v2";
 // Namespacing the pool key by image version makes old-image entries
 // unreachable immediately; the existing idle sweep reclaims them.
 // Bump this whenever Dockerfile.sandbox's run-sandbox contents change.
-const RUN_SANDBOX_IMAGE_VERSION = "v5";
+const RUN_SANDBOX_IMAGE_VERSION = "v6";
 // Non-Codex runs get a fresh HOME per run, inside the per-run scratch tree
 // that prepare wipes and the release reset removes. Pool sandboxes outlive
 // sessions, so everything a CLI persists under its home — transcripts, todos,
@@ -172,6 +173,11 @@ const RUN_AGENT_HOME = "/tmp/openfloor/agent-home";
 // end. The cap keeps a runaway transcript from turning every retry into a
 // multi-megabyte R2 round trip; over it, the next attempt starts fresh.
 const SESSION_STORE_PATH = "/tmp/openfloor/session-store.tgz";
+// Where a resumable provider's session directory lives: the per-run agent
+// HOME for the non-root runners (Claude, Qwen Code), root's HOME for Codex.
+function sessionStoreHome(provider: CredentialProvider): string {
+  return usesClaudeRunner(provider) || usesQwenRunner(provider) ? RUN_AGENT_HOME : "${HOME:-/root}";
+}
 const MAX_SESSION_STORE_BYTES = 8 * 1024 * 1024;
 
 export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Params> {
@@ -379,14 +385,14 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
         // so the runner can continue that conversation (eligibility decided
         // in createAgentRun via lib/run-resume.ts). Best-effort by design —
         // a missing object or failed extraction means a fresh thread, never
-        // a failed run. Gemini is excluded: its CLI's resume support is
-        // unverified at the pinned version.
+        // a failed run. resumableProvider excludes Gemini: its CLI's resume
+        // support is unverified at the pinned version.
         let resumeThreadId: string | null = null;
-        if (!manualApplied && context.resumeThreadId && context.resumeSessionStoreKey && context.provider !== "gemini") {
+        if (!manualApplied && context.resumeThreadId && context.resumeSessionStoreKey && resumableProvider(context.provider)) {
           const store = await this.env.PREFLIGHT_LOGS.get(context.resumeSessionStoreKey);
           if (store?.body) {
             await sandbox.writeFile(SESSION_STORE_PATH, store.body);
-            const home = usesClaudeRunner(context.provider) ? RUN_AGENT_HOME : "${HOME:-/root}";
+            const home = sessionStoreHome(context.provider);
             const restored = await sandbox.exec(
               `mkdir -p ${home} && tar -xzf ${SESSION_STORE_PATH} -C ${home} && rm -f ${SESSION_STORE_PATH}`,
               { timeout: 60_000 },
@@ -462,19 +468,25 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
           );
           if (!prepared.success) throw new Error(`Claude runtime preparation failed with exit code ${prepared.exitCode}`);
         }
-        if (context.provider === "gemini") {
-          // Same non-root posture as the Claude runner, with the CLI's pinned
-          // configuration in a SYSTEM-scope settings file (beats the target
-          // repository's own .gemini/settings.json in the CLI's merge order)
-          // and an srt settings file for wrapping the whole runner — see
-          // lib/gemini-settings.ts for why each value is pinned. No skills
-          // and no CLAUDE.md append: skills are a Claude-runner feature, and
-          // the Gemini CLI natively reads the repository's GEMINI.md context
-          // files. The context token is signed here so the settings file is
-          // complete at write time; it has the same 60-minute TTL as the
-          // start step's tokens.
+        if (context.provider === "gemini" || usesQwenRunner(context.provider)) {
+          // The two headless-CLI runners (Gemini; Qwen Code for qwen AND
+          // deepseek — usesQwenRunner). Same non-root posture as the Claude
+          // runner, with the CLI's pinned configuration in a SYSTEM-scope
+          // settings file (beats the target repository's own
+          // .gemini/settings.json or .qwen/settings.json in the CLI's merge
+          // order) and an srt settings file for wrapping the whole runner —
+          // see lib/gemini-settings.ts and lib/qwen-settings.ts for why each
+          // value is pinned; the settings directory is the only per-CLI
+          // difference here. No skills and no CLAUDE.md append: skills are a
+          // Claude-runner feature, and each CLI natively reads the
+          // repository's own GEMINI.md / QWEN.md context files. The context
+          // token is signed here so the settings file is complete at write
+          // time; it has the same 60-minute TTL as the start step's tokens.
+          const cli = context.provider === "gemini"
+            ? { name: "Gemini", dir: ".gemini", buildSystemSettings: buildGeminiSystemSettings, buildSrtSettings: buildGeminiSrtSettings }
+            : { name: "Qwen Code", dir: ".qwen", buildSystemSettings: buildQwenSystemSettings, buildSrtSettings: buildQwenSrtSettings };
           await sandbox.exec(
-            `id -u openfloor-agent >/dev/null 2>&1 || useradd -m openfloor-agent; mkdir -p ${RUN_AGENT_HOME}/.gemini`,
+            `id -u openfloor-agent >/dev/null 2>&1 || useradd -m openfloor-agent; mkdir -p ${RUN_AGENT_HOME}/${cli.dir}`,
             { timeout: 30_000 },
           );
           const contextToken = await signRunGatewayToken({
@@ -486,8 +498,8 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
             candidateSha: context.candidateSha, operation: "conflict_input",
           }, this.env.RUNTIME_GATEWAY_SECRET) : null;
           await sandbox.writeFile(
-            `${RUN_AGENT_HOME}/.gemini/system-settings.json`,
-            buildGeminiSystemSettings({
+            `${RUN_AGENT_HOME}/${cli.dir}/system-settings.json`,
+            cli.buildSystemSettings({
               contextUrl: `${this.env.OPENFLOOR_RUNTIME_ORIGIN}/runtime/run/context`,
               contextToken,
               mcpServerPath: "/opt/openfloor/openfloor-mcp.mjs",
@@ -500,7 +512,7 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
           );
           await sandbox.writeFile(
             `${RUN_AGENT_HOME}/srt-settings.json`,
-            buildGeminiSrtSettings({
+            cli.buildSrtSettings({
               gatewayHost: new URL(this.env.OPENFLOOR_RUNTIME_ORIGIN).host,
               workspace: "/workspace/repository",
               readOnly: context.kind === "reply",
@@ -510,7 +522,7 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
             "chown -R openfloor-agent:openfloor-agent /workspace/repository /tmp/openfloor && git config --global --add safe.directory /workspace/repository",
             { timeout: 60_000 },
           );
-          if (!prepared.success) throw new Error(`Gemini runtime preparation failed with exit code ${prepared.exitCode}`);
+          if (!prepared.success) throw new Error(`${cli.name} runtime preparation failed with exit code ${prepared.exitCode}`);
         }
         return { materializedSkills, conflictPaths, manualApplied, manualApplySummary, resumeThreadId };
       });
@@ -535,13 +547,15 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
       await step.do("start Codex", { retries: { limit: 1, delay: "5 seconds" }, timeout: "2 minutes" }, async () => {
         const existing = await sandbox.getProcess(processId);
         if (!existing) {
-          // Claude-runner providers get a token bound to their own gateway
-          // operation (anthropic → /runtime/anthropic, kimi → /runtime/kimi);
-          // everything else is Codex against the OpenAI gateway.
+          // Claude-runner, Gemini, and Qwen-runner providers get a token
+          // bound to their own gateway operation (anthropic →
+          // /runtime/anthropic, kimi → /runtime/kimi, deepseek →
+          // /runtime/deepseek, …); everything else is Codex against the
+          // OpenAI gateway.
           const providerToken = await signRunGatewayToken({
             runId, sessionId: context.sessionId, repositoryId: context.repositoryId,
             candidateSha: context.candidateSha,
-            operation: usesClaudeRunner(context.provider) || context.provider === "gemini" ? context.provider : "openai",
+            operation: usesClaudeRunner(context.provider) || context.provider === "gemini" || usesQwenRunner(context.provider) ? context.provider : "openai",
           }, this.env.RUNTIME_GATEWAY_SECRET);
           const eventsToken = await signRunGatewayToken({
             runId, sessionId: context.sessionId, repositoryId: context.repositoryId,
@@ -558,15 +572,17 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
           // runuser -p preserves the startProcess env (including the HOME set
           // below, which is where the pinned sandbox settings live) while
           // dropping to the non-root user the Claude sandbox requires.
-          // Gemini's start command is Plan A from the Spike-C posture gate:
-          // srt wraps the ENTIRE runner + CLI (the CLI has no built-in
+          // Gemini's and Qwen Code's start command is Plan A from their
+          // posture gates (Spike C 2026-08-24, Spike Q1 2026-08-28): srt
+          // wraps the ENTIRE runner + CLI (neither CLI has a built-in
           // sandbox, unlike the Agent SDK), with the gateway host as the only
-          // egress; the runner's fetch preload keeps the CLI's own model
-          // traffic working through srt's proxy on the image's Node 22.
+          // egress. The Gemini runner's fetch preload keeps that CLI's model
+          // traffic working through srt's proxy on the image's Node 22; Qwen
+          // Code honors the proxy env natively.
           const command = usesClaudeRunner(context.provider)
             ? "runuser -p -u openfloor-agent -- node /opt/openfloor/claude-runner.mjs"
-            : context.provider === "gemini"
-              ? `runuser -p -u openfloor-agent -- /opt/openfloor/node_modules/.bin/srt -s ${RUN_AGENT_HOME}/srt-settings.json -c "node /opt/openfloor/gemini-runner.mjs"`
+            : context.provider === "gemini" || usesQwenRunner(context.provider)
+              ? `runuser -p -u openfloor-agent -- /opt/openfloor/node_modules/.bin/srt -s ${RUN_AGENT_HOME}/srt-settings.json -c "node /opt/openfloor/${context.provider === "gemini" ? "gemini" : "qwen"}-runner.mjs"`
               : "node /opt/openfloor/codex-runner.mjs";
           const providerEnv = usesClaudeRunner(context.provider)
             ? {
@@ -594,7 +610,18 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
                   HOME: RUN_AGENT_HOME,
                   GEMINI_CLI_SYSTEM_SETTINGS_PATH: `${RUN_AGENT_HOME}/.gemini/system-settings.json`,
                 }
-              : {
+              : usesQwenRunner(context.provider)
+                ? {
+                    // One runner for qwen and deepseek; the gateway route the
+                    // run JWT is bound to is the whole difference (the
+                    // Kimi/GLM recipe). /v1 so the CLI's logged paths read
+                    // like the vendor's own (/runtime/openai/v1 precedent).
+                    OPENFLOOR_QWEN_BASE_URL: `${this.env.OPENFLOOR_RUNTIME_ORIGIN}/runtime/${context.provider}/v1`,
+                    OPENFLOOR_QWEN_TOKEN: providerToken,
+                    HOME: RUN_AGENT_HOME,
+                    QWEN_CODE_SYSTEM_SETTINGS_PATH: `${RUN_AGENT_HOME}/.qwen/system-settings.json`,
+                  }
+                : {
                   OPENFLOOR_OPENAI_BASE_URL: `${this.env.OPENFLOOR_RUNTIME_ORIGIN}/runtime/openai/v1`,
                   OPENFLOOR_OPENAI_TOKEN: providerToken,
                 };
@@ -900,13 +927,14 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
   // resumes from — into private R2 as a session_store artifact. Best-effort
   // and never throws: a missing directory, an oversized archive, or an R2
   // hiccup just means the next attempt starts a fresh thread. The per-run
-  // HOME (Claude runner) and the release reset (Codex's ~/.codex) guarantee
-  // the directory holds only this run's transcript plus the one it resumed.
+  // HOME (Claude and Qwen Code runners) and the release reset (Codex's
+  // ~/.codex) guarantee the directory holds only this run's transcript plus
+  // the one it resumed.
   private async persistSessionStore(runId: string, provider: CredentialProvider, threadId: string | null, sandbox: ReturnType<typeof getSandbox<Sandbox>>) {
-    if (!threadId || provider === "gemini") return;
+    if (!threadId || !resumableProvider(provider)) return;
     try {
-      const home = usesClaudeRunner(provider) ? RUN_AGENT_HOME : "${HOME:-/root}";
-      const subdir = usesClaudeRunner(provider) ? ".claude/projects" : ".codex/sessions";
+      const home = sessionStoreHome(provider);
+      const subdir = usesClaudeRunner(provider) ? ".claude/projects" : usesQwenRunner(provider) ? ".qwen/projects" : ".codex/sessions";
       const packed = await sandbox.exec(
         `cd ${home} && test -d ${subdir} && tar -czf ${SESSION_STORE_PATH} ${subdir} && wc -c < ${SESSION_STORE_PATH}`,
         { timeout: 60_000 },

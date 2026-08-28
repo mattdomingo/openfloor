@@ -27,6 +27,10 @@ export async function validateProviderApiKey(
     kimi: { url: "https://api.moonshot.ai/v1/models", headers: { authorization: `Bearer ${apiKey}` } },
     gemini: { url: "https://generativelanguage.googleapis.com/v1beta/models", headers: { "x-goog-api-key": apiKey } },
     glm: { url: "https://api.z.ai/api/paas/v4/models", headers: { authorization: `Bearer ${apiKey}` } },
+    // International (Singapore) endpoint, the same upstream the qwen gateway
+    // forwards to; a China-region key fails here by design.
+    qwen: { url: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/models", headers: { authorization: `Bearer ${apiKey}` } },
+    deepseek: { url: "https://api.deepseek.com/models", headers: { authorization: `Bearer ${apiKey}` } },
   };
   const request = requests[provider];
   return probeModelsEndpoint(request.url, request.headers);
