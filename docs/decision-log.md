@@ -746,3 +746,11 @@ Separately, the lobby's `SessionSetupDialog`/`setupRequested`/`?setup=1` are del
 
 **Consequences:** Substantially lowers per-run prompt token usage and cost across all provider runs while preserving floor coordination, conflict avoidance, and honest empty states.
 
+### 2026-08-28 — Queue groups finished prompts into fixed collapsible sections
+
+**Decision:** The queue panel no longer renders one flat list with done items sunk to the bottom. `groupQueueItems` (`components/session/data.ts`) buckets the scoped snapshot into six fixed sections: Live (queued/running/blocked/paused items, active runs, parked ready/published runs, mid-rollback items, discarded runs) in `position`-ascending dispatch order, then Conflicted (default expanded), Failed, Answered, Integrated, and Cancelled as collapsible bars, each sorted newest-first by `createdAt` with id as tie-break. Section expand state is local-only and resets on reload; Live has no bar. Drag reorder stays limited to Live items.
+
+**Rationale:** The flat list buried fresh integrated/cancelled work under everything older and made a busy queue unreadable. `position` is load-bearing — auto-dispatch and manual reorder both act on it — so Live keeps dispatch order instead of recency; finished sections have no dispatch meaning, so newest-first by `createdAt` (the only stable recency key: `reorderFloorQueue` bumps `updated_at`, and terminal runs age out of the 20-run window) surfaces recent outcomes. Conflicted defaults open because it always carries an action.
+
+**Consequences:** Pure presentation: no persistence, API, or `position` change — the server still returns the queue in `position` order and `Workspace.dropQueueItem` rebuilds IDs from the full snapshot. A queued/paused item still wins over its stale terminal run (the resumed-item guard moves into the bucketing). Discarded published runs fold into Live, matching where they rendered before grouping. Answered items survive their reply run aging out of the run window via the durable `item.answer` descriptor, integrated ones via `item.rollback`. The queue section expand state joins the intentionally-local UI list in `AGENTS.md`.
+
