@@ -82,15 +82,26 @@ export function GuidedTour({ storageKey, steps }: { storageKey: string; steps: T
     if (!step) return;
     const measure = () => {
       const element = document.querySelector(step.selector);
-      setRect(element ? element.getBoundingClientRect() : null);
+      const next = element ? element.getBoundingClientRect() : null;
+      // Same-box check so the MutationObserver below can't re-render forever.
+      setRect((current) => {
+        if (!next) return null;
+        if (current && current.left === next.left && current.top === next.top && current.width === next.width && current.height === next.height) return current;
+        return next;
+      });
     };
     document.querySelector(step.selector)?.scrollIntoView({ block: "nearest" });
     measure();
     window.addEventListener("resize", measure);
     window.addEventListener("scroll", measure, true);
+    // A step's anchor can render after the step activates — e.g. the create
+    // dialog that the previous step's click opens — so watch the DOM too.
+    const observer = new MutationObserver(measure);
+    observer.observe(document.body, { childList: true, subtree: true });
     return () => {
       window.removeEventListener("resize", measure);
       window.removeEventListener("scroll", measure, true);
+      observer.disconnect();
     };
   }, [step]);
 
@@ -110,6 +121,10 @@ export function GuidedTour({ storageKey, steps }: { storageKey: string; steps: T
         width: bubbleWidth,
       }
     : { left: (window.innerWidth - bubbleWidth) / 2, top: window.innerHeight / 3, width: bubbleWidth };
+
+  // An anchor inside a showModal() dialog lives in the top layer, where a
+  // body-portaled bubble would be inert and covered — portal into the dialog.
+  const portalTarget = document.querySelector(step.selector)?.closest("dialog[open]") ?? document.body;
 
   return createPortal(
     <div className="tour-layer">
@@ -138,6 +153,6 @@ export function GuidedTour({ storageKey, steps }: { storageKey: string; steps: T
         </div>
       </div>
     </div>,
-    document.body,
+    portalTarget,
   );
 }

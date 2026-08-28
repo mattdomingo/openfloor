@@ -210,8 +210,12 @@ export function OnboardingScreen({
               <div className="field onboarding-avatar-field">
                 <span className="label">Profile picture <em>optional</em></span>
                 <div className="onboarding-avatar-picker">
-                  <Avatar initials={initialsFromParts(firstName, lastName)} tone="you" previewSrc={avatarPreview ?? undefined} />
-                  <div><AvatarFileButton hasPicture={Boolean(avatarPreview)} onPick={pickAvatar} /><small>PNG, JPEG, or WebP. 5MB maximum.</small></div>
+                  {/* The tile is what people click first, so it drives the same
+                      file input as the button — natively, via the label. */}
+                  <label htmlFor="onboarding-avatar-input" className="onboarding-avatar-tile" aria-label="Choose profile picture">
+                    <Avatar initials={initialsFromParts(firstName, lastName)} tone="you" previewSrc={avatarPreview ?? undefined} />
+                  </label>
+                  <div><AvatarFileButton hasPicture={Boolean(avatarPreview)} onPick={pickAvatar} inputId="onboarding-avatar-input" /><small>PNG, JPEG, or WebP. 5MB maximum.</small></div>
                 </div>
               </div>
               {cropSource && <AvatarCropper file={cropSource} onCancel={() => setCropSource(null)} onCropped={applyCrop} />}

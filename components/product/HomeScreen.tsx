@@ -385,6 +385,11 @@ const HOME_TOUR: TourStep[] = [
     title: "Start a session",
     body: "A session is one room for one goal. Click + to name the task, pick the GitHub repository, and optionally connect an AI provider — all on one page.",
   },
+  {
+    selector: '.create-dialog button[type="submit"]',
+    title: "Name it, pick a repository, create",
+    body: "Fill in the task, choose the GitHub repository the agents work in, then click Create session. You land on the agent floor — it walks you through itself the first time.",
+  },
 ];
 
 function SessionGrid({
