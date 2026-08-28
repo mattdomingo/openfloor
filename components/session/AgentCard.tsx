@@ -1,14 +1,14 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import type { AgentRun, FloorAgent, FloorAgentSettingsPatch, RunActivityEvent } from "@/lib/floor-types";
+import { memo, useEffect, useRef, useState } from "react";
+import type { AgentRun, FloorAgent, FloorAgentSettingsPatch } from "@/lib/floor-types";
 import { AGENT_PROVIDER_LABELS, credentialKindLabel, credentialKindsForProvider, MODEL_CONTEXT_TOKENS, parseCredentialKind, PROVIDER_MODELS } from "@/lib/provider-credentials";
 import { BASE_PATH } from "@/components/basePath";
 import { LocalDateTime } from "@/components/LocalDateTime";
 import { Icon } from "./primitives";
 import { Markdown } from "./Markdown";
 import { SelectMenu } from "./SelectMenu";
-import type { RunActivitySource } from "./useRunActivity";
+import { type RunActivitySource, useRunEvents } from "./useRunActivity";
 import { ACTIVE_RUN_STATUSES, agentReplyText, conflictCardStatus, conflictStateLabel, formatAgentCost, isRunLive, runContextUsage, runStatusToken, type AgentConflictInfo } from "./data";
 
 const KIND_GLYPHS: Record<string, string> = {
@@ -25,8 +25,9 @@ function glyphFor(kind: string): string {
   return KIND_GLYPHS[kind] ?? "•";
 }
 
-export function AgentCard({ agent, tone, latestRun, activityEvents, selected, owner, conflict, onFocus, onOpenConflict, onHistory, onPause, onStop, onDelete }: { agent: FloorAgent; tone: string; latestRun: AgentRun | null; activityEvents: RunActivityEvent[]; selected: boolean; owner: boolean; conflict?: AgentConflictInfo | null; onFocus: () => void; onOpenConflict?: (caseId: string) => void; onHistory: () => void; onPause: (agentId: string, paused: boolean) => void; onStop: (agentId: string) => void; onDelete: (agentId: string) => void }) {
+export const AgentCard = memo(function AgentCard({ agent, tone, latestRun, activity, selected, owner, conflict, onFocus, onOpenConflict, onHistory, onPause, onStop, onDelete }: { agent: FloorAgent; tone: string; latestRun: AgentRun | null; activity: RunActivitySource; selected: boolean; owner: boolean; conflict?: AgentConflictInfo | null; onFocus: () => void; onOpenConflict?: (caseId: string) => void; onHistory: () => void; onPause: (agentId: string, paused: boolean) => void; onStop: (agentId: string) => void; onDelete: (agentId: string) => void }) {
   const live = isRunLive(latestRun);
+  const activityEvents = useRunEvents(activity, live ? latestRun?.id : null);
   const latestEvent = live ? activityEvents[activityEvents.length - 1] ?? null : null;
   const reply = agentReplyText(latestRun);
   const paused = agent.pausedAt !== null;
@@ -70,7 +71,7 @@ export function AgentCard({ agent, tone, latestRun, activityEvents, selected, ow
       <div className="agent-foot"><span>Owned by {agent.ownerName}</span><span className="agent-cost" title={cost.title}>{cost.label}</span><span><LocalDateTime timestamp={agent.createdAt} /></span></div>
     </article>
   );
-}
+});
 
 // Plain reply text, not a bubble or tooltip: the clamped reply sits directly
 // on the tile so it's visible without a hover/focus step. Click opens the
@@ -83,7 +84,7 @@ function AgentReplyBubble({ agentName, reply, onOpen }: { agentName: string; rep
   );
 }
 
-export function AgentSpotlight({ agent, tone, sessionId, latestRun, activity, owner, conflict, onHistory, onOpenConflict, onUpdateSettings, onPause, onStop, onDelete }: { agent: FloorAgent; tone: string; sessionId: string; latestRun: AgentRun | null; activity: RunActivitySource; owner: boolean; conflict?: AgentConflictInfo | null; onHistory: () => void; onOpenConflict?: (caseId: string) => void; onUpdateSettings: (agentId: string, patch: FloorAgentSettingsPatch) => Promise<boolean>; onPause: (agentId: string, paused: boolean) => void; onStop: (agentId: string) => void; onDelete: (agentId: string) => void }) {
+export const AgentSpotlight = memo(function AgentSpotlight({ agent, tone, sessionId, latestRun, activity, owner, conflict, onHistory, onOpenConflict, onUpdateSettings, onPause, onStop, onDelete }: { agent: FloorAgent; tone: string; sessionId: string; latestRun: AgentRun | null; activity: RunActivitySource; owner: boolean; conflict?: AgentConflictInfo | null; onHistory: () => void; onOpenConflict?: (caseId: string) => void; onUpdateSettings: (agentId: string, patch: FloorAgentSettingsPatch) => Promise<boolean>; onPause: (agentId: string, paused: boolean) => void; onStop: (agentId: string) => void; onDelete: (agentId: string) => void }) {
   // A reply run never runs checks, exports files, or publishes a branch —
   // that execution summary belongs only to a task run.
   const isReply = latestRun?.kind === "reply";
@@ -179,10 +180,10 @@ export function AgentSpotlight({ agent, tone, sessionId, latestRun, activity, ow
       <div className="spotlight-foot"><span><LocalDateTime timestamp={agent.createdAt} /></span><button type="button" className="button agent-chat-button" data-size="sm" onClick={onHistory}><Icon name="message" size={12} /><span className="agent-chat-label">Prompt history</span></button></div>
     </article>
   );
-}
+});
 
-function ActivityTimeline({ run, activity }: { run: AgentRun; activity: RunActivitySource }) {
-  const events = activity.eventsFor(run.id);
+const ActivityTimeline = memo(function ActivityTimeline({ run, activity }: { run: AgentRun; activity: RunActivitySource }) {
+  const events = useRunEvents(activity, run.id);
   const listRef = useRef<HTMLOListElement>(null);
   const pinnedRef = useRef(true);
   const loadTimeline = activity.loadTimeline;
@@ -215,7 +216,7 @@ function ActivityTimeline({ run, activity }: { run: AgentRun; activity: RunActiv
       ))}
     </ol>
   );
-}
+});
 
 /** Fetch-on-expand artifact viewer. Omit `kind` for the default (unfiltered) codex_log + diff view. */
 function ArtifactToggle({ sessionId, run, kind, label, closeLabel, emptyText }: {

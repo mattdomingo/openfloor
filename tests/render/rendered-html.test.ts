@@ -39,7 +39,7 @@ describe("server rendering", () => {
     expect(response.status).toBe(200);
     const html = await response.text();
     expect(html).toContain("Sign in to continue. You will be sent back to what you were opening.");
-    expect(html).toContain('href="/session/private-room"');
+    expect(html).toContain('href="/signin?return_to=%2Fsession%2Fprivate-room"');
     // Without the params the landing stays quiet.
     const plain = await (await render()).text();
     expect(plain).not.toContain("Sign in to open that page");
@@ -510,8 +510,8 @@ describe("custom sign-in", () => {
     expect(response.status).toBe(200);
     const html = await response.text();
     expect(html).toContain('name="action" value="https://openfloor-render-test.cloudflareaccess.com/cdn-cgi/access/verify-code/app.opnflr.com?kid=render-fixture&amp;meta=render-fixture"');
-    expect(html).toContain('href="/session/private-room">Continue with GitHub');
-    expect(html).toContain('action="/signin/code?return_to=%2Fsession%2Fprivate-room"');
+    expect(html).toContain('href="/auth/complete?return_to=%2Fsession%2Fprivate-room">Continue with GitHub');
+    expect(html).toContain('action="/signin/code?return_to=%2Fauth%2Fcomplete%3Freturn_to%3D%252Fsession%252Fprivate-room"');
   });
 
   it("code step: submitting the email renders the code form pointed at Cloudflare's real callback", async () => {

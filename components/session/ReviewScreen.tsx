@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import { LocalDateTime } from "@/components/LocalDateTime";
 import type { FloorMessage, FloorParticipant, FloorReviewSnapshot, MergeConflictCase, ReviewContribution, ReviewContributor, ReviewContributorFacet, SessionFile } from "@/lib/floor-types";
 import type { RepositoryTreeEntry } from "@/lib/github";
@@ -43,7 +43,7 @@ function MergeGateRow({ review }: { review: FloorReviewSnapshot }) {
   </div>;
 }
 
-export function ReviewScreen({ sessionId, revision, review, repository, repositoryTree, selectedConflictCaseId, promptRequest, owner, busy, blockingRunId, onRequestRollback, onReady, onMerge, onDeleteBranch, onAbandon, onCancelRun, onResolveConflict, onAnswerConflict, onSubmitConflictSelections, teamChat, onSendTeamMessage, participants, currentUserId, sessionFiles }: {
+export const ReviewScreen = memo(function ReviewScreen({ sessionId, revision, review, repository, repositoryTree, selectedConflictCaseId, promptRequest, owner, busy, blockingRunId, onRequestRollback, onReady, onMerge, onDeleteBranch, onAbandon, onCancelRun, onResolveConflict, onAnswerConflict, onSubmitConflictSelections, teamChat, onSendTeamMessage, participants, currentUserId, sessionFiles }: {
   sessionId: string;
   revision: number;
   review: FloorReviewSnapshot | null;
@@ -322,7 +322,7 @@ export function ReviewScreen({ sessionId, revision, review, repository, reposito
     {blockingRunId && pendingAction && <IntegrationBlockedDialog retrying={retrying} onClose={() => setPendingAction(null)} onConfirm={cancelBlockingRunAndRetry} />}
     {resolverCaseId && <ConflictResolver sessionId={sessionId} caseId={resolverCaseId} busy={busy} onClose={() => setResolverCaseId(null)} onSubmit={onSubmitConflictSelections} />}
   </section>;
-}
+});
 
 type ContributionSource = ReturnType<typeof useReviewContributions>;
 type ContributionDetailSource = ReturnType<typeof useReviewContributionDetail>;

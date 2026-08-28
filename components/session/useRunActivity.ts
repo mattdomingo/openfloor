@@ -1,13 +1,15 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useSyncExternalStore } from "react";
 import { BASE_PATH } from "@/components/basePath";
 import type { RunActivityEvent } from "@/lib/floor-types";
 
 const MAX_EVENTS_PER_RUN = 200;
+const EMPTY_EVENTS: RunActivityEvent[] = [];
 
 export type RunActivitySource = {
   eventsFor(runId: string): RunActivityEvent[];
+  subscribe(runId: string, listener: () => void): () => void;
   ingest(payload: { runId: string; events: RunActivityEvent[] }): void;
   catchUp(runIds: string[]): void;
   loadTimeline(runId: string): void;
@@ -21,19 +23,26 @@ function merge(current: RunActivityEvent[] | undefined, incoming: RunActivityEve
 }
 
 export function useRunActivity(sessionId: string): RunActivitySource {
-  const [eventsByRun, setEventsByRun] = useState<ReadonlyMap<string, RunActivityEvent[]>>(new Map());
-  const eventsRef = useRef(eventsByRun);
-  useEffect(() => { eventsRef.current = eventsByRun; }, [eventsByRun]);
+  const eventsByRunRef = useRef(new Map<string, RunActivityEvent[]>());
+  const listenersByRunRef = useRef(new Map<string, Set<() => void>>());
   const loadingRef = useRef(new Set<string>());
+
+  const notify = useCallback((runId: string) => {
+    const listeners = listenersByRunRef.current.get(runId);
+    if (listeners) {
+      for (const listener of listeners) {
+        listener();
+      }
+    }
+  }, []);
 
   const store = useCallback((runId: string, incoming: RunActivityEvent[]) => {
     if (incoming.length === 0) return;
-    setEventsByRun((current) => {
-      const next = new Map(current);
-      next.set(runId, merge(current.get(runId), incoming));
-      return next;
-    });
-  }, []);
+    const current = eventsByRunRef.current.get(runId);
+    const next = merge(current, incoming);
+    eventsByRunRef.current.set(runId, next);
+    notify(runId);
+  }, [notify]);
 
   const fetchEvents = useCallback(async (runId: string, after: number) => {
     if (loadingRef.current.has(runId)) return;
@@ -56,16 +65,42 @@ export function useRunActivity(sessionId: string): RunActivitySource {
 
   const catchUp = useCallback((runIds: string[]) => {
     for (const runId of runIds) {
-      const known = eventsRef.current.get(runId);
+      const known = eventsByRunRef.current.get(runId);
       void fetchEvents(runId, known?.length ? known[known.length - 1].sequence : 0);
     }
   }, [fetchEvents]);
 
   const loadTimeline = useCallback((runId: string) => {
-    if (!eventsRef.current.get(runId)?.length) void fetchEvents(runId, 0);
+    if (!eventsByRunRef.current.get(runId)?.length) void fetchEvents(runId, 0);
   }, [fetchEvents]);
 
-  const eventsFor = useCallback((runId: string) => eventsByRun.get(runId) ?? [], [eventsByRun]);
+  const eventsFor = useCallback((runId: string) => eventsByRunRef.current.get(runId) ?? EMPTY_EVENTS, []);
 
-  return useMemo(() => ({ eventsFor, ingest, catchUp, loadTimeline }), [eventsFor, ingest, catchUp, loadTimeline]);
+  const subscribe = useCallback((runId: string, listener: () => void) => {
+    let set = listenersByRunRef.current.get(runId);
+    if (!set) {
+      set = new Set();
+      listenersByRunRef.current.set(runId, set);
+    }
+    set.add(listener);
+    return () => {
+      set?.delete(listener);
+      if (set && set.size === 0) {
+        listenersByRunRef.current.delete(runId);
+      }
+    };
+  }, []);
+
+  return useMemo(() => ({ eventsFor, subscribe, ingest, catchUp, loadTimeline }), [eventsFor, subscribe, ingest, catchUp, loadTimeline]);
+}
+
+export function useRunEvents(activity: RunActivitySource, runId: string | null | undefined): RunActivityEvent[] {
+  return useSyncExternalStore(
+    useCallback((onStoreChange) => {
+      if (!runId) return () => {};
+      return activity.subscribe(runId, onStoreChange);
+    }, [activity, runId]),
+    () => (runId ? activity.eventsFor(runId) : EMPTY_EVENTS),
+    () => EMPTY_EVENTS,
+  );
 }

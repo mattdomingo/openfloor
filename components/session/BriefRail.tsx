@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { memo, useMemo, useRef, useState } from "react";
 import type { FloorAgent, FloorAssignment, FloorMessage, FloorParticipant, FloorQueueItem, SessionFile } from "@/lib/floor-types";
 import { BASE_PATH } from "@/components/basePath";
 import type { ChatThread, TeamPanelView } from "./data";
@@ -31,7 +31,7 @@ type BriefRailProps = {
 // Every file shared into the session (ENG-113): chat attachments and direct
 // uploads alike, all of it copied into each agent run's sandbox. Real rows
 // from session_files — an empty session says so instead of inventing files.
-function ArtifactsPanel({ sessionId, files, onUploadFiles }: {
+const ArtifactsPanel = memo(function ArtifactsPanel({ sessionId, files, onUploadFiles }: {
   sessionId: string;
   files: SessionFile[];
   onUploadFiles: (files: File[]) => Promise<string[] | null>;
@@ -78,14 +78,17 @@ function ArtifactsPanel({ sessionId, files, onUploadFiles }: {
       )}
     </div>
   );
-}
+});
 
 function formatFileSize(sizeBytes: number): string {
   if (sizeBytes >= 1024 * 1024) return `${(sizeBytes / (1024 * 1024)).toFixed(1)} MB`;
   return `${Math.max(1, Math.round(sizeBytes / 1024))} KB`;
 }
 
-export function BriefRail(props: BriefRailProps) {
+const EMPTY_AGENTS: FloorAgent[] = [];
+const EMPTY_PROMPTS: Array<{ item: FloorQueueItem; prompt: FloorQueueItem["prompts"][number] }> = [];
+
+export const BriefRail = memo(function BriefRail(props: BriefRailProps) {
   const chatLabel = props.unreadTeamCount > 0
     ? <>Chat<span className="unread-badge">{props.unreadTeamCount}</span></>
     : "Chat";
@@ -97,6 +100,38 @@ export function BriefRail(props: BriefRailProps) {
       options={[{ value: "goals", label: "Goals" }, { value: "chat", label: chatLabel }, { value: "artifacts", label: "Artifacts" }]}
     />
   );
+
+  const agentsByOwner = useMemo(() => {
+    const map = new Map<string, FloorAgent[]>();
+    for (const agent of props.agents) {
+      const list = map.get(agent.ownerUserId);
+      if (list) {
+        list.push(agent);
+      } else {
+        map.set(agent.ownerUserId, [agent]);
+      }
+    }
+    return map;
+  }, [props.agents]);
+
+  const promptsByAuthor = useMemo(() => {
+    const map = new Map<string, Array<{ item: FloorQueueItem; prompt: FloorQueueItem["prompts"][number] }>>();
+    for (const item of props.queue) {
+      for (const prompt of item.prompts) {
+        const list = map.get(prompt.authorUserId);
+        if (list) {
+          list.push({ item, prompt });
+        } else {
+          map.set(prompt.authorUserId, [{ item, prompt }]);
+        }
+      }
+    }
+    return map;
+  }, [props.queue]);
+
+  const participantMap = useMemo(() => {
+    return new Map(props.participants.map((person) => [person.id, person]));
+  }, [props.participants]);
 
   return (
     <Panel chrome={props.chrome} title="Team" actions={controls}>
@@ -125,9 +160,9 @@ export function BriefRail(props: BriefRailProps) {
               <OwnerCard
                 key={assignment.userId}
                 assignment={assignment}
-                participant={props.participants.find((person) => person.id === assignment.userId)}
-                agents={props.agents.filter((agent) => agent.ownerUserId === assignment.userId)}
-                prompts={props.queue.flatMap((item) => item.prompts.map((prompt) => ({ item, prompt }))).filter(({ prompt }) => prompt.authorUserId === assignment.userId)}
+                participant={participantMap.get(assignment.userId)}
+                agents={agentsByOwner.get(assignment.userId) ?? EMPTY_AGENTS}
+                prompts={promptsByAuthor.get(assignment.userId) ?? EMPTY_PROMPTS}
                 onSave={props.onAssignmentChange}
               />
             ))}
@@ -136,9 +171,9 @@ export function BriefRail(props: BriefRailProps) {
       )}
     </Panel>
   );
-}
+});
 
-function OwnerCard({ assignment, participant, agents, prompts, onSave }: {
+const OwnerCard = memo(function OwnerCard({ assignment, participant, agents, prompts, onSave }: {
   assignment: FloorAssignment;
   participant?: FloorParticipant;
   agents: FloorAgent[];
@@ -189,7 +224,7 @@ function OwnerCard({ assignment, participant, agents, prompts, onSave }: {
       )}
     </div>
   );
-}
+});
 
 function AssignmentEditor({ assignment, onSave }: { assignment: FloorAssignment; onSave: (id: string, task: string | null) => Promise<boolean> }) {
   const [value, setValue] = useState(assignment.task ?? "");

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
+import { memo, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import type { TypingDraft } from "@/lib/session-types";
 import type { FloorAgent, FloorParticipant } from "@/lib/floor-types";
 import { visibleTypingDrafts, type DraftVisibility } from "@/lib/typing-drafts";
@@ -17,7 +17,7 @@ const draftVisibilityOptions: { value: DraftVisibility; label: ReactNode; title:
   { value: "hidden", label: <Icon name="eyeOff" size={13} />, title: "Hidden" },
 ];
 
-export function FloorDock({ onSubmit, onUploadFiles, agents, queueTarget, onQueueTargetChange, textareaRef, notice, noticeTone, noticeVisible, busy, participants, typingDrafts, onTypingUpdate }: {
+export const FloorDock = memo(function FloorDock({ onSubmit, onUploadFiles, agents, queueTarget, onQueueTargetChange, textareaRef, notice, noticeTone, noticeVisible, busy, participants, typingDrafts, onTypingUpdate }: {
   onSubmit: (value: string) => Promise<boolean>;
   onUploadFiles: (files: File[]) => Promise<string[] | null>;
   textareaRef: RefObject<HTMLTextAreaElement | null>;
@@ -109,6 +109,6 @@ export function FloorDock({ onSubmit, onUploadFiles, agents, queueTarget, onQueu
         <button type="button" className="icon-button" aria-label="Attach files or photos" title="Attach files or photos" onClick={() => fileInputRef.current?.click()}><Icon name="attach" /></button>
         <button type="submit" className="send" aria-label="Add to queue" title="Add to queue" disabled={busy}><span className="button-label send-label">{busy ? "Saving…" : "Add to queue"}</span><Icon name="send" /></button>
       </div>
-    </form>{visibleDrafts.length > 0 && <div className="dock-lanes">{visibleDrafts.map((person) => <div className="lane" key={person.id} data-typing={person.draft?.typing ? "true" : "false"} aria-label={`${person.name}'s draft`}><div className="lane-head"><Avatar userId={person.id} initials={person.initials} tone={person.tone} online={person.online} typing={person.draft?.typing} /><strong>{person.name}</strong><em><Icon name="circle" size={6} />{person.draft?.typing ? "typing" : "idle"}</em></div>{person.draft?.text ? <p>{person.draft.text}</p> : <p />}</div>)}</div>}</div>
+    </form>    {visibleDrafts.length > 0 && <div className="dock-lanes">{visibleDrafts.map((person) => <div className="lane" key={person.id} data-typing={person.draft?.typing ? "true" : "false"} aria-label={`${person.name}'s draft`}><div className="lane-head"><Avatar userId={person.id} initials={person.initials} tone={person.tone} online={person.online} typing={person.draft?.typing} /><strong>{person.name}</strong><em><Icon name="circle" size={6} />{person.draft?.typing ? "typing" : "idle"}</em></div>{person.draft?.text ? <p>{person.draft.text}</p> : <p />}</div>)}</div>}</div>
   </section>;
-}
+});
