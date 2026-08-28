@@ -230,6 +230,8 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await owner.getByLabel("Prompt to add to the queue").fill("What does the auth module do?");
   await owner.getByRole("button", { name: "Add to queue" }).click();
   const answeredItem = owner.locator("li.queue-item", { hasText: "What does the auth module do?" });
+  // Answered prompts fold into their collapsed section; open the bar first.
+  await owner.locator(".queue-group-bar", { hasText: "Answered" }).click();
   await expect(answeredItem.getByText("answered", { exact: true })).toBeVisible();
   await expect(answeredItem).toHaveAttribute("data-done", "true");
   // The reply renders as a clamped bubble directly on the tile (no hover
@@ -340,6 +342,8 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   // queued and unrun for the rest of this test, so it also has a visible
   // Run button now.
   await inspectContractItem.getByRole("button", { name: "Run", exact: true }).click();
+  // Integrated prompts fold into their collapsed section; open the bar first.
+  await owner.locator(".queue-group-bar", { hasText: "Integrated" }).click();
   await expect(owner.getByText("integrated", { exact: true }).first()).toBeVisible();
   await expect(agentFloor.getByText("1 changed file", { exact: false })).toBeVisible();
   await expect(agentFloor.getByText("Reviewing the requested change before editing.")).toBeVisible();
@@ -349,6 +353,8 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await expect(agentFloor.getByText("Codex test adapter completed a real deterministic run contract.")).toBeVisible();
   await agentFloor.getByRole("button", { name: "Hide raw log" }).click();
   await owner.reload();
+  // Section expand state is local and resets on reload — reopen Integrated.
+  await owner.locator(".queue-group-bar", { hasText: "Integrated" }).click();
   await expect(owner.getByText("integrated", { exact: true }).first()).toBeVisible();
 
   // An integrated prompt's card is itself a link into Review's Prompts mode
@@ -404,6 +410,7 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   const ownerRollbackItem = owner.locator("li.queue-item", { hasText: "Create a member rollback change" });
   const memberRollbackItem = member.locator("li.queue-item", { hasText: "Create a member rollback change" });
   await ownerRollbackItem.getByRole("button", { name: "Run", exact: true }).click();
+  await member.locator(".queue-group-bar", { hasText: "Integrated" }).click();
   await expect(memberRollbackItem.getByText("integrated", { exact: true })).toBeVisible();
   await expect(memberRollbackItem.getByRole("button", { name: "Remove changes" })).toBeVisible();
   await memberRollbackItem.getByRole("button", { name: "Remove changes" }).click();
@@ -531,6 +538,8 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   const failingItem = owner.locator("li.queue-item", { hasText: "Create an intentionally failing change" });
   await expect(failingItem).toBeVisible();
   await failingItem.getByRole("button", { name: "Run", exact: true }).click();
+  // Failed prompts fold into their collapsed section; open the bar first.
+  await owner.locator(".queue-group-bar", { hasText: "Failed" }).click();
   await expect(owner.getByText("failed", { exact: true }).first()).toBeVisible();
   await expect(failingItem.getByRole("button", { name: "Resume", exact: true })).toBeVisible();
 
@@ -562,6 +571,8 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await expect(owner.getByRole("button", { name: "Cancel", exact: true })).toBeVisible();
   await expect(member.getByRole("button", { name: "Cancel", exact: true })).toHaveCount(0);
   await owner.getByRole("button", { name: "Cancel", exact: true }).click();
+  // Cancelled prompts fold into their collapsed section; open the bar first.
+  await owner.locator(".queue-group-bar", { hasText: "Cancelled" }).click();
   await expect(owner.getByText("cancelled", { exact: true }).first()).toBeVisible();
   await expect(cancellableItem.getByRole("button", { name: "Resume", exact: true })).toBeVisible();
 
