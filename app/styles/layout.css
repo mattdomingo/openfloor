@@ -300,6 +300,11 @@
    route.ts's "Use a different email" link inlines its own copy of the old
    .signin-google secondary style; only this stylesheet dropped it. */
 .signin-oauth { display: flex; align-items: center; justify-content: center; width: 100%; text-decoration: none; }
+
+/* Sits right under the GitHub button, pulled up out of .signin-card's 22px
+   gap — a footnote, not another card row. */
+.signin-github-note { margin-top: -12px; color: var(--entry-ink-muted); font-family: var(--font-brand-sans); font-size: 12px; text-align: center; }
+.signin-github-note a { color: inherit; }
 .signin-button[data-variant="quiet"] {
   border: 1px solid color-mix(in srgb, var(--entry-ink) 30%, transparent);
   background: transparent;
