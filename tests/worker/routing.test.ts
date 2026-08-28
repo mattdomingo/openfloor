@@ -645,6 +645,19 @@ describe("classifyPrompt", () => {
     ["👋", "noise"],
     ["what does auth.ts do?", "question"],
     ["Why is the deploy failing?", "question"],
+    // Leading interjections must not hide an interrogative opener — the
+    // production repro for attachment prompts failing: the image question was
+    // classified "task", dispatched as a writable task run, and hard-failed
+    // when the agent answered without changing files.
+    ["yo what is this image", "question"],
+    ["hey what does this screenshot show", "question"],
+    ["so how does the auth flow work", "question"],
+    ["ok is the deploy done", "question"],
+    ["yo", "noise"],
+    ["yo fix the login page", "task"],
+    ["please add a dark mode toggle", "task"],
+    ["so so so", "task"],
+    ["notes.txt should say hello", "task"],
     ["can you fix the login bug?", "task"],
     ["ping the health endpoint", "task"],
     ["test the login flow end to end", "task"],
