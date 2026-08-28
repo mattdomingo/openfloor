@@ -7,7 +7,7 @@
 
 .create-card { display: grid; gap: var(--space-5); margin-top: var(--space-6); padding: var(--space-6); }
 .create-card label { display: grid; gap: var(--space-2); font-size: var(--text-sm); font-weight: 700; }
-.create-card label > span { display: flex; justify-content: space-between; }
+.create-card label > span.label { display: flex; justify-content: space-between; }
 .create-card label em { color: var(--text-tertiary); font-style: normal; font-weight: 500; }
 input, textarea { width: 100%; padding: 11px 12px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--surface-panel); resize: vertical; }
 .form-actions, .button-row { display: flex; flex-wrap: wrap; gap: var(--space-2); }
