@@ -372,10 +372,12 @@ export function HomeScreen({
   );
 }
 
-// First-visit walkthrough (ENG-17). Two steps here; the floor carries its own
-// tour, so each surface teaches only what it renders. Each step advances by
-// clicking its anchor, so the "+" tile comes last — that final click both
-// ends the tour and opens the create dialog.
+// First-visit walkthrough (ENG-17). The floor carries its own tour, so this
+// one teaches only /home: the tabs and the New session tile, then it follows
+// the tile's click straight into the create dialog and walks every field in
+// form order, ending on the real Create session click — that final click
+// both ends the tour and creates the session, landing on the agent floor
+// where FLOOR_TOUR picks up.
 const HOME_TOUR: TourStep[] = [
   {
     selector: ".shop-tabs",
@@ -388,9 +390,34 @@ const HOME_TOUR: TourStep[] = [
     body: "A session is one room for one goal. Click + to name the task, pick the GitHub repository, and optionally connect an AI provider — all on one page.",
   },
   {
+    selector: '.create-dialog [data-tour="task"]',
+    title: "Name the task",
+    body: "This names the session and seeds the candidate branch name below.",
+  },
+  {
+    selector: '.create-dialog [data-tour="goal"]',
+    title: "Say what done looks like",
+    body: "Optional, but this is the shared objective the floor works toward — the team can update it later.",
+  },
+  {
+    selector: '.create-dialog [aria-label="Session repository"]',
+    title: "Pick the repository",
+    body: "The GitHub repository agents clone and push to. No repositories listed? Add GitHub access in Account Settings.",
+  },
+  {
+    selector: '.create-dialog [data-tour="candidate-name"]',
+    title: "Name the candidate branch",
+    body: "Runs land on this candidate branch, never on the repository's default branch, until the team reviews and merges.",
+  },
+  {
+    selector: '.create-dialog section[aria-label="AI connection"]',
+    title: "Check your AI is connected",
+    body: "Agents refuse to run with no connected provider. Expand the one you want and confirm it reads CONNECTED — or skip this and add one later in Settings.",
+  },
+  {
     selector: '.create-dialog button[type="submit"]',
-    title: "Name it, pick a repository, create",
-    body: "Fill in the task, choose the GitHub repository the agents work in, then click Create session. You land on the agent floor — it walks you through itself the first time.",
+    title: "Create the session",
+    body: "Click Create session. You land on the agent floor — it walks you through itself the first time.",
   },
 ];
 
@@ -807,8 +834,8 @@ function CreateSessionDialog({ repositories, repositoriesLoading, loadError, ini
           </div>
         </div>
         <div className="dialog-body create-dialog-body">
-          <label><span>Task</span><input value={title} onChange={(event) => setTitle(event.target.value)} maxLength={100} required autoFocus placeholder="What is this session for?" /></label>
-          <label><span>Goal <em>optional</em></span><textarea value={objective} onChange={(event) => setObjective(event.target.value)} maxLength={2000} rows={3} placeholder="The shared objective the floor works toward" /></label>
+          <label><span>Task</span><input data-tour="task" value={title} onChange={(event) => setTitle(event.target.value)} maxLength={100} required autoFocus placeholder="What is this session for?" /></label>
+          <label><span>Goal <em>optional</em></span><textarea data-tour="goal" value={objective} onChange={(event) => setObjective(event.target.value)} maxLength={2000} rows={3} placeholder="The shared objective the floor works toward" /></label>
           <label>
             <span>Repository</span>
             {repositories.length > 0 ? (
@@ -827,6 +854,7 @@ function CreateSessionDialog({ repositories, repositoriesLoading, loadError, ini
           <label>
             <span>Candidate branch name</span>
             <input
+              data-tour="candidate-name"
               value={effectiveCandidateName}
               onChange={(event) => {
                 setCandidateNameTouched(true);

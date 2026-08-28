@@ -47,8 +47,8 @@ test("a direct user keeps profile state across steps and completes Free onboardi
   // This context never set the tour's seen-it flag, so the first-visit
   // guided tour opens on /home. It advances only by clicking the
   // highlighted element itself (GuidedTour.tsx): the tabs first, then the
-  // New session tile — whose click both ends the tour and opens the
-  // one-page create dialog.
+  // New session tile — whose click both ends this step and opens the
+  // one-page create dialog, which the tour then walks field by field.
   const tour = page.getByRole("dialog", { name: "Your sessions" });
   await expect(tour).toBeVisible();
   await expect(tour.getByRole("button", { name: "Next" })).toHaveCount(0);
@@ -56,16 +56,40 @@ test("a direct user keeps profile state across steps and completes Free onboardi
   await expect(page.getByRole("dialog", { name: "Start a session" })).toBeVisible();
   await page.getByRole("button", { name: "New session" }).click();
   await expect(page.getByRole("heading", { name: "Name the session" })).toBeVisible();
-  // The tour follows into the create dialog: its last step anchors the
-  // Create submit, and only a real create — or Skip — ends it.
-  await expect(page.getByRole("dialog", { name: "Name it, pick a repository, create" })).toBeVisible();
-  // The whole create form is one page: task, repository, branch, and the
-  // AI connection are all present with a single Create submit.
-  await expect(page.getByLabel("Task")).toBeVisible();
-  await expect(page.getByLabel("Candidate branch name")).toBeVisible();
+
+  // Task, then Goal, then Repository, then the candidate branch name, then
+  // the AI connection section, then the real Create session submit — eight
+  // steps in all, each one advancing only on a click of its own anchor.
+  await expect(page.getByRole("dialog", { name: "Name the task" })).toBeVisible();
+  await expect(page.locator(".tour-count")).toHaveText("3 of 8");
+  await page.getByLabel("Task", { exact: true }).click();
+  await page.getByLabel("Task", { exact: true }).fill("Session from onboarding");
+
+  await expect(page.getByRole("dialog", { name: "Say what done looks like" })).toBeVisible();
+  await page.getByLabel(/Goal/).click();
+
+  await expect(page.getByRole("dialog", { name: "Pick the repository" })).toBeVisible();
+  await page.getByRole("combobox", { name: "Session repository" }).click();
+  await page.getByRole("option").first().click();
+
+  await expect(page.getByRole("dialog", { name: "Name the candidate branch" })).toBeVisible();
+  await expect(page.getByLabel("Candidate branch name")).toHaveValue("Session from onboarding");
+  await page.getByLabel("Candidate branch name").click();
+
+  await expect(page.getByRole("dialog", { name: "Check your AI is connected" })).toBeVisible();
+  await page.getByText(/Optional: at least one connected provider/).click();
+
+  await expect(page.getByRole("dialog", { name: "Create the session" })).toBeVisible();
+  await expect(page.locator(".tour-count")).toHaveText("8 of 8");
   await expect(page.getByRole("button", { name: "Create session" })).toBeVisible();
-  await page.getByRole("button", { name: "Skip" }).click();
-  await expect(page.locator(".tour-bubble")).toHaveCount(0);
+  await page.getByRole("button", { name: "Create session" }).click();
+
+  // The final click both ends the home tour and creates the session for
+  // real — same do-it-to-advance rule as the New session tile above. Landing
+  // on the floor opens FLOOR_TOUR (its own, separate seen-it key), exactly
+  // what the last step's body promised.
+  await expect(page).toHaveURL(/\/session\/[0-9a-f-]+\/floor$/);
+  await expect(page.getByRole("dialog", { name: "Team" })).toBeVisible();
 
   await context.close();
 });
