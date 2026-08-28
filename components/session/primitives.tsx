@@ -103,6 +103,7 @@ export type IconName =
   | "pause"
   | "play"
   | "stop"
+  | "copy"
   | "trash";
 
 const glyphs: Record<IconName, ReactNode> = {
@@ -209,6 +210,12 @@ const glyphs: Record<IconName, ReactNode> = {
   ),
   play: <path d="M4.5 3v10l8-5z" strokeLinejoin="round" fill="currentColor" stroke="none" />,
   stop: <rect x="4" y="4" width="8" height="8" rx="1" fill="currentColor" stroke="none" />,
+  copy: (
+    <>
+      <rect x="5.8" y="5.8" width="7.2" height="7.2" rx="1.2" />
+      <path d="M3.6 10.2h-.4a1.2 1.2 0 0 1-1.2-1.2V3.6a1.2 1.2 0 0 1 1.2-1.2H9a1.2 1.2 0 0 1 1.2 1.2v.4" />
+    </>
+  ),
   trash: (
     <>
       <path d="M3 5h10" />
