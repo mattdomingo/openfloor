@@ -1208,14 +1208,16 @@
 
 .shop-shell .device-dialog { width: min(460px, calc(100vw - 48px)); }
 .device-dialog-body { display: grid; gap: var(--space-4); justify-items: center; text-align: center; }
+.device-dialog-code-row { margin: var(--space-2) 0 0; display: flex; align-items: center; gap: var(--space-2); }
 .device-dialog-code {
-  margin: var(--space-2) 0 0;
+  margin: 0;
   padding: var(--space-3) var(--space-6);
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-md);
   font: 600 28px var(--font-mono);
   letter-spacing: 0.18em;
 }
+.device-dialog-copy { padding: var(--space-2); border-radius: var(--radius-md); }
 .device-dialog-hint a { text-decoration: underline; }
 .device-dialog-status { display: inline-flex; align-items: center; gap: var(--space-2); color: var(--text-secondary); }
 .device-dialog-installations { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-2); }

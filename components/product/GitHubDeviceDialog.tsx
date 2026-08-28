@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { BASE_PATH } from "@/components/basePath";
-import { Spinner, useDialogDismiss } from "@/components/session/primitives";
+import { Icon, Spinner, useDialogDismiss } from "@/components/session/primitives";
 import type { UserGitHubInstallationSummary } from "@/lib/session-types";
 
 type Phase =
@@ -27,6 +27,7 @@ export function GitHubDeviceDialog({ purpose, returnTo, onConnected, onIdentity,
   const { dismiss, dialogProps } = useDialogDismiss(onClose);
   const [phase, setPhase] = useState<Phase>({ name: "starting" });
   const [installBusy, setInstallBusy] = useState(false);
+  const [codeCopied, setCodeCopied] = useState(false);
   const stopped = useRef(false);
 
   // The classic redirect: used when device flow is unavailable, and offered
@@ -121,7 +122,27 @@ export function GitHubDeviceDialog({ purpose, returnTo, onConnected, onIdentity,
         {phase.name === "starting" && <p className="device-dialog-status"><Spinner /> Contacting GitHub…</p>}
         {phase.name === "waiting" && (
           <>
-            <p className="device-dialog-code" aria-label="Device code">{phase.userCode}</p>
+            <div className="device-dialog-code-row">
+              <p className="device-dialog-code" aria-label="Device code">{phase.userCode}</p>
+              <button
+                type="button"
+                className="button device-dialog-copy"
+                data-variant="quiet"
+                aria-label={codeCopied ? "Copied" : "Copy code"}
+                onClick={async () => {
+                  try {
+                    await navigator.clipboard.writeText(phase.userCode);
+                    setCodeCopied(true);
+                    window.setTimeout(() => setCodeCopied(false), 2000);
+                  } catch {
+                    // Clipboard access can be refused (insecure origin,
+                    // denied permission); the code is on screen either way.
+                  }
+                }}
+              >
+                <Icon name={codeCopied ? "check" : "copy"} />
+              </button>
+            </div>
             <p className="device-dialog-hint">
               Copy this code, then enter it on GitHub to connect.
             </p>
