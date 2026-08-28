@@ -9,7 +9,7 @@ import { Icon } from "./primitives";
 import { Markdown } from "./Markdown";
 import { SelectMenu } from "./SelectMenu";
 import { type RunActivitySource, useRunEvents } from "./useRunActivity";
-import { ACTIVE_RUN_STATUSES, agentReplyText, formatAgentCost, isRunLive, runContextUsage, runStatusToken } from "./data";
+import { ACTIVE_RUN_STATUSES, agentReplyText, conflictCardStatus, conflictStateLabel, formatAgentCost, isRunLive, runContextUsage, runStatusToken, type AgentConflictInfo } from "./data";
 
 const KIND_GLYPHS: Record<string, string> = {
   reasoning: "✳",
@@ -25,18 +25,23 @@ function glyphFor(kind: string): string {
   return KIND_GLYPHS[kind] ?? "•";
 }
 
-export const AgentCard = memo(function AgentCard({ agent, tone, latestRun, activity, selected, owner, onFocus, onHistory, onPause, onStop, onDelete }: { agent: FloorAgent; tone: string; latestRun: AgentRun | null; activity: RunActivitySource; selected: boolean; owner: boolean; onFocus: () => void; onHistory: () => void; onPause: (agentId: string, paused: boolean) => void; onStop: (agentId: string) => void; onDelete: (agentId: string) => void }) {
+export const AgentCard = memo(function AgentCard({ agent, tone, latestRun, activity, selected, owner, conflict, onFocus, onOpenConflict, onHistory, onPause, onStop, onDelete }: { agent: FloorAgent; tone: string; latestRun: AgentRun | null; activity: RunActivitySource; selected: boolean; owner: boolean; conflict?: AgentConflictInfo | null; onFocus: () => void; onOpenConflict?: (caseId: string) => void; onHistory: () => void; onPause: (agentId: string, paused: boolean) => void; onStop: (agentId: string) => void; onDelete: (agentId: string) => void }) {
   const live = isRunLive(latestRun);
   const activityEvents = useRunEvents(activity, live ? latestRun?.id : null);
   const latestEvent = live ? activityEvents[activityEvents.length - 1] ?? null : null;
   const reply = agentReplyText(latestRun);
   const paused = agent.pausedAt !== null;
   const controllable = agent.kind !== "answer";
-  const stateLabel = paused ? "Paused" : latestRun ? runStatusToken(latestRun).replace("_", " ") : "Created";
+  const conflictStatus = conflictCardStatus(conflict);
+  const stateLabel = conflictStatus ? conflictStateLabel(conflictStatus) : paused ? "Paused" : latestRun ? runStatusToken(latestRun).replace("_", " ") : "Created";
   const cost = formatAgentCost(agent);
+  // A conflicted card's own click goes straight to the exact case in Review
+  // instead of focusing the tile — the floor is not where a merge gets
+  // resolved, and sending the click anywhere else would be a dead end.
+  const cardClick = conflictStatus && conflict && onOpenConflict ? () => onOpenConflict(conflict.caseId) : onFocus;
   return (
-    <article className="agent-card" data-selected={selected ? "true" : "false"} data-status={paused ? "paused" : latestRun ? runStatusToken(latestRun) : "idle"} data-tone={tone} role="button" tabIndex={0} onClick={onFocus} onKeyDown={(event) => {
-      if (event.target === event.currentTarget && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); onFocus(); }
+    <article className="agent-card" data-selected={selected ? "true" : "false"} data-status={conflictStatus ?? (paused ? "paused" : latestRun ? runStatusToken(latestRun) : "idle")} data-tone={tone} role="button" tabIndex={0} onClick={cardClick} onKeyDown={(event) => {
+      if (event.target === event.currentTarget && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); cardClick(); }
     }}>
       <div className="agent-head">
         <span className="agent-glyph" aria-hidden="true">{agent.name.slice(0, 1)}</span>
@@ -44,13 +49,18 @@ export const AgentCard = memo(function AgentCard({ agent, tone, latestRun, activ
         <span className="agent-head-trailing"><span className="agent-state">{stateLabel}</span><button type="button" className="button agent-chat-button" data-size="sm" onClick={(event) => { event.stopPropagation(); onHistory(); }}><Icon name="message" size={12} /><span className="agent-chat-label">Prompts</span></button></span>
       </div>
       <div className="agent-task"><strong title={agent.task}>{agent.task}</strong></div>
-      {latestEvent && (
+      {conflictStatus === "needs-input" && conflict && onOpenConflict ? (
+        <button type="button" className="agent-conflict-strip" onClick={(event) => { event.stopPropagation(); onOpenConflict(conflict.caseId); }}>
+          <Icon name="alert" size={12} />
+          {conflict.status === "failed" ? "Automatic resolution failed — resolve it" : "Waiting on your answer"}
+        </button>
+      ) : latestEvent && (
         <div className="agent-activity-line" data-kind={latestEvent.kind} title={latestEvent.detail}>
           <span className="agent-activity-glyph" aria-hidden="true">{glyphFor(latestEvent.kind)}</span>
           <span className="agent-activity-detail">{latestEvent.detail}</span>
         </div>
       )}
-      {reply && <AgentReplyBubble agentName={agent.name} reply={reply} onOpen={onFocus} />}
+      {!conflictStatus && reply && <AgentReplyBubble agentName={agent.name} reply={reply} onOpen={onFocus} />}
       {controllable && (
         <div className="agent-controls" onClick={(event) => event.stopPropagation()}>
           <button type="button" className="button" data-size="sm" title={paused ? "Resume" : "Pause"} aria-label={paused ? `Resume ${agent.name}` : `Pause ${agent.name}`} onClick={() => onPause(agent.id, !paused)}><Icon name={paused ? "play" : "pause"} size={12} /></button>
@@ -74,21 +84,30 @@ function AgentReplyBubble({ agentName, reply, onOpen }: { agentName: string; rep
   );
 }
 
-export const AgentSpotlight = memo(function AgentSpotlight({ agent, tone, sessionId, latestRun, activity, owner, onHistory, onUpdateSettings, onPause, onStop, onDelete }: { agent: FloorAgent; tone: string; sessionId: string; latestRun: AgentRun | null; activity: RunActivitySource; owner: boolean; onHistory: () => void; onUpdateSettings: (agentId: string, patch: FloorAgentSettingsPatch) => Promise<boolean>; onPause: (agentId: string, paused: boolean) => void; onStop: (agentId: string) => void; onDelete: (agentId: string) => void }) {
+export const AgentSpotlight = memo(function AgentSpotlight({ agent, tone, sessionId, latestRun, activity, owner, conflict, onHistory, onOpenConflict, onUpdateSettings, onPause, onStop, onDelete }: { agent: FloorAgent; tone: string; sessionId: string; latestRun: AgentRun | null; activity: RunActivitySource; owner: boolean; conflict?: AgentConflictInfo | null; onHistory: () => void; onOpenConflict?: (caseId: string) => void; onUpdateSettings: (agentId: string, patch: FloorAgentSettingsPatch) => Promise<boolean>; onPause: (agentId: string, paused: boolean) => void; onStop: (agentId: string) => void; onDelete: (agentId: string) => void }) {
   // A reply run never runs checks, exports files, or publishes a branch —
   // that execution summary belongs only to a task run.
   const isReply = latestRun?.kind === "reply";
   const paused = agent.pausedAt !== null;
   const controllable = agent.kind !== "answer";
-  const stateLabel = paused ? "Paused" : latestRun ? runStatusToken(latestRun).replace("_", " ") : "Created";
+  const conflictStatus = conflictCardStatus(conflict);
+  const stateLabel = conflictStatus ? conflictStateLabel(conflictStatus) : paused ? "Paused" : latestRun ? runStatusToken(latestRun).replace("_", " ") : "Created";
   const context = latestRun ? runContextUsage(latestRun, MODEL_CONTEXT_TOKENS[latestRun.model] ?? null) : null;
   return (
-    <article className="spotlight" data-status={paused ? "paused" : latestRun ? runStatusToken(latestRun) : "idle"} data-tone={tone}>
+    <article className="spotlight" data-status={conflictStatus ?? (paused ? "paused" : latestRun ? runStatusToken(latestRun) : "idle")} data-tone={tone}>
       <div className="spotlight-head">
         <span className="agent-glyph" data-size="lg" aria-hidden="true">{agent.name.slice(0, 1)}</span>
         <div className="agent-identity"><h3>{agent.name}{agent.kind && <em className="kind-tag" data-kind="auto">Auto-generated</em>}</h3><span>{agent.role} · {AGENT_PROVIDER_LABELS[agent.provider]}{agent.model ? ` · ${agent.model}` : ""}{agent.credentialKind ? ` · ${credentialKindLabel(agent.provider, agent.credentialKind)}` : ""} · owned by {agent.ownerName}</span></div>
         <span className="agent-state">{stateLabel}</span>
       </div>
+      {conflict && conflictStatus && onOpenConflict && (
+        <button type="button" className="agent-conflict-strip" onClick={() => onOpenConflict(conflict.caseId)}>
+          <Icon name="alert" size={12} />
+          {conflictStatus === "needs-input"
+            ? conflict.status === "failed" ? "Automatic resolution failed — resolve it in Review" : "Waiting on your answer — open Review"
+            : "Resolving a merge conflict in Review"}
+        </button>
+      )}
       {controllable && (
         <div className="agent-controls">
           <button type="button" className="button" data-size="sm" onClick={() => onPause(agent.id, !paused)}><Icon name={paused ? "play" : "pause"} size={12} />{paused ? "Resume" : "Pause"}</button>

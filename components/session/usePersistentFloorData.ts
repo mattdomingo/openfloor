@@ -150,6 +150,8 @@ export function usePersistentFloorData(sessionId: string, initialFloor: FloorSna
     request(`/conflicts/${encodeURIComponent(caseId)}/resolve`, "POST"), [request]);
   const answerConflict = useCallback((caseId: string, answers: Array<{ questionId: string; answer: string }>) =>
     request(`/conflicts/${encodeURIComponent(caseId)}/answers`, "POST", { answers }), [request]);
+  const submitConflictSelections = useCallback((caseId: string, snapshotRunId: string, selections: Array<{ path: string; hunkIndex: number; choice: import("@/lib/floor-types").ConflictChoice }>) =>
+    request(`/conflicts/${encodeURIComponent(caseId)}/selections`, "POST", { snapshotRunId, selections }), [request]);
   const cancelRun = useCallback((runId: string) =>
     request(`/runs/${encodeURIComponent(runId)}/cancel`, "POST"), [request]);
   const discardRun = useCallback((runId: string) =>
@@ -204,6 +206,7 @@ export function usePersistentFloorData(sessionId: string, initialFloor: FloorSna
     setAutoResolveConflicts,
     resolveConflict,
     answerConflict,
+    submitConflictSelections,
     cancelRun,
     discardRun,
     rollbackRun,
@@ -244,6 +247,7 @@ export function usePersistentFloorData(sessionId: string, initialFloor: FloorSna
     setAutoResolveConflicts,
     resolveConflict,
     answerConflict,
+    submitConflictSelections,
     cancelRun,
     discardRun,
     rollbackRun,

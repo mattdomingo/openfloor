@@ -97,6 +97,21 @@ const INTERROGATIVES = new Set([
   "can", "could", "should", "would", "will",
 ]);
 
+// Leading interjections that carry no intent of their own ("yo what is this",
+// "ok so how do I..."). Skipped only when locating the first content word for
+// the interrogative-opener check below — a bare greeting is already noise
+// above, and task verbs are matched across the whole string before this runs.
+const FILLER_OPENERS = new Set([
+  "yo", "hey", "hi", "hello", "ok", "okay", "so", "well", "hmm", "hm", "uh", "um",
+  "lol", "pls", "please", "sup", "bro", "bruh", "dude",
+]);
+
+// Answer-shaped imperatives: "describe this image" / "explain the auth flow"
+// ask for an answer, not an edit. Only meaningful as the first content word —
+// task verbs are matched across the whole string first, so "describe the
+// feature and add it" still classifies as a task.
+const QUESTION_IMPERATIVES = new Set(["describe", "explain", "summarize", "summarise"]);
+
 export function classifyPrompt(text: string): PromptIntent {
   const normalized = text.normalize("NFKC").trim().replace(/\s+/g, " ").toLowerCase();
   if (normalized.length === 0) return "task";
@@ -107,7 +122,13 @@ export function classifyPrompt(text: string): PromptIntent {
   const words = normalized.split(/[^a-z0-9]+/).filter(Boolean);
   if (words.some((word) => TASK_VERBS.has(word))) return "task";
 
-  if (normalized.endsWith("?") || INTERROGATIVES.has(words[0] ?? "")) return "question";
+  if (normalized.endsWith("?")) return "question";
+  // Key on the first CONTENT word, not the literal first word: "yo what is
+  // this image" asks the same question as "what is this image", and misreading
+  // it as a task dispatches a writable task run that hard-fails when the agent
+  // answers without changing files.
+  const firstContentWord = words.find((word) => !FILLER_OPENERS.has(word)) ?? "";
+  if (INTERROGATIVES.has(firstContentWord) || QUESTION_IMPERATIVES.has(firstContentWord)) return "question";
 
   return "task";
 }
