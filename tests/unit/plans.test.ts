@@ -53,6 +53,17 @@ describe("effectivePlan", () => {
     expect(effectivePlan("free", "active", "tester@opnflr.com.evil.com")).toBe("free");
     expect(effectivePlan("free", "inactive", undefined)).toBe("free");
   });
+
+  it("grants each allowlisted testing address enterprise regardless of stored plan/status, and survives delete + resignup since nothing is row-stored", () => {
+    for (const email of ["matthew.domingo2022@gmail.com", "alha3308@colorado.edu"]) {
+      for (const status of [...nonActiveStatuses, "active" as PlanStatus]) {
+        expect(effectivePlan("free", status, email)).toBe("enterprise");
+      }
+    }
+    expect(effectivePlan("free", "canceled", "Matthew.Domingo2022@Gmail.com")).toBe("enterprise");
+    expect(effectivePlan("free", "canceled", "ALHA3308@Colorado.EDU")).toBe("enterprise");
+    expect(effectivePlan("free", "active", "matthew.domingo2023@gmail.com")).toBe("free");
+  });
 });
 
 describe("currentMonth", () => {
