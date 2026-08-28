@@ -170,3 +170,21 @@ export async function listNonTerminalStripeSubscriptionIds(userId: string, datab
   ).bind(userId).all<{ id: string }>();
   return rows.results.map((row) => row.id);
 }
+
+// Account deletion's write: force one local row terminal and re-project,
+// deliberately bypassing saveStripeSubscription's event_created guard — used
+// only once Stripe has confirmed (by cancel, by retrieve, or by not knowing
+// the id at all) that nothing is billing on this subscription any more. A
+// later webhook replay of the same cancellation reconciles to this same
+// terminal state.
+export async function markStripeSubscriptionTerminal(
+  subscriptionId: string,
+  userId: string,
+  status: "canceled" | "incomplete_expired",
+  database = getDb(),
+): Promise<void> {
+  await database.prepare(
+    "UPDATE stripe_subscriptions SET status = ?, updated_at = ? WHERE stripe_subscription_id = ? AND user_id = ?",
+  ).bind(status, Date.now(), subscriptionId, userId).run();
+  await projectStripeEntitlement(userId, database);
+}
