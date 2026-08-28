@@ -4,7 +4,7 @@ import type {
 } from "@/lib/session-types";
 import type { GitHubAppConfig } from "@/lib/github";
 import type { GitHubRepositoryOption } from "@/lib/session-types";
-import { listInstallationRepositories } from "@/lib/github";
+import { GitHubApiError, listInstallationRepositories } from "@/lib/github";
 import { deduplicateAccountGitHubRepositories } from "@/lib/account-github-repositories";
 import { getDb, type D1DatabaseLike } from "./index";
 
@@ -140,7 +140,18 @@ export async function listAccountGitHubRepositories(
   const installations = await activeInstallationRecords(userId, database);
   const options: AccountGitHubRepositoryOption[] = [];
   for (const installation of installations) {
-    const repositories = await listInstallationRepositories(config, installation.installationId);
+    let repositories: GitHubRepositoryOption[];
+    try {
+      repositories = await listInstallationRepositories(config, installation.installationId);
+    } catch (error) {
+      // A GitHub-side uninstall whose webhook never landed leaves a stale
+      // active row; one dead installation must not blank out the rest.
+      if (error instanceof GitHubApiError && error.status === 404) {
+        await setUserGitHubInstallationStatus(installation.installationId, "revoked", database);
+        continue;
+      }
+      throw error;
+    }
     options.push(...repositories.map((repository) => ({ ...repository, accountInstallationId: installation.id })));
   }
   return deduplicateAccountGitHubRepositories(options);

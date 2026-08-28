@@ -133,12 +133,12 @@ export function OnboardingScreen({
     setDeviceDialogOpen(true);
   }
 
-  async function submit(event: FormEvent) {
+  function submit(event: FormEvent) {
     event.preventDefault();
-    if (step === 1) {
-      void continueToConnections();
-      return;
-    }
+    void continueToConnections();
+  }
+
+  async function finishSetup() {
     if (!ready || submitting) return;
     setSubmitting(true);
     setSubmitError(null);
@@ -188,8 +188,10 @@ export function OnboardingScreen({
             </li>
           </ol>
 
-          <form className="onboarding-form" onSubmit={submit} noValidate>
-            <section className="onboarding-step" hidden={step !== 1} aria-labelledby="profile-step-title">
+          {/* No shared wrapping form: ProviderCredentials in step 2 has its own
+              forms, and nesting them breaks credential saves during onboarding. */}
+          <div className="onboarding-form">
+            <form className="onboarding-step" onSubmit={submit} noValidate hidden={step !== 1} aria-labelledby="profile-step-title">
               <div className="onboarding-step-heading">
                 <p className="eyebrow">Step 1 of 2</p>
                 <h2 id="profile-step-title" ref={profileHeadingRef} tabIndex={-1}>Create your profile</h2>
@@ -231,7 +233,7 @@ export function OnboardingScreen({
 
               {profileError && <p className="form-error" role="alert">{profileError}</p>}
               <div className="form-actions"><button type="submit" className="button" data-variant="primary" data-size="lg" disabled={submitting}>{submitting ? "Saving…" : "Continue"}</button></div>
-            </section>
+            </form>
 
             <section className="onboarding-step" hidden={step !== 2} aria-labelledby="connections-step-title">
               <div className="onboarding-step-heading">
@@ -243,10 +245,10 @@ export function OnboardingScreen({
               {submitError && <p className="form-error" role="alert">{submitError}</p>}
               <div className="form-actions onboarding-plan-actions">
                 <button type="button" className="button" data-variant="quiet" disabled={submitting} onClick={() => changeStep(1)}>Back</button>
-                <button type="submit" className="button" data-variant="primary" data-size="lg" disabled={!ready || submitting}>{submitting ? <><Spinner />Saving…</> : "Finish setup"}</button>
+                <button type="button" className="button" data-variant="primary" data-size="lg" disabled={!ready || submitting} onClick={() => void finishSetup()}>{submitting ? <><Spinner />Saving…</> : "Finish setup"}</button>
               </div>
             </section>
-          </form>
+          </div>
         </section>
       </div>
     </main>
