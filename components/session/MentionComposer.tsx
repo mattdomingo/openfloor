@@ -1,6 +1,6 @@
 "use client";
 
-import { KeyboardEvent, ReactNode, RefObject, SyntheticEvent, useEffect, useMemo, useRef, useState } from "react";
+import { KeyboardEvent, memo, ReactNode, RefObject, SyntheticEvent, useEffect, useMemo, useRef, useState } from "react";
 import type { FloorAgent } from "@/lib/floor-types";
 
 const FLOOR_PLACEHOLDERS = [
@@ -67,7 +67,7 @@ function renderHighlight(value: string, agents: FloorAgent[]): ReactNode[] {
   return nodes;
 }
 
-export function MentionComposer({
+export const MentionComposer = memo(function MentionComposer({
   ariaLabel,
   agents,
   textareaRef,
@@ -169,4 +169,4 @@ export function MentionComposer({
       )}
     </div>
   );
-}
+});

@@ -1,9 +1,9 @@
 "use client";
 
-import { CSSProperties, PointerEvent as ReactPointerEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { CSSProperties, PointerEvent as ReactPointerEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CredentialProvider, ProviderCredentialSummary } from "@/lib/provider-credentials";
 import type { AppUser, SessionMember, SessionSummary, TypingDraft } from "@/lib/session-types";
-import type { CreateFloorAgentInput } from "@/lib/floor-types";
+import type { CreateFloorAgentInput, FloorAgentSettingsPatch } from "@/lib/floor-types";
 import { countMessagesSinceObjective, countUnreadTeamMessages, latestTeamMessageAt, resolvePersistedAgentMention } from "@/lib/floor-state";
 import { GuidedTour, type TourStep } from "@/components/GuidedTour";
 import type { AgentConflictInfo, AgentLayout, ChatThread, PanelId, QueueOrderMode, QueueScope, RailId, TeamPanelView, WorkspaceScreen } from "./data";
@@ -295,10 +295,206 @@ export function Workspace({ user, session, members, floorData, activity, reposit
   function slotStyle(panel: PanelId): CSSProperties { if (expandedPanel === panel) return { flex: "1 1 100%" }; if (panel === "floor") return { flex: "1 1 0" }; return { flex: `0 1 ${isCollapsed(panel) ? RAIL_COLLAPSED_WIDTH : railWidths[panel]}px` }; }
   function chromeFor(panel: PanelId, index: number): PanelChrome { return { id: panel, index, count: panelOrder.length, expanded: expandedPanel === panel, collapsible: panel !== "floor", collapsed: isCollapsed(panel), onMove: (direction) => movePanel(panel, direction), onExpand: () => setExpandedPanel(expandedPanel === panel ? null : panel), onCollapse: () => { if (panel !== "floor") setCollapsedRails((current) => ({ ...current, [panel]: !current[panel] })); }, onDragStart: () => setDraggedPanel(panel), onDragEnd: () => { setDraggedPanel(null); setDragOverPanel(null); } }; }
 
+  const {
+    updateAssignment,
+    sendMessage,
+    setQueueItemAgent,
+    setAutoDispatch,
+    setAutoResolveConflicts,
+    runQueueItem,
+    cancelRun,
+    discardRun,
+    retryRun,
+    editQueuePrompt,
+    setQueueItemPaused,
+    deleteQueueItem,
+    setAutoProvisionAgents,
+    setAutoAgentProvider,
+    updateAgentSettings,
+    pauseAgent,
+    stopAgent,
+    deleteAgent,
+    pauseAllAgents,
+    resumeAllAgents,
+    stopAllAgents,
+    resolveConflict,
+    answerConflict,
+    submitConflictSelections,
+    readyReview,
+    squashMergeReview,
+    deleteReviewBranch,
+    abandonCandidate,
+    uploadFiles,
+  } = floorData;
+
+  const handleAssignmentChange = useCallback(async (id: string, task: string | null) => {
+    return Boolean(await updateAssignment(id, task));
+  }, [updateAssignment]);
+
+  const handleSendMessage = useCallback(async (text: string, recipient: string | null, attachmentIds?: string[]) => {
+    return Boolean(await sendMessage(text, recipient, attachmentIds));
+  }, [sendMessage]);
+
+  const handleSetQueueAgent = useCallback(async (queueItemId: string, agentId: string) => {
+    const result = await setQueueItemAgent(queueItemId, agentId);
+    if (result) setNotice("Prompt targeted");
+  }, [setQueueItemAgent, setNotice]);
+
+  const handleAutoDispatch = useCallback(async (enabled: boolean) => {
+    const result = await setAutoDispatch(enabled);
+    if (result) setNotice(enabled ? "Auto-dispatch enabled" : "Auto-dispatch disabled");
+  }, [setAutoDispatch, setNotice]);
+
+  const handleAutoResolveConflicts = useCallback(async (enabled: boolean) => {
+    const result = await setAutoResolveConflicts(enabled);
+    if (result) setNotice(enabled ? "Automatic conflict resolution enabled" : "Automatic conflict resolution disabled");
+  }, [setAutoResolveConflicts, setNotice]);
+
+  const handleRunQueueItem = useCallback(async (id: string) => {
+    const result = await runQueueItem(id);
+    if (result) setNotice("Agent run started");
+  }, [runQueueItem, setNotice]);
+
+  const handleCancelRun = useCallback(async (id: string) => {
+    const result = await cancelRun(id);
+    if (result) setNotice("Cancellation requested");
+  }, [cancelRun, setNotice]);
+
+  const handleDiscardRun = useCallback(async (id: string) => {
+    const result = await discardRun(id);
+    if (result) setNotice("Verified run branch discarded");
+  }, [discardRun, setNotice]);
+
+  const handleRollbackRun = useCallback((runId: string) => {
+    setRollbackIntent({ scope: "prompt", subjectId: runId });
+    return Promise.resolve();
+  }, []);
+
+  const handleRetryRun = useCallback(async (id: string) => {
+    const result = await retryRun(id);
+    if (result) setNotice("Retry started against the latest candidate");
+  }, [retryRun, setNotice]);
+
+  const handleEditQueuePrompt = useCallback(async (queueItemId: string, promptId: string, text: string) => {
+    const result = await editQueuePrompt(queueItemId, promptId, text);
+    if (result) setNotice("Prompt updated");
+    return Boolean(result);
+  }, [editQueuePrompt, setNotice]);
+
+  const handlePauseQueueItem = useCallback(async (queueItemId: string, paused: boolean) => {
+    const result = await setQueueItemPaused(queueItemId, paused);
+    if (result) setNotice(paused ? "Prompt paused" : "Prompt resumed");
+  }, [setQueueItemPaused, setNotice]);
+
+  const handleDeleteQueueItem = useCallback(async (queueItemId: string) => {
+    const result = await deleteQueueItem(queueItemId);
+    if (result) setNotice("Prompt removed");
+  }, [deleteQueueItem, setNotice]);
+
+  const handleFocusAgent = useCallback((agentId: string) => {
+    setSelectedAgentId(agentId);
+    setAgentLayout("focus");
+  }, []);
+
+  const handleOpenReview = useCallback((runId: string, status: "active" | "rolled_back") => {
+    setReviewPromptRequest({ runId, status });
+    setScreen("review");
+  }, []);
+
+  const handleAutoProvisionAgents = useCallback(async (enabled: boolean) => {
+    return Boolean(await setAutoProvisionAgents(enabled));
+  }, [setAutoProvisionAgents]);
+
+  const handleAutoAgentProvider = useCallback(async (provider: CredentialProvider | null) => {
+    return Boolean(await setAutoAgentProvider(provider));
+  }, [setAutoAgentProvider]);
+
+  const handleUpdateSettings = useCallback(async (agentId: string, patch: FloorAgentSettingsPatch) => {
+    return Boolean(await updateAgentSettings(agentId, patch));
+  }, [updateAgentSettings]);
+
+  const handlePauseAgent = useCallback((agentId: string, paused: boolean) => {
+    void (async () => {
+      const result = await pauseAgent(agentId, paused);
+      if (result) setNotice(paused ? "Agent paused" : "Agent resumed");
+    })();
+  }, [pauseAgent, setNotice]);
+
+  const handleStopAgent = useCallback((agentId: string) => {
+    void (async () => {
+      const result = await stopAgent(agentId);
+      if (result) setNotice("Agent stopped");
+    })();
+  }, [stopAgent, setNotice]);
+
+  const handleDeleteAgent = useCallback((agentId: string) => {
+    void (async () => {
+      const result = await deleteAgent(agentId);
+      if (result) setNotice("Agent removed");
+    })();
+  }, [deleteAgent, setNotice]);
+
+  const handlePauseAllAgents = useCallback(async () => {
+    const result = await pauseAllAgents();
+    if (result) setNotice("All agents paused");
+  }, [pauseAllAgents, setNotice]);
+
+  const handleResumeAllAgents = useCallback(async () => {
+    const result = await resumeAllAgents();
+    if (result) setNotice("All agents resumed");
+  }, [resumeAllAgents, setNotice]);
+
+  const handleStopAllAgents = useCallback(async () => {
+    const result = await stopAllAgents();
+    if (result) setNotice("All agents stopped");
+  }, [stopAllAgents, setNotice]);
+
+  const handleResolveConflict = useCallback(async (caseId: string) => {
+    return Boolean(await resolveConflict(caseId));
+  }, [resolveConflict]);
+
+  const handleAnswerConflict = useCallback(async (caseId: string, answers: Array<{ questionId: string; answer: string }>) => {
+    return Boolean(await answerConflict(caseId, answers));
+  }, [answerConflict]);
+
+  const handleSubmitConflictSelections = useCallback(async (caseId: string, snapshotRunId: string, selections: Array<{ path: string; hunkIndex: number; choice: import("@/lib/floor-types").ConflictChoice }>) => {
+    return Boolean(await submitConflictSelections(caseId, snapshotRunId, selections));
+  }, [submitConflictSelections]);
+
+  const handleReadyReview = useCallback(async () => {
+    if (await readyReview()) setNotice("GitHub review status synchronized");
+  }, [readyReview, setNotice]);
+
+  const handleMergeReview = useCallback(async (deleteCandidateBranch: boolean) => {
+    const result = await squashMergeReview(deleteCandidateBranch);
+    if (result) setNotice(deleteCandidateBranch ? "Pull request squash merged and branches cleaned up" : "Pull request squash merged; candidate branch kept");
+    return Boolean(result);
+  }, [squashMergeReview, setNotice]);
+
+  const handleDeleteReviewBranch = useCallback(async () => {
+    const result = await deleteReviewBranch();
+    if (result) setNotice("Candidate branch deleted");
+    return Boolean(result);
+  }, [deleteReviewBranch, setNotice]);
+
+  const handleAbandonReviewCandidate = useCallback(async (deleteBranch: boolean) => {
+    const result = await abandonCandidate(deleteBranch);
+    if (result) setNotice(deleteBranch ? "Candidate abandoned and branch deleted" : "Candidate abandoned; branch kept");
+    return Boolean(result);
+  }, [abandonCandidate, setNotice]);
+
+  const handleCancelReviewRun = useCallback(async (runId: string) => {
+    await cancelRun(runId);
+  }, [cancelRun]);
+
+  const handleSendReviewTeamMessage = useCallback(async (text: string, recipient: string | null) => {
+    return Boolean(await sendMessage(text, recipient));
+  }, [sendMessage]);
+
   function renderPanel(panel: PanelId, chrome: PanelChrome) {
-    if (panel === "brief") return <BriefRail chrome={chrome} sessionId={session.id} assignments={assignments} agents={agents} queue={queue} onAssignmentChange={async (id, task) => Boolean(await floorData.updateAssignment(id, task))} view={teamPanelView} onViewChange={setTeamPanelView} messages={messages} onSendMessage={async (text, recipient, attachmentIds) => Boolean(await floorData.sendMessage(text, recipient, attachmentIds))} chatThread={chatThread} onChatThreadChange={setChatThread} participants={participants} currentUserId={user.id} unreadTeamCount={unreadTeamCount} files={floorData.floor.files} onUploadFiles={floorData.uploadFiles} />;
-    if (panel === "queue") return <PromptQueue chrome={chrome} items={queue} runs={runs} agents={agents} owner={session.role === "owner"} runEnabled={agentRunEnabled} busy={floorData.busy} autoDispatch={floorData.floor.autoDispatch} onSetAgent={async (queueItemId, agentId) => { const result = await floorData.setQueueItemAgent(queueItemId, agentId); if (result) setNotice("Prompt targeted"); }} onAutoDispatch={async (enabled) => { const result = await floorData.setAutoDispatch(enabled); if (result) setNotice(enabled ? "Auto-dispatch enabled" : "Auto-dispatch disabled"); }} autoResolveConflicts={floorData.floor.autoResolveConflicts} onAutoResolveConflicts={async (enabled) => { const result = await floorData.setAutoResolveConflicts(enabled); if (result) setNotice(enabled ? "Automatic conflict resolution enabled" : "Automatic conflict resolution disabled"); }} browserConflictAlerts={browserConflictAlerts} onBrowserConflictAlerts={setConflictBrowserAlerts} onRun={async (id) => { const result = await floorData.runQueueItem(id); if (result) setNotice("Agent run started"); }} onCancel={async (id) => { const result = await floorData.cancelRun(id); if (result) setNotice("Cancellation requested"); }} onDiscard={async (id) => { const result = await floorData.discardRun(id); if (result) setNotice("Verified run branch discarded"); }} onRollback={(runId) => { setRollbackIntent({ scope: "prompt", subjectId: runId }); return Promise.resolve(); }} onRetry={async (id) => { const result = await floorData.retryRun(id); if (result) setNotice("Retry started against the latest candidate"); }} onEditPrompt={async (queueItemId, promptId, text) => { const result = await floorData.editQueuePrompt(queueItemId, promptId, text); if (result) setNotice("Prompt updated"); return Boolean(result); }} onPause={async (queueItemId, paused) => { const result = await floorData.setQueueItemPaused(queueItemId, paused); if (result) setNotice(paused ? "Prompt paused" : "Prompt resumed"); }} onDelete={async (queueItemId) => { const result = await floorData.deleteQueueItem(queueItemId); if (result) setNotice("Prompt removed"); }} currentUserId={user.id} scope={queueScope} onScope={setQueueScope} orderMode={queueOrderMode} onOrderMode={setQueueOrderMode} draggedItemId={draggedQueueItem} onItemDragStart={setDraggedQueueItem} onItemDragEnd={() => setDraggedQueueItem(null)} onItemDrop={(id) => void dropQueueItem(id)} onFocusAgent={(agentId) => { setSelectedAgentId(agentId); setAgentLayout("focus"); }} onOpenReview={(runId, status) => { setReviewPromptRequest({ runId, status }); setScreen("review"); }} />;
-    return <AgentFloor chrome={chrome} sessionId={session.id} agents={agents} runs={runs} activity={activity} selected={selectedAgent} onSelect={setSelectedAgentId} agentLayout={agentLayout} onAgentLayout={setAgentLayout} onCreateAgent={createAgent} enabledProviders={enabledProviders} providerCredentials={providerCredentials} owner={session.role === "owner"} autoProvisionAgents={floorData.floor.autoProvisionAgents} autoAgentProvider={floorData.floor.autoAgentProvider} effectiveAutoAgentProvider={floorData.floor.effectiveAutoAgentProvider} autoAgentProviderState={floorData.floor.autoAgentProviderState} onAutoProvisionAgents={async (enabled) => Boolean(await floorData.setAutoProvisionAgents(enabled))} onAutoAgentProvider={async (provider) => Boolean(await floorData.setAutoAgentProvider(provider))} onUpdateSettings={async (agentId, patch) => Boolean(await floorData.updateAgentSettings(agentId, patch))} onPauseAgent={(agentId, paused) => { void (async () => { const result = await floorData.pauseAgent(agentId, paused); if (result) setNotice(paused ? "Agent paused" : "Agent resumed"); })(); }} onStopAgent={(agentId) => { void (async () => { const result = await floorData.stopAgent(agentId); if (result) setNotice("Agent stopped"); })(); }} onDeleteAgent={(agentId) => { void (async () => { const result = await floorData.deleteAgent(agentId); if (result) setNotice("Agent removed"); })(); }} onPauseAllAgents={async () => { const result = await floorData.pauseAllAgents(); if (result) setNotice("All agents paused"); }} onResumeAllAgents={async () => { const result = await floorData.resumeAllAgents(); if (result) setNotice("All agents resumed"); }} onStopAllAgents={async () => { const result = await floorData.stopAllAgents(); if (result) setNotice("All agents stopped"); }} agentControlsBusy={floorData.busy} queue={queue} participants={participants} currentUserId={user.id} conflictsByAgentId={conflictsByAgentId} onOpenConflict={openConflict} />;
+    if (panel === "brief") return <BriefRail chrome={chrome} sessionId={session.id} assignments={assignments} agents={agents} queue={queue} onAssignmentChange={handleAssignmentChange} view={teamPanelView} onViewChange={setTeamPanelView} messages={messages} onSendMessage={handleSendMessage} chatThread={chatThread} onChatThreadChange={setChatThread} participants={participants} currentUserId={user.id} unreadTeamCount={unreadTeamCount} files={floorData.floor.files} onUploadFiles={uploadFiles} />;
+    if (panel === "queue") return <PromptQueue chrome={chrome} items={queue} runs={runs} agents={agents} owner={session.role === "owner"} runEnabled={agentRunEnabled} busy={floorData.busy} autoDispatch={floorData.floor.autoDispatch} onSetAgent={handleSetQueueAgent} onAutoDispatch={handleAutoDispatch} autoResolveConflicts={floorData.floor.autoResolveConflicts} onAutoResolveConflicts={handleAutoResolveConflicts} browserConflictAlerts={browserConflictAlerts} onBrowserConflictAlerts={setConflictBrowserAlerts} onRun={handleRunQueueItem} onCancel={handleCancelRun} onDiscard={handleDiscardRun} onRollback={handleRollbackRun} onRetry={handleRetryRun} onEditPrompt={handleEditQueuePrompt} onPause={handlePauseQueueItem} onDelete={handleDeleteQueueItem} currentUserId={user.id} scope={queueScope} onScope={setQueueScope} orderMode={queueOrderMode} onOrderMode={setQueueOrderMode} draggedItemId={draggedQueueItem} onItemDragStart={setDraggedQueueItem} onItemDragEnd={() => setDraggedQueueItem(null)} onItemDrop={(id) => void dropQueueItem(id)} onFocusAgent={handleFocusAgent} onOpenReview={handleOpenReview} />;
+    return <AgentFloor chrome={chrome} sessionId={session.id} agents={agents} runs={runs} activity={activity} selected={selectedAgent} onSelect={setSelectedAgentId} agentLayout={agentLayout} onAgentLayout={setAgentLayout} onCreateAgent={createAgent} enabledProviders={enabledProviders} providerCredentials={providerCredentials} owner={session.role === "owner"} autoProvisionAgents={floorData.floor.autoProvisionAgents} autoAgentProvider={floorData.floor.autoAgentProvider} effectiveAutoAgentProvider={floorData.floor.effectiveAutoAgentProvider} autoAgentProviderState={floorData.floor.autoAgentProviderState} onAutoProvisionAgents={handleAutoProvisionAgents} onAutoAgentProvider={handleAutoAgentProvider} onUpdateSettings={handleUpdateSettings} onPauseAgent={handlePauseAgent} onStopAgent={handleStopAgent} onDeleteAgent={handleDeleteAgent} onPauseAllAgents={handlePauseAllAgents} onResumeAllAgents={handleResumeAllAgents} onStopAllAgents={handleStopAllAgents} agentControlsBusy={floorData.busy} queue={queue} participants={participants} currentUserId={user.id} conflictsByAgentId={conflictsByAgentId} onOpenConflict={openConflict} />;
   }
 
   return <main className="app-shell" data-screen={screen}>
@@ -308,7 +504,7 @@ export function Workspace({ user, session, members, floorData, activity, reposit
       <QuotaNotice sessionId={session.id} role={session.role} remainingSeconds={lowHoursRemaining} />
     )}
     {screen !== "review" && attentionConflicts[0] && <button type="button" className="notice conflict-attention-banner" data-tone="attention" onClick={() => openConflict(attentionConflicts[0].id)}><strong>{attentionConflicts[0].status === "awaiting_input" ? "Merge conflict needs a decision" : "Merge Resolver needs attention"}</strong><span>Open Review to see the conflict and {attentionConflicts[0].status === "awaiting_input" ? "answer its questions" : "retry resolution"}.</span></button>}
-    {screen === "review" ? <ReviewScreen sessionId={session.id} revision={floorData.floor.revision} review={review} repository={repository} repositoryTree={repositoryTree} selectedConflictCaseId={selectedConflictCaseId} promptRequest={reviewPromptRequest} owner={session.role === "owner"} busy={floorData.busy} blockingRunId={floorData.blockingRunId} onRequestRollback={(intent) => setRollbackIntent(intent)} onResolveConflict={async (caseId) => Boolean(await floorData.resolveConflict(caseId))} onAnswerConflict={async (caseId, answers) => Boolean(await floorData.answerConflict(caseId, answers))} onSubmitConflictSelections={async (caseId, snapshotRunId, selections) => Boolean(await floorData.submitConflictSelections(caseId, snapshotRunId, selections))} onReady={async () => { if (await floorData.readyReview()) setNotice("GitHub review status synchronized"); }} onMerge={async (deleteCandidateBranch) => { const result = await floorData.squashMergeReview(deleteCandidateBranch); if (result) setNotice(deleteCandidateBranch ? "Pull request squash merged and branches cleaned up" : "Pull request squash merged; candidate branch kept"); return Boolean(result); }} onDeleteBranch={async () => { const result = await floorData.deleteReviewBranch(); if (result) setNotice("Candidate branch deleted"); return Boolean(result); }} onAbandon={async (deleteBranch) => { const result = await floorData.abandonCandidate(deleteBranch); if (result) setNotice(deleteBranch ? "Candidate abandoned and branch deleted" : "Candidate abandoned; branch kept"); return Boolean(result); }} onCancelRun={async (runId) => { await floorData.cancelRun(runId); }} teamChat={messages} onSendTeamMessage={async (text, recipient) => Boolean(await floorData.sendMessage(text, recipient))} participants={participants} currentUserId={user.id} sessionFiles={floorData.floor.files} /> : <><div className="workspace" data-expanded={expandedPanel ? "true" : "false"} data-resizing={resizing ? "true" : "false"}>{panelOrder.map((panel, index) => { const next = panelOrder[index + 1]; const showHandle = !expandedPanel && next !== undefined && !(isCollapsed(panel) && panel !== "floor"); return <div key={panel} ref={(element) => { if (element) panelSlotRefs.current.set(panel, element); else panelSlotRefs.current.delete(panel); }} className="panel-slot" style={slotStyle(panel)} data-expanded={expandedPanel === panel ? "true" : "false"} data-collapsed={isCollapsed(panel) ? "true" : "false"} data-dragging={draggedPanel === panel ? "true" : "false"} data-drop-target={dragOverPanel === panel ? "true" : "false"} onDragOver={(event) => { event.preventDefault(); if (draggedPanel && draggedPanel !== panel) setDragOverPanel(panel); }} onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragOverPanel((current) => current === panel ? null : current); }} onDrop={() => dropPanel(panel)}>{renderPanel(panel, chromeFor(panel, index))}{showHandle && <div className="resize-handle" role="separator" aria-label={`Resize ${panel} panel`} onPointerDown={(event) => startResize(panel, next, event)} />}</div>; })}</div><FloorDock onSubmit={enqueuePrompt} onUploadFiles={floorData.uploadFiles} agents={agents} queueTarget={queueTarget} onQueueTargetChange={setQueueTarget} textareaRef={composerRef} notice={notice} noticeTone={noticeTone} noticeVisible={noticeVisible} busy={floorData.busy} participants={participants} typingDrafts={typingDrafts} onTypingUpdate={onTypingUpdate} /></>}
+    {screen === "review" ? <ReviewScreen sessionId={session.id} revision={floorData.floor.revision} review={review} repository={repository} repositoryTree={repositoryTree} selectedConflictCaseId={selectedConflictCaseId} promptRequest={reviewPromptRequest} owner={session.role === "owner"} busy={floorData.busy} blockingRunId={floorData.blockingRunId} onRequestRollback={setRollbackIntent} onResolveConflict={handleResolveConflict} onAnswerConflict={handleAnswerConflict} onSubmitConflictSelections={handleSubmitConflictSelections} onReady={handleReadyReview} onMerge={handleMergeReview} onDeleteBranch={handleDeleteReviewBranch} onAbandon={handleAbandonReviewCandidate} onCancelRun={handleCancelReviewRun} teamChat={messages} onSendTeamMessage={handleSendReviewTeamMessage} participants={participants} currentUserId={user.id} sessionFiles={floorData.floor.files} /> : <><div className="workspace" data-expanded={expandedPanel ? "true" : "false"} data-resizing={resizing ? "true" : "false"}>{panelOrder.map((panel, index) => { const next = panelOrder[index + 1]; const showHandle = !expandedPanel && next !== undefined && !(isCollapsed(panel) && panel !== "floor"); return <div key={panel} ref={(element) => { if (element) panelSlotRefs.current.set(panel, element); else panelSlotRefs.current.delete(panel); }} className="panel-slot" style={slotStyle(panel)} data-expanded={expandedPanel === panel ? "true" : "false"} data-collapsed={isCollapsed(panel) ? "true" : "false"} data-dragging={draggedPanel === panel ? "true" : "false"} data-drop-target={dragOverPanel === panel ? "true" : "false"} onDragOver={(event) => { event.preventDefault(); if (draggedPanel && draggedPanel !== panel) setDragOverPanel(panel); }} onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragOverPanel((current) => current === panel ? null : current); }} onDrop={() => dropPanel(panel)}>{renderPanel(panel, chromeFor(panel, index))}{showHandle && <div className="resize-handle" role="separator" aria-label={`Resize ${panel} panel`} onPointerDown={(event) => startResize(panel, next, event)} />}</div>; })}</div><FloorDock onSubmit={enqueuePrompt} onUploadFiles={uploadFiles} agents={agents} queueTarget={queueTarget} onQueueTargetChange={setQueueTarget} textareaRef={composerRef} notice={notice} noticeTone={noticeTone} noticeVisible={noticeVisible} busy={floorData.busy} participants={participants} typingDrafts={typingDrafts} onTypingUpdate={onTypingUpdate} /></>}
     {rollbackIntent && <RollbackImpactDialog sessionId={session.id} intent={rollbackIntent} busy={floorData.busy} onClose={() => setRollbackIntent(null)} onConfirm={async (impact) => { const result = await floorData.rollbackReviewChanges({ scope: impact.scope, subjectId: impact.subjectId, expectedCandidateSha: impact.expectedCandidateSha, expectedRunIds: impact.targets.map((target) => target.runId) }); if (result) setNotice("Candidate rollback started"); return Boolean(result); }} />}
     {screen === "review" && notice && <StatusBar notice={notice} visible={noticeVisible} tone={noticeTone} />}
     {screen === "workspace" && <GuidedTour storageKey={`openfloor:tutorial:floor:${user.id}`} steps={FLOOR_TOUR} />}
