@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { useState } from "react";
 import { BASE_PATH } from "@/components/basePath";
 import { Spinner } from "@/components/session/primitives";
 import { formatTokens } from "@/components/session/data";
@@ -110,8 +110,7 @@ function ProviderCredentialRow({ provider, kind, credential, showAgentDefaults, 
   const subscriptionGuide = SUBSCRIPTION_KEY_GUIDE[provider] ?? guide;
   const oauthNoun = setupCommand ? "Setup token" : "API key";
 
-  async function connect(event: FormEvent) {
-    event.preventDefault();
+  async function connect() {
     if (!secret.trim() || busy) return;
     setBusy(true);
     setError(null);
@@ -206,7 +205,13 @@ function ProviderCredentialRow({ provider, kind, credential, showAgentDefaults, 
               </button>
             </>
           ) : (
-            <form className="settings-category-detail" onSubmit={connect}>
+            // A plain div, not a <form>: this row can render inside the
+            // create-session dialog's own <form>, and nested forms are
+            // invalid HTML — a submit button there silently native-submits
+            // the OUTER form instead of running this row's onClick/onSubmit
+            // handler, which is exactly the bug that motivated dropping the
+            // <form> here rather than accepting the nesting.
+            <div className="settings-category-detail">
               {kind === "oauth" ? (
                 <>
                   <p className="settings-category-detail">
@@ -259,6 +264,11 @@ function ProviderCredentialRow({ provider, kind, credential, showAgentDefaults, 
                     type="password"
                     value={secret}
                     onChange={(event) => setSecret(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key !== "Enter") return;
+                      event.preventDefault();
+                      void connect();
+                    }}
                     placeholder={kind === "api_key" ? guide.placeholder : undefined}
                     maxLength={512}
                     autoComplete="off"
@@ -267,11 +277,11 @@ function ProviderCredentialRow({ provider, kind, credential, showAgentDefaults, 
                 </label>
               )}
               <div className="form-actions">
-                <button className="button" data-variant="primary" data-size="sm" disabled={!secret.trim() || busy}>
+                <button type="button" className="button" data-variant="primary" data-size="sm" disabled={!secret.trim() || busy} onClick={connect}>
                   {busy ? <><Spinner />{bundle ? "Connecting…" : "Verifying…"}</> : "Connect"}
                 </button>
               </div>
-            </form>
+            </div>
           )}
           {error && <p className="form-error" role="alert">{error}</p>}
         </div>
@@ -295,8 +305,7 @@ function ProviderBudgetControl({ credential, busy, onSaveLimit }: {
   );
   const level = budgetLevel(credential.monthSpendMicroUsd, credential.monthlyLimitMicroUsd);
 
-  function submitLimit(event: FormEvent) {
-    event.preventDefault();
+  function submitLimit() {
     const trimmed = limitInput.trim();
     if (!trimmed) {
       onSaveLimit(null);
@@ -324,7 +333,9 @@ function ProviderBudgetControl({ credential, busy, onSaveLimit }: {
         aria-label={`This month's spend${hasLimit ? `, against a ${formatUsd(credential.monthlyLimitMicroUsd as number)} monthly limit` : ""}`}
       />
       {editing && (
-        <form className="provider-budget-form" onSubmit={submitLimit}>
+        // A plain div, not a <form> — see the connect-form comment above for
+        // why: this can render inside the create-session dialog's own form.
+        <div className="provider-budget-form">
           <label className="field">
             <span className="label">Monthly limit (USD, blank for none)</span>
             <input
@@ -334,14 +345,19 @@ function ProviderBudgetControl({ credential, busy, onSaveLimit }: {
               inputMode="numeric"
               value={limitInput}
               onChange={(event) => setLimitInput(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key !== "Enter") return;
+                event.preventDefault();
+                submitLimit();
+              }}
               placeholder="No limit"
               aria-label="Monthly limit in US dollars"
             />
           </label>
           <div className="form-actions">
-            <button className="button" data-variant="primary" data-size="sm" disabled={busy}>{busy ? "Saving…" : "Save"}</button>
+            <button type="button" className="button" data-variant="primary" data-size="sm" disabled={busy} onClick={submitLimit}>{busy ? "Saving…" : "Save"}</button>
           </div>
-        </form>
+        </div>
       )}
     </div>
   );
