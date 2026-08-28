@@ -41,10 +41,12 @@ import { notifyFloorChanged } from "../lib/presence-server";
 import { pokeSessionRouter } from "../lib/router-server";
 import { signRunGatewayToken } from "../lib/runtime-token";
 import { renderConflictResolverPrompt } from "../lib/conflict-resolver-prompt";
+import { applyConflictSelections, type ConflictChoice, type ConflictSnapshotFileRaw } from "../lib/conflict-hunks";
 import {
   advanceConflictAfterFailure,
   finishResolverAwaitingInput,
   getConflictRunContext,
+  getConflictSelectionsForCase,
   getMergeConflictCases,
   isConflictInputRequested,
   markConflictResolved,
@@ -85,6 +87,69 @@ type Params =
 const MAX_LOG_BYTES = 500_000;
 const MAX_DIFF_BYTES = 2_000_000;
 const MAX_FILES = 100;
+// A resolver attempt's conflict_snapshot artifact — the raw base/ours/theirs/
+// merged bodies the manual resolver dialog parses into hunks. Capped well
+// below recordConflictPaths' 100-path list: a snapshot holds real file
+// content (up to 4 bodies per file), not just paths. Paths beyond the cap
+// stay in the case's ordinary conflictPaths list (still shown, just not
+// editable in the dialog — see ConflictSnapshot.omittedPaths).
+const MAX_SNAPSHOT_FILES = 40;
+const MAX_SNAPSHOT_BYTES = 3_000_000;
+// The capture script itself bounds each base/ours/theirs/merged body to 16
+// KiB (see CONFLICT_SNAPSHOT_SCRIPT) — kept out of the script string so both
+// ends of that contract are visible from one file.
+const MAX_SNAPSHOT_FIELD_BYTES = 16_384;
+// Runs inside the run sandbox against the just-merged /workspace/repository,
+// right after the three-way merge leaves conflict markers and index stages
+// 1/2/3 for every unmerged path. Reading it with plain git plumbing (rather
+// than the ours/theirs archives fetched earlier) keeps this exactly aligned
+// with what the resolver agent itself sees, and needs no new tooling in
+// Dockerfile.sandbox beyond the Node already installed there for the
+// runners. Binary detection uses `git diff --numstat`, which reports "-" for
+// binary paths; a binary conflict gets no captured content, just its kind —
+// the manual dialog offers "keep ours" / "keep theirs" for those without a
+// text diff.
+const CONFLICT_SNAPSHOT_SCRIPT = `
+import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+const MAX_FIELD_BYTES = ${MAX_SNAPSHOT_FIELD_BYTES};
+const paths = JSON.parse(readFileSync("/tmp/openfloor/conflict-paths.json", "utf8"));
+function bound(buf) {
+  const truncated = buf.length > MAX_FIELD_BYTES;
+  return { content: buf.slice(0, MAX_FIELD_BYTES).toString("utf8"), truncated };
+}
+function showStage(path, stage) {
+  try { return bound(execFileSync("git", ["show", ":" + stage + ":" + path], { maxBuffer: 8 * 1024 * 1024 })); }
+  catch { return null; }
+}
+function isBinaryPath(path) {
+  try {
+    const out = execFileSync("git", ["diff", "--numstat", "-z", "HEAD", "--", path]).toString("utf8");
+    return out.split("\\t")[0] === "-";
+  } catch { return false; }
+}
+const files = [];
+for (const path of paths) {
+  if (isBinaryPath(path)) { files.push({ path, kind: "binary", merged: null, base: null, ours: null, theirs: null, truncated: false }); continue; }
+  const base = showStage(path, 1);
+  const ours = showStage(path, 2);
+  const theirs = showStage(path, 3);
+  let merged = null;
+  let mergedTruncated = false;
+  try {
+    const boundedMerged = bound(readFileSync(path));
+    merged = boundedMerged.content;
+    mergedTruncated = boundedMerged.truncated;
+  } catch { merged = null; }
+  const kind = !ours ? "delete_modify" : !theirs ? "modify_delete" : "content";
+  files.push({
+    path, kind,
+    merged, base: base ? base.content : null, ours: ours ? ours.content : null, theirs: theirs ? theirs.content : null,
+    truncated: mergedTruncated || Boolean(base && base.truncated) || Boolean(ours && ours.truncated) || Boolean(theirs && theirs.truncated),
+  });
+}
+process.stdout.write(JSON.stringify({ files }));
+`;
 const PUBLISHER_SANDBOX_IMAGE_VERSION = "v2";
 // Pooled run sandboxes are keyed only by repository (see db/sandbox-pool.ts),
 // so a container built from a stale image would otherwise stay claimable for
@@ -161,7 +226,7 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
       // OPENFLOOR_SKILLS is the same snapshot — a second D1 read there could
       // observe a skill imported mid-provisioning and enable a name whose
       // SKILL.md was never written.
-      const skillNames = await step.do("prepare exact workspace", { retries: { limit: 2, delay: "5 seconds", backoff: "exponential" }, timeout: "5 minutes" }, async () => {
+      const { materializedSkills: skillNames, manualApplied, manualApplySummary } = await step.do("prepare exact workspace", { retries: { limit: 2, delay: "5 seconds", backoff: "exponential" }, timeout: "5 minutes" }, async () => {
         const sourceToken = await signRunGatewayToken({
           runId, sessionId: context.sessionId, repositoryId: context.repositoryId,
           candidateSha: context.candidateSha, operation: "source",
@@ -182,6 +247,10 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
           } },
         );
         if (!result.success) throw new Error(`Candidate workspace preparation failed with exit code ${result.exitCode}`);
+        let conflictPaths: string[] = [];
+        let snapshotFiles: ConflictSnapshotFileRaw[] = [];
+        let manualApplied = false;
+        let manualApplySummary: string | null = null;
         if (context.conflictCaseId) {
           const conflictSourceToken = await signRunGatewayToken({
             runId, sessionId: context.sessionId, repositoryId: context.repositoryId,
@@ -214,8 +283,79 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
             } },
           );
           if (!merge.success) throw new Error(`Conflict workspace reconstruction failed with exit code ${merge.exitCode}`);
-          const conflictPaths = merge.stdout.split("\n").map((path) => path.trim()).filter(Boolean);
+          conflictPaths = merge.stdout.split("\n").map((path) => path.trim()).filter(Boolean);
           await recordConflictPaths(runId, conflictPaths, this.env.DB);
+          // Captured on every attempt (automatic or manual) so a manual
+          // resolution is available the moment automation fails, without
+          // needing a fresh sandbox — see AGENTS.md's Merge Resolver section.
+          const snapshotPaths = conflictPaths.slice(0, MAX_SNAPSHOT_FILES);
+          if (snapshotPaths.length > 0) {
+            await sandbox.writeFile("/tmp/openfloor/conflict-paths.json", JSON.stringify(snapshotPaths));
+            await sandbox.writeFile("/tmp/openfloor/snapshot.mjs", CONFLICT_SNAPSHOT_SCRIPT);
+            const captured = await sandbox.exec("node /tmp/openfloor/snapshot.mjs", { cwd: "/workspace/repository", timeout: 2 * 60 * 1000 });
+            if (captured.success) {
+              try {
+                const parsed = JSON.parse(captured.stdout) as { files: ConflictSnapshotFileRaw[] };
+                snapshotFiles = parsed.files;
+                const snapshotJson = JSON.stringify(parsed).slice(0, MAX_SNAPSHOT_BYTES);
+                const snapshotKey = `conflicts/${context.conflictCaseId}/${runId}/snapshot.json`;
+                await this.env.PREFLIGHT_LOGS.put(snapshotKey, snapshotJson, { httpMetadata: { contentType: "application/json; charset=utf-8" } });
+                await recordRunArtifact(runId, "conflict_snapshot", snapshotKey, "application/json; charset=utf-8", snapshotJson.length, this.env.DB);
+              } catch {
+                // A malformed capture is non-fatal: this attempt just has no
+                // manual-resolution fallback available yet; the automatic
+                // resolver agent still runs exactly as it always has.
+              }
+            }
+          }
+          // A prior human decision (merge_conflict_selections) applies only
+          // when it covers every currently-conflicted path against THIS
+          // attempt's own fresh hunk parse. Any mismatch — a path the
+          // capture couldn't reach, a hunk count that no longer lines up
+          // because the candidate moved between the snapshot and this retry
+          // — falls back to running the resolver agent normally rather than
+          // guessing which of the human's choices still apply.
+          const record = await getConflictSelectionsForCase(context.conflictCaseId, this.env.DB);
+          if (record && conflictPaths.length > 0 && conflictPaths.every((path) => snapshotFiles.some((file) => file.path === path))) {
+            const decisionsByPath = new Map<string, Array<{ hunkIndex: number; choice: ConflictChoice }>>();
+            for (const selection of record.selections) {
+              const list = decisionsByPath.get(selection.path) ?? [];
+              list.push({ hunkIndex: selection.hunkIndex, choice: selection.choice });
+              decisionsByPath.set(selection.path, list);
+            }
+            const resolvedContent = new Map<string, string>();
+            const fileLevelChoices = new Map<string, "ours" | "theirs">();
+            let mismatch = false;
+            for (const path of conflictPaths) {
+              const raw = snapshotFiles.find((file) => file.path === path)!;
+              const decisions = decisionsByPath.get(path);
+              if (!decisions || decisions.length === 0) { mismatch = true; break; }
+              if (raw.kind === "content") {
+                if (raw.merged === null) { mismatch = true; break; }
+                try {
+                  resolvedContent.set(path, applyConflictSelections(raw.merged, new Map(decisions.map((decision) => [decision.hunkIndex, decision.choice]))));
+                } catch { mismatch = true; break; }
+              } else {
+                if (decisions.length !== 1 || decisions[0].choice === "both") { mismatch = true; break; }
+                fileLevelChoices.set(path, decisions[0].choice);
+              }
+            }
+            if (!mismatch) {
+              for (const [path, content] of resolvedContent) await sandbox.writeFile(`/workspace/repository/${path}`, content);
+              for (const [path, choice] of fileLevelChoices) {
+                const quoted = `'${path.replace(/'/g, "'\\''")}'`;
+                await sandbox.exec(
+                  `git checkout --${choice} -- ${quoted} 2>/dev/null && git add -- ${quoted} || git rm -f -q -- ${quoted}`,
+                  { cwd: "/workspace/repository", timeout: 30_000 },
+                );
+              }
+              const staged = await sandbox.exec("git -c core.hooksPath=/dev/null add -A", { cwd: "/workspace/repository", timeout: 60_000 });
+              if (staged.success) {
+                manualApplied = true;
+                manualApplySummary = `Applied ${record.selections.length} human selection${record.selections.length === 1 ? "" : "s"} across ${conflictPaths.length} file${conflictPaths.length === 1 ? "" : "s"} — no model call was made.`;
+              }
+            }
+          }
         }
         let prompt = await buildRunPrompt(context, this.env.DB);
         if (usesClaudeRunner(context.provider)) {
@@ -335,10 +475,26 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
           );
           if (!prepared.success) throw new Error(`Gemini runtime preparation failed with exit code ${prepared.exitCode}`);
         }
-        return materializedSkills;
+        return { materializedSkills, conflictPaths, manualApplied, manualApplySummary };
       });
 
       const processId = `codex-${runId}`;
+      let codexResult: ReturnType<typeof parseRunResult>;
+      if (manualApplied) {
+        // A human already chose every conflicting line — deterministic
+        // marker rewriting (lib/conflict-hunks.ts) applied those choices
+        // above, in the same sandbox workspace this run will publish from.
+        // No agent process runs: no model call, no tokens, no chance the
+        // model overrides an explicit human decision.
+        if (await isRunCancellationRequested(runId, this.env.DB)) {
+          finalStatus = "cancelled";
+          summary = "Agent run cancelled. No repository changes were published.";
+          return await this.complete(runId, finalStatus, summary);
+        }
+        await markRunRunning(runId, null, this.env.DB);
+        await this.notify(runId);
+        codexResult = { ok: true, threadId: null, finalResponse: manualApplySummary, error: null, usage: null, modelUsage: null, totalCostUsd: null };
+      } else {
       await step.do("start Codex", { retries: { limit: 1, delay: "5 seconds" }, timeout: "2 minutes" }, async () => {
         const existing = await sandbox.getProcess(processId);
         if (!existing) {
@@ -484,7 +640,7 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
         return await this.complete(runId, finalStatus, summary);
       }
       const resultFile = await sandbox.exec("cat /tmp/openfloor/result.json", { timeout: 10_000 });
-      const codexResult = parseRunResult(resultFile.stdout);
+      codexResult = parseRunResult(resultFile.stdout);
       // Recorded even when the run went on to fail below (ok: false, or a
       // nonzero exit code) — a failed run still spent real tokens against
       // the owner's budget, and skipping it here would let a crashlooping
@@ -493,6 +649,7 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
         usage: codexResult.usage, modelUsage: codexResult.modelUsage, totalCostUsd: codexResult.totalCostUsd,
       }, this.env.DB);
       if (processResult.exitCode !== 0 || !codexResult.ok) throw new Error(codexResult.error || `The agent process exited with code ${processResult.exitCode}`);
+      }
       if (context.conflictCaseId) {
         const verified = await sandbox.exec(
           "git -c core.hooksPath=/dev/null add -A && test -z \"$(git ls-files -u)\" && git diff --cached --check && git reset -q refs/heads/openfloor-base",
