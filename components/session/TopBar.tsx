@@ -146,7 +146,7 @@ export const TopBar = memo(function TopBar({
           <span>{session.objective || "Add a shared objective for this session"}</span>
         </button>
         <SessionTimer base={session.activeSeconds} running={presenceConnected && session.endedAt == null} />
-        <span className="objective-fact"><Icon name="clock" size={12} />Updated <LocalDateTime timestamp={session.updatedAt} mode="time" /></span>
+        <span className="objective-fact objective-fact-updated"><Icon name="clock" size={12} />Updated <LocalDateTime timestamp={session.updatedAt} mode="time" /></span>
         {session.role === "owner" && !editingObjective && staleMessageCount >= OBJECTIVE_NUDGE_THRESHOLD && (
           <span className="objective-nudge" role="status">
             {staleMessageCount} team messages since the objective was last updated.
