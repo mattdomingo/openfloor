@@ -75,4 +75,21 @@ describe("deletion routes", () => {
     await expect(deleted.json()).resolves.toEqual({ deleted: true, orphanedBranches: [expect.any(String)] });
     expect(await env.DB.prepare("SELECT id FROM sessions WHERE id = ?").bind(sessionId).first()).toBeNull();
   });
+
+  it("POST /api/sessions/[id]/review/sync reconciles review for any member", async () => {
+    const { headers: ownerHeaders, sessionId } = await createOwnedSession("sync-review-route");
+    const memberHeaders = identity("sync-review-member");
+    await completeTestOnboarding(memberHeaders, "Sync", "Member");
+    const invite = await (await SELF.fetch(`http://localhost/api/sessions/${sessionId}/invite`, { headers: ownerHeaders })).json() as { inviteUrl: string };
+    const token = invite.inviteUrl.split("/join/").pop()!;
+    expect((await SELF.fetch(`http://localhost/api/invites/${token}/accept`, { method: "POST", headers: memberHeaders })).status).toBe(200);
+
+    // Initial sync before PR exists gives 409
+    const prePr = await SELF.fetch(`http://localhost/api/sessions/${sessionId}/review/sync`, { method: "POST", headers: memberHeaders });
+    expect(prePr.status).toBe(409);
+
+    const outsiderHeaders = identity("sync-review-outsider");
+    const outsider = await SELF.fetch(`http://localhost/api/sessions/${sessionId}/review/sync`, { method: "POST", headers: outsiderHeaders });
+    expect(outsider.status).toBe(404);
+  });
 });

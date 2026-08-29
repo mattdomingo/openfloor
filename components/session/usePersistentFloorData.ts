@@ -168,6 +168,30 @@ export function usePersistentFloorData(sessionId: string, initialFloor: FloorSna
     request(`/runs/${encodeURIComponent(runId)}/retry`, "POST"), [request]);
   const readyReview = useCallback(() => request("/review/ready", "POST"), [request]);
   const unreadyReview = useCallback(() => request("/review/draft", "POST"), [request]);
+  const syncReview = useCallback(async (options?: { silent?: boolean }) => {
+    if (options?.silent) {
+      try {
+        const response = await fetch(`${BASE_PATH}/api/sessions/${sessionId}/review/sync`, {
+          method: "POST",
+          cache: "no-store",
+        });
+        if (response.status === 404) {
+          onMissing();
+          return null;
+        }
+        if (!response.ok) return null;
+        const result = (await response.json()) as { floor?: FloorSnapshot };
+        if (result.floor) {
+          setFloor((current) => result.floor!.revision >= current.revision ? result.floor! : current);
+          return result.floor;
+        }
+        return null;
+      } catch {
+        return null;
+      }
+    }
+    return request("/review/sync", "POST");
+  }, [onMissing, request, sessionId]);
   const squashMergeReview = useCallback((deleteCandidateBranch: boolean) =>
     request("/review/merge", "POST", { deleteCandidateBranch }), [request]);
   const deleteReviewBranch = useCallback(() => request("/review/branch", "DELETE"), [request]);
@@ -215,6 +239,7 @@ export function usePersistentFloorData(sessionId: string, initialFloor: FloorSna
     retryRun,
     readyReview,
     unreadyReview,
+    syncReview,
     squashMergeReview,
     deleteReviewBranch,
     abandonCandidate,
@@ -257,6 +282,7 @@ export function usePersistentFloorData(sessionId: string, initialFloor: FloorSna
     retryRun,
     readyReview,
     unreadyReview,
+    syncReview,
     squashMergeReview,
     deleteReviewBranch,
     abandonCandidate,

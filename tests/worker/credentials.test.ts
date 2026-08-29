@@ -1040,13 +1040,13 @@ describe("OpenAI gateway credential resolution", () => {
       }), { status: 200, headers: { "content-type": "application/json" } });
     });
     const resolved = { secret: stale, ownerUserId: owner.id, updatedAt: before!.updatedAt };
-    const winner = await ensureFreshChatGptBundle(resolved, { encryptionKey: ENCRYPTION_SECRET }, env.DB, Date.now());
+    const winner = await ensureFreshChatGptBundle(resolved, { encryptionKey: ENCRYPTION_SECRET }, env.DB, before!.updatedAt + 100);
     expect(winner?.refreshToken).toBe("rt-rotated-1");
     // A second dispatch that read the row before the winner's write carries the
     // same now-stale updated_at. Its conditional update must miss, and it must
     // adopt the winner's bundle: the vendor rotates on every exchange, so
     // persisting its own would strand the member on a dead refresh token.
-    const loser = await ensureFreshChatGptBundle(resolved, { encryptionKey: ENCRYPTION_SECRET }, env.DB, Date.now());
+    const loser = await ensureFreshChatGptBundle(resolved, { encryptionKey: ENCRYPTION_SECRET }, env.DB, before!.updatedAt + 200);
     expect(loser?.refreshToken).toBe("rt-rotated-1");
     expect(loser?.accessToken).toBe(winner?.accessToken);
     const stored = await env.DB.prepare(
