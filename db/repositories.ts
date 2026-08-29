@@ -541,6 +541,38 @@ export async function getCandidateReviewMutationContext(
   return { ...candidate, repositoryPrivate: Boolean(candidate.repositoryPrivate), runs: runs.results };
 }
 
+/* Review synchronization context available to all active session members,
+   not just the session owner. Review data is member-visible read-only state. */
+export async function getCandidateReviewSyncContext(
+  sessionId: string,
+  userId: string,
+  database = getDb(),
+) {
+  if (!(await getActiveMembershipRole(sessionId, userId, database))) return null;
+  const candidate = await database.prepare(
+    `SELECT c.id AS candidateId, c.branch_name AS candidateBranch, c.base_branch AS baseBranch,
+            c.candidate_sha AS candidateSha, c.remote_candidate_sha AS remoteCandidateSha,
+            c.integration_run_id AS integrationRunId,
+            c.pull_request_number AS pullRequestNumber, c.pull_request_node_id AS pullRequestNodeId,
+            c.pull_request_draft AS pullRequestDraft, CASE WHEN c.merged_at IS NOT NULL THEN 'merged' ELSE c.status END AS candidateStatus,
+            rc.status AS connectionStatus, rc.installation_id AS installationId,
+            rc.repository_id AS repositoryId, rc.repository_owner AS repositoryOwner,
+            rc.repository_name AS repositoryName, rc.repository_full_name AS repositoryFullName,
+            rc.repository_private AS repositoryPrivate, rc.default_branch AS defaultBranch
+     FROM repository_candidates c JOIN repository_connections rc ON rc.id = c.connection_id
+     WHERE c.session_id = ? AND c.status = 'active' AND c.abandoned_at IS NULL ORDER BY c.created_at DESC LIMIT 1`,
+  ).bind(sessionId).first<{
+    candidateId: string; candidateBranch: string; baseBranch: string; candidateSha: string | null; remoteCandidateSha: string | null;
+    integrationRunId: string | null;
+    pullRequestNumber: number | null; pullRequestNodeId: string | null; pullRequestDraft: number | boolean | null;
+    candidateStatus: "active" | "merged"; connectionStatus: RepositoryConnectionStatus; installationId: string;
+    repositoryId: string; repositoryOwner: string; repositoryName: string; repositoryFullName: string;
+    repositoryPrivate: number | boolean; defaultBranch: string;
+  }>();
+  if (!candidate) return null;
+  return { ...candidate, repositoryPrivate: Boolean(candidate.repositoryPrivate) };
+}
+
 /* Shared by the deferred post-merge "delete candidate branch" action and
    candidate abandonment (lib/candidate-abandon.ts) — both need the latest
    candidate's branch/SHA/lease state plus its still-live run branches, for

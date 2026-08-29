@@ -46,6 +46,7 @@ import {
   saveRepositoryConnection,
   recordGitHubWebhookDelivery,
   reconcileCandidateReview,
+  getCandidateReviewSyncContext,
   reserveRepositoryCandidate,
   markCandidateAbandoned,
   markCandidateMerged,
@@ -1074,6 +1075,41 @@ describe("D1 session persistence", () => {
     const nextCandidateId = crypto.randomUUID();
     await expect(reserveRepositoryCandidate(created.session.id, owner.id, saved!.id, nextCandidateId,
       "Next candidate", "Next objective", `openfloor/${created.session.id.slice(0, 8)}/candidate/${nextCandidateId.slice(0, 8)}`, "main", squashSha, env.DB)).resolves.toBe(true);
+  });
+
+  it("provides review sync context for active members (owner and regular member)", async () => {
+    const owner = await upsertUser(identity("sync-ctx-owner", "Sync Owner"), env.DB);
+    const member = await upsertUser(identity("sync-ctx-member", "Sync Member"), env.DB);
+    const outsider = await upsertUser(identity("sync-ctx-outsider", "Sync Outsider"), env.DB);
+    const created = await createSession(owner.id, { title: "Sync Room", objective: null }, env.DB);
+    await acceptInvite(created.inviteId, member.id, env.DB);
+    const saved = await saveRepositoryConnection(created.session.id, owner.id, null, "installation-sync-ctx", {
+      id: "repository-sync-ctx", nodeId: "R_sync_ctx", owner: "openfloor-test", name: "sync-repo",
+      fullName: "openfloor-test/sync-repo", private: true, defaultBranch: "main",
+    }, "main", env.DB);
+    const candidateId = crypto.randomUUID();
+    const branch = `openfloor/${created.session.id.slice(0, 8)}/candidate/${candidateId.slice(0, 8)}`;
+    await reserveRepositoryCandidate(created.session.id, owner.id, saved!.id, candidateId, "Sync Room", "", branch, "main", "a".repeat(40), env.DB);
+    await activateRepositoryCandidate(created.session.id, candidateId, "a".repeat(40), env.DB);
+
+    const ownerContext = await getCandidateReviewSyncContext(created.session.id, owner.id, env.DB);
+    expect(ownerContext).toEqual(expect.objectContaining({
+      candidateId,
+      candidateBranch: branch,
+      installationId: "installation-sync-ctx",
+      repositoryName: "sync-repo",
+      connectionStatus: "ready",
+    }));
+
+    const memberContext = await getCandidateReviewSyncContext(created.session.id, member.id, env.DB);
+    expect(memberContext).toEqual(expect.objectContaining({
+      candidateId,
+      candidateBranch: branch,
+      installationId: "installation-sync-ctx",
+    }));
+
+    const outsiderContext = await getCandidateReviewSyncContext(created.session.id, outsider.id, env.DB);
+    expect(outsiderContext).toBeNull();
   });
 
   it("blocks end/delete while a run is integrating and unblocks once that run is cancelled", async () => {

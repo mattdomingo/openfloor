@@ -420,4 +420,34 @@ describe("D1 persistent floor", () => {
     const workerRun = await env.DB.prepare("SELECT status FROM agent_runs WHERE id = ?").bind(workerRunId).first<{ status: string }>();
     expect(workerRun?.status).toBe("cancel_requested");
   });
+
+  it("builds review files from GitHub pull request review data when populated", async () => {
+    const room = await floorRoom("review-data");
+    const connectionId = crypto.randomUUID();
+    const candidateId = crypto.randomUUID();
+    const now = Date.now();
+    await env.DB.prepare(
+      `INSERT INTO repository_connections (id, session_id, installation_id, repository_id, repository_node_id, repository_owner, repository_name, repository_full_name, repository_private, default_branch, base_branch, status, connected_by, connected_at, updated_at)
+       VALUES (?, ?, 'inst-rev', 'repo-rev', 'node-rev', 'openfloor', 'test-repo', 'openfloor/test-repo', 1, 'main', 'main', 'ready', ?, ?, ?)`
+    ).bind(connectionId, room.sessionId, room.owner.id, now, now).run();
+    await env.DB.prepare(
+      `INSERT INTO repository_candidates (id, session_id, connection_id, branch_name, base_branch, base_sha, status, pull_request_number, pull_request_url, pull_request_state, pull_request_draft, created_by, created_at, updated_at)
+       VALUES (?, ?, ?, 'openfloor/candidate', 'main', 'sha-base', 'active', 42, 'https://github.com/openfloor/test-repo/pull/42', 'open', 1, ?, ?, ?)`
+    ).bind(candidateId, room.sessionId, connectionId, room.owner.id, now, now).run();
+    await env.DB.prepare(
+      `INSERT INTO repository_candidate_files (id, candidate_id, path, additions, deletions, change_kind, patch_preview)
+       VALUES (?, ?, 'src/index.ts', 10, 2, 'modified', '+const x = 1;\n-const x = 0;')`
+    ).bind(crypto.randomUUID(), candidateId).run();
+
+    const snapshot = await getFloorSnapshot(room.sessionId, room.owner.id, env.DB);
+    expect(snapshot?.review).not.toBeNull();
+    expect(snapshot?.review?.files).toEqual([
+      expect.objectContaining({
+        path: "src/index.ts",
+        additions: 10,
+        deletions: 2,
+        summary: "GitHub pull request diff",
+      }),
+    ]);
+  });
 });

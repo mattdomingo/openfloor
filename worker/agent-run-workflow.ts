@@ -29,7 +29,7 @@ import {
 import { claimPoolSandbox, releasePoolSandbox, retirePoolSandbox } from "../db/sandbox-pool";
 import { getSessionContext, getSessionSharedFiles, viewerFromRunContext } from "../db/session-context";
 import { getGitHubAppConfig } from "../db";
-import { createDraftPullRequest, createInstallationToken, getRepositoryRefSha, GitHubApiError, mergeRepositoryBranch } from "../lib/github";
+import { createDraftPullRequest, createInstallationToken, getPullRequestReview, getRepositoryRefSha, GitHubApiError, mergeRepositoryBranch } from "../lib/github";
 import type { AgentRunFile } from "../lib/floor-types";
 import type { GitHubRepositoryOption } from "../lib/session-types";
 import { renderSessionContext, SESSION_FILE_MOUNT, sessionFilePath } from "../lib/session-context";
@@ -45,6 +45,7 @@ import { pokeSessionRouter } from "../lib/router-server";
 import { signRunGatewayToken } from "../lib/runtime-token";
 import { renderConflictResolverPrompt } from "../lib/conflict-resolver-prompt";
 import { applyConflictSelections, type ConflictChoice, type ConflictSnapshotFileRaw } from "../lib/conflict-hunks";
+import { reconcileCandidateReview } from "../db/repositories";
 import {
   advanceConflictAfterFailure,
   finishResolverAwaitingInput,
@@ -1146,7 +1147,45 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
       const update = await finishRunIntegrated(runId, result.candidateSha, result.pullRequest, this.env.DB);
       if (update) {
         await markConflictResolved(runId, result.candidateSha, this.env.DB);
-        await notifyFloorChanged(update.sessionId, update.revision, ["queue", "repository", "runs", "review"]);
+        let latestRevision = update.revision;
+        try {
+          const prNumber = result.pullRequest?.number ?? (await this.env.DB.prepare(
+            "SELECT pull_request_number AS prNumber FROM repository_candidates WHERE id = (SELECT candidate_id FROM agent_runs WHERE id = ?)"
+          ).bind(runId).first<{ prNumber: number | null }>())?.prNumber;
+          if (prNumber) {
+            const config = getGitHubAppConfig();
+            const candidateInfo = await this.env.DB.prepare(
+              `SELECT c.id AS candidateId, rc.installation_id AS installationId, rc.repository_id AS repositoryId,
+                      rc.repository_owner AS repositoryOwner, rc.repository_name AS repositoryName,
+                      rc.repository_full_name AS repositoryFullName, rc.repository_private AS repositoryPrivate,
+                      rc.default_branch AS defaultBranch
+               FROM repository_candidates c
+               JOIN repository_connections rc ON rc.id = c.connection_id
+               WHERE c.id = (SELECT candidate_id FROM agent_runs WHERE id = ?)`
+            ).bind(runId).first<{
+              candidateId: string; installationId: string; repositoryId: string;
+              repositoryOwner: string; repositoryName: string; repositoryFullName: string;
+              repositoryPrivate: number | boolean; defaultBranch: string;
+            }>();
+            if (candidateInfo) {
+              const repository: GitHubRepositoryOption = {
+                id: candidateInfo.repositoryId,
+                nodeId: "review-not-required",
+                owner: candidateInfo.repositoryOwner,
+                name: candidateInfo.repositoryName,
+                fullName: candidateInfo.repositoryFullName,
+                private: Boolean(candidateInfo.repositoryPrivate),
+                defaultBranch: candidateInfo.defaultBranch,
+              };
+              const review = await getPullRequestReview(config, candidateInfo.installationId, repository, prNumber);
+              latestRevision = await reconcileCandidateReview(update.sessionId, candidateInfo.candidateId, review, this.env.DB);
+            }
+          }
+        } catch {
+          // Reconciling GitHub review data is best-effort on integration;
+          // if GitHub fails, the candidate SHA and run integration are already committed in D1.
+        }
+        await notifyFloorChanged(update.sessionId, latestRevision, ["queue", "repository", "runs", "review"]);
         await pokeSessionRouter(update.sessionId, "run_completed");
       }
       return { status: "integrated" };
