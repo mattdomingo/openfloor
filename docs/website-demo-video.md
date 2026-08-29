@@ -2,8 +2,8 @@
 
 The website demo is a matched pair of silent, voiceover-ready MP4s:
 
-- **Polar** — the product's cool near-white manual theme.
-- **Midnight** — the product's near-black manual theme.
+- **Light** — the product's cool near-white manual theme.
+- **Dark** — the product's near-black manual theme.
 
 Both cuts enter directly on a working Agent Floor. They never show sign-in,
 onboarding, the home screen, the session lobby, or repository setup. The visible
@@ -22,14 +22,14 @@ themes at 1440×900, and exits without touching production or GitHub:
 npm run demo:record
 ```
 
-During iteration, set `OPENFLOOR_DEMO_THEME=polar` or
-`OPENFLOOR_DEMO_THEME=midnight` to render only one cut.
+During iteration, set `OPENFLOOR_DEMO_THEME=light` or
+`OPENFLOOR_DEMO_THEME=dark` to render only one cut.
 
 The outputs are:
 
 ```text
-artifacts/demo/openfloor-website-demo-polar.mp4
-artifacts/demo/openfloor-website-demo-midnight.mp4
+artifacts/demo/openfloor-website-demo-light.mp4
+artifacts/demo/openfloor-website-demo-dark.mp4
 ```
 
 The two contexts record the same disposable session concurrently, so content,
@@ -87,4 +87,4 @@ adapters. Those adapters never enter production code or production data. Demo
 run pacing only delays this test seam and broadcasts genuine persisted status
 changes; production execution timing is untouched. The
 theme is set before first paint through the same `openfloor:theme` preference
-used by the product: the exact stored values are `polar` and `midnight`.
+used by the product: the exact stored values are `light` and `dark`.

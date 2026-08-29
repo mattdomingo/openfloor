@@ -8,8 +8,8 @@ const origin = `http://127.0.0.1:${port}`;
 const outputDir = resolve(process.env.OPENFLOOR_DEMO_OUTPUT ?? "artifacts/demo");
 const viewport = { width: 1440, height: 900 };
 const themes = [
-  { name: "Polar", value: "polar", colorScheme: "light", slug: "polar" },
-  { name: "Midnight", value: "midnight", colorScheme: "dark", slug: "midnight" },
+  { name: "Light", value: "light", colorScheme: "light", slug: "light" },
+  { name: "Dark", value: "dark", colorScheme: "dark", slug: "dark" },
 ];
 const requestedTheme = process.env.OPENFLOOR_DEMO_THEME?.toLowerCase();
 const selectedThemes = requestedTheme ? themes.filter((theme) => theme.slug === requestedTheme) : themes;
@@ -152,7 +152,7 @@ const frontendFiles = [
   ]),
 ];
 const reviewFilePaths = [...backendFiles, ...frontendFiles].map((file) => file.path);
-if (selectedThemes.length === 0) throw new Error("OPENFLOOR_DEMO_THEME must be polar or midnight");
+if (selectedThemes.length === 0) throw new Error("OPENFLOOR_DEMO_THEME must be light or dark");
 
 mkdirSync(outputDir, { recursive: true });
 

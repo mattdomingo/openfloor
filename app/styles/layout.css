@@ -2,7 +2,7 @@
 
 /* Pre-auth gate: this is opnflr.com's own identity (black canvas,
    Archivo-bold logotype, sharp-cornered blue CTA), not the app's
-   light/dark/polar/midnight theme system — nobody has a session yet, so
+   light/dark/stone/charcoal theme system — nobody has a session yet, so
    there's nothing to personalize, only the brand to represent consistently
    with the marketing site at the domain apex. Tokens are fixed and local to
    this shell rather than pulled from tokens.css on purpose. */

@@ -12,7 +12,7 @@
 
 .settings-shell { --danger-ink: #b8453a; }
 :root[data-theme="dark"] .settings-shell,
-:root[data-theme="midnight"] .settings-shell { --danger-ink: #d9584a; }
+:root[data-theme="charcoal"] .settings-shell { --danger-ink: #d9584a; }
 
 /* ── Layout ──────────────────────────────────────────────────────────── */
 

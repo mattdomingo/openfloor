@@ -2,13 +2,13 @@
 
 import { useSyncExternalStore } from "react";
 
-type ThemeMode = "system" | "light" | "polar" | "dark" | "midnight";
+type ThemeMode = "system" | "light" | "stone" | "dark" | "charcoal";
 
 const STORAGE_KEY = "openfloor:theme";
 const CHANGE_EVENT = "openfloor:theme-change";
-const ORDER: ThemeMode[] = ["system", "light", "polar", "dark", "midnight"];
-const LABEL: Record<ThemeMode, string> = { system: "System", light: "Light", polar: "Polar", dark: "Dark", midnight: "Midnight" };
-const MANUAL_MODES = new Set<ThemeMode>(["light", "polar", "dark", "midnight"]);
+const ORDER: ThemeMode[] = ["system", "light", "stone", "dark", "charcoal"];
+const LABEL: Record<ThemeMode, string> = { system: "System", light: "Light", stone: "Stone", dark: "Dark", charcoal: "Charcoal" };
+const MANUAL_MODES = new Set<ThemeMode>(["light", "stone", "dark", "charcoal"]);
 
 function subscribe(callback: () => void) {
   window.addEventListener("storage", callback);
@@ -24,10 +24,10 @@ function readMode(): ThemeMode {
   return stored && MANUAL_MODES.has(stored as ThemeMode) ? (stored as ThemeMode) : "system";
 }
 
-/* Cycles System → Light → Polar → Dark → Midnight. The choice is a per-device
+/* Cycles System → Light → Stone → Dark → Charcoal. The choice is a per-device
    preference stored in localStorage and applied as html[data-theme];
    app/layout.tsx sets the attribute pre-paint so a saved choice never
-   flashes another theme. Polar and Midnight are manual-only variants (no
+   flashes another theme. Stone and Charcoal are manual-only variants (no
    prefers-color-scheme tie-in) — System still just follows light/dark. */
 export function ThemeToggle() {
   const mode = useSyncExternalStore(subscribe, readMode, () => "system" as ThemeMode);
