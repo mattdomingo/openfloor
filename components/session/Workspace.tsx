@@ -301,6 +301,7 @@ export function Workspace({ user, session, members, floorData, activity, reposit
     setQueueItemAgent,
     setAutoDispatch,
     setAutoResolveConflicts,
+    setAutoInjectFeedback,
     runQueueItem,
     cancelRun,
     discardRun,
@@ -351,6 +352,11 @@ export function Workspace({ user, session, members, floorData, activity, reposit
     const result = await setAutoResolveConflicts(enabled);
     if (result) setNotice(enabled ? "Automatic conflict resolution enabled" : "Automatic conflict resolution disabled");
   }, [setAutoResolveConflicts, setNotice]);
+
+  const handleAutoInjectFeedback = useCallback(async (enabled: boolean) => {
+    const result = await setAutoInjectFeedback(enabled);
+    if (result) setNotice(enabled ? "PR feedback nudges enabled" : "PR feedback nudges disabled");
+  }, [setAutoInjectFeedback, setNotice]);
 
   const handleRunQueueItem = useCallback(async (id: string) => {
     const result = await runQueueItem(id);
@@ -505,7 +511,7 @@ export function Workspace({ user, session, members, floorData, activity, reposit
 
   function renderPanel(panel: PanelId, chrome: PanelChrome) {
     if (panel === "brief") return <BriefRail chrome={chrome} sessionId={session.id} assignments={assignments} agents={agents} queue={queue} onAssignmentChange={handleAssignmentChange} view={teamPanelView} onViewChange={setTeamPanelView} messages={messages} onSendMessage={handleSendMessage} chatThread={chatThread} onChatThreadChange={setChatThread} participants={participants} currentUserId={user.id} unreadTeamCount={unreadTeamCount} files={floorData.floor.files} onUploadFiles={uploadFiles} />;
-    if (panel === "queue") return <PromptQueue chrome={chrome} items={queue} runs={runs} agents={agents} owner={session.role === "owner"} runEnabled={agentRunEnabled} busy={floorData.busy} autoDispatch={floorData.floor.autoDispatch} onSetAgent={handleSetQueueAgent} onAutoDispatch={handleAutoDispatch} autoResolveConflicts={floorData.floor.autoResolveConflicts} onAutoResolveConflicts={handleAutoResolveConflicts} browserConflictAlerts={browserConflictAlerts} onBrowserConflictAlerts={setConflictBrowserAlerts} onRun={handleRunQueueItem} onCancel={handleCancelRun} onDiscard={handleDiscardRun} onRollback={handleRollbackRun} onRetry={handleRetryRun} onEditPrompt={handleEditQueuePrompt} onPause={handlePauseQueueItem} onDelete={handleDeleteQueueItem} currentUserId={user.id} scope={queueScope} onScope={setQueueScope} orderMode={queueOrderMode} onOrderMode={setQueueOrderMode} draggedItemId={draggedQueueItem} onItemDragStart={setDraggedQueueItem} onItemDragEnd={() => setDraggedQueueItem(null)} onItemDrop={(id) => void dropQueueItem(id)} onFocusAgent={handleFocusAgent} onOpenReview={handleOpenReview} />;
+    if (panel === "queue") return <PromptQueue chrome={chrome} items={queue} runs={runs} agents={agents} owner={session.role === "owner"} runEnabled={agentRunEnabled} busy={floorData.busy} autoDispatch={floorData.floor.autoDispatch} onSetAgent={handleSetQueueAgent} onAutoDispatch={handleAutoDispatch} autoResolveConflicts={floorData.floor.autoResolveConflicts} onAutoResolveConflicts={handleAutoResolveConflicts} autoInjectFeedback={floorData.floor.autoInjectFeedback} onAutoInjectFeedback={handleAutoInjectFeedback} browserConflictAlerts={browserConflictAlerts} onBrowserConflictAlerts={setConflictBrowserAlerts} onRun={handleRunQueueItem} onCancel={handleCancelRun} onDiscard={handleDiscardRun} onRollback={handleRollbackRun} onRetry={handleRetryRun} onEditPrompt={handleEditQueuePrompt} onPause={handlePauseQueueItem} onDelete={handleDeleteQueueItem} currentUserId={user.id} scope={queueScope} onScope={setQueueScope} orderMode={queueOrderMode} onOrderMode={setQueueOrderMode} draggedItemId={draggedQueueItem} onItemDragStart={setDraggedQueueItem} onItemDragEnd={() => setDraggedQueueItem(null)} onItemDrop={(id) => void dropQueueItem(id)} onFocusAgent={handleFocusAgent} onOpenReview={handleOpenReview} />;
     return <AgentFloor chrome={chrome} sessionId={session.id} agents={agents} runs={runs} activity={activity} selected={selectedAgent} onSelect={setSelectedAgentId} agentLayout={agentLayout} onAgentLayout={setAgentLayout} onCreateAgent={createAgent} enabledProviders={enabledProviders} providerCredentials={providerCredentials} owner={session.role === "owner"} autoProvisionAgents={floorData.floor.autoProvisionAgents} autoAgentProvider={floorData.floor.autoAgentProvider} effectiveAutoAgentProvider={floorData.floor.effectiveAutoAgentProvider} autoAgentProviderState={floorData.floor.autoAgentProviderState} onAutoProvisionAgents={handleAutoProvisionAgents} onAutoAgentProvider={handleAutoAgentProvider} onUpdateSettings={handleUpdateSettings} onPauseAgent={handlePauseAgent} onStopAgent={handleStopAgent} onDeleteAgent={handleDeleteAgent} onPauseAllAgents={handlePauseAllAgents} onResumeAllAgents={handleResumeAllAgents} onStopAllAgents={handleStopAllAgents} agentControlsBusy={floorData.busy} queue={queue} participants={participants} currentUserId={user.id} conflictsByAgentId={conflictsByAgentId} onOpenConflict={openConflict} />;
   }
 

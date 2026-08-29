@@ -2,6 +2,7 @@
 
 import { memo, useMemo, useRef, useState } from "react";
 import type { FloorAgent, FloorAssignment, FloorMessage, FloorParticipant, FloorQueueItem, SessionFile } from "@/lib/floor-types";
+import { formatSessionFileSize } from "@/lib/session-file-constraints";
 import { BASE_PATH } from "@/components/basePath";
 import type { ChatThread, TeamPanelView } from "./data";
 import { Avatar, Icon, SegmentedControl } from "./primitives";
@@ -71,7 +72,7 @@ const ArtifactsPanel = memo(function ArtifactsPanel({ sessionId, files, onUpload
                 <Icon name="file" size={12} />
                 <span>{file.name}</span>
               </a>
-              <small>{formatFileSize(file.sizeBytes)} · {file.uploadedByName}</small>
+              <small>{formatSessionFileSize(file.sizeBytes)} · {file.uploadedByName}</small>
             </li>
           ))}
         </ul>
@@ -79,11 +80,6 @@ const ArtifactsPanel = memo(function ArtifactsPanel({ sessionId, files, onUpload
     </div>
   );
 });
-
-function formatFileSize(sizeBytes: number): string {
-  if (sizeBytes >= 1024 * 1024) return `${(sizeBytes / (1024 * 1024)).toFixed(1)} MB`;
-  return `${Math.max(1, Math.round(sizeBytes / 1024))} KB`;
-}
 
 const EMPTY_AGENTS: FloorAgent[] = [];
 const EMPTY_PROMPTS: Array<{ item: FloorQueueItem; prompt: FloorQueueItem["prompts"][number] }> = [];

@@ -7,7 +7,10 @@ import {
   reserveRepositoryCandidate,
   saveRepositoryConnection,
 } from "@/db/repositories";
-import { createSession, upsertUser } from "@/db/sessions";
+import { createFloorAgent, createFloorQueueItem, pauseFloorAgent } from "@/db/floor";
+import { createSession, setSessionRoutingSettings, upsertUser } from "@/db/sessions";
+import { setTestPullRequestFeedback } from "@/lib/github";
+import { parseAgentInput } from "@/lib/validation";
 
 describe("GitHub webhook reconciliation", () => {
   it("revokes and restores account installation access with installation webhooks", async () => {
@@ -111,6 +114,113 @@ describe("GitHub webhook reconciliation", () => {
     expect(await duplicate.json()).toEqual(expect.objectContaining({ duplicate: true }));
     const afterReplay = await env.DB.prepare("SELECT ended_at AS endedAt FROM sessions WHERE id = ?").bind(created.session.id).first<{ endedAt: number | null }>();
     expect(afterReplay?.endedAt).toBe(ended?.endedAt);
+  });
+});
+
+describe("GitHub PR feedback nudges", () => {
+  it("turns CI failures and review comments on the candidate PR into router-originated queue items", async () => {
+    const owner = await upsertUser({
+      providerUserId: "webhook-feedback-owner", email: "webhook-feedback@example.com", displayName: "Feedback Owner", fullName: "Feedback Owner",
+    }, env.DB);
+    const created = await createSession(owner.id, { title: "Feedback room", objective: null }, env.DB);
+    const repository = { id: "repository-feedback", nodeId: "R_feedback", owner: "openfloor", name: "feedback", fullName: "openfloor/feedback", private: true, defaultBranch: "main" };
+    const connection = await saveRepositoryConnection(created.session.id, owner.id, null, "installation-feedback", repository, "main", env.DB);
+    const candidateId = crypto.randomUUID();
+    const branch = `openfloor/${created.session.id.slice(0, 8)}/candidate/${candidateId.slice(0, 8)}`;
+    const sha = "a".repeat(40);
+    await reserveRepositoryCandidate(created.session.id, owner.id, connection!.id, candidateId, "Feedback room", "", branch, "main", sha, env.DB);
+    await activateRepositoryCandidate(created.session.id, candidateId, sha, env.DB);
+    await env.DB.prepare(
+      "UPDATE repository_candidates SET pull_request_number = 7, pull_request_node_id = 'PR_7', pull_request_url = ?, pull_request_state = 'open' WHERE id = ?",
+    ).bind("https://github.com/openfloor/feedback/pull/7", candidateId).run();
+    const parsed = parseAgentInput({ name: "Builder", role: "Engineer", task: "Implement the request", ownerUserId: owner.id });
+    if (!parsed) throw new Error("Invalid agent fixture");
+    let floor = await createFloorAgent(created.session.id, owner.id, parsed, env.DB);
+    const agentId = floor!.agents[0].id;
+    floor = await createFloorQueueItem(created.session.id, owner.id, { prompt: "Add a file", agentId }, env.DB);
+    const humanItemId = floor!.queue[0].id;
+    // One integrated run by Builder that touched src/a.ts — the responsible run.
+    const runId = crypto.randomUUID();
+    const now = Date.now();
+    await env.DB.prepare(
+      `INSERT INTO agent_runs
+        (id, session_id, queue_item_id, agent_id, candidate_id, candidate_sha, run_branch, attempt, status, model, sandbox_id,
+         integrated_at, created_by, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, 'openfloor/run/one', 1, 'integrated', 'gpt-test', 'sandbox', ?, ?, ?, ?)`,
+    ).bind(runId, created.session.id, humanItemId, agentId, candidateId, sha, now, owner.id, now, now).run();
+    await env.DB.prepare(
+      `INSERT INTO agent_run_files (id, run_id, path, change_kind, additions, deletions, summary, diff_preview, created_at)
+       VALUES (?, ?, 'src/a.ts', 'update', 1, 1, NULL, '', ?)`,
+    ).bind(crypto.randomUUID(), runId, now).run();
+    await env.DB.prepare("UPDATE floor_queue_items SET status = 'completed' WHERE id = ?").bind(humanItemId).run();
+
+    const nudges = async () => (await env.DB.prepare(
+      `SELECT id, agent_id AS agentId, status, assigned_by AS assignedBy, intent, origin, source_run_id AS sourceRunId
+       FROM floor_queue_items WHERE session_id = ? AND origin IS NOT NULL ORDER BY position`,
+    ).bind(created.session.id).all<{ id: string; agentId: string | null; status: string; assignedBy: string | null; intent: string | null; origin: string; sourceRunId: string | null }>()).results;
+    const promptText = async (itemId: string) => env.DB.prepare("SELECT author_user_id AS authorUserId, text FROM floor_queue_prompts WHERE queue_item_id = ?")
+      .bind(itemId).first<{ authorUserId: string; text: string }>();
+    const revision = async () => Number((await env.DB.prepare("SELECT floor_revision AS revision FROM sessions WHERE id = ?").bind(created.session.id).first<{ revision: number }>())?.revision);
+    const deliver = async (event: string, delivery: string, payload: Record<string, unknown>) => {
+      const body = JSON.stringify({ installation: { id: "installation-feedback" }, repository: { id: "repository-feedback" }, ...payload });
+      const response = await receiveGitHubWebhook(webhookRequest(body, delivery, await sign(body), event));
+      expect(response.status).toBe(202);
+    };
+    const checkRun = { action: "completed", check_run: { head_sha: sha, pull_requests: [{ number: 7 }] } };
+    const failing = [{ name: "build", status: "failure", url: "https://ci.example/1" }];
+    const comment = (id: string, body: string) => ({ id, author: "reviewer", body, path: "src/a.ts", line: 3, url: `https://github.com/openfloor/feedback/pull/7#discussion_r${id}` });
+
+    const bindings = env as unknown as Record<string, unknown>;
+    const previousFixture = bindings.OPENFLOOR_TEST_GITHUB_DATA;
+    bindings.OPENFLOOR_TEST_GITHUB_DATA = JSON.stringify({ installationId: "installation-feedback", repositories: [{ ...repository, branches: ["main"] }] });
+    try {
+      // A completed failing check queues one CI nudge for the responsible agent.
+      setTestPullRequestFeedback("repository-feedback", 7, { headSha: sha, failedChecks: failing });
+      await deliver("check_run", "delivery-feedback-ci-1", checkRun);
+      let rows = await nudges();
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toEqual(expect.objectContaining({ origin: "ci_failure", intent: "task", status: "queued", agentId, assignedBy: "router", sourceRunId: runId }));
+      const ciPrompt = await promptText(rows[0].id);
+      expect(ciPrompt?.authorUserId).toBe(owner.id);
+      expect(ciPrompt?.text).toContain("CI is failing on PR #7");
+      expect(ciPrompt?.text).toContain("Failed: build (failure)");
+      const state = await env.DB.prepare("SELECT feedback_nudges AS feedbackNudges FROM repository_candidates WHERE id = ?").bind(candidateId).first<{ feedbackNudges: string }>();
+      expect(JSON.parse(state!.feedbackNudges).ci_failure).toEqual(expect.objectContaining({ attempts: 1, queueItemId: rows[0].id }));
+
+      // The same facts redelivered do not create a second item; the revision still moves.
+      const beforeRedelivery = await revision();
+      await deliver("check_run", "delivery-feedback-ci-2", checkRun);
+      expect(await nudges()).toHaveLength(1);
+      expect(await revision()).toBeGreaterThan(beforeRedelivery);
+
+      // A review comment on a path the paused agent last changed goes out unassigned but still names its run.
+      await pauseFloorAgent(created.session.id, owner.id, agentId, true, env.DB);
+      setTestPullRequestFeedback("repository-feedback", 7, { headSha: sha, failedChecks: failing, unresolvedThreads: [{ threadId: "T1", comments: [comment("1", "Rename this")] }] });
+      await deliver("pull_request_review_comment", "delivery-feedback-review-1", { action: "created", pull_request: { number: 7, node_id: "PR_7" } });
+      rows = await nudges();
+      expect(rows).toHaveLength(2);
+      const review = rows.find((row) => row.origin === "review_comments")!;
+      expect(review).toEqual(expect.objectContaining({ status: "queued", agentId: null, assignedBy: null, sourceRunId: runId }));
+
+      // A newer comment while that item is still queued updates it in place, and the resumed agent picks it up.
+      await pauseFloorAgent(created.session.id, owner.id, agentId, false, env.DB);
+      setTestPullRequestFeedback("repository-feedback", 7, { headSha: sha, failedChecks: failing, unresolvedThreads: [{ threadId: "T1", comments: [comment("1", "Rename this"), comment("2", "And this")] }] });
+      await deliver("pull_request_review_comment", "delivery-feedback-review-2", { action: "created", pull_request: { number: 7, node_id: "PR_7" } });
+      rows = await nudges();
+      expect(rows).toHaveLength(2);
+      expect(rows.find((row) => row.origin === "review_comments")).toEqual(expect.objectContaining({ id: review.id, agentId, assignedBy: "router" }));
+      expect((await promptText(review.id))?.text).toContain("2 unresolved review comments");
+
+      // With the owner toggle off, a brand-new CI failure queues nothing; the revision still bumps.
+      await setSessionRoutingSettings(created.session.id, owner.id, { autoInjectFeedback: false }, env.DB);
+      setTestPullRequestFeedback("repository-feedback", 7, { headSha: "b".repeat(40), failedChecks: [{ name: "lint", status: "failure", url: null }] });
+      const beforeOff = await revision();
+      await deliver("check_run", "delivery-feedback-ci-3", checkRun);
+      expect(await nudges()).toHaveLength(2);
+      expect(await revision()).toBeGreaterThan(beforeOff);
+    } finally {
+      bindings.OPENFLOOR_TEST_GITHUB_DATA = previousFixture;
+    }
   });
 });
 

@@ -281,6 +281,20 @@
       "when": 1787933827714,
       "tag": "0039_misty_vargas",
       "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "6",
+      "when": 1787946087573,
+      "tag": "0040_eager_thor",
+      "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "6",
+      "when": 1787946824738,
+      "tag": "0041_spicy_wilson_fisk",
+      "breakpoints": true
     }
   ]
 }

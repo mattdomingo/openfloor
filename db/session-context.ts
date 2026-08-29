@@ -83,10 +83,10 @@ export async function getSessionContext(
        WHERE r.session_id = ? ORDER BY r.created_at DESC LIMIT ?`,
     ).bind(sessionId, RUN_LIMIT).all<RunRow>(),
     database.prepare(
-      `SELECT q.id, q.position, q.status, q.agent_id AS agentId, a.name AS agentName, q.assigned_reason AS assignedReason
+      `SELECT q.id, q.position, q.status, q.agent_id AS agentId, a.name AS agentName, q.assigned_reason AS assignedReason, q.origin
        FROM floor_queue_items q LEFT JOIN floor_agents a ON a.id = q.agent_id
        WHERE q.session_id = ? AND q.status != 'completed' AND q.dismissed_at IS NULL ORDER BY q.position LIMIT ?`,
-    ).bind(sessionId, QUEUE_LIMIT).all<{ id: string; position: number; status: string; agentId: string | null; agentName: string | null; assignedReason: string | null }>(),
+    ).bind(sessionId, QUEUE_LIMIT).all<{ id: string; position: number; status: string; agentId: string | null; agentName: string | null; assignedReason: string | null; origin: string | null }>(),
     database.prepare(
       `SELECT u.display_name AS authorName, m.text
        FROM floor_messages m JOIN users u ON u.id = m.author_user_id
@@ -160,6 +160,7 @@ export async function getSessionContext(
     status: item.status,
     agentName: item.agentName,
     assignedReason: item.assignedReason,
+    origin: item.origin,
     prompts: promptsByQueueItem.get(item.id) ?? [],
   }));
 

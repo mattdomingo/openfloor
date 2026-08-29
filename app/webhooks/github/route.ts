@@ -10,8 +10,10 @@ import {
   updateRepositoryPushState,
 } from "@/db/repositories";
 import { endMergedSession } from "@/db/sessions";
+import { applyCandidatePullRequestFeedback } from "@/lib/candidate-feedback";
 import { verifyGitHubWebhookSignature } from "@/lib/github-state";
 import { notifyFloorChanged, notifySessionEnded } from "@/lib/presence-server";
+import { pokeSessionRouter } from "@/lib/router-server";
 
 const MAX_WEBHOOK_BYTES = 1_000_000;
 
@@ -53,6 +55,7 @@ export async function POST(request: Request) {
   const targets = await findRepositoryWebhookTargets(installationId, repositoryId);
   for (const target of targets) {
     let revision: number;
+    let domains: Parameters<typeof notifyFloorChanged>[2] = ["repository", "runs", "review"];
     if (event === "installation" && ["deleted", "suspend"].includes(body.action ?? "")) {
       revision = await setRepositoryAvailability(target.sessionId, "revoked");
     } else if (event === "installation" && ["created", "unsuspend", "new_permissions_accepted"].includes(body.action ?? "")) {
@@ -95,10 +98,19 @@ export async function POST(request: Request) {
         const ended = await endMergedSession(target.sessionId);
         if (ended) await notifySessionEnded(target.sessionId, ended.endedAt, "merged");
       }
+    } else if (FEEDBACK_EVENTS[event]?.(body.action ?? null) && concernsCandidatePullRequest(event, body, target)) {
+      // Facts are re-fetched from GitHub rather than read off the payload:
+      // one idempotent observation path regardless of delivery order.
+      const outcome = await applyCandidatePullRequestFeedback(target.sessionId);
+      revision = outcome.revision;
+      if (outcome.nudged) {
+        domains = ["queue", "repository", "runs", "review"];
+        await pokeSessionRouter(target.sessionId, "enqueue");
+      }
     } else {
       revision = await touchRepositoryReview(target.sessionId);
     }
-    await notifyFloorChanged(target.sessionId, revision, ["repository", "runs", "review"]);
+    await notifyFloorChanged(target.sessionId, revision, domains);
   }
   return Response.json({ accepted: true, event }, { status: 202 });
 }
@@ -112,4 +124,38 @@ type GitHubWebhookPayload = {
   ref?: string;
   after?: string;
   pull_request?: { number?: number; node_id?: string; html_url?: string; state?: string; draft?: boolean; merged?: boolean; merge_commit_sha?: string; head?: { ref?: string } };
+  // Identity fields only — feedback facts come from the re-fetch, never the payload.
+  check_run?: { head_sha?: string; pull_requests?: Array<{ number?: number }> };
+  check_suite?: { head_sha?: string; pull_requests?: Array<{ number?: number }> };
+  sha?: string;
+  branches?: Array<{ name?: string }>;
 };
+
+// Deliveries that can change the candidate PR's feedback facts, keyed by the
+// action that carries new information (a completed check, a submitted
+// review, a created comment). Everything else keeps the plain revision bump.
+const FEEDBACK_EVENTS: Record<string, (action: string | null) => boolean> = {
+  check_run: (action) => action === "completed",
+  check_suite: (action) => action === "completed",
+  status: () => true,
+  pull_request_review: (action) => action === "submitted",
+  pull_request_review_comment: (action) => action === "created",
+};
+
+function concernsCandidatePullRequest(
+  event: string,
+  body: GitHubWebhookPayload,
+  target: Awaited<ReturnType<typeof findRepositoryWebhookTargets>>[number],
+): boolean {
+  if (!target.pullRequestNumber) return false;
+  const shas = [target.candidateSha, target.remoteCandidateSha].filter((sha): sha is string => Boolean(sha));
+  if (event === "check_run" || event === "check_suite") {
+    const subject = event === "check_run" ? body.check_run : body.check_suite;
+    return Boolean(subject?.pull_requests?.some((pullRequest) => pullRequest.number === target.pullRequestNumber)
+      || (subject?.head_sha && shas.includes(subject.head_sha)));
+  }
+  if (event === "status") {
+    return Boolean((body.sha && shas.includes(body.sha)) || body.branches?.some((branch) => branch.name === target.candidateBranch));
+  }
+  return body.pull_request?.node_id === target.pullRequestNodeId || body.pull_request?.number === target.pullRequestNumber;
+}

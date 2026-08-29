@@ -8,6 +8,8 @@ export function disabledRunProviders(): ReadonlySet<CredentialProvider> {
     KIMI_RUN_ENABLED?: string;
     GEMINI_RUN_ENABLED?: string;
     GLM_RUN_ENABLED?: string;
+    QWEN_RUN_ENABLED?: string;
+    DEEPSEEK_RUN_ENABLED?: string;
     OPENFLOOR_TEST_ALLOW_IDENTITY_HEADERS?: string;
   };
   if (bindings.OPENFLOOR_TEST_ALLOW_IDENTITY_HEADERS === "true") return new Set();
@@ -16,6 +18,8 @@ export function disabledRunProviders(): ReadonlySet<CredentialProvider> {
     kimi: bindings.KIMI_RUN_ENABLED,
     gemini: bindings.GEMINI_RUN_ENABLED,
     glm: bindings.GLM_RUN_ENABLED,
+    qwen: bindings.QWEN_RUN_ENABLED,
+    deepseek: bindings.DEEPSEEK_RUN_ENABLED,
   } as const;
   return new Set(
     (Object.keys(flags) as Array<keyof typeof flags>).filter((provider) => flags[provider] !== "true"),

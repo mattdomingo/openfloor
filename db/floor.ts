@@ -60,9 +60,10 @@ async function readFloorSnapshot(sessionId: string, userId: string, database: D1
     database.prepare(
       `SELECT s.floor_revision AS revision, s.auto_dispatch AS autoDispatch,
               s.auto_provision_agents AS autoProvisionAgents, s.auto_resolve_conflicts AS autoResolveConflicts,
+              s.auto_inject_feedback AS autoInjectFeedback,
               (SELECT role FROM session_members WHERE session_id = s.id AND user_id = ? AND removed_at IS NULL) AS viewerRole
        FROM sessions s WHERE s.id = ?`,
-    ).bind(userId, sessionId).first<{ revision: number; autoDispatch: number; autoProvisionAgents: number; autoResolveConflicts: number; viewerRole: "owner" | "member" }>(),
+    ).bind(userId, sessionId).first<{ revision: number; autoDispatch: number; autoProvisionAgents: number; autoResolveConflicts: number; autoInjectFeedback: number; viewerRole: "owner" | "member" }>(),
     resolveAutoAgentProvider(sessionId, database, disabledRunProviders()),
     database.prepare(
       // Two extra joins for lifetime cost (Agent tile meter): `cost` sums
@@ -122,7 +123,7 @@ async function readFloorSnapshot(sessionId: string, userId: string, database: D1
     database.prepare(
       `SELECT q.id, q.agent_id AS agentId, a.name AS agentName, a.owner_user_id AS agentOwnerUserId,
               q.position, q.status,
-              q.assigned_by AS assignedBy, q.assigned_reason AS assignedReason, q.intent,
+              q.assigned_by AS assignedBy, q.assigned_reason AS assignedReason, q.intent, q.origin,
               q.created_at AS createdAt, q.updated_at AS updatedAt,
               rollback_run.id AS rollbackRunId, latest_rollback.status AS rollbackStatus,
               latest_rollback.failure_reason AS rollbackFailureReason,
@@ -184,6 +185,7 @@ async function readFloorSnapshot(sessionId: string, userId: string, database: D1
     effectiveAutoAgentProvider: providerResolution.effectiveProvider,
     autoAgentProviderState: providerResolution.state,
     autoResolveConflicts: Boolean(session?.autoResolveConflicts),
+    autoInjectFeedback: Boolean(session?.autoInjectFeedback),
     agents: agents.results,
     assignments: assignments.results.map((assignment) => ({
       ...assignment,

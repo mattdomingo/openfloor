@@ -65,6 +65,8 @@ import {
   finishAgentRun,
   finishRunPublished,
   finishRunIntegrated,
+  getAgentRun,
+  getRunArtifactKeysForMember,
   getRunExecutionContext,
   markRunChecking,
   markRunRunning,
@@ -72,8 +74,10 @@ import {
   markRunPublishing,
   markRunIntegrationConflicted,
   prepareConflictedRunRetry,
+  recordRunArtifact,
   replaceRunFiles,
   requestAgentRunCancellation,
+  setRunProviderThreadId,
 } from "@/db/runs";
 import { parseAgentInput } from "@/lib/validation";
 import {
@@ -902,6 +906,69 @@ describe("D1 session persistence", () => {
     const updated = await getFloorSnapshot(created.session.id, owner.id, env.DB);
     expect(updated?.queue[0].status).toBe("completed");
     expect(updated?.runs[0]).toEqual(expect.objectContaining({ kind: "reply", runBranch: null }));
+  });
+
+  it("resumes an eligible earlier attempt's provider thread and never serves its session store", async () => {
+    const owner = await upsertUser(identity("resume-owner", "Resume Owner"), env.DB);
+    const created = await createSession(owner.id, { title: "Resume room", objective: "Continue the thread" }, env.DB);
+    const saved = await saveRepositoryConnection(created.session.id, owner.id, null, "installation-resume", {
+      id: "repository-resume", nodeId: "R_resume", owner: "openfloor-test", name: "resume",
+      fullName: "openfloor-test/resume", private: true, defaultBranch: "main",
+    }, "main", env.DB);
+    const candidateId = crypto.randomUUID();
+    const branch = `openfloor/${created.session.id.slice(0, 8)}/candidate/${candidateId.slice(0, 8)}`;
+    await reserveRepositoryCandidate(created.session.id, owner.id, saved!.id, candidateId, "Resume room", "Continue the thread", branch, "main", "a".repeat(40), env.DB);
+    await activateRepositoryCandidate(created.session.id, candidateId, "a".repeat(40), env.DB);
+    const parsed = parseAgentInput({ name: "Builder", role: "Engineer", task: "Implement the request", ownerUserId: owner.id });
+    if (!parsed) throw new Error("Invalid agent fixture");
+    let floor = await createFloorAgent(created.session.id, owner.id, parsed, env.DB);
+    const agentId = floor!.agents[0].id;
+    floor = await createFloorQueueItem(created.session.id, owner.id, { prompt: "Add a real file", agentId }, env.DB);
+    const queueItemId = floor!.queue[0].id;
+
+    // Attempt 1 crashes: its thread id survives (markRunChecking never ran)
+    // and its session store is recorded, but never listed for members.
+    const first = await createAgentRun(created.session.id, queueItemId, owner.id, "task", env.DB);
+    expect(first).toEqual(expect.objectContaining({ resumedFromRunId: null, resumedFromAttempt: null, providerThreadResumed: null }));
+    await markRunRunning(first.id, "process-1", env.DB);
+    await setRunProviderThreadId(first.id, "thread-1", null, env.DB);
+    await recordRunArtifact(first.id, "session_store", `runs/${first.id}/session-store.tgz`, "application/gzip", 1234, env.DB);
+    await recordRunArtifact(first.id, "codex_log", `runs/${first.id}/codex.log`, "text/plain", 10, env.DB);
+    await finishAgentRun(first.id, "failed", "Crashed", env.DB);
+    const stored = await env.DB.prepare("SELECT codex_thread_id AS threadId FROM agent_runs WHERE id = ?").bind(first.id).first<{ threadId: string | null }>();
+    expect(stored?.threadId).toBe("thread-1");
+    expect((await getRunArtifactKeysForMember(created.session.id, first.id, owner.id, env.DB))?.map((artifact) => artifact.kind)).toEqual(["codex_log"]);
+
+    // Un-pausing the failed item re-runs it; attempt 2 resumes attempt 1.
+    expect(await setFloorQueueItemPaused(created.session.id, owner.id, queueItemId, false, env.DB)).not.toBeNull();
+    const second = await createAgentRun(created.session.id, queueItemId, owner.id, "task", env.DB);
+    expect(second).toEqual(expect.objectContaining({ attempt: 2, resumedFromRunId: first.id, resumedFromAttempt: 1, providerThreadResumed: null }));
+    expect(await getRunExecutionContext(second.id, env.DB)).toEqual(expect.objectContaining({
+      resumeThreadId: "thread-1", resumedFromAttempt: 1, resumedFromStatus: "failed", resumeSessionStoreKey: `runs/${first.id}/session-store.tgz`,
+    }));
+    await markRunRunning(second.id, "process-2", env.DB);
+    await setRunProviderThreadId(second.id, null, false, env.DB);
+    expect((await getAgentRun(second.id, env.DB))).toEqual(expect.objectContaining({ providerThreadResumed: 0 }));
+    await setRunProviderThreadId(second.id, "thread-1", true, env.DB);
+    await recordRunArtifact(second.id, "session_store", `runs/${second.id}/session-store.tgz`, "application/gzip", 2345, env.DB);
+    await finishAgentRun(second.id, "cancelled", "Cancelled", env.DB);
+    expect((await getAgentRun(second.id, env.DB))).toEqual(expect.objectContaining({ providerThreadResumed: 1 }));
+
+    // A system-originated follow-up names its source run explicitly and
+    // resumes that thread even though the queue item differs.
+    floor = await createFloorQueueItem(created.session.id, owner.id, { prompt: "CI is failing on your PR.", agentId }, env.DB);
+    const followUpId = floor!.queue.find((item) => item.id !== queueItemId)!.id;
+    await env.DB.prepare("UPDATE floor_queue_items SET source_run_id = ? WHERE id = ?").bind(second.id, followUpId).run();
+    const followUp = await createAgentRun(created.session.id, followUpId, owner.id, "task", env.DB);
+    expect(followUp).toEqual(expect.objectContaining({ attempt: 1, resumedFromRunId: second.id, resumedFromAttempt: 2 }));
+    await finishAgentRun(followUp.id, "cancelled", "Cancelled", env.DB);
+
+    // A model change breaks eligibility: the next attempt starts fresh.
+    await env.DB.prepare("UPDATE floor_agents SET model = 'gpt-5.6-terra-other' WHERE id = ?").bind(agentId).run();
+    expect(await setFloorQueueItemPaused(created.session.id, owner.id, queueItemId, false, env.DB)).not.toBeNull();
+    const third = await createAgentRun(created.session.id, queueItemId, owner.id, "task", env.DB);
+    expect(third).toEqual(expect.objectContaining({ attempt: 3, model: "gpt-5.6-terra-other", resumedFromRunId: null }));
+    expect(await getRunExecutionContext(third.id, env.DB)).toEqual(expect.objectContaining({ resumeThreadId: null, resumeSessionStoreKey: null }));
   });
 
   it("persists owner-gated agent runs, real files, checks, retry, and cancellation", async () => {

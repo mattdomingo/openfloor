@@ -134,11 +134,16 @@ export const sessions = sqliteTable("sessions", {
   // available. Null means resolve from the owner's current credential set:
   // one provider selects itself, none falls back to OpenAI, several require
   // an explicit selection before generated agents can start.
-  autoAgentProvider: text("auto_agent_provider", { enum: ["anthropic", "openai", "kimi", "gemini"] }),
+  autoAgentProvider: text("auto_agent_provider", { enum: ["anthropic", "openai", "kimi", "gemini", "glm", "qwen", "deepseek"] }),
   // Merge-conflict work is a separate queue automation from ordinary prompt
   // dispatch. Existing and new sessions opt in by default; owners may turn it
   // off without changing auto_dispatch.
   autoResolveConflicts: integer("auto_resolve_conflicts", { mode: "boolean" }).notNull().default(true),
+  // PR feedback nudges (lib/candidate-feedback.ts): failing checks and review
+  // feedback on the candidate PR become router-originated queue items for the
+  // responsible agent. Independent of auto_dispatch, like conflicts; on by
+  // default for existing and new sessions.
+  autoInjectFeedback: integer("auto_inject_feedback", { mode: "boolean" }).notNull().default(true),
   // Display counter: seconds this session had at least one connected
   // participant. The billing ledger is usage_months; this one cascades away
   // with the session and that is fine.
@@ -175,7 +180,7 @@ export const providerSpendMonths = sqliteTable(
   "provider_spend_months",
   {
     userId: text("user_id").notNull(),
-    provider: text("provider", { enum: ["anthropic", "openai", "kimi", "gemini", "glm"] }).notNull(),
+    provider: text("provider", { enum: ["anthropic", "openai", "kimi", "gemini", "glm", "qwen", "deepseek"] }).notNull(),
     kind: text("kind", { enum: ["api_key", "oauth", "server"] }).notNull(),
     month: text("month").notNull(), // "YYYY-MM", UTC
     microUsd: integer("micro_usd").notNull().default(0),
@@ -251,7 +256,7 @@ export const floorAgents = sqliteTable(
     // Open enum, TS-only, no SQL CHECK (agent_run_artifacts.kind convention);
     // existing rows keep current behavior via the default. `model` null means
     // "use the provider's default" (lib/provider-credentials.ts).
-    provider: text("provider", { enum: ["anthropic", "openai", "kimi", "gemini", "glm"] }).notNull().default("openai"),
+    provider: text("provider", { enum: ["anthropic", "openai", "kimi", "gemini", "glm", "qwen", "deepseek"] }).notNull().default("openai"),
     // Which of the owner's credential kinds pays for this agent's runs. Open
     // enum, nullable, no CHECK and no default: null means "the owner's
     // default" — api_key when connected, else whatever single row exists —
@@ -364,6 +369,17 @@ export const floorQueueItems = sqliteTable(
     // Set once by the router's classifyPrompt (db/routing.ts) in the same
     // guarded assignment UPDATE that sets agentId/assignedBy/assignedReason.
     intent: text("intent", { enum: ["task", "question", "noise"] }),
+    // Null for every human-authored item. A system-originated PR feedback
+    // nudge (lib/candidate-feedback.ts) names its kind here; the prompt row
+    // itself is attributed to the session owner, the same convention as
+    // resolver runs' created_by. TS-only enum, no SQL CHECK.
+    origin: text("origin", { enum: ["ci_failure", "review_comments", "changes_requested"] }),
+    // Soft reference to the agent_runs row this item follows up on (set by
+    // system-originated items such as PR feedback nudges). createAgentRun
+    // uses it to resume that run's provider thread when the same agent picks
+    // the item up (lib/run-resume.ts); no FK so agent_runs never gains a new
+    // inbound constraint.
+    sourceRunId: text("source_run_id"),
     // Soft-delete marker: a removed prompt is dismissed, not deleted, because
     // agent_runs.queue_item_id has no ON DELETE cascade (a hard delete on a
     // run-bearing item raises a FOREIGN KEY constraint failure — run audit
@@ -509,6 +525,15 @@ export const repositoryCandidates = sqliteTable(
     pullRequestMergeable: integer("pull_request_mergeable", { mode: "boolean" }),
     pullRequestMergeableState: text("pull_request_mergeable_state"),
     githubChecksPassing: integer("github_checks_passing", { mode: "boolean" }),
+    // GitHub's reviewDecision for the PR, observed on review webhooks. TS-only
+    // enum, no SQL CHECK (this table already carries a checked status column
+    // whose recreate hazard AGENTS.md documents).
+    reviewDecision: text("review_decision", { enum: ["approved", "changes_requested", "review_required"] }),
+    // JSON: per feedback kind { signature, attempts, queueItemId } plus a
+    // nonce; the dedup state for PR feedback nudges, written with a
+    // compare-and-set so concurrent webhook deliveries cannot both insert.
+    // Shape owned by lib/pr-feedback.ts (FeedbackNudgeState).
+    feedbackNudges: text("feedback_nudges"),
     reviewReadyAt: integer("review_ready_at"),
     reviewReadyBy: text("review_ready_by").references(() => users.id),
     reviewSyncedAt: integer("review_synced_at"),
@@ -653,6 +678,16 @@ export const agentRuns = sqliteTable(
     // four inbound ON DELETE CASCADE FKs and a set-null, and a drizzle
     // rename emits a table recreate that cascade-deletes children.
     providerThreadId: text("codex_thread_id"),
+    // Soft reference to the earlier agent_runs row whose provider thread this
+    // run resumed (same session, agent, and candidate — enforced by
+    // createAgentRun's eligibility query, lib/run-resume.ts). Deliberately no
+    // .references(): see the recreate warning above; a bare ADD COLUMN is the
+    // only safe shape for this table.
+    resumedFromRunId: text("resumed_from_run_id"),
+    // null = fresh thread; 1 = the provider resumed the prior thread; 0 = a
+    // resume was attempted (store restored, id passed) but the runner fell
+    // back to a fresh thread.
+    providerThreadResumed: integer("provider_thread_resumed"),
     summary: text("summary"),
     finalResponse: text("final_response"),
     // Open enum, TS-only, no SQL CHECK (same convention as floor_agents.provider
@@ -844,7 +879,12 @@ export const agentRunArtifacts = sqliteTable(
     // file bodies, captured for the manual resolver dialog) is additive to
     // this TS-only Drizzle enum — no SQL CHECK exists on this column, so
     // widening it needs no migration.
-    kind: text("kind", { enum: ["codex_log", "diff", "prompt", "conflict_snapshot"] }).notNull(),
+    // "session_store" is the provider's own session directory (Codex
+    // rollouts / Claude project transcripts) tarred at run end so the next
+    // attempt can resume the thread; never served to members
+    // (getRunArtifactKeysForMember excludes it). Additive, TS-only, like
+    // conflict_snapshot.
+    kind: text("kind", { enum: ["codex_log", "diff", "prompt", "conflict_snapshot", "session_store"] }).notNull(),
     r2Key: text("r2_key").notNull(),
     contentType: text("content_type").notNull(),
     sizeBytes: integer("size_bytes").notNull(),
@@ -1070,7 +1110,7 @@ export const userProviderCredentials = sqliteTable(
   "user_provider_credentials",
   {
     userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
-    provider: text("provider", { enum: ["anthropic", "openai", "kimi", "gemini", "glm"] }).notNull(),
+    provider: text("provider", { enum: ["anthropic", "openai", "kimi", "gemini", "glm", "qwen", "deepseek"] }).notNull(),
     kind: text("kind", { enum: ["api_key", "oauth"] }).notNull().default("api_key"),
     ciphertext: text("ciphertext").notNull(),
     fingerprint: text("fingerprint").notNull(),

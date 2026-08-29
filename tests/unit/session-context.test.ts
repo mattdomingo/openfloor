@@ -25,7 +25,7 @@ function baseSnapshot(overrides: Partial<SessionContextSnapshot> = {}): SessionC
     candidate: { branchName: "openfloor/abc123/candidate/ship-def456", sha: "sha-candidate", pullRequestNumber: null },
     agents: [{ id: "self", name: "Builder", role: "Backend agent", task: "Implements API routes.", ownerName: "Owner Example" }],
     assignments: [],
-    queue: [{ id: "queue-self", position: 1, status: "running", agentName: "Builder", assignedReason: null, prompts: [{ authorName: "Owner Example", text: "Add /healthz" }] }],
+    queue: [{ id: "queue-self", position: 1, status: "running", agentName: "Builder", assignedReason: null, origin: null, prompts: [{ authorName: "Owner Example", text: "Add /healthz" }] }],
     integratedRuns: [],
     inFlightRuns: [],
     blockedRuns: [],
@@ -129,7 +129,7 @@ describe("renderSessionContext", () => {
     const inFlightRuns = Array.from({ length: SESSION_CONTEXT_LIMITS.inFlightRuns }, (_, index) => run(`inflight-${index}`, "running"));
     const queue = [
       baseSnapshot().queue[0],
-      ...Array.from({ length: SESSION_CONTEXT_LIMITS.queuedItems }, (_, index) => ({ id: `queue-${index}`, position: index + 2, status: "queued", agentName: null, assignedReason: null, prompts: longPrompt })),
+      ...Array.from({ length: SESSION_CONTEXT_LIMITS.queuedItems }, (_, index) => ({ id: `queue-${index}`, position: index + 2, status: "queued", agentName: null, assignedReason: null, origin: null, prompts: longPrompt })),
     ];
     const integratedRuns: SessionContextRun[] = [{ id: "integrated-1", agentName: "Other", status: "integrated", summary: "The real integrated summary that must survive.", conflictReason: null, prompts: [], files: ["src/index.ts"], recentEdits: [] }];
 
@@ -145,5 +145,37 @@ describe("renderSessionContext", () => {
     // The tiny, higher-priority integrated section survives the cascade.
     expect(text).toContain("The real integrated summary that must survive.");
     expect(text).toContain("src/index.ts");
+  });
+});
+
+describe("renderSessionContext thread resume", () => {
+  it("opens a resumed thread with a short preamble and leaves fresh runs untouched", () => {
+    const fresh = renderSessionContext(baseSnapshot(), viewer);
+    expect(fresh).not.toContain("## Continuing your earlier thread");
+
+    const resumed = renderSessionContext(baseSnapshot(), { ...viewer, attempt: 2, resume: { fromAttempt: 1, fromStatus: "failed" } });
+    expect(resumed).toContain("## Continuing your earlier thread");
+    expect(resumed).toContain("from attempt 1 (failed)");
+    expect(resumed).toContain("checked out fresh at candidate sha-pinned");
+    expect(resumed.indexOf("## Continuing your earlier thread")).toBeLessThan(resumed.indexOf("## Your request"));
+    expect(resumed.length).toBeLessThanOrEqual(SESSION_CONTEXT_LIMITS.totalChars);
+  });
+});
+
+describe("renderSessionContext PR feedback nudges", () => {
+  it("renders a feedback nudge past the ordinary prompt cap while staying inside the brief budget", () => {
+    const nudge = `CI is failing on PR #7.\n${"Failed: check (failure)\n".repeat(60)}`;
+    const snapshot = baseSnapshot({
+      queue: [{ id: "queue-self", position: 1, status: "running", agentName: "Builder", assignedReason: null, origin: "ci_failure", prompts: [{ authorName: "Owner Example", text: nudge }] }],
+    });
+    const text = renderSessionContext(snapshot, viewer);
+    expect(nudge.length).toBeGreaterThan(SESSION_CONTEXT_LIMITS.promptChars);
+    expect(text).toContain(nudge.trim());
+    expect(text.length).toBeLessThanOrEqual(SESSION_CONTEXT_LIMITS.totalChars);
+
+    const human = renderSessionContext(baseSnapshot({
+      queue: [{ id: "queue-self", position: 1, status: "running", agentName: "Builder", assignedReason: null, origin: null, prompts: [{ authorName: "Owner Example", text: nudge }] }],
+    }), viewer);
+    expect(human).not.toContain(nudge.trim());
   });
 });

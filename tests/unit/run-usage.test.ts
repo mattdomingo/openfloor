@@ -92,6 +92,32 @@ describe("normalizeRunUsage", () => {
     expect(result.costSource).toBe("estimated");
   });
 
+  // Captured Spike Q1 `result.usage` (2026-08-28): five stubbed
+  // chat-completions calls, each prompt_tokens 10 with cached_tokens 2 and
+  // completion_tokens 5 — the CLI reports the GROSS prompt sum, so the
+  // cached subset must be subtracted, not added.
+  it("normalizes Qwen Code result usage, netting the cached subset out of input", () => {
+    const result = normalizeRunUsage("qwen", "qwen3-coder-plus", {
+      usage: { input_tokens: 50, output_tokens: 25, cache_read_input_tokens: 10, total_tokens: 75 },
+    });
+    expect(result.inputTokens).toBe(40);
+    expect(result.cacheReadTokens).toBe(10);
+    expect(result.cacheWriteTokens).toBe(0);
+    expect(result.outputTokens).toBe(25);
+    expect(result.costSource).toBe("estimated");
+    // 40 × $1/M + 25 × $5/M + 10 × $1/M = $0.000175
+    expect(result.costMicroUsd).toBe(175);
+  });
+
+  it("prices a DeepSeek run through the same runner shape at the vendor's own rates", () => {
+    const result = normalizeRunUsage("deepseek", "deepseek-v4-pro", {
+      usage: { input_tokens: 1_000_000, output_tokens: 0, cache_read_input_tokens: 0 },
+    });
+    expect(result.inputTokens).toBe(1_000_000);
+    expect(result.costMicroUsd).toBe(1_320_000);
+    expect(result.costSource).toBe("estimated");
+  });
+
   it("returns null cost for an unpriced model, without guessing", () => {
     const result = normalizeRunUsage("openai", "some-future-model", {
       usage: { input_tokens: 100, cached_input_tokens: 0, cache_write_input_tokens: 0, output_tokens: 50, reasoning_output_tokens: 0 },

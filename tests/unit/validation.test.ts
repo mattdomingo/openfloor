@@ -290,7 +290,9 @@ describe("merge conflict input validation", () => {
     expect(parseRoutingSettingsInput({ autoProvisionAgents: false, autoAgentProvider: "gemini" })).toEqual({ autoProvisionAgents: false, autoAgentProvider: "gemini" });
     expect(parseRoutingSettingsInput({ autoAgentProvider: null })).toEqual({ autoAgentProvider: null });
     expect(parseRoutingSettingsInput({})).toBeNull();
+    expect(parseRoutingSettingsInput({ autoInjectFeedback: false })).toEqual({ autoInjectFeedback: false });
     expect(parseRoutingSettingsInput({ autoResolveConflicts: "yes" })).toBeNull();
+    expect(parseRoutingSettingsInput({ autoInjectFeedback: "off" })).toBeNull();
     expect(parseRoutingSettingsInput({ autoProvisionAgents: "true" })).toBeNull();
     expect(parseRoutingSettingsInput({ autoAgentProvider: "unknown" })).toBeNull();
   });

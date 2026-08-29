@@ -48,7 +48,7 @@ export type RunGatewayClaims = {
   sessionId: string;
   repositoryId: string;
   candidateSha: string;
-  operation: "source" | "openai" | "anthropic" | "kimi" | "gemini" | "glm" | "bundle_upload" | "bundle_read" | "events" | "context" | "conflict_source" | "conflict_input";
+  operation: "source" | "openai" | "anthropic" | "kimi" | "gemini" | "glm" | "qwen" | "deepseek" | "bundle_upload" | "bundle_read" | "events" | "context" | "conflict_source" | "conflict_input";
 };
 
 // The "wait for Codex" step allows 60 minutes (worker/agent-run-workflow.ts),
@@ -58,7 +58,7 @@ export type RunGatewayClaims = {
 // deliberately NOT shortened, since that would cut the longest possible run for
 // every provider to solve an openai-only problem.
 const RUN_TOKEN_TTL_SECONDS: Partial<Record<RunGatewayClaims["operation"], number>> = { openai: 90 * 60 };
-const LONG_LIVED_OPERATIONS = ["anthropic", "kimi", "gemini", "glm", "events", "context", "conflict_input"];
+const LONG_LIVED_OPERATIONS = ["anthropic", "kimi", "gemini", "glm", "qwen", "deepseek", "events", "context", "conflict_input"];
 
 export async function signRunGatewayToken(claims: RunGatewayClaims, secret: string): Promise<string> {
   const now = Math.floor(Date.now() / 1000);

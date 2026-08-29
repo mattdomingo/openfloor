@@ -10,7 +10,11 @@
 // is hard-refused by the pinned Codex binary itself (`wire_api = "chat"` is
 // no longer supported — verified 2026-08-26). See the AGENTS.md decision log
 // before proposing route four.
-export const CREDENTIAL_PROVIDERS = ["anthropic", "openai", "kimi", "gemini", "glm"] as const;
+// qwen (Alibaba Cloud Model Studio / DashScope) and deepseek ride one shared
+// Qwen Code CLI runner against an OpenAI-chat-completions gateway each — see
+// usesQwenRunner below and docs/qwen-deepseek-provider-prompt.md (Spike Q1,
+// 2026-08-28).
+export const CREDENTIAL_PROVIDERS = ["anthropic", "openai", "kimi", "gemini", "glm", "qwen", "deepseek"] as const;
 export type CredentialProvider = (typeof CREDENTIAL_PROVIDERS)[number];
 
 // A subscription credential (Claude setup token, ChatGPT auth bundle, Kimi
@@ -42,6 +46,10 @@ export function parseCredentialKind(value: unknown): CredentialKind | null {
 // The gateway substitutes the bundle's access token toward
 // chatgpt.com/backend-api/codex, so the run container never holds the
 // credential at all — see the 2026-08-26 ENG-117 decision-log entry.
+// qwen: api_key only. Alibaba's Coding Plan (sk-sp-… keys on a separate
+// coding-intl base) is the natural oauth-kind candidate, withheld until Spike
+// Q2 completes a run on a real plan key — the Kimi precedent shipped a plan
+// surface unverified; do not repeat that silently.
 export function credentialKindsForProvider(provider: CredentialProvider): readonly CredentialKind[] {
   return provider === "anthropic" || provider === "kimi" || provider === "openai" ? CREDENTIAL_KINDS : ["api_key"];
 }
@@ -139,19 +147,23 @@ const PROVIDER_LABELS: Record<CredentialProvider, string> = {
   kimi: "Moonshot",
   gemini: "Google",
   glm: "Z.ai",
+  qwen: "Alibaba Cloud",
+  deepseek: "DeepSeek",
 };
 
 /* What Settings shows next to each provider: a mark, where the key is made,
    and the shape a real key has. The placeholder is the whole point of the
    last one — a pasted key that does not look like the example is almost
-   always the wrong vendor's. Z.ai has no mark in public/logos yet, so its
-   tile falls back to a monogram. */
+   always the wrong vendor's. Z.ai, Alibaba Cloud, and DeepSeek have no mark
+   in public/logos yet, so their tiles fall back to a monogram. */
 export const PROVIDER_LOGOS: Record<CredentialProvider, string | null> = {
   anthropic: "/logos/anthropic.svg",
   openai: "/logos/openai.svg",
   kimi: "/logos/kimi.svg",
   gemini: "/logos/gemini.svg",
   glm: null,
+  qwen: null,
+  deepseek: null,
 };
 
 export const PROVIDER_KEY_GUIDE: Record<CredentialProvider, { placeholder: string; consoleUrl: string; consoleLabel: string }> = {
@@ -160,6 +172,12 @@ export const PROVIDER_KEY_GUIDE: Record<CredentialProvider, { placeholder: strin
   kimi: { placeholder: "sk-…", consoleUrl: "https://platform.moonshot.ai/console/api-keys", consoleLabel: "Moonshot Platform" },
   gemini: { placeholder: "AIza…", consoleUrl: "https://aistudio.google.com/apikey", consoleLabel: "Google AI Studio" },
   glm: { placeholder: "…", consoleUrl: "https://z.ai/manage-apikey/apikey-list", consoleLabel: "Z.ai console" },
+  // Singapore region on purpose: the gateway's upstream is the international
+  // (dashscope-intl) endpoint, and a Beijing-region key does not authenticate
+  // there. Keys are "sk-…" (newer ones "sk-ws…"); an "sk-sp-…" key is a Coding
+  // Plan key, a different surface (see credentialKindsForProvider).
+  qwen: { placeholder: "sk-…", consoleUrl: "https://modelstudio.console.alibabacloud.com/ap-southeast-1?tab=model#/api-key", consoleLabel: "Model Studio console" },
+  deepseek: { placeholder: "sk-…", consoleUrl: "https://platform.deepseek.com/api_keys", consoleLabel: "DeepSeek Platform" },
 };
 
 // The command that mints a subscription credential on the member's own
@@ -195,13 +213,36 @@ export const AGENT_PROVIDER_LABELS: Record<CredentialProvider, string> = {
   kimi: "Kimi",
   gemini: "Gemini",
   glm: "GLM",
+  qwen: "Qwen",
+  deepseek: "DeepSeek",
 };
 
 // Providers whose runs execute through scripts/claude-runner.mjs against an
 // Anthropic-Messages-compatible gateway route — the single predicate every
-// workflow branch keys on. Gemini has its own runner; openai is Codex.
+// workflow branch keys on. Gemini has its own runner; openai is Codex;
+// qwen/deepseek share the Qwen Code runner (usesQwenRunner).
 export function usesClaudeRunner(provider: CredentialProvider): boolean {
   return provider === "anthropic" || provider === "kimi" || provider === "glm";
+}
+
+// Providers whose runs execute through scripts/qwen-runner.mjs (the pinned
+// Qwen Code CLI, which speaks OpenAI chat completions) against an
+// OpenAI-chat-compat gateway route — /runtime/qwen or /runtime/deepseek. The
+// only difference between the two is the gateway the run JWT is bound to,
+// exactly the Kimi→GLM recipe; every workflow branch keys on this predicate,
+// never on the id.
+export function usesQwenRunner(provider: CredentialProvider): boolean {
+  return provider === "qwen" || provider === "deepseek";
+}
+
+// Providers whose runner can continue an earlier attempt's thread from a
+// persisted session store (worker/agent-run-workflow.ts persistSessionStore /
+// restore, lib/run-resume.ts): Codex (`~/.codex/sessions`), the Claude
+// runner (`~/.claude/projects`), and the Qwen Code runner
+// (`~/.qwen/projects`, verified Spike Q1 step 4). Gemini is the exclusion —
+// its pinned CLI's resume support is unverified.
+export function resumableProvider(provider: CredentialProvider): boolean {
+  return provider !== "gemini";
 }
 
 // Stored and shown instead of the key itself; routes never return the key.
@@ -246,12 +287,23 @@ export function credentialFingerprint(apiKey: string): string {
 // openai: the models-endpoint read stayed blocked on a key at the banking
 //   pass; until one exists this stays the single known-good default —
 //   gpt-5.6 variants must not be guessed.
+// qwen: banked from Model Studio's international model list and pricing pages
+//   (2026-08-28, docs/qwen-deepseek-provider-prompt.md) — the coder trio the
+//   Coding Plan also serves, plus the two general flagships. NOT yet read
+//   from GET /models with a live key (Spike Q2 pending a scratch key); the
+//   default was chosen from the vendor's own Qwen Code recommendation, not
+//   from a run. Re-verify at Spike Q2 before flipping QWEN_RUN_ENABLED.
+// deepseek: the two ids GET /models returns per the vendor's docs
+//   (2026-08-28) — deepseek-chat/deepseek-reasoner are no longer listed.
+//   Same caveat: Spike D1 re-reads the endpoint before the flag flips.
 export const PROVIDER_MODELS: Record<CredentialProvider, readonly string[]> = {
   openai: ["gpt-5.6-terra"],
   anthropic: ["claude-opus-5", "claude-fable-5", "claude-opus-4-8", "claude-sonnet-5", "claude-haiku-4-5"],
   kimi: ["kimi-k3", "kimi-k2.7-code", "kimi-k2.7-code-highspeed", "kimi-k2.6", "kimi-for-coding", "kimi-for-coding-highspeed", "k3-256k"],
   gemini: ["gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite"],
   glm: ["glm-5.3", "glm-5.2", "glm-5.1", "glm-5-turbo", "glm-5", "glm-4.7", "glm-4.6", "glm-4.5-air", "glm-4.5"],
+  qwen: ["qwen3-coder-plus", "qwen3-coder-next", "qwen3-coder-flash", "qwen3.7-plus", "qwen3.8-max"],
+  deepseek: ["deepseek-v4-pro", "deepseek-v4-flash"],
 };
 
 // Derived alias (first allowlist entry), kept so existing importers don't
@@ -264,9 +316,11 @@ export const DEFAULT_PROVIDER_MODELS = Object.fromEntries(
 
 // Context-window sizes in tokens, only for models whose window is documented
 // somewhere this file can cite: the anthropic note above (claude-haiku-4-5 is
-// the 200K entry, the rest are 1M) and k3-256k's own vendor id. Absent means
-// unknown — the UI shows a plain token count, never a guessed meter. Extend
-// alongside PROVIDER_MODELS when a vendor documents a window.
+// the 200K entry, the rest are 1M), k3-256k's own vendor id, the top of each
+// Qwen model's published input-length pricing tier (Model Studio international
+// pricing, 2026-08-28), and DeepSeek's documented 1M for both V4 ids. Absent
+// means unknown — the UI shows a plain token count, never a guessed meter.
+// Extend alongside PROVIDER_MODELS when a vendor documents a window.
 export const MODEL_CONTEXT_TOKENS: Record<string, number> = {
   "claude-opus-5": 1_000_000,
   "claude-fable-5": 1_000_000,
@@ -274,6 +328,13 @@ export const MODEL_CONTEXT_TOKENS: Record<string, number> = {
   "claude-sonnet-5": 1_000_000,
   "claude-haiku-4-5": 200_000,
   "k3-256k": 256_000,
+  "qwen3-coder-plus": 1_000_000,
+  "qwen3-coder-next": 256_000,
+  "qwen3-coder-flash": 1_000_000,
+  "qwen3.7-plus": 1_000_000,
+  "qwen3.8-max": 1_000_000,
+  "deepseek-v4-pro": 1_000_000,
+  "deepseek-v4-flash": 1_000_000,
 };
 
 export function resolveRunModel(provider: CredentialProvider, agentModel: string | null): string {

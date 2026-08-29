@@ -15,9 +15,17 @@
 // 5-minute/default cache-write rate where one is published (Anthropic);
 // providers with no separate write charge reuse `inputPerMTok`. GLM's cache
 // reads are a time-limited free promotion (`docs.z.ai`) captured here as 0 —
-// re-verify before it lapses. Re-verify the whole table on any provider
-// price-list change or new model id, the same way
-// lib/provider-credentials.ts:129-131 flags the openai model id.
+// re-verify before it lapses. Qwen rows (2026-08-28) are Model Studio's
+// international/Singapore list prices at the lowest input-length tier
+// (alibabacloud.com/help/en/model-studio/model-pricing; longer prompts bill
+// higher tiers the estimate ignores) with no published international
+// cache-hit rate, so cache reads are metered at the full input price — an
+// overestimate, never an under-count. DeepSeek rows (2026-08-28,
+// api-docs.deepseek.com/quick_start/pricing) are the PEAK rate (01:00–04:00
+// and 06:00–10:00 UTC weekdays; off-peak is exactly half) for the same
+// reason. Re-verify the whole table on any provider price-list change or new
+// model id, the same way lib/provider-credentials.ts:129-131 flags the
+// openai model id.
 //
 // All figures are USD per 1,000,000 tokens.
 export type ModelPrice = {
@@ -75,6 +83,18 @@ export const MODEL_PRICING: Record<string, ModelPrice> = {
   "glm-4.6": { inputPerMTok: 0.6, outputPerMTok: 2.2, cacheReadPerMTok: 0, cacheWritePerMTok: 0.6 },
   "glm-4.5-air": { inputPerMTok: 0.2, outputPerMTok: 1.1, cacheReadPerMTok: 0, cacheWritePerMTok: 0.2 },
   "glm-4.5": { inputPerMTok: 0.6, outputPerMTok: 2.2, cacheReadPerMTok: 0, cacheWritePerMTok: 0.6 },
+
+  // qwen (Alibaba Cloud Model Studio, international; via qwen-runner.mjs —
+  // always estimated, the CLI reports tokens only)
+  "qwen3-coder-plus": { inputPerMTok: 1, outputPerMTok: 5, cacheReadPerMTok: 1, cacheWritePerMTok: 1 },
+  "qwen3-coder-next": { inputPerMTok: 0.3, outputPerMTok: 1.5, cacheReadPerMTok: 0.3, cacheWritePerMTok: 0.3 },
+  "qwen3-coder-flash": { inputPerMTok: 0.3, outputPerMTok: 1.5, cacheReadPerMTok: 0.3, cacheWritePerMTok: 0.3 },
+  "qwen3.7-plus": { inputPerMTok: 0.4, outputPerMTok: 1.6, cacheReadPerMTok: 0.4, cacheWritePerMTok: 0.4 },
+  "qwen3.8-max": { inputPerMTok: 2, outputPerMTok: 6, cacheReadPerMTok: 2, cacheWritePerMTok: 2 },
+
+  // deepseek (peak rate; same runner, always estimated)
+  "deepseek-v4-pro": { inputPerMTok: 1.32, outputPerMTok: 3.96, cacheReadPerMTok: 0.044, cacheWritePerMTok: 1.32 },
+  "deepseek-v4-flash": { inputPerMTok: 0.44, outputPerMTok: 1.32, cacheReadPerMTok: 0.014, cacheWritePerMTok: 0.44 },
 };
 
 export type EstimatedUsage = {
