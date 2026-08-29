@@ -246,13 +246,16 @@
 }
 
 .repo-branch span {
+  flex: 0 1 auto;
+  min-width: 0;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
 }
 
 .repo-branch code {
-  flex: none;
+  flex: 0 1 auto;
+  min-width: 0;
   max-width: 28ch;
   overflow: hidden;
   color: var(--text-primary);
