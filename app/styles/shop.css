@@ -15,14 +15,14 @@
    stay at zero and motion stays at .16s ease, same as the marketing site. */
 
 .shop-shell {
-  --shop: #c6ccd4;
-  --shop-2: #d3d8df;
-  --sheet: #dce1e7;
-  --bone: #d7dadf;
+  --shop: #eef0f2;
+  --shop-2: #f4f5f7;
+  --sheet: #f9fafb;
+  --bone: #e1e4e7;
   --ink: #12181f;
   --muted: #2c3540;
   --steel: #39424d;
-  --rule: #a9b1bd;
+  --rule: #b6bbc2;
   --edge: #1e262f;
   --accent-ink: #1A3FA6;
   --accent-fill: #1B45B8;
@@ -47,13 +47,56 @@
 }
 
 /* Dark resolution: app theme Light stays on the light shop palette above,
-   Dark and Midnight both resolve to the dark one below (Midnight then
-   layers its own surface shift — see the Polar/Midnight block further
-   down), and System follows the OS only when there is no explicit
-   data-theme. Keep the two dark variable blocks byte-identical, following
-   the same discipline as tokens.css. */
-:root[data-theme="dark"] .shop-shell,
-:root[data-theme="midnight"] .shop-shell {
+   Dark (deep) and Charcoal (warm) resolve to their respective palettes below,
+   and System follows the OS only when there is no explicit data-theme. */
+:root[data-theme="dark"] .shop-shell {
+  color-scheme: dark;
+  --shop: #0a0d11;
+  --shop-2: #0d1014;
+  --sheet: #11151a;
+  --ink: #dfe3e8;
+  --muted: #c2c8d1;
+  --steel: #a6adb7;
+  --rule: #2b323b;
+  --edge: #4e5560;
+  --accent-ink: #7FB0FF;
+  --accent-fill: #6EA3FF;
+  --btn-ink: #0d1319;
+  --attention-ink: #e7b76d;
+  --ready-ink: #6dd4aa;
+  --wave: 190, 200, 214;
+  --usage-tone: #3fd9c0;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) .shop-shell {
+    color-scheme: dark;
+    --shop: #0a0d11;
+    --shop-2: #0d1014;
+    --sheet: #11151a;
+    --ink: #dfe3e8;
+    --muted: #c2c8d1;
+    --steel: #a6adb7;
+    --rule: #2b323b;
+    --edge: #4e5560;
+    --accent-ink: #7FB0FF;
+    --accent-fill: #6EA3FF;
+    --btn-ink: #0d1319;
+    --attention-ink: #e7b76d;
+    --ready-ink: #6dd4aa;
+    --wave: 190, 200, 214;
+  }
+}
+
+/* Stone / Charcoal manual variants */
+:root[data-theme="stone"] .shop-shell {
+  --shop: #c6ccd4;
+  --shop-2: #d3d8df;
+  --sheet: #dce1e7;
+  --rule: #a9b1bd;
+}
+
+:root[data-theme="charcoal"] .shop-shell {
   color-scheme: dark;
   --shop: #20262e;
   --shop-2: #292f37;
@@ -70,47 +113,6 @@
   --ready-ink: #6dd4aa;
   --wave: 190, 200, 214;
   --usage-tone: #3fd9c0;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme]) .shop-shell {
-    color-scheme: dark;
-    --shop: #20262e;
-    --shop-2: #292f37;
-    --sheet: #313740;
-    --ink: #dfe3e8;
-    --muted: #c2c8d1;
-    --steel: #a6adb7;
-    --rule: #404751;
-    --edge: #4e5560;
-    --accent-ink: #7FB0FF;
-    --accent-fill: #6EA3FF;
-    --btn-ink: #0d1319;
-    --attention-ink: #e7b76d;
-    --ready-ink: #6dd4aa;
-    --wave: 190, 200, 214;
-  }
-}
-
-/* Polar/Midnight: same relationship to Light/Dark that the floor
-   (tokens.css, .app-shell/.join-shell) gives them — genuinely distinct
-   manual variants, not an alias. Only the surface stack (--shop/-2/--sheet)
-   and --rule (this shell's line-strong equivalent — see the --rule/--edge
-   note at the top of this file) shift; --ink/--muted/--steel/--edge/accent/
-   status stay whatever the light/dark block above already set. Values are
-   the same family tokens.css uses for .app-shell's own Polar/Midnight. */
-:root[data-theme="polar"] .shop-shell {
-  --shop: #eef0f2;
-  --shop-2: #f4f5f7;
-  --sheet: #f9fafb;
-  --rule: #b6bbc2;
-}
-
-:root[data-theme="midnight"] .shop-shell {
-  --shop: #0a0d11;
-  --shop-2: #0d1014;
-  --sheet: #11151a;
-  --rule: #2b323b;
 }
 
 /* ── Backdrop ────────────────────────────────────────────────────────── */
@@ -452,7 +454,7 @@
 
 .shop-shell .button[data-variant="primary"] { color: var(--accent-ink); font-weight: 700; }
 :root[data-theme="dark"] .shop-shell .button[data-variant="primary"],
-:root[data-theme="midnight"] .shop-shell .button[data-variant="primary"] { color: var(--accent-fill); }
+:root[data-theme="charcoal"] .shop-shell .button[data-variant="primary"] { color: var(--accent-fill); }
 
 .shop-shell .button[data-size="sm"] { padding: 2px 1px; gap: 6px; font-size: 11px; }
 .shop-shell .button[data-size="sm"]::before,

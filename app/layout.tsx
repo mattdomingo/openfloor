@@ -49,7 +49,7 @@ export async function generateMetadata(): Promise<Metadata> {
 
 // Applies a saved manual theme before first paint so it never flashes the
 // other theme. System-followers get no attribute and ride prefers-color-scheme.
-const themeScript = `try{var t=localStorage.getItem("openfloor:theme");if(t==="light"||t==="dark"||t==="polar"||t==="midnight")document.documentElement.dataset.theme=t}catch(e){}`;
+const themeScript = `try{var t=localStorage.getItem("openfloor:theme");if(t==="light"||t==="dark"||t==="stone"||t==="charcoal")document.documentElement.dataset.theme=t}catch(e){}`;
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (

@@ -811,13 +811,18 @@ Separately, the lobby's `SessionSetupDialog`/`setupRequested`/`?setup=1` are del
 
 **Consequences:** Zero runner changes, zero Dockerfile changes beyond §3's image — DeepSeek inherits the Qwen runner's posture, settings, MCP bridge, usage normalization, and thread resume because they are runner properties. Prices are the vendor's PEAK rate (01:00–04:00 and 06:00–10:00 UTC weekdays; off-peak is exactly half), so estimates are an upper bound. The flag stays false until Spike D1 (a scratch DeepSeek key: `/models`, non-stream and SSE, one tool round trip, one real run through the runner per model to pick the default from behavior — including whether the reasoning model's `reasoning_content` needs anything the CLI cannot express) and the flag-flip runbook pass; if D1 shows a model needs a workaround the CLI cannot express, ship the other id only and record why.
 
-### 2026-08-28 — Automatic review reconciliation on run integration and screen mount
+### 2026-08-28 — Theme reorganization: Polar to Light, Midnight to Dark, cream to Stone, and warm dark to Charcoal
 
-**Decision:** Review state automatically stays up to date with GitHub without requiring manual "Refresh GitHub status" clicks.
-1. `AgentRunWorkflow.integrate` (`worker/agent-run-workflow.ts`) calls `getPullRequestReview` and `reconcileCandidateReview` immediately after successfully integrating a run into the candidate branch and merging via GitHub. The subsequent `notifyFloorChanged` includes the `"review"` domain alongside `"queue"`, `"repository"`, and `"runs"` so all connected session members receive the latest PR files and checks.
-2. A dedicated `POST /api/sessions/[id]/review/sync` endpoint (`app/api/sessions/[id]/review/sync/route.ts`) allows any session member (not just the session owner) to reconcile active GitHub pull request data (files, checks, mergeability) into D1 via `getCandidateReviewSyncContext` (`db/repositories.ts`) without changing the pull request's draft status.
-3. `ReviewScreen` (`components/session/ReviewScreen.tsx`) mounts an effect that triggers a silent `onSync` on mount when an active pull request exists, and the "Refresh GitHub status" button now calls `onSync` instead of the owner-only ready route.
+**Decision:** Reorganize the product themes and their names:
+- Default Light mode (formerly `polar`) is now `light`, providing crisp near-white surfaces.
+- Default Dark mode (formerly `midnight`) is now `dark`, providing deep dark surfaces.
+- The warm cream light mode (formerly default `light`) is now `stone`.
+- The warm dark mode (formerly `dark`) is now `charcoal`.
+- `ThemeToggle.tsx` cycles `System` → `Light` → `Stone` → `Dark` → `Charcoal`.
+- `app/layout.tsx` validates `light`, `dark`, `stone`, and `charcoal` for pre-paint inline script hydration.
+- `app/styles/tokens.css` `:root` and `@media (prefers-color-scheme: dark)` provide the new Light and Dark defaults, with explicit `:root[data-theme="stone"]` and `:root[data-theme="charcoal"]` blocks for the warm alternatives across `.app-shell`, `.join-shell`, and `.shop-shell`.
 
-**Rationale:** Previously, when a teammate's agent run completed and merged, `AgentRunWorkflow` updated `repository_candidates` but did not reconcile `repository_candidate_files` or `repository_candidate_checks` from GitHub. As a result, the review page did not display the updated diff or check statuses until an owner clicked "Refresh GitHub status" (which overloaded `/api/sessions/[id]/review/ready`).
+**Rationale:** The crisp near-white palette (former Polar) and deep dark palette (former Midnight) are the preferred modern defaults for the application. Renaming them to Light and Dark simplifies standard theme selection while retaining the warm paper palettes under descriptive names (Stone and Charcoal).
 
-**Consequences:** All members see integrated changes in the Review tab immediately upon completion or when navigating to the Review screen. Review reconciliation is member-safe and read-only, separate from owner-only draft/ready review state mutations.
+**Consequences:** `openfloor:theme` localStorage values are `light`, `dark`, `stone`, and `charcoal`. `shop.css`, `settings.css`, `components.css`, and demo scripts update to target the new theme names.
+

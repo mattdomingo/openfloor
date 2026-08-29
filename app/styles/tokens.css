@@ -1,24 +1,21 @@
 /* Design tokens. Every value used in the interface should resolve to one of these.
 
-   Theming: the bare :root block is the light (cream) theme. The dark values
+   Theming: the bare :root block is the light (crisp near-white) theme. The dark values
    live twice below — once under prefers-color-scheme for the system default,
    once under [data-theme="dark"] for the manual override — and must stay
    identical. html[data-theme] is set pre-paint by the inline script in
-   app/layout.tsx and controlled by components/ThemeToggle.tsx. */
+   app/layout.tsx and controlled by components/ThemeToggle.tsx. Stone and
+   Charcoal provide warm alternative manual themes. */
 
 :root {
   color-scheme: light;
-  /* Surfaces. Each warm paper reads as a distinct layer, darkest to lightest:
-     canvas, chrome band, window body, floating card.
-     App bands use these deliberately:
-       topbar  = raised (clean tool chrome)
-       objective = header (warm content strip)
-       workspace = page (recessed floor for panels) */
-  --surface-page: #e3dac4;
-  --surface-header: #efe6d1;
-  --surface-panel: #f8f3e6;
-  --surface-raised: #fbf6e9;
-  --surface-sunken: #e8ded2;
+  /* Surfaces. Cool crisp papers reading as distinct layers:
+     canvas, chrome band, window body, floating card. */
+  --surface-page: #f4f4f2;
+  --surface-header: #f9f9f7;
+  --surface-panel: #fdfdfc;
+  --surface-raised: #ffffff;
+  --surface-sunken: #ececea;
 
   /* Inverse surfaces, used only by the code workbench. */
   --surface-inverse: #1d211d;
@@ -34,9 +31,9 @@
   --text-inverse-tertiary: #9ca59d;
 
   /* Lines. Strong lines draw window boundaries; soft lines separate rows
-     within a surface. Both are tuned to read clearly on every surface above. */
-  --line-strong: #b9ab8c;
-  --line-soft: #d9cdb3;
+     within a surface. */
+  --line-strong: #b7b7ae;
+  --line-soft: #dcdcd6;
   --line-inverse: #383e39;
 
   /* Accent. One accent for the product; never used to decorate. */
@@ -130,26 +127,26 @@
   --focus-ring: 0 0 0 2px var(--surface-raised), 0 0 0 4px var(--accent-line);
 }
 
-/* Dark theme: warm charcoal papers mirroring the cream stack. The inverse
+/* Dark theme: deep dark papers pushed toward black. The inverse
    (workbench) surfaces, inverse text, and identity tints stay as they are —
    they were born dark-safe. Keep this block and the [data-theme="dark"] block
    below byte-identical. */
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]):not([data-theme="polar"]):not([data-theme="midnight"]) {
+  :root:not([data-theme="light"]):not([data-theme="stone"]):not([data-theme="charcoal"]) {
     color-scheme: dark;
 
-    --surface-page: #171a17;
-    --surface-header: #1d211d;
-    --surface-panel: #232823;
-    --surface-raised: #2a302a;
-    --surface-sunken: #121412;
+    --surface-page: #060706;
+    --surface-header: #0a0b0a;
+    --surface-panel: #0f110f;
+    --surface-raised: #171a17;
+    --surface-sunken: #000000;
 
     --text-primary: #e8ede8;
     --text-secondary: #cbd0c7;
     --text-tertiary: #a9aea4;
 
-    --line-strong: #4a5147;
-    --line-soft: #343a33;
+    --line-strong: #33382f;
+    --line-soft: #202420;
 
     --accent: #e06a45;
     --accent-hover: #eb7f5c;
@@ -167,78 +164,12 @@
     --status-attention: #d09a4a;
     --status-attention-soft: #362b1c;
 
-    --elevation-1: 0 1px 2px rgba(0, 0, 0, 0.5), 0 1px 0 rgba(0, 0, 0, 0.3);
-    --elevation-2: 0 16px 36px rgba(0, 0, 0, 0.55);
+    --elevation-1: 0 1px 2px rgba(0, 0, 0, 0.7), 0 1px 0 rgba(0, 0, 0, 0.4);
+    --elevation-2: 0 16px 36px rgba(0, 0, 0, 0.75);
   }
 }
 
 :root[data-theme="dark"] {
-  color-scheme: dark;
-
-  --surface-page: #171a17;
-  --surface-header: #1d211d;
-  --surface-panel: #232823;
-  --surface-raised: #2a302a;
-  --surface-sunken: #121412;
-
-  --text-primary: #e8ede8;
-  --text-secondary: #cbd0c7;
-  --text-tertiary: #a9aea4;
-
-  --line-strong: #4a5147;
-  --line-soft: #343a33;
-
-  --accent: #e06a45;
-  --accent-hover: #eb7f5c;
-  --accent-soft: #3d2a22;
-  --accent-line: #7c4936;
-
-  --status-running: #5fa886;
-  --status-running-soft: #22322a;
-  --status-blocked: #d96a5e;
-  --status-blocked-soft: #3a2622;
-  --status-review: #7da3c2;
-  --status-review-soft: #232e37;
-  --status-waiting: #a8a398;
-  --status-waiting-soft: #2b2b26;
-  --status-attention: #d09a4a;
-  --status-attention-soft: #362b1c;
-
-  --elevation-1: 0 1px 2px rgba(0, 0, 0, 0.5), 0 1px 0 rgba(0, 0, 0, 0.3);
-  --elevation-2: 0 16px 36px rgba(0, 0, 0, 0.55);
-}
-
-/* Polar: light, drained of the cream's warmth — crisp near-white surfaces.
-   Text/line/accent/status stay exactly the light theme's (still built and
-   tuned for a light background), only the surface stack shifts cooler and
-   brighter. Manual choice only, like dark — no system-preference tie-in. */
-:root[data-theme="polar"] {
-  color-scheme: light;
-
-  --surface-page: #f4f4f2;
-  --surface-header: #f9f9f7;
-  --surface-panel: #fdfdfc;
-  --surface-raised: #ffffff;
-  --surface-sunken: #ececea;
-
-  /* Text stays explicit (not inherited from the bare :root) so this theme
-     can never pick up the dark-preference block's near-white values by
-     accident — same reasoning as dark/midnight duplicating their own. */
-  --text-primary: #1f241f;
-  --text-secondary: #45443d;
-  --text-tertiary: #605d53;
-
-  /* Darker than a literal near-white gray: against surfaces this pale, a
-     line needs real luminance separation to read at all, let alone as a
-     dashed 1px outline at avatar size. */
-  --line-strong: #b7b7ae;
-  --line-soft: #dcdcd6;
-}
-
-/* Midnight: dark, pushed past charcoal toward black. Same relationship to
-   dark that polar has to light — only the surface stack moves, text/accent/
-   status keep dark's already-tuned contrast against a darker floor. */
-:root[data-theme="midnight"] {
   color-scheme: dark;
 
   --surface-page: #060706;
@@ -274,6 +205,81 @@
   --elevation-2: 0 16px 36px rgba(0, 0, 0, 0.75);
 }
 
+/* Stone: light, warm cream papers. Manual choice only. */
+:root[data-theme="stone"] {
+  color-scheme: light;
+
+  --surface-page: #e3dac4;
+  --surface-header: #efe6d1;
+  --surface-panel: #f8f3e6;
+  --surface-raised: #fbf6e9;
+  --surface-sunken: #e8ded2;
+
+  --text-primary: #1f241f;
+  --text-secondary: #45443d;
+  --text-tertiary: #605d53;
+
+  --line-strong: #b9ab8c;
+  --line-soft: #d9cdb3;
+
+  --accent: #cf5330;
+  --accent-hover: #b8462a;
+  --accent-soft: #f9e6dd;
+  --accent-line: #e6b39c;
+  --accent-contrast: #fffdf8;
+
+  --status-running: #3d7b61;
+  --status-running-soft: #e3efe7;
+  --status-blocked: #b8453a;
+  --status-blocked-soft: #f8e3de;
+  --status-review: #4c6d88;
+  --status-review-soft: #e2eaf0;
+  --status-waiting: #6e695e;
+  --status-waiting-soft: #ebe6da;
+  --status-attention: #b5761f;
+  --status-attention-soft: #f6e9d2;
+
+  --elevation-1: 0 1px 2px rgba(40, 32, 18, 0.1), 0 1px 0 rgba(40, 32, 18, 0.04);
+  --elevation-2: 0 16px 36px rgba(40, 32, 18, 0.18);
+}
+
+/* Charcoal: dark, warm charcoal papers mirroring the cream stack. Manual choice only. */
+:root[data-theme="charcoal"] {
+  color-scheme: dark;
+
+  --surface-page: #171a17;
+  --surface-header: #1d211d;
+  --surface-panel: #232823;
+  --surface-raised: #2a302a;
+  --surface-sunken: #121412;
+
+  --text-primary: #e8ede8;
+  --text-secondary: #cbd0c7;
+  --text-tertiary: #a9aea4;
+
+  --line-strong: #4a5147;
+  --line-soft: #343a33;
+
+  --accent: #e06a45;
+  --accent-hover: #eb7f5c;
+  --accent-soft: #3d2a22;
+  --accent-line: #7c4936;
+
+  --status-running: #5fa886;
+  --status-running-soft: #22322a;
+  --status-blocked: #d96a5e;
+  --status-blocked-soft: #3a2622;
+  --status-review: #7da3c2;
+  --status-review-soft: #232e37;
+  --status-waiting: #a8a398;
+  --status-waiting-soft: #2b2b26;
+  --status-attention: #d09a4a;
+  --status-attention-soft: #362b1c;
+
+  --elevation-1: 0 1px 2px rgba(0, 0, 0, 0.5), 0 1px 0 rgba(0, 0, 0, 0.3);
+  --elevation-2: 0 16px 36px rgba(0, 0, 0, 0.55);
+}
+
 /* Floor + join palette: the session floor (.app-shell,
    components/session/Workspace.tsx) and the invite page (.join-shell,
    components/product/JoinScreen.tsx) resolve onto the same cool blue-gray
@@ -295,25 +301,25 @@
   color-scheme: light;
   background: var(--surface-page);
   /* `color` is inheritable and body (legacy-floor-base.css) already resolved
-     it from the bare :root's cream --text-primary before this element is
+     it from the bare :root's --text-primary before this element is
      reached — declaring it again here, like .shop-shell does (shop.css:39),
      restarts inheritance from .app-shell's own --text-primary so descendants
      that don't set `color` themselves (e.g. .panel-head) pick up this palette
-     instead of the cream one. */
+     instead of the default one. */
   color: var(--text-primary);
 
-  --surface-page: #c6ccd4;
-  --surface-header: #d3d8df;
-  --surface-panel: #dce1e7;
-  --surface-raised: #e6eaee;
-  --surface-sunken: #b9c0c9;
+  --surface-page: #eef0f2;
+  --surface-header: #f4f5f7;
+  --surface-panel: #f9fafb;
+  --surface-raised: #ffffff;
+  --surface-sunken: #e1e4e7;
 
   --text-primary: #12181f;
   --text-secondary: #2c3540;
   --text-tertiary: #39424d;
 
-  --line-strong: #a9b1bd;
-  --line-soft: #c2c9d1;
+  --line-strong: #b6bbc2;
+  --line-soft: #dadee2;
 
   --accent: #1b45b8;
   --accent-hover: #143391;
@@ -346,9 +352,60 @@
 }
 
 :root[data-theme="dark"] .app-shell,
-:root[data-theme="dark"] .join-shell,
-:root[data-theme="midnight"] .app-shell,
-:root[data-theme="midnight"] .join-shell {
+:root[data-theme="dark"] .join-shell {
+  color-scheme: dark;
+
+  --surface-page: #0a0d11;
+  --surface-header: #0d1014;
+  --surface-panel: #11151a;
+  --surface-raised: #171c22;
+  --surface-sunken: #000000;
+
+  --text-primary: #dfe3e8;
+  --text-secondary: #c2c8d1;
+  --text-tertiary: #a6adb7;
+
+  --line-strong: #2b323b;
+  --line-soft: #1a1f25;
+
+  --accent: #6ea3ff;
+  --accent-hover: #7fb0ff;
+  --accent-soft: #1e2c44;
+  --accent-line: #38507a;
+  --accent-contrast: #0d1319;
+
+  --status-running: #6dd4aa;
+  --status-running-soft: #1f3a31;
+  --status-blocked: #e08b80;
+  --status-blocked-soft: #3c2723;
+  --status-review: #8fb6da;
+  --status-review-soft: #232f3c;
+  --status-waiting: #98a1ac;
+  --status-waiting-soft: #2a2f36;
+  --status-attention: #e7b76d;
+  --status-attention-soft: #3a301c;
+
+  --elevation-1: 0 1px 2px rgba(0, 0, 0, 0.7), 0 1px 0 rgba(0, 0, 0, 0.4);
+  --elevation-2: 0 16px 36px rgba(0, 0, 0, 0.75);
+}
+
+/* Floor + join Stone/Charcoal: manual variants */
+:root[data-theme="stone"] .app-shell,
+:root[data-theme="stone"] .join-shell {
+  color-scheme: light;
+
+  --surface-page: #c6ccd4;
+  --surface-header: #d3d8df;
+  --surface-panel: #dce1e7;
+  --surface-raised: #e6eaee;
+  --surface-sunken: #b9c0c9;
+
+  --line-strong: #a9b1bd;
+  --line-soft: #c2c9d1;
+}
+
+:root[data-theme="charcoal"] .app-shell,
+:root[data-theme="charcoal"] .join-shell {
   color-scheme: dark;
 
   --surface-page: #20262e;
@@ -385,60 +442,23 @@
   --elevation-2: 0 16px 36px rgba(0, 0, 0, 0.55);
 }
 
-/* Floor + join Polar/Midnight: genuinely distinct manual variants, not an
-   alias to Light/Dark — same relationship the original cream Polar/Midnight
-   blocks above had to Light/Dark: only the surface + line stack shifts
-   (cooler/near-white for Polar, pushed past charcoal for Midnight); text,
-   accent, and status stay whatever the light/dark .app-shell, .join-shell
-   block above already set, so they're intentionally not redeclared here. */
-:root[data-theme="polar"] .app-shell,
-:root[data-theme="polar"] .join-shell {
-  color-scheme: light;
-
-  --surface-page: #eef0f2;
-  --surface-header: #f4f5f7;
-  --surface-panel: #f9fafb;
-  --surface-raised: #ffffff;
-  --surface-sunken: #e1e4e7;
-
-  --line-strong: #b6bbc2;
-  --line-soft: #dadee2;
-}
-
-:root[data-theme="midnight"] .app-shell,
-:root[data-theme="midnight"] .join-shell {
-  color-scheme: dark;
-
-  --surface-page: #0a0d11;
-  --surface-header: #0d1014;
-  --surface-panel: #11151a;
-  --surface-raised: #171c22;
-  --surface-sunken: #000000;
-
-  --line-strong: #2b323b;
-  --line-soft: #1a1f25;
-
-  --elevation-1: 0 1px 2px rgba(0, 0, 0, 0.7), 0 1px 0 rgba(0, 0, 0, 0.4);
-  --elevation-2: 0 16px 36px rgba(0, 0, 0, 0.75);
-}
-
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme]) .app-shell,
   :root:not([data-theme]) .join-shell {
     color-scheme: dark;
 
-    --surface-page: #20262e;
-    --surface-header: #292f37;
-    --surface-panel: #313740;
-    --surface-raised: #3a4149;
-    --surface-sunken: #171c22;
+    --surface-page: #0a0d11;
+    --surface-header: #0d1014;
+    --surface-panel: #11151a;
+    --surface-raised: #171c22;
+    --surface-sunken: #000000;
 
     --text-primary: #dfe3e8;
     --text-secondary: #c2c8d1;
     --text-tertiary: #a6adb7;
 
-    --line-strong: #4e5560;
-    --line-soft: #404751;
+    --line-strong: #2b323b;
+    --line-soft: #1a1f25;
 
     --accent: #6ea3ff;
     --accent-hover: #7fb0ff;
@@ -457,7 +477,7 @@
     --status-attention: #e7b76d;
     --status-attention-soft: #3a301c;
 
-    --elevation-1: 0 1px 2px rgba(0, 0, 0, 0.5), 0 1px 0 rgba(0, 0, 0, 0.3);
-    --elevation-2: 0 16px 36px rgba(0, 0, 0, 0.55);
+    --elevation-1: 0 1px 2px rgba(0, 0, 0, 0.7), 0 1px 0 rgba(0, 0, 0, 0.4);
+    --elevation-2: 0 16px 36px rgba(0, 0, 0, 0.75);
   }
 }
