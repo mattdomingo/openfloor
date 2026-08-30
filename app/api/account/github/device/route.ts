@@ -134,7 +134,7 @@ export async function PUT(request: Request) {
     // member's token can reach and scope the link to exactly those. A failed
     // scope read skips the link rather than guessing.
     const repoScope = await listUserInstallationRepositoryIds(token.access_token, String(installation.id));
-    if (repoScope == null) continue;
+    if (!repoScope || repoScope.length === 0) continue;
     await linkUserGitHubInstallation(user.id, String(installation.id), {
       login: installation.account?.login ?? "unknown",
       type: installation.account?.type ?? "User",

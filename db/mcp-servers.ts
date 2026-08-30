@@ -1,6 +1,7 @@
 import { decryptCredential, encryptCredential } from "@/lib/credential-crypto";
 import {
   MAX_MCP_SERVERS_PER_SESSION,
+  isSafeMcpUrl,
   type McpServerCreateInput,
   type McpServerRuntimeConfig,
   type McpServerUpdateInput,
@@ -163,6 +164,11 @@ export async function getEnabledMcpServersForRun(
     .all<{ id: string; name: string; transport: McpTransport; url: string; headersCiphertext: string | null }>();
   const servers: McpServerRuntimeConfig[] = [];
   for (const row of rows.results) {
+    // Revalidate at execution time so rows written before stricter URL
+    // validation (or modified outside this service) fail closed.
+    if (!isSafeMcpUrl(row.url)) {
+      throw new Error(`MCP server "${row.name}" uses a blocked URL. Update or remove it in the session lobby.`);
+    }
     let headers: Record<string, string> | null = null;
     if (row.headersCiphertext) {
       const decrypted = await decryptCredential(row.headersCiphertext, encryptionSecret, `mcp:${row.id}`);

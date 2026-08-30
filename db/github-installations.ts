@@ -37,14 +37,14 @@ export async function consumeGitHubAccountConnectionState(
   stateId: string,
   userId: string,
   installationId: string,
-  account: { login: string; type: string },
+  account: { login: string; type: string } | null,
   repoScope: string[],
   database = getDb(),
 ): Promise<{ purpose: GitHubAccountConnectionPurpose; returnTo: string } | null> {
   const now = Date.now();
-  const installationRowId = crypto.randomUUID();
-  const results = await database.batch([
-    database.prepare(
+  const statements = [];
+  if (account && repoScope.length > 0) {
+    statements.push(database.prepare(
       `INSERT INTO user_github_installations
        (id, user_id, installation_id, account_login, account_type, status, repo_scope, connected_at, updated_at)
        SELECT ?, user_id, ?, ?, ?, 'active', ?, ?, ?
@@ -56,13 +56,15 @@ export async function consumeGitHubAccountConnectionState(
          status = 'active',
          repo_scope = excluded.repo_scope,
          updated_at = excluded.updated_at`,
-    ).bind(installationRowId, installationId, account.login, account.type, JSON.stringify(repoScope), now, now, stateId, userId, now),
-    database.prepare(
-      `UPDATE github_account_connection_states SET used_at = ?
-       WHERE id = ? AND user_id = ? AND used_at IS NULL AND expires_at > ?`,
-    ).bind(now, stateId, userId, now),
-  ]);
-  if (!results[1]?.success || Number(results[1].meta?.changes ?? 0) !== 1) return null;
+    ).bind(crypto.randomUUID(), installationId, account.login, account.type, JSON.stringify(repoScope), now, now, stateId, userId, now));
+  }
+  statements.push(database.prepare(
+    `UPDATE github_account_connection_states SET used_at = ?
+     WHERE id = ? AND user_id = ? AND used_at IS NULL AND expires_at > ?`,
+  ).bind(now, stateId, userId, now));
+  const results = await database.batch(statements);
+  const consumedResult = results[results.length - 1];
+  if (!consumedResult?.success || Number(consumedResult.meta?.changes ?? 0) !== 1) return null;
   return database.prepare(
     "SELECT purpose, return_to AS returnTo FROM github_account_connection_states WHERE id = ? AND user_id = ?",
   ).bind(stateId, userId).first<{ purpose: GitHubAccountConnectionPurpose; returnTo: string }>();
@@ -81,6 +83,7 @@ export async function linkUserGitHubInstallation(
   repoScope: string[],
   database = getDb(),
 ): Promise<void> {
+  if (repoScope.length === 0) return;
   const now = Date.now();
   await database.prepare(
     `INSERT INTO user_github_installations
@@ -115,7 +118,8 @@ export async function listUserGitHubInstallations(
     `SELECT id, account_login AS accountLogin, account_type AS accountType, status,
             json_array_length(repo_scope) AS repoCount,
             connected_at AS connectedAt, updated_at AS updatedAt
-     FROM user_github_installations WHERE user_id = ?
+     FROM user_github_installations
+     WHERE user_id = ? AND json_valid(repo_scope) AND json_array_length(repo_scope) > 0
      ORDER BY account_login COLLATE NOCASE, connected_at`,
   ).bind(userId).all<UserGitHubInstallationSummary>();
   return rows.results;
@@ -126,7 +130,9 @@ export async function hasActiveUserGitHubInstallation(
   database = getDb(),
 ): Promise<boolean> {
   return Boolean(await database.prepare(
-    "SELECT 1 AS present FROM user_github_installations WHERE user_id = ? AND status = 'active' LIMIT 1",
+    `SELECT 1 AS present FROM user_github_installations
+     WHERE user_id = ? AND status = 'active' AND json_valid(repo_scope)
+       AND json_array_length(repo_scope) > 0 LIMIT 1`,
   ).bind(userId).first());
 }
 
@@ -207,7 +213,8 @@ async function activeInstallationRecords(
     `SELECT id, installation_id AS installationId, account_login AS accountLogin,
             account_type AS accountType, status, repo_scope AS repoScope,
             connected_at AS connectedAt, updated_at AS updatedAt
-     FROM user_github_installations WHERE user_id = ? AND status = 'active'
+     FROM user_github_installations
+     WHERE user_id = ? AND status = 'active' AND json_valid(repo_scope) AND json_array_length(repo_scope) > 0
      ORDER BY connected_at, id`,
   ).bind(userId).all<InstallationRecord>();
   return rows.results;
