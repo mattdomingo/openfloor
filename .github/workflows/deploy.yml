@@ -46,21 +46,17 @@ jobs:
           npm run test:render
       - name: Run browser test gate
         env:
-          WRANGLER_LOG: debug
-          WRANGLER_LOG_PATH: ${{ runner.temp }}/openfloor-e2e-wrangler.log
+          OPENFLOOR_E2E_SERVER_EXIT_MARKER: ${{ runner.temp }}/openfloor-e2e-server-${{ github.run_id }}-${{ github.run_attempt }}.exit
         run: |
           if npm run test:e2e; then
             exit 0
           fi
 
           # Wrangler 4.127.1 can fatally drop its local ProxyWorker connection
-          # on Linux CI (workers-sdk#15317). Retry once only when its private
-          # debug log proves that exact upstream failure; application and test
-          # failures remain red, and a failed retry remains red.
-          grep -Fq "Error inside ProxyWorker" "$WRANGLER_LOG_PATH"
-          grep -Fq "Network connection lost." "$WRANGLER_LOG_PATH"
-          grep -Fq "castErrorCause" "$WRANGLER_LOG_PATH"
-          grep -Fq "handleLoopback" "$WRANGLER_LOG_PATH"
+          # on Linux CI (workers-sdk#15317). Retry once only when the test
+          # harness directly observed its Wrangler child die unexpectedly;
+          # application/test failures remain red, and a failed retry stays red.
+          test -f "$OPENFLOOR_E2E_SERVER_EXIT_MARKER"
           npm run test:e2e
       - run: npx wrangler d1 migrations apply DB --remote
         if: github.event_name == 'push'

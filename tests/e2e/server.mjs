@@ -1,10 +1,11 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 
 const statePath = mkdtempSync(join(tmpdir(), "openfloor-e2e-"));
 const port = process.env.OPENFLOOR_E2E_PORT ?? "8787";
+const unexpectedExitMarker = process.env.OPENFLOOR_E2E_SERVER_EXIT_MARKER;
 const githubTestData = JSON.stringify({
   installationId: "test-installation",
   repositories: [{
@@ -98,7 +99,10 @@ const server = spawn("npx", [
   "--show-interactive-dev-session=false",
 ], { stdio: "inherit" });
 
+let stopping = false;
+
 function stop(signal) {
+  stopping = true;
   server.kill(signal);
   rmSync(statePath, { recursive: true, force: true });
 }
@@ -106,6 +110,9 @@ function stop(signal) {
 process.on("SIGINT", () => stop("SIGINT"));
 process.on("SIGTERM", () => stop("SIGTERM"));
 server.on("exit", (code) => {
+  if (!stopping && unexpectedExitMarker) {
+    writeFileSync(unexpectedExitMarker, `${code ?? "signal"}\n`, { flag: "wx" });
+  }
   rmSync(statePath, { recursive: true, force: true });
   process.exit(code ?? 0);
 });
