@@ -315,6 +315,7 @@ describe("D1 persistent floor", () => {
     await expect(pauseFloorAgent(room.sessionId, room.member.id, agentId, false, env.DB)).rejects.toBeInstanceOf(FloorTargetError);
 
     await expect(pauseFloorAgent(room.sessionId, room.owner.id, answer.id, true, env.DB)).rejects.toBeInstanceOf(FloorConflictError);
+    await expect(pauseFloorAgent(room.sessionId, room.member.id, answer.id, false, env.DB)).rejects.toBeInstanceOf(FloorConflictError);
     floor = await pauseFloorAgent(room.sessionId, room.member.id, worker.id, true, env.DB);
     expect(floor!.agents.find((agent) => agent.id === worker.id)?.pausedAt).not.toBeNull();
     floor = await pauseFloorAgent(room.sessionId, room.owner.id, worker.id, false, env.DB);

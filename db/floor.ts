@@ -625,7 +625,9 @@ export async function pauseFloorAgent(
   const role = await getActiveMembershipRole(sessionId, userId, database);
   if (!role) return null;
   if (!paused) {
-    const owner = await database.prepare("SELECT owner_user_id AS ownerUserId FROM floor_agents WHERE id = ? AND session_id = ?").bind(agentId, sessionId).first<{ ownerUserId: string }>();
+    const owner = await database.prepare(
+      "SELECT owner_user_id AS ownerUserId FROM floor_agents WHERE id = ? AND session_id = ? AND (kind IS NULL OR kind = 'worker') AND deprovisioned_at IS NULL",
+    ).bind(agentId, sessionId).first<{ ownerUserId: string }>();
     if (owner && owner.ownerUserId !== userId) throw new FloorTargetError("Only this agent's owner can resume it.");
   }
   const now = Date.now();
