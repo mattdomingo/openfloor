@@ -505,6 +505,8 @@ Bindings (`wrangler.jsonc`): `DB`, `SESSION_PRESENCE`, `ASSETS`, `IMAGES`, `REPO
 
 Rollout gate flags: `PREFLIGHT_ENABLED`, `AGENT_RUN_ENABLED`, `STRIPE_CHECKOUT_ENABLED`, `CLAUDE_RUN_ENABLED`, `KIMI_RUN_ENABLED`, `GEMINI_RUN_ENABLED`, `GLM_RUN_ENABLED`, `QWEN_RUN_ENABLED`, `DEEPSEEK_RUN_ENABLED`. `AGENT_RUN_ENABLED` is currently false as a security hold: provider CLIs and repository commands share a Linux uid, so same-uid `/proc` reads can expose a CLI's initial gateway token despite child-environment filtering. Do not enable it until an adversarial container test proves a separate-uid or equivalent process boundary. Durable Object migration `v1` registers `SessionPresence`; `v2` registers `Sandbox`.
 
+Runner credential containment is defense in depth while that gate is closed. Codex receives an explicit minimal SDK environment and uses `shell_environment_policy.inherit = "none"` plus an explicit safe command environment. Gemini/Qwen preload `scripts/runner-env-preload.mjs`, whose allowlist covers every supported `node:child_process` API and both array/options overloads; only the exact built-in MCP command may receive its explicit context/conflict variables. Preserve the allowlist and overload tests when changing a runner.
+
 See [`docs/deployment-config.md`](docs/deployment-config.md) for what each binding is for and the full explanation of every rollout gate (what stays true while it's off, what must be live before flipping it, and the rollback behavior).
 
 ### Required secrets
@@ -594,7 +596,7 @@ Pushes to `main` run this exact sequence automatically via `.github/workflows/de
 - Preserve invalid-invite and non-member metadata concealment.
 - Preserve the Worker-wide unsafe-`/api/*` browser mutation guard and response security headers. Headerless requests remain supported for trusted non-browser clients; cross-site Fetch Metadata or a mismatched `Origin` must fail before application routing.
 - Remote MCP endpoints are untrusted egress. Require HTTPS on port 443, reject URL credentials and local/internal/non-global literal addresses at write time, and revalidate stored rows at dispatch. DNS rebinding and hostile public MCP responses remain residual risks.
-- Enqueue internal-ID-derived R2 prefixes before deleting sessions or scrubbing accounts. The scheduled cleaner must keep session-scoped jobs until the source session is gone, retry failures, paginate, and require the 24-hour delayed-write hold plus a final empty confirmation before removing an intent.
+- Enqueue internal-ID-derived R2 prefixes before deleting sessions or scrubbing accounts. The scheduled cleaner must keep session-scoped jobs until the source session is gone, defer live-source rows so the 25-job window cannot starve later work, retry failures, paginate, and require the 24-hour delayed-write hold plus a final empty confirmation before removing an intent. Retention purges at most 25 sessions per scheduled invocation.
 
 ### Git and change hygiene
 

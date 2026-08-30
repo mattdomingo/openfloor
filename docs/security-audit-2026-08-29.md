@@ -33,25 +33,25 @@ No production dependency advisory remains. Full development audit reports four m
 
 **Evidence:** Codex, Gemini, Qwen, built-in MCP, and repository-controlled child processes were traced through `worker/agent-run-workflow.ts`, runner scripts, container users, environment variables, command lines, and Linux process semantics. Child environment filtering prevents ordinary inheritance, but deleting or overwriting `process.env` does not remove the process's initial environment from `/proc/<pid>/environ`. Provider CLI and repository commands run as `openfloor-agent`, so same-uid inspection remains possible.
 
-**Fix/containment:** Codex now sets `shell_environment_policy.inherit = "none"` and receives only its minimal SDK environment. Built-in MCP tokens are supplied only through the explicit MCP process `env_vars`. Gemini/Qwen preload `scripts/runner-env-preload.mjs`, which strips provider, event, context, and conflicting authentication variables from repository-controlled child shells while exempting only the explicit built-in MCP process. The Sandbox base image is digest-pinned; `undici` is `7.29.0`; pool version is `v7`. Because these changes do not defeat same-uid `/proc`, production `AGENT_RUN_ENABLED` is false.
+**Fix/containment:** Codex now receives only a minimal SDK environment and sets `shell_environment_policy.inherit = "none"` with an explicit safe command environment, preserving `PATH`/`HOME` without inheriting runner credentials. Built-in MCP tokens are supplied only through the explicit MCP process `env_vars`. Gemini/Qwen preload `scripts/runner-env-preload.mjs`, which applies a safe environment allowlist across `spawn`, `spawnSync`, `exec`, `execSync`, `execFile`, `execFileSync`, and `fork`, handles both array/options overloads without dropping caller options, synchronizes patched ESM exports, and exempts only the exact built-in MCP command for its explicit context/conflict variables. The Sandbox base image is digest-pinned; `undici` is `7.29.0`; pool version is `v8`. Because these JavaScript defenses do not defeat same-uid `/proc`, production `AGENT_RUN_ENABLED` is false.
 
 **Functionality impact:** all production agent runs are unavailable while the global gate is false, regardless of provider-specific gates. Preflight remains independently gated.
 
 **Residual risk/inherent risk:** enabling agent execution remains inherently risky even after credential isolation: repository code and model-directed commands execute in containers with selected network access. Required follow-up is a separate uid/process namespace or equivalent kernel-enforced boundary, then adversarial tests covering environment, child processes, command lines, and `/proc` for every provider and built-in MCP.
 
-**Verification:** unit tests pin runner environment construction and stripping. Local image validation could not complete because Docker Desktop was unavailable (`Cannot connect to the Docker daemon`); this does not weaken the production hold, which stays closed.
+**Verification:** unit probes cover every wrapped synchronous/asynchronous child-process family, the two-argument options overload, caller-option preservation, safe `PATH`/`HOME`, exact built-in MCP matching, expanded provider-secret examples, and Codex's explicit SDK/shell environment construction. Local image validation could not complete because Docker Desktop was unavailable (`Cannot connect to the Docker daemon`); this does not weaken the production hold, which stays closed.
 
 ### SEC-03 — D1 deletion left private R2 artifacts behind (High, fixed)
 
 **Evidence:** session/account/retention deletion cascaded D1 rows but did not durably delete `sessions/<id>/`, `runs/<id>/`, `preflights/<id>/`, `conflicts/<id>/`, or account-avatar objects. R2 has no transaction with D1, and delayed Workflow writes could recreate data after a one-shot deletion.
 
-**Fix:** migrations `0042`/`0043` add `storage_cleanup_prefixes`. `db/storage-cleanup.ts` derives internal-ID prefixes and enqueues them before session deletion, account scrubbing, or the 30-day retention purge. Scheduled cleanup processes 25 jobs per sweep, lists up to 10,000 objects per job, deletes in 1,000-key batches, retries failures independently, and skips a source job while its session exists. A first empty scan starts a 24-hour hold; only a second empty confirmation removes the durable intent.
+**Fix:** migrations `0042`/`0043` add `storage_cleanup_prefixes`. `db/storage-cleanup.ts` derives internal-ID prefixes and enqueues them before session deletion, account scrubbing, or the 30-day retention purge. Retention selects at most 25 sessions per invocation. Scheduled cleanup processes 25 jobs per sweep, lists up to 10,000 objects per job, deletes in 1,000-key batches, retries failures independently, and pushes a live-source job's due time forward so a full window cannot starve later work. A first empty scan starts a 24-hour hold; only a second empty confirmation removes the durable intent.
 
 **Functionality impact:** deleted session/account artifacts become unrecoverable after cleanup. Cleanup is asynchronous and may take more than 24 hours by design.
 
 **Residual risk:** objects written under an unrecorded or nonstandard key are outside prefix cleanup. Future R2 writers must use documented internal-ID prefixes and add their prefix to `sessionPrefixes`.
 
-**Verification:** worker tests cover queued prefixes for manual session deletion, account deletion, retention purge, paginated object deletion, delayed empty confirmation, and durable retry behavior.
+**Verification:** worker tests cover queued prefixes for manual session deletion, account deletion, bounded retention purge, paginated object deletion, delayed empty confirmation, durable retry behavior, and a full 25-row live-source starvation window.
 
 ### SEC-04 — Remote MCP accepted SSRF-prone endpoints (High, fixed with residual DNS risk)
 
@@ -105,7 +105,7 @@ No production dependency advisory remains. Full development audit reports four m
 
 **Evidence:** older Cloudflare/Vite tooling and Sandbox `undici` carried avoidable advisory/provenance exposure; the Sandbox base used a mutable tag. `drizzle-kit` retains nested legacy `esbuild` advisories.
 
-**Fix:** upgraded `@cloudflare/vite-plugin` to `^1.54.2`, Wrangler to `^4.127.1`, Vite to `^8.2.2`, `@cloudflare/workers-types` to `^5.20260830.1`, `vinext` to `^1.0.0-beta.8`, and `@vitejs/plugin-rsc` to `^0.5.34`. The vinext/RSC pair passed typecheck and production build together. Sandbox `undici` is `7.29.0`; the `cloudflare/sandbox:0.12.7` base is pinned by digest.
+**Fix:** upgraded and exactly pinned `@cloudflare/vite-plugin` to `1.54.2`, Wrangler to `4.127.1`, Vite to `8.2.2`, `@cloudflare/workers-types` to `5.20260830.1`, `vinext` to `1.0.0-beta.8`, and `@vitejs/plugin-rsc` to `0.5.34`. The vinext/RSC pair passed typecheck and production build together. Sandbox `undici` is `7.29.0`; the `cloudflare/sandbox:0.12.7` base is pinned by digest.
 
 **Functionality impact:** no intended application behavior change. Vite emits a future native config-loader warning about JSON import attributes/extensions; build succeeds.
 
@@ -125,17 +125,17 @@ No production dependency advisory remains. Full development audit reports four m
 
 - `npm run typecheck`: passed.
 - `npm run lint`: passed with two pre-existing `@next/next/no-img-element` warnings.
-- `npm run test:unit`: passed, 47 files / 313 tests.
-- Focused security worker suites: passed, 5 files / 110 tests.
-- `npm run test:migrations`: passed, 8 files / 162 tests, including exact `0042` quarantine replay.
-- `npm run test:worker`: passed, 6 files / 82 tests.
+- `npm test` with `OPENFLOOR_E2E_PORT=8933`: passed end to end.
+- `npm run test:unit`: passed, 47 files / 315 tests.
+- `npm run test:migrations`: passed, 8 files / 163 tests, including exact `0042` quarantine replay and bounded retention purge.
+- `npm run test:worker`: passed, 6 files / 83 tests, including full-window cleanup starvation coverage.
 - `npm run test:render`: passed, 6 files / 45 tests.
 - `npm run build`: passed with the documented future config-loader warning.
 - `npm audit --omit=dev`: passed, zero advisories.
 - Full `npm audit`: four moderate development-only advisories under `drizzle-kit`.
 - `git diff --check`: passed.
 - Sandbox image build: blocked locally because Docker Desktop daemon was unavailable. Production execution remains disabled, so no unverified image is authorized for runs.
-- End-to-end suite: 10 of 11 tests passed in each full-suite attempt; the long pre-existing persistent-session scenario failed at two different eventual-consistency assertions. Its isolated rerun passed. This is reported as an unrelated flaky result rather than security-regression evidence.
+- End-to-end suite: passed, 11 of 11 tests. Port `8933` avoids the unrelated standing process on default port `8787`.
 
 ## Required operational follow-up before enabling agent execution
 
