@@ -101,7 +101,7 @@ Production code must not seed, fabricate, or animate agents, prompts, messages, 
 
 openfloor has three intentionally separate state classes:
 
-1. **D1-authoritative application state**: users, Stripe entitlement projections, sessions, memberships, invites, objective, routing settings, agents, assignments, messages, queue items, queue prompts, ordering, agent-run rollback groups/attempts, merge-conflict cases/attempts/questions, and floor revision. Stripe remains authoritative for the external subscription lifecycle; D1 owns the product-facing projection.
+1. **D1-authoritative application state**: users, Stripe entitlement projections, sessions, memberships, invites, objective, routing settings, agents, assignments, messages, queue items, queue prompts, ordering, agent-run rollback groups/attempts, merge-conflict cases/attempts/questions, durable private-storage cleanup intents, and floor revision. Stripe remains authoritative for the external subscription lifecycle; D1 owns the product-facing projection.
 2. **Durable Object-coordinated ephemeral state**: online connections and teammate prompt drafts. This state is realtime but is not D1 history.
 3. **Local UI state**: selected tabs, panel order and size, collapsed or expanded panels, queue filters, menus, dialogs, the current onboarding step and its unsaved profile/plan inputs, and the local visibility choice for teammate drafts.
 
@@ -115,6 +115,7 @@ Do not persist an ephemeral interaction merely because D1 is available. Do not l
 - The WebSocket upgrade is authenticated and membership-checked before the request reaches the Durable Object.
 - Client-provided user IDs are never trusted as the acting identity.
 - Targets such as agent owners, assignment owners, message recipients, agents, and queue items must belong to the same session.
+- A member-created persistent agent is always owned by its authenticated creator. Teammates may edit its task and use Pause/Stop as safety controls, but only the recorded agent owner may change its model/billing choice or resume it. Bulk resume is scoped to the caller's own agents.
 - Non-members receive the same not-found response as nonexistent sessions. This concealment prevents metadata enumeration.
 
 ### Missing capabilities stay absent
@@ -196,7 +197,7 @@ Per-session WebSocket
 - `SessionPresence` is a SQLite-backed Durable Object bound as `SESSION_PRESENCE`.
 - `RepositoryPreflightWorkflow` is bound as `REPOSITORY_PREFLIGHT`; it durably coordinates exact-source checkout, ordered checks, result persistence, and cleanup.
 - `AgentRunWorkflow` is bound as `AGENT_RUN_WORKFLOW`; it durably coordinates exact-source checkout, Codex, required checks, Git-bundle export, trusted publication, reconciliation, cancellation, and cleanup.
-- `Sandbox` is the `@cloudflare/sandbox` Durable Object bound as `SANDBOX`, backed by the matching `cloudflare/sandbox:0.12.7` container image.
+- `Sandbox` is the `@cloudflare/sandbox` Durable Object bound as `SANDBOX`, backed by the matching digest-pinned `cloudflare/sandbox:0.12.7` container image.
 - Private bounded preflight and run artifacts are stored in R2 bucket `openfloor-preflight-logs`, bound as `PREFLIGHT_LOGS`.
 - Cloudflare static assets are bound as `ASSETS`.
 - Cloudflare Images is bound as `IMAGES` for vinext image optimization.
@@ -500,9 +501,9 @@ Viewer-local timestamps are shown through `components/LocalDateTime.tsx`: it ren
 
 ### Required bindings
 
-Bindings (`wrangler.jsonc`): `DB`, `SESSION_PRESENCE`, `ASSETS`, `IMAGES`, `REPOSITORY_PREFLIGHT`, `AGENT_RUN_WORKFLOW`, `SANDBOX`, `PREFLIGHT_LOGS`.
+Bindings (`wrangler.jsonc`): `DB`, `SESSION_PRESENCE`, `ASSETS`, `IMAGES`, `REPOSITORY_PREFLIGHT`, `AGENT_RUN_WORKFLOW`, `SANDBOX`, `PREFLIGHT_LOGS`, `USER_AVATARS`.
 
-Rollout gate flags: `PREFLIGHT_ENABLED`, `AGENT_RUN_ENABLED`, `STRIPE_CHECKOUT_ENABLED`, `CLAUDE_RUN_ENABLED`, `KIMI_RUN_ENABLED`, `GEMINI_RUN_ENABLED`, `GLM_RUN_ENABLED`, `QWEN_RUN_ENABLED`, `DEEPSEEK_RUN_ENABLED`. Durable Object migration `v1` registers `SessionPresence`; `v2` registers `Sandbox`.
+Rollout gate flags: `PREFLIGHT_ENABLED`, `AGENT_RUN_ENABLED`, `STRIPE_CHECKOUT_ENABLED`, `CLAUDE_RUN_ENABLED`, `KIMI_RUN_ENABLED`, `GEMINI_RUN_ENABLED`, `GLM_RUN_ENABLED`, `QWEN_RUN_ENABLED`, `DEEPSEEK_RUN_ENABLED`. `AGENT_RUN_ENABLED` is currently false as a security hold: provider CLIs and repository commands share a Linux uid, so same-uid `/proc` reads can expose a CLI's initial gateway token despite child-environment filtering. Do not enable it until an adversarial container test proves a separate-uid or equivalent process boundary. Durable Object migration `v1` registers `SessionPresence`; `v2` registers `Sandbox`.
 
 See [`docs/deployment-config.md`](docs/deployment-config.md) for what each binding is for and the full explanation of every rollout gate (what stays true while it's off, what must be live before flipping it, and the rollback behavior).
 
@@ -591,6 +592,9 @@ Pushes to `main` run this exact sequence automatically via `.github/workflows/de
 - Remember that team messages are visible to the room, while DMs are filtered per caller.
 - Treat live drafts as sensitive room content visible to authenticated members.
 - Preserve invalid-invite and non-member metadata concealment.
+- Preserve the Worker-wide unsafe-`/api/*` browser mutation guard and response security headers. Headerless requests remain supported for trusted non-browser clients; cross-site Fetch Metadata or a mismatched `Origin` must fail before application routing.
+- Remote MCP endpoints are untrusted egress. Require HTTPS on port 443, reject URL credentials and local/internal/non-global literal addresses at write time, and revalidate stored rows at dispatch. DNS rebinding and hostile public MCP responses remain residual risks.
+- Enqueue internal-ID-derived R2 prefixes before deleting sessions or scrubbing accounts. The scheduled cleaner must keep session-scoped jobs until the source session is gone, retry failures, paginate, and require the 24-hour delayed-write hold plus a final empty confirmation before removing an intent.
 
 ### Git and change hygiene
 

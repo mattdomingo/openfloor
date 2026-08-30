@@ -16,18 +16,21 @@ Defined in `wrangler.jsonc`:
 - `AGENT_RUN_WORKFLOW`: Cloudflare Workflow binding.
 - `SANDBOX`: Cloudflare Sandbox Durable Object/container binding.
 - `PREFLIGHT_LOGS`: private R2 bucket `openfloor-preflight-logs`.
+- `USER_AVATARS`: private R2 bucket `openfloor-user-avatars`.
 
 The phased GitHub rollout currently uses the existing production Worker and D1 database. GitHub App setup and deployment are documented in `docs/github-production.md`. Until the user establishes staging, install the App only on the disposable acceptance repository and complete each phase's browser acceptance before expanding repository access.
 
 Cloudflare Containers requires a Workers Paid account. `PREFLIGHT_ENABLED` is the production rollout gate: production is enabled only after the container image, `SANDBOX`, and `REPOSITORY_PREFLIGHT` bindings deploy successfully. While disabled, the UI omits **Verify runner** and the start endpoint returns `503`; repository connection and candidate reconciliation remain available. Tests explicitly enable the deterministic test adapter.
 
-`AGENT_RUN_ENABLED` independently gates Phase 4. Production is enabled only after the updated image and Workflow deploy and `OPENAI_API_KEY` is configured; while false the UI omits **Run** and direct starts return `503`. Tests enable only the deterministic test adapter.
+`AGENT_RUN_ENABLED` independently gates all agent execution. It is currently **false in production as a security hold**: provider CLIs and repository-controlled processes share the `openfloor-agent` Linux uid, and Linux exposes each process's initial environment through same-uid `/proc` reads even after JavaScript deletes those variables. Child-process environment filtering therefore does not prove gateway-token isolation. Keep this global gate false until the container uses a separate uid/process boundary (or equivalent kernel isolation) and adversarial tests prove environment, command-line, child-process, and `/proc` isolation. While false the UI omits **Run**, direct starts return `503`, and provider-specific gates cannot override it. Tests enable only deterministic test adapters.
 
 `STRIPE_CHECKOUT_ENABLED` gates new Checkout and plan-change flows. Keep it false until both exact monthly prices, the restricted Portal configuration, all Stripe secrets, D1 migrations, public webhook delivery, and test-mode acceptance in `docs/stripe-billing.md` are complete. Existing entitlement reads and signed webhook reconciliation do not depend on this gate.
 
 `CLAUDE_RUN_ENABLED`, `KIMI_RUN_ENABLED`, `GEMINI_RUN_ENABLED`, `GLM_RUN_ENABLED`, `QWEN_RUN_ENABLED`, and `DEEPSEEK_RUN_ENABLED` independently gate their providers' runs (one flag per provider id; `disabledRunProviders()` in `lib/provider-rollout.ts` is the single reader, re-exported by `lib/agent-run-start.ts` for compatibility). For each: keep it `false` until the deploy containing its code (and any bumped image) is live, its gateway route is reachable, and a credential resolves (owner-connected or server) — then run the per-provider acceptance runbook (staging session, full run arc, gateway rejected-path log review) before flipping. While a flag is false, a *manual* start of that provider's item refuses as `disabled` at the `startQueueItemRun` seam, agent *creation* and generated-agent default selection for it refuse with `503`, and *auto-dispatch* skips its items per-item (`RoutingDeps.disabledProviders`) so they never hold the rest of a mixed queue; other providers' runs are unaffected either way. Rollback = flip back: existing agents persist and generated-provider resolution ignores disabled choices until an enabled credential/default is available.
 
 Durable Object migration `v1` registers `SessionPresence`; `v2` registers `Sandbox`. Keep migration syntax compatible with the pinned Wrangler version.
+
+The Sandbox image is `cloudflare/sandbox:0.12.7` pinned to digest `sha256:6d741713aef266e8ae0831a5709c6f2d7b77b4952ac79b549f4f4e380af86fbe`; `@cloudflare/sandbox` stays pinned to `0.12.7`, and the pool key is `RUN_SANDBOX_IMAGE_VERSION = "v7"`. The image installs `undici@7.29.0`. Any image-content change must bump the pool version. A 10-minute cron and the daily retention cron both sweep durable R2 cleanup intents; the cleaner needs both R2 bindings above.
 
 ### Required secrets
 
