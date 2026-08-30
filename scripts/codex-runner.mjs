@@ -145,7 +145,16 @@ const mcpServers = contextUrl && contextToken && mcpServerPath ? {
     },
   },
 } : undefined;
-const codex = new Codex({ baseUrl: gatewayUrl, apiKey: gatewayToken, ...(mcpServers ? { config: { mcp_servers: mcpServers } } : {}) });
+const codex = new Codex({
+  baseUrl: gatewayUrl,
+  apiKey: gatewayToken,
+  config: {
+    ...(mcpServers ? { mcp_servers: mcpServers } : {}),
+    // Repository-controlled shell commands must not inherit gateway or
+    // runtime credentials. The MCP bridge receives its own explicit env.
+    shell_environment_policy: { inherit: "none" },
+  },
+});
 const threadOptions = {
   model,
   workingDirectory: workspace,
