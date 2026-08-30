@@ -35,6 +35,7 @@ jobs:
       - run: npm install -g npm@11.19.1
       - run: npm ci
       - run: npm audit --omit=dev
+      - run: npx playwright install --with-deps chromium
       - run: npm test
       - run: npx wrangler d1 migrations apply DB --remote
         if: github.event_name == 'push'

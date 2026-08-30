@@ -45,7 +45,7 @@ No production dependency advisory was found. The full development audit still re
 
 **Evidence:** `.github/workflows/deploy.yml` ran only on pushes to `main`, applied remote D1 migrations after `npm ci`, and did not run `npm audit --omit=dev` or `npm test`. Build and deploy followed the migration, so a later failure could leave production schema changed without a validated or deployed application. `actions/checkout@v4`, `actions/setup-node@v4`, and `npm@11` were mutable major-version references.
 
-**Fix:** the workflow runs on pull requests and pushes to `main`; both run `npm audit --omit=dev` and the complete `npm test` pipeline. Remote migration, production build, and deploy are push-only and occur after those gates. Checkout and setup-node are pinned to reviewed commit SHAs, npm is pinned to `11.19.1`, checkout does not persist credentials, and superseded pull-request runs may cancel while `main` deploys never do.
+**Fix:** the workflow runs on pull requests and pushes to `main`; both run `npm audit --omit=dev`, install the lockfile-selected Playwright Chromium build and runner dependencies, and run the complete `npm test` pipeline. Remote migration, production build, and deploy are push-only and occur after those gates. Checkout and setup-node are pinned to reviewed commit SHAs, npm is pinned to `11.19.1`, checkout does not persist credentials, and superseded pull-request runs may cancel while `main` deploys never do.
 
 **Functionality impact:** pull requests now run the full release validation and may take longer. A failed production audit or test prevents remote migration. Production build still runs after migration on `main`, but `npm test` already performs two successful production builds in render and end-to-end stages before mutation.
 
@@ -53,7 +53,7 @@ No production dependency advisory was found. The full development audit still re
 
 **Verification:** workflow YAML parses, exact action/npm pins are reviewed, Cloudflare credentials remain scoped only to production mutation steps, and the full local pipeline reproduces the pre-mutation gate.
 
-The newly enforced full-suite gate also exposed a rapid Prompts-to-History transition race in the long two-user browser test. The test now waits for the active contribution request to settle before changing filters; this changes no product behavior and prevents the test from replacing an unsettled asynchronous assertion.
+The newly enforced full-suite gate also exposed two test-environment gaps: the original workflow had never provisioned Playwright Chromium, and the long two-user browser test could switch rapidly from Prompts to History before the first contribution request settled. CI now installs Chromium before the suite, and the test waits for the active contribution request before changing filters. Neither change affects product behavior.
 
 ## Additional scope conclusions and residual risks
 
