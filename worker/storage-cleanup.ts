@@ -23,7 +23,14 @@ export async function sweepStorageCleanup(env: StorageCleanupEnvironment): Promi
     try {
       if (row.sourceSessionId) {
         const live = await env.DB.prepare("SELECT 1 AS present FROM sessions WHERE id = ?").bind(row.sourceSessionId).first();
-        if (live) continue;
+        if (live) {
+          // Yield this limited sweep slot. A deletion can enqueue before a
+          // later guard refuses the D1 delete; without backoff, 25 such rows
+          // permanently starve every cleanup intent ordered behind them.
+          await env.DB.prepare("UPDATE storage_cleanup_prefixes SET not_before = ?, updated_at = ? WHERE bucket = ? AND prefix = ?")
+            .bind(now + storageCleanupTiming.RETRY_MS, now, row.bucket, row.prefix).run();
+          continue;
+        }
       }
       if (row.bucket !== "preflight_logs" && row.bucket !== "user_avatars") throw new Error("Unknown cleanup bucket");
       const bucket = row.bucket === "preflight_logs" ? env.PREFLIGHT_LOGS : env.USER_AVATARS;

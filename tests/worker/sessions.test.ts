@@ -7,6 +7,7 @@ import {
   currentMonth,
   deleteAccount,
   deleteSession,
+  ENDED_SESSION_PURGE_BATCH_SIZE,
   ENDED_SESSION_RETENTION_MS,
   endMergedSession,
   endSession,
@@ -724,6 +725,22 @@ describe("D1 session persistence", () => {
     expect(await getSessionForMember(stale.session.id, owner.id, env.DB)).toBeNull();
     expect(await getInvitePreview(stale.inviteId, env.DB)).toBeNull();
     expect((await env.DB.prepare("SELECT COUNT(*) AS count FROM storage_cleanup_prefixes WHERE source_session_id = ?").bind(stale.session.id).first<{ count: number }>())?.count).toBeGreaterThan(0);
+  });
+
+  it("bounds each retention purge sweep", async () => {
+    const marker = crypto.randomUUID();
+    const now = Date.now();
+    const staleAt = now - ENDED_SESSION_RETENTION_MS - 1_000;
+    await env.DB.batch(Array.from({ length: ENDED_SESSION_PURGE_BATCH_SIZE + 1 }, (_, index) => env.DB.prepare(
+      `INSERT INTO sessions (id, title, created_at, updated_at, objective_updated_at, ended_at, ended_reason)
+       VALUES (?, ?, ?, ?, ?, ?, 'owner')`,
+    ).bind(crypto.randomUUID(), `Purge batch ${marker}-${index}`, staleAt, staleAt, staleAt, staleAt)));
+
+    expect(await purgeExpiredSessions(env.DB, now)).toHaveLength(ENDED_SESSION_PURGE_BATCH_SIZE);
+    const remaining = await env.DB.prepare(
+      "SELECT COUNT(*) AS count FROM sessions WHERE title LIKE ?",
+    ).bind(`Purge batch ${marker}-%`).first<{ count: number }>();
+    expect(remaining?.count).toBe(1);
   });
 
   it("lets only owners hard-delete sessions, including ended ones", async () => {

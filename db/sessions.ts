@@ -912,6 +912,7 @@ export async function setSessionLocked(
 }
 
 export const ENDED_SESSION_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+export const ENDED_SESSION_PURGE_BATCH_SIZE = 25;
 
 export async function purgeExpiredSessions(database = getDb(), now = Date.now()): Promise<string[]> {
   // Every session-scoped child cascades on sessions.id. Repository
@@ -922,8 +923,9 @@ export async function purgeExpiredSessions(database = getDb(), now = Date.now())
   const eligible = await database.prepare(
     `SELECT id FROM sessions
        WHERE ended_at IS NOT NULL AND ended_at < ?
-         AND NOT EXISTS (SELECT 1 FROM repository_connections WHERE session_id = sessions.id)`,
-  ).bind(now - ENDED_SESSION_RETENTION_MS).all<{ id: string }>();
+         AND NOT EXISTS (SELECT 1 FROM repository_connections WHERE session_id = sessions.id)
+       ORDER BY ended_at, id LIMIT ?`,
+  ).bind(now - ENDED_SESSION_RETENTION_MS, ENDED_SESSION_PURGE_BATCH_SIZE).all<{ id: string }>();
   const deleted: string[] = [];
   for (const row of eligible.results) {
     await enqueueSessionStorageCleanup(row.id, database, now);

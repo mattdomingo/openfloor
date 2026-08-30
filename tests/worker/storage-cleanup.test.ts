@@ -56,7 +56,46 @@ describe("durable private-storage cleanup", () => {
     await sweepStorageCleanup({ DB: env.DB, PREFLIGHT_LOGS: bucket, USER_AVATARS: bucket });
 
     expect(listCalls).toBe(0);
-    expect(await env.DB.prepare("SELECT 1 AS present FROM storage_cleanup_prefixes WHERE prefix = ?").bind(prefix).first()).not.toBeNull();
+    const deferred = await env.DB.prepare(
+      "SELECT not_before AS notBefore FROM storage_cleanup_prefixes WHERE prefix = ?",
+    ).bind(prefix).first<{ notBefore: number }>();
+    expect(deferred?.notBefore).toBeGreaterThan(now);
+  });
+
+  it("defers a full window of live-session jobs so later cleanup cannot starve", async () => {
+    const now = Date.now();
+    const user = await upsertUser({
+      providerUserId: `cleanup-starvation-${crypto.randomUUID()}`,
+      email: `${crypto.randomUUID()}@example.com`,
+      displayName: "Cleanup starvation owner",
+      fullName: "Cleanup starvation owner",
+    }, env.DB);
+    const created = await createSession(user.id, { title: "Cleanup starvation source", objective: null }, env.DB);
+    const livePrefixes = Array.from({ length: 25 }, (_, index) => `sessions/${created.session.id}/held-${index}/`);
+    const healthyPrefix = `runs/security-after-live-window-${crypto.randomUUID()}/`;
+    await env.DB.batch([
+      ...livePrefixes.map((prefix) => env.DB.prepare(
+        "INSERT INTO storage_cleanup_prefixes (bucket, prefix, source_session_id, not_before, updated_at) VALUES ('preflight_logs', ?, ?, 0, ?)",
+      ).bind(prefix, created.session.id, now - 1_000)),
+      env.DB.prepare(
+        "INSERT INTO storage_cleanup_prefixes (bucket, prefix, source_session_id, not_before, updated_at) VALUES ('preflight_logs', ?, NULL, 0, ?)",
+      ).bind(healthyPrefix, now - 500),
+    ]);
+    const objects = new Set([`${healthyPrefix}artifact.log`]);
+    const bucket = {
+      async list({ prefix = "" }: { prefix?: string } = {}) {
+        return { objects: [...objects].filter((key) => key.startsWith(prefix)).map((key) => ({ key })), truncated: false };
+      },
+      async delete(keys: string | string[]) {
+        for (const key of Array.isArray(keys) ? keys : [keys]) objects.delete(key);
+      },
+    };
+    const cleanupEnv = { DB: env.DB, PREFLIGHT_LOGS: bucket, USER_AVATARS: bucket };
+
+    await sweepStorageCleanup(cleanupEnv);
+    expect(objects.size).toBe(1);
+    await sweepStorageCleanup(cleanupEnv);
+    expect(objects.size).toBe(0);
   });
 
   it("paginates deletion and keeps a failed job for retry without blocking another", async () => {
