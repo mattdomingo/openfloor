@@ -15,6 +15,9 @@ if (!autoAgentMigration) throw new Error("Expected drizzle/0028_*.sql (the auto-
 const autoAgentDataQueries = autoAgentMigration.queries.filter((query) => query.trimStart().startsWith("UPDATE"));
 const accountGitHubMigration = migrations.find((migration) => migration.name.startsWith("0032_"));
 if (!accountGitHubMigration) throw new Error("Expected drizzle/0032_*.sql (the account GitHub migration) to exist.");
+const agentBillingMigration = migrations.find((migration) => migration.name.startsWith("0042_"));
+if (!agentBillingMigration) throw new Error("Expected drizzle/0042_*.sql (the agent billing quarantine migration) to exist.");
+const agentBillingDataQueries = agentBillingMigration.queries.filter((query) => query.trimStart().startsWith("UPDATE floor_agents"));
 
 export default defineConfig({
   resolve: { alias: { "@": fileURLToPath(new URL(".", import.meta.url)) } },
@@ -46,6 +49,7 @@ export default defineConfig({
           ACCOUNT_EMAIL_MERGE_QUERIES: JSON.stringify(accountEmailMergeMigration.queries),
           AUTO_AGENT_DATA_MIGRATION_QUERIES: JSON.stringify(autoAgentDataQueries),
           ACCOUNT_GITHUB_MIGRATION_QUERIES: JSON.stringify(accountGitHubMigration.queries),
+          AGENT_BILLING_QUARANTINE_QUERIES: JSON.stringify(agentBillingDataQueries),
         },
       },
     }),

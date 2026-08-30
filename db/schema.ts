@@ -354,6 +354,24 @@ export const sessionFiles = sqliteTable(
   ],
 );
 
+// Durable R2 deletion intents. D1 rows can cascade before a Worker gets time
+// to delete private blobs, so deletions record internal prefixes first. The
+// sweeper only acts after source_session_id is gone and keeps jobs until a
+// delayed workflow write has had time to settle.
+export const storageCleanupPrefixes = sqliteTable(
+  "storage_cleanup_prefixes",
+  {
+    bucket: text("bucket", { enum: ["preflight_logs", "user_avatars"] }).notNull(),
+    prefix: text("prefix").notNull(),
+    sourceSessionId: text("source_session_id"),
+    notBefore: integer("not_before").notNull(),
+    lastScannedAt: integer("last_scanned_at"),
+    emptyScans: integer("empty_scans").notNull().default(0),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.bucket, table.prefix] }), index("idx_storage_cleanup_due").on(table.notBefore, table.updatedAt)],
+);
+
 export const floorQueueItems = sqliteTable(
   "floor_queue_items",
   {

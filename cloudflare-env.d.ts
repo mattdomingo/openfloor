@@ -24,6 +24,7 @@ declare global {
       ACCOUNT_EMAIL_MERGE_QUERIES: string;
       AUTO_AGENT_DATA_MIGRATION_QUERIES: string;
       ACCOUNT_GITHUB_MIGRATION_QUERIES: string;
+      AGENT_BILLING_QUARANTINE_QUERIES: string;
     }
   }
 }

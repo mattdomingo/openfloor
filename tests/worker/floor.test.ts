@@ -77,6 +77,42 @@ async function insertRun(sessionId: string, agentId: string, userId: string, que
 }
 
 describe("D1 persistent floor", () => {
+  it("migration 0042 pauses active persistent agents whose creator differs from billing owner", async () => {
+    const room = await floorRoom("agent-billing-quarantine");
+    const now = Date.now();
+    const mismatchedId = crypto.randomUUID();
+    const matchedId = crypto.randomUUID();
+    const generatedId = crypto.randomUUID();
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO floor_agents
+          (id, session_id, created_by, owner_user_id, name, name_key, role, task, state, provider, kind, created_at, updated_at)
+         VALUES (?, ?, ?, ?, 'Legacy mismatch', 'legacy mismatch', 'Engineer', 'Work', 'created', 'openai', NULL, ?, ?)`,
+      ).bind(mismatchedId, room.sessionId, room.member.id, room.owner.id, now, now),
+      env.DB.prepare(
+        `INSERT INTO floor_agents
+          (id, session_id, created_by, owner_user_id, name, name_key, role, task, state, provider, kind, created_at, updated_at)
+         VALUES (?, ?, ?, ?, 'Matched owner', 'matched owner', 'Engineer', 'Work', 'created', 'openai', NULL, ?, ?)`,
+      ).bind(matchedId, room.sessionId, room.owner.id, room.owner.id, now, now),
+      env.DB.prepare(
+        `INSERT INTO floor_agents
+          (id, session_id, created_by, owner_user_id, name, name_key, role, task, state, provider, kind, created_at, updated_at)
+         VALUES (?, ?, ?, ?, 'Generated worker', 'generated worker', 'Engineer', 'Work', 'created', 'openai', 'worker', ?, ?)`,
+      ).bind(generatedId, room.sessionId, room.member.id, room.owner.id, now, now),
+    ]);
+
+    const queries = JSON.parse(env.AGENT_BILLING_QUARANTINE_QUERIES) as string[];
+    expect(queries).toHaveLength(1);
+    await env.DB.batch(queries.map((query) => env.DB.prepare(query)));
+
+    const rows = await env.DB.prepare(
+      "SELECT id, paused_at AS pausedAt FROM floor_agents WHERE id IN (?, ?, ?) ORDER BY name",
+    ).bind(mismatchedId, matchedId, generatedId).all<{ id: string; pausedAt: number | null }>();
+    expect(rows.results.find((row) => row.id === mismatchedId)?.pausedAt).not.toBeNull();
+    expect(rows.results.find((row) => row.id === matchedId)?.pausedAt).toBeNull();
+    expect(rows.results.find((row) => row.id === generatedId)?.pausedAt).toBeNull();
+  });
+
   it("starts empty, derives blank assignments from members, and conceals outsiders", async () => {
     const room = await floorRoom("empty");
     const floor = await getFloorSnapshot(room.sessionId, room.owner.id, env.DB);

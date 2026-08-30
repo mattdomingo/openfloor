@@ -130,12 +130,10 @@ describe("D1 session persistence", () => {
     // 0038 repo_scope column so later tests in this file see today's schema.
     await env.DB.prepare("ALTER TABLE user_github_installations ADD `repo_scope` text").run();
 
-    expect(await listUserGitHubInstallations(owner.id, env.DB)).toEqual([
-      expect.objectContaining({ accountLogin: "acme", status: "active" }),
-    ]);
-    expect(await listUserGitHubInstallations(other.id, env.DB)).toEqual([
-      expect.objectContaining({ accountLogin: "acme", status: "active" }),
-    ]);
+    // Legacy rows without verified repository scope remain stored for audit,
+    // but no longer appear connected or authorize onboarding.
+    expect(await listUserGitHubInstallations(owner.id, env.DB)).toEqual([]);
+    expect(await listUserGitHubInstallations(other.id, env.DB)).toEqual([]);
     const backfilled = await env.DB.prepare(
       "SELECT user_id AS userId, installation_id AS installationId FROM user_github_installations ORDER BY user_id",
     ).all<{ userId: string; installationId: string }>();
@@ -164,6 +162,11 @@ describe("D1 session persistence", () => {
     await expect(consumeGitHubAccountConnectionState(
       stateId, owner.id, "installation-account", { login: "openfloor", type: "Organization" }, [], env.DB,
     )).resolves.toBeNull();
+    await expect(listUserGitHubInstallations(owner.id, env.DB)).resolves.toEqual([]);
+    const verifiedStateId = await createGitHubAccountConnectionState(owner.id, "onboarding", "/home", env.DB);
+    await expect(consumeGitHubAccountConnectionState(
+      verifiedStateId, owner.id, "installation-account", { login: "openfloor", type: "Organization" }, ["repository-account"], env.DB,
+    )).resolves.toEqual({ purpose: "onboarding", returnTo: "/home" });
     const [installation] = await listUserGitHubInstallations(owner.id, env.DB);
     expect(installation).toEqual(expect.objectContaining({ accountLogin: "openfloor", status: "active" }));
 
@@ -300,6 +303,7 @@ describe("D1 session persistence", () => {
       .run();
 
     await expect(deleteAccount(deleted.id, env.DB)).resolves.toEqual({ deleted: true });
+    expect((await env.DB.prepare("SELECT 1 AS present FROM storage_cleanup_prefixes WHERE bucket = 'user_avatars' AND prefix = ?").bind(`users/${deleted.id}/avatar`).first())?.present).toBe(1);
 
     // Owned session and its graph are gone.
     expect(await getSessionForMember(owned.session.id, otherOwner.id, env.DB)).toBeNull();
@@ -719,6 +723,7 @@ describe("D1 session persistence", () => {
     // Cascade sanity: the purged session's graph is gone with it.
     expect(await getSessionForMember(stale.session.id, owner.id, env.DB)).toBeNull();
     expect(await getInvitePreview(stale.inviteId, env.DB)).toBeNull();
+    expect((await env.DB.prepare("SELECT COUNT(*) AS count FROM storage_cleanup_prefixes WHERE source_session_id = ?").bind(stale.session.id).first<{ count: number }>())?.count).toBeGreaterThan(0);
   });
 
   it("lets only owners hard-delete sessions, including ended ones", async () => {
@@ -731,6 +736,7 @@ describe("D1 session persistence", () => {
     await endSession(created.session.id, owner.id, "owner", env.DB);
     await expect(deleteSession(created.session.id, owner.id, env.DB)).resolves.toEqual({ deleted: true, candidateBranchAlive: false });
     expect(await getSessionForMember(created.session.id, owner.id, env.DB)).toBeNull();
+    expect((await env.DB.prepare("SELECT 1 AS present FROM storage_cleanup_prefixes WHERE prefix = ?").bind(`sessions/${created.session.id}/`).first())?.present).toBe(1);
     await expect(deleteSession(created.session.id, owner.id, env.DB)).resolves.toBe("missing");
   });
 
@@ -1214,7 +1220,7 @@ describe("D1 session persistence", () => {
     await activateRepositoryCandidate(created.session.id, candidateId, initialSha, env.DB);
     const parsed = parseAgentInput({ name: "Reverter", role: "Engineer", task: "Implement prompts", ownerUserId: agentOwner.id });
     if (!parsed) throw new Error("Invalid rollback agent fixture");
-    let floor = await createFloorAgent(created.session.id, owner.id, parsed, env.DB);
+    let floor = await createFloorAgent(created.session.id, agentOwner.id, parsed, env.DB);
     floor = await createFloorQueueItem(created.session.id, engineer.id, { prompt: "Add the reversible change", agentId: floor!.agents[0].id }, env.DB);
     const run = await createAgentRun(created.session.id, floor!.queue[0].id, owner.id, "task", env.DB);
     await markRunRunning(run.id, "rollback-process", env.DB);
