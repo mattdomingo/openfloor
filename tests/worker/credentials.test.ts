@@ -441,6 +441,46 @@ describe("OpenAI gateway credential resolution", () => {
     expect(await response.text()).toContain("No OpenAI credential");
   });
 
+  it("revokes every model gateway as soon as cancellation is requested", async () => {
+    const { sessionId, runId } = await runningRun("gw-cancel-requested");
+    await env.DB.prepare("UPDATE agent_runs SET status = 'cancel_requested' WHERE id = ?").bind(runId).run();
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+
+    const token = (operation: "openai" | "anthropic" | "gemini" | "qwen") => signRunGatewayToken(
+      { runId, sessionId, repositoryId: "repo", candidateSha: "sha-run", operation },
+      GATEWAY_SECRET,
+    );
+    const openai = await postOpenAiGateway(gatewayRequest(await token("openai")), gatewayParams());
+    const anthropic = await postAnthropicGateway(
+      new Request("https://app.opnflr.com/runtime/anthropic/v1/messages", {
+        method: "POST",
+        headers: { authorization: `Bearer ${await token("anthropic")}`, "content-type": "application/json" },
+        body: "{}",
+      }),
+      { params: Promise.resolve({ path: ["v1", "messages"] }) },
+    );
+    const gemini = await postGeminiGateway(
+      new Request("https://app.opnflr.com/runtime/gemini/v1beta/models/gemini-3.5-flash:streamGenerateContent", {
+        method: "POST",
+        headers: { "x-goog-api-key": await token("gemini"), "content-type": "application/json" },
+        body: "{}",
+      }),
+      { params: Promise.resolve({ path: ["v1beta", "models", "gemini-3.5-flash:streamGenerateContent"] }) },
+    );
+    const qwen = await postQwenGateway(
+      new Request("https://app.opnflr.com/runtime/qwen/v1/chat/completions", {
+        method: "POST",
+        headers: { authorization: `Bearer ${await token("qwen")}`, "content-type": "application/json" },
+        body: "{}",
+      }),
+      { params: Promise.resolve({ path: ["v1", "chat", "completions"] }) },
+    );
+
+    expect([openai.status, anthropic.status, gemini.status, qwen.status]).toEqual([404, 404, 404, 404]);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
   it("refuses rather than silently falling back when the owner credential cannot be read", async () => {
     const { sessionId, owner, runId } = await runningRun("gw-unreadable");
     // Ciphertext bound to the wrong context decrypts to null at the gateway.
@@ -859,8 +899,8 @@ describe("OpenAI gateway credential resolution", () => {
       GATEWAY_SECRET,
     );
     expect((await qwenRequest(deepseekOperation)).status).toBe(404);
-    // Once the run leaves running/cancel_requested, a still-valid JWT is
-    // refused before any credential is resolved.
+    // Once the run leaves running, a still-valid JWT is refused before any
+    // credential is resolved.
     await connectKey(owner.id, "qwen", "sk-dashscope-owner-key");
     await env.DB.prepare("UPDATE agent_runs SET status = 'failed' WHERE id = ?").bind(runId).run();
     expect((await qwenRequest(token)).status).toBe(404);

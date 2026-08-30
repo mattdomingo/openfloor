@@ -426,6 +426,9 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await owner.getByRole("button", { name: /Review/ }).first().click();
   await expect(owner.getByText("member-change.ts", { exact: true })).toHaveCount(0);
   await owner.getByRole("button", { name: "Prompts", exact: true }).click();
+  // Let the active request settle before replacing it with the History filter;
+  // otherwise the test can outrun React's effect and wait on a superseded load.
+  await expect(owner.locator(".review-prompt-item").first()).toBeVisible({ timeout: 30_000 });
   await owner.getByRole("button", { name: "History", exact: true }).click();
   const rollbackHistoryItem = owner.locator(".review-prompt-item", { hasText: "Create a member rollback change" });
   // The Prompts tab pages contributions over the network; allow for a slow fetch.

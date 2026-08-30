@@ -70,3 +70,9 @@ npx wrangler secret put CF_ACCESS_AUD
 ```
 
 Do not pass the secret value as the `wrangler secret put` name. Never commit `.dev.vars`, Access credentials, signing secrets, tokens, or generated invite URLs.
+
+### CI and deployment gate
+
+`.github/workflows/deploy.yml` runs on every pull request and push to `main`. Both event types install with the exact pinned npm CLI, run `npm audit --omit=dev`, and run the complete `npm test` pipeline. Only a push to `main` may continue to the remote D1 migration, production build, and Worker deploy; those steps remain serialized and are never cancelled. Superseded pull-request checks may cancel. GitHub actions are commit-SHA pinned, checkout uses `persist-credentials: false`, and the workflow's default token has only read access to repository contents. Cloudflare credentials are present only on the remote migration and deploy steps.
+
+The manual emergency order is the same trust boundary: run `npm audit --omit=dev` and `npm test` before applying a remote migration. Merging to `main` remains production authorization; a pull-request run never mutates production.

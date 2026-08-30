@@ -524,15 +524,16 @@ Do not pass the secret value as the `wrangler secret put` name. Never commit `.d
 ### Deployment order
 
 ```bash
+npm audit --omit=dev
 npm test
 npx wrangler d1 migrations apply openfloor-production --remote
 npm run build
 npx wrangler deploy --config dist/server/wrangler.json
 ```
 
-Migrations must land before code that requires them. The build generates `dist/server/wrangler.json`; deployment uses that built config.
+The production dependency audit and complete test pipeline must pass before any production mutation. Migrations must land before code that requires them. The build generates `dist/server/wrangler.json`; deployment uses that built config.
 
-Pushes to `main` run this exact sequence automatically via `.github/workflows/deploy.yml` (GitHub secrets `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`); merging to `main` is the deploy authorization. Production Cloudflare credentials are step-scoped to migration and deployment and must never be exposed to dependency installation, tests, or builds. The manual sequence above remains for emergencies and for changes GitHub Actions cannot see (secrets, Access policy).
+Pull requests run the audit and complete test pipeline through `.github/workflows/deploy.yml`; pushes to `main` repeat both gates and then run the production-only migration/build/deploy steps (GitHub secrets `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`). Merging to `main` is the deploy authorization. Third-party actions and the npm CLI are exact-version pinned, checkout never persists credentials, and production Cloudflare credentials are step-scoped to migration and deployment; dependency installation, audits, tests, and builds must never receive them. Superseded pull-request runs may cancel, but an in-flight `main` deploy never does. The manual sequence above remains for emergencies and for changes GitHub Actions cannot see (secrets, Access policy).
 
 ### Smoke test after deployment
 

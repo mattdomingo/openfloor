@@ -3,6 +3,7 @@ import { setUserGitHubInstallationStatus } from "@/db/github-installations";
 import {
   findRepositoryWebhookTargets,
   recordGitHubWebhookDelivery,
+  releaseGitHubWebhookDelivery,
   setRepositoryAvailability,
   touchRepositoryReview,
   updateRepositoryPullRequestState,
@@ -47,6 +48,21 @@ export async function POST(request: Request) {
   const repositoryId = body.repository?.id == null ? null : String(body.repository.id);
   const fresh = await recordGitHubWebhookDelivery(deliveryId, event, body.action ?? null, installationId, repositoryId);
   if (!fresh) return Response.json({ accepted: true, event, duplicate: true }, { status: 202 });
+  try {
+    await applyGitHubWebhook(event, body, installationId, repositoryId);
+  } catch (error) {
+    await releaseGitHubWebhookDelivery(deliveryId);
+    throw error;
+  }
+  return Response.json({ accepted: true, event }, { status: 202 });
+}
+
+async function applyGitHubWebhook(
+  event: string,
+  body: GitHubWebhookPayload,
+  installationId: string | null,
+  repositoryId: string | null,
+): Promise<void> {
   if (event === "installation" && ["deleted", "suspend"].includes(body.action ?? "")) {
     await setUserGitHubInstallationStatus(installationId, "revoked");
   } else if (event === "installation" && ["created", "unsuspend", "new_permissions_accepted"].includes(body.action ?? "")) {
@@ -112,7 +128,6 @@ export async function POST(request: Request) {
     }
     await notifyFloorChanged(target.sessionId, revision, domains);
   }
-  return Response.json({ accepted: true, event }, { status: 202 });
 }
 
 type GitHubWebhookPayload = {

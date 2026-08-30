@@ -46,6 +46,7 @@ import {
   getRepositoryConnectionForMember,
   saveRepositoryConnection,
   recordGitHubWebhookDelivery,
+  releaseGitHubWebhookDelivery,
   reconcileCandidateReview,
   getCandidateReviewSyncContext,
   reserveRepositoryCandidate,
@@ -889,6 +890,8 @@ describe("D1 session persistence", () => {
 
     await expect(recordGitHubWebhookDelivery("delivery-1", "push", null, "installation-2", "repository-2", env.DB)).resolves.toBe(true);
     await expect(recordGitHubWebhookDelivery("delivery-1", "push", null, "installation-2", "repository-2", env.DB)).resolves.toBe(false);
+    await expect(releaseGitHubWebhookDelivery("delivery-1", env.DB)).resolves.toBeUndefined();
+    await expect(recordGitHubWebhookDelivery("delivery-1", "push", null, "installation-2", "repository-2", env.DB)).resolves.toBe(true);
     const [target] = await findRepositoryWebhookTargets("installation-2", "repository-2", env.DB);
     await updateRepositoryPushState(target.sessionId, "refs/heads/main", "b".repeat(40), target.baseBranch, target.candidateBranch, target.candidateSha, target.integrationRunId, env.DB);
     expect(await getActiveRepositoryCandidateForMember(created.session.id, owner.id, env.DB)).toEqual(expect.objectContaining({ behindBase: true, remoteBaseSha: "b".repeat(40) }));
