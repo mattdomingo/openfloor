@@ -53,7 +53,7 @@ No production dependency advisory was found. The full development audit still re
 
 **Verification:** workflow YAML parses, exact action/npm pins are reviewed, Cloudflare credentials remain scoped only to production mutation steps, and the full local pipeline reproduces the pre-mutation gate.
 
-The newly enforced full-suite gate also exposed two test-environment gaps: the original workflow had never provisioned Playwright Chromium, and the long two-user browser test could switch rapidly from Prompts to History before the first contribution request settled. CI now installs Chromium before the suite, and the test waits for the active contribution request before changing filters. Neither change affects product behavior.
+The newly enforced full-suite gate also exposed three test-environment gaps: the original workflow had never provisioned Playwright Chromium; the long two-user browser test could switch rapidly from Prompts to History before the first contribution request settled; and Wrangler 4.127.1 can fatally lose its local dev-proxy connection on Linux CI, the upstream `workers-sdk#15317` failure. CI now installs Chromium, the test waits for the active contribution request before changing filters, and the browser gate permits one fresh-suite retry only when Wrangler's private debug log contains all four upstream crash signatures. Ordinary failures and a failed retry remain red. None changes product behavior.
 
 ## Additional scope conclusions and residual risks
 

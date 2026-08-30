@@ -36,7 +36,32 @@ jobs:
       - run: npm ci
       - run: npm audit --omit=dev
       - run: npx playwright install --with-deps chromium
-      - run: npm test
+      - name: Run non-browser test gate
+        run: |
+          npm run typecheck
+          npm run lint
+          npm run test:unit
+          npm run test:migrations
+          npm run test:worker
+          npm run test:render
+      - name: Run browser test gate
+        env:
+          WRANGLER_LOG: debug
+          WRANGLER_LOG_PATH: ${{ runner.temp }}/openfloor-e2e-wrangler.log
+        run: |
+          if npm run test:e2e; then
+            exit 0
+          fi
+
+          # Wrangler 4.127.1 can fatally drop its local ProxyWorker connection
+          # on Linux CI (workers-sdk#15317). Retry once only when its private
+          # debug log proves that exact upstream failure; application and test
+          # failures remain red, and a failed retry remains red.
+          grep -Fq "Error inside ProxyWorker" "$WRANGLER_LOG_PATH"
+          grep -Fq "Network connection lost." "$WRANGLER_LOG_PATH"
+          grep -Fq "castErrorCause" "$WRANGLER_LOG_PATH"
+          grep -Fq "handleLoopback" "$WRANGLER_LOG_PATH"
+          npm run test:e2e
       - run: npx wrangler d1 migrations apply DB --remote
         if: github.event_name == 'push'
         env:
