@@ -145,14 +145,23 @@ const mcpServers = contextUrl && contextToken && mcpServerPath ? {
     },
   },
 } : undefined;
+const safeCliEnvironment = Object.fromEntries([
+  "HOME", "LANG", "LANGUAGE", "LOGNAME", "PATH", "SHELL", "TEMP", "TERM",
+  "TMP", "TMPDIR", "TZ", "USER", "XDG_CACHE_HOME", "XDG_CONFIG_HOME",
+  "XDG_DATA_HOME", "XDG_RUNTIME_DIR", "XDG_STATE_HOME",
+].flatMap((name) => process.env[name] === undefined ? [] : [[name, process.env[name]]]));
 const codex = new Codex({
   baseUrl: gatewayUrl,
   apiKey: gatewayToken,
+  // The SDK otherwise copies the runner's full process.env into the Codex CLI.
+  // Pass only shell-operability variables; the SDK adds CODEX_API_KEY itself.
+  env: safeCliEnvironment,
   config: {
     ...(mcpServers ? { mcp_servers: mcpServers } : {}),
     // Repository-controlled shell commands must not inherit gateway or
-    // runtime credentials. The MCP bridge receives its own explicit env.
-    shell_environment_policy: { inherit: "none" },
+    // runtime credentials. Keep basic command lookup/home state through an
+    // explicit safe set; the MCP bridge receives its own explicit env.
+    shell_environment_policy: { inherit: "none", set: safeCliEnvironment },
   },
 });
 const threadOptions = {
