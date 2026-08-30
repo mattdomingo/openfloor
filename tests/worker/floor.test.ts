@@ -89,10 +89,12 @@ describe("D1 persistent floor", () => {
     await expect(getFloorSnapshot(room.sessionId, room.outsider.id, env.DB)).resolves.toBeNull();
   });
 
-  it("persists uniquely named agents with real member ownership", async () => {
+  it("persists uniquely named self-owned agents and rejects billing another member", async () => {
     const room = await floorRoom("agents");
-    const floor = await createFloorAgent(room.sessionId, room.member.id, agentInput(room.owner.id), env.DB);
-    expect(floor?.agents).toEqual([expect.objectContaining({ name: "Lumen", ownerUserId: room.owner.id, state: "created", provider: "openai", model: null, credentialKind: null })]);
+    const omittedOwner = agentInput(room.member.id);
+    omittedOwner.ownerUserId = "";
+    const floor = await createFloorAgent(room.sessionId, room.member.id, omittedOwner, env.DB);
+    expect(floor?.agents).toEqual([expect.objectContaining({ name: "Lumen", ownerUserId: room.member.id, state: "created", provider: "openai", model: null, credentialKind: null })]);
     expect(floor?.revision).toBe(1);
     await expect(createFloorAgent(room.sessionId, room.owner.id, agentInput(room.owner.id, "LUMEN"), env.DB)).rejects.toBeInstanceOf(FloorConflictError);
     await expect(createFloorAgent(room.sessionId, room.owner.id, agentInput(room.outsider.id, "Other"), env.DB)).rejects.toBeInstanceOf(FloorTargetError);
@@ -101,7 +103,7 @@ describe("D1 persistent floor", () => {
 
   it("sums lifetime cost across runs, flags a mixed cost source, and reports the most recent billed_kind", async () => {
     const room = await floorRoom("cost-aggregate");
-    const floor = await createFloorAgent(room.sessionId, room.member.id, agentInput(room.owner.id), env.DB);
+    const floor = await createFloorAgent(room.sessionId, room.member.id, agentInput(room.member.id), env.DB);
     const agentId = floor!.agents[0].id;
     const firstQueueFloor = await createFloorQueueItem(room.sessionId, room.member.id, { prompt: "Work 1", agentId }, env.DB);
     const firstQueueItemId = firstQueueFloor!.queue[0].id;
@@ -156,14 +158,15 @@ describe("D1 persistent floor", () => {
     if (!input) throw new Error("Invalid test agent");
     const floor = await createFloorAgent(room.sessionId, room.owner.id, input, env.DB);
     const agentId = floor!.agents[0].id;
-    let updated = await updateFloorAgentSettings(room.sessionId, room.member.id, agentId, { model: "claude-sonnet-5" }, env.DB);
+    await expect(updateFloorAgentSettings(room.sessionId, room.member.id, agentId, { model: "claude-sonnet-5" }, env.DB)).rejects.toBeInstanceOf(FloorTargetError);
+    let updated = await updateFloorAgentSettings(room.sessionId, room.owner.id, agentId, { model: "claude-sonnet-5" }, env.DB);
     expect(updated?.agents[0].model).toBe("claude-sonnet-5");
     // The old task-only contract survives the generalization.
     updated = await updateFloorAgentSettings(room.sessionId, room.member.id, agentId, { task: "New task" }, env.DB);
     expect(updated?.agents[0].task).toBe("New task");
     expect(updated?.agents[0].model).toBe("claude-sonnet-5");
     // Explicit null resets to the provider default.
-    updated = await updateFloorAgentSettings(room.sessionId, room.member.id, agentId, { model: null }, env.DB);
+    updated = await updateFloorAgentSettings(room.sessionId, room.owner.id, agentId, { model: null }, env.DB);
     expect(updated?.agents[0].model).toBeNull();
     // A model outside the STORED provider's allowlist is refused — no
     // provider crossed the wire, so a caller cannot pick which list applies.
@@ -260,7 +263,7 @@ describe("D1 persistent floor", () => {
     await expect(createFloorMessage(room.sessionId, room.owner.id, { text: "Bad DM", recipientUserId: room.outsider.id }, env.DB)).rejects.toBeInstanceOf(FloorTargetError);
   });
 
-  it("pauses and resumes persistent agents and generated workers for any member, but refuses Concierge", async () => {
+  it("lets members pause safety controls, owners resume persistent agents, and refuses Concierge", async () => {
     const room = await floorRoom("pause");
     let floor = await createFloorAgent(room.sessionId, room.owner.id, agentInput(room.owner.id), env.DB);
     const agentId = floor!.agents[0].id;
@@ -273,7 +276,7 @@ describe("D1 persistent floor", () => {
 
     floor = await pauseFloorAgent(room.sessionId, room.owner.id, agentId, false, env.DB);
     expect(floor!.agents.find((agent) => agent.id === agentId)?.pausedAt).toBeNull();
-    await expect(pauseFloorAgent(room.sessionId, room.member.id, agentId, false, env.DB)).rejects.toBeInstanceOf(FloorConflictError);
+    await expect(pauseFloorAgent(room.sessionId, room.member.id, agentId, false, env.DB)).rejects.toBeInstanceOf(FloorTargetError);
 
     await expect(pauseFloorAgent(room.sessionId, room.owner.id, answer.id, true, env.DB)).rejects.toBeInstanceOf(FloorConflictError);
     floor = await pauseFloorAgent(room.sessionId, room.member.id, worker.id, true, env.DB);

@@ -95,7 +95,7 @@ async function runningRun(suffix: string, agentOwner?: "member") {
   const agentOwnerId = agentOwner === "member" ? member.id : owner.id;
   const input = parseAgentInput({ name: "Builder", role: "Engineer", task: "Implement changes", ownerUserId: agentOwnerId });
   if (!input) throw new Error("Invalid test agent");
-  const floor = await createFloorAgent(sessionId, owner.id, input, env.DB);
+  const floor = await createFloorAgent(sessionId, agentOwnerId, input, env.DB);
   const agent = floor?.agents.find((candidate) => candidate.name === "Builder");
   if (!agent) throw new Error("Agent was not created");
   const runId = await insertRunRow(sessionId, agent.id, owner.id, "running");

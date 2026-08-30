@@ -51,7 +51,7 @@ export function AgentBulkControlsMenu({ onPauseAll, onResumeAll, onStopAll, busy
       <span className="queue-order-label" aria-hidden="true">All persistent agents</span>
       <ul>
         <li><button type="button" disabled={busy} onClick={() => run(onPauseAll)}><span>Pause all</span><small>Block new dispatch; in-flight runs finish normally</small></button></li>
-        <li><button type="button" disabled={busy} onClick={() => run(onResumeAll)}><span>Resume all</span><small>Make every paused agent eligible again</small></button></li>
+        <li><button type="button" disabled={busy} onClick={() => run(onResumeAll)}><span>Resume yours</span><small>Make your paused agents eligible again</small></button></li>
         <li><button type="button" disabled={busy} onClick={() => run(onStopAll)}><span>Stop all</span><small>Pause every agent and cancel their active runs</small></button></li>
       </ul>
     </div>,

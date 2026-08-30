@@ -27,7 +27,7 @@ async function seed(suffix: string) {
   await acceptInvite(created.inviteId, unrelated.id, env.DB);
   const input = parseAgentInput({ name: "Lumen", role: "Engineer", task: "Own integration", ownerUserId: member.id });
   if (!input) throw new Error("Invalid agent fixture");
-  const withAgent = await createFloorAgent(created.session.id, owner.id, input, env.DB);
+  const withAgent = await createFloorAgent(created.session.id, member.id, input, env.DB);
   const agentId = withAgent!.agents[0].id;
   const withQueue = await createFloorQueueItem(created.session.id, member.id, { prompt: "Change shared files", agentId }, env.DB);
   const queueItemId = withQueue!.queue[0].id;

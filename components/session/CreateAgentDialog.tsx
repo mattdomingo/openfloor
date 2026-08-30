@@ -2,7 +2,7 @@
 
 import { FormEvent, useEffect, useId, useRef, useState } from "react";
 import Link from "next/link";
-import type { CreateFloorAgentInput, FloorParticipant } from "@/lib/floor-types";
+import type { CreateFloorAgentInput } from "@/lib/floor-types";
 import {
   AGENT_PROVIDER_LABELS,
   connectedKindsForProvider,
@@ -22,7 +22,6 @@ export function CreateAgentDialog({
   sessionId,
   onCreate,
   onClose,
-  participants,
   currentUserId,
   enabledProviders,
   providerCredentials,
@@ -30,7 +29,6 @@ export function CreateAgentDialog({
   sessionId: string;
   onCreate: (input: CreateFloorAgentInput) => Promise<boolean>;
   onClose: () => void;
-  participants: FloorParticipant[];
   currentUserId: string;
   enabledProviders: CredentialProvider[];
   providerCredentials: ProviderCredentialSummary[];
@@ -41,7 +39,6 @@ export function CreateAgentDialog({
   const [name, setName] = useState("");
   const [role, setRole] = useState("");
   const [task, setTask] = useState("");
-  const [ownerUserId, setOwnerUserId] = useState(currentUserId);
   // Only the current user's own connected keys — an agent's owner pays for
   // its runs, but the create dialog only ever creates agents billed against
   // whoever is using it right now, never a teammate's key by proxy.
@@ -58,7 +55,7 @@ export function CreateAgentDialog({
   // Billing above, so a model id can never be posted to another provider.
   const [model, setModel] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const ready = name.trim().length > 0 && role.trim().length > 0 && task.trim().length > 0 && ownerUserId.length > 0 && provider !== null;
+  const ready = name.trim().length > 0 && role.trim().length > 0 && task.trim().length > 0 && provider !== null;
 
   useEffect(() => { nameRef.current?.focus(); }, []);
 
@@ -66,7 +63,7 @@ export function CreateAgentDialog({
     event.preventDefault();
     if (!ready || submitting || !provider) return;
     setSubmitting(true);
-    const created = await onCreate({ name, role, task, ownerUserId, provider, credentialKind, model });
+    const created = await onCreate({ name, role, task, ownerUserId: currentUserId, provider, credentialKind, model });
     setSubmitting(false);
     if (created) dismiss();
   }
@@ -85,15 +82,7 @@ export function CreateAgentDialog({
           <label className="field"><span className="label">Name</span><input ref={nameRef} value={name} onChange={(event) => setName(event.target.value)} required maxLength={24} /></label>
           <label className="field"><span className="label">Role</span><input value={role} onChange={(event) => setRole(event.target.value)} required maxLength={80} /></label>
           <label className="field"><span className="label">Task</span><textarea value={task} onChange={(event) => setTask(event.target.value)} required maxLength={1000} rows={4} /></label>
-          <div className="field">
-            <span className="label">Owner</span>
-            <SelectMenu
-              label="Agent owner"
-              value={ownerUserId}
-              onChange={setOwnerUserId}
-              options={participants.map((person) => ({ value: person.id, label: `${person.name}${person.isCurrentUser ? " (You)" : ""}` }))}
-            />
-          </div>
+          <p className="form-note">You own this agent. Shared routing may run it and spend your connected provider credential.</p>
           {available.length === 0 ? (
             <p className="notice" data-tone="attention" role="status">
               {"No provider keys are connected. Connect one to create an agent. "}
