@@ -161,7 +161,7 @@ const PUBLISHER_SANDBOX_IMAGE_VERSION = "v2";
 // Namespacing the pool key by image version makes old-image entries
 // unreachable immediately; the existing idle sweep reclaims them.
 // Bump this whenever Dockerfile.sandbox's run-sandbox contents change.
-const RUN_SANDBOX_IMAGE_VERSION = "v6";
+const RUN_SANDBOX_IMAGE_VERSION = "v8";
 // Non-Codex runs get a fresh HOME per run, inside the per-run scratch tree
 // that prepare wipes and the release reset removes. Pool sandboxes outlive
 // sessions, so everything a CLI persists under its home — transcripts, todos,

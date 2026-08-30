@@ -138,6 +138,7 @@ function spawnCli(resumeId) {
       env: {
         PATH: process.env.PATH ?? "",
         HOME: process.env.HOME ?? "",
+        NODE_OPTIONS: "--import file:///opt/openfloor/runner-env-preload.mjs",
         OPENAI_API_KEY: gatewayToken,
         OPENAI_BASE_URL: gatewayUrl,
         QWEN_CODE_SUPPRESS_YOLO_WARNING: "1",

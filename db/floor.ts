@@ -343,7 +343,7 @@ export async function createFloorAgent(
   database = getDb(),
 ): Promise<FloorSnapshot | null> {
   if (!(await getActiveMembershipRole(sessionId, userId, database))) return null;
-  if (!(await isSessionMember(sessionId, input.ownerUserId, database))) throw new FloorTargetError("Agent owner must be a session member.");
+  if (input.ownerUserId && input.ownerUserId !== userId) throw new FloorTargetError("Agents can only be owned by the member who creates them.");
   const id = crypto.randomUUID();
   const now = Date.now();
   try {
@@ -353,7 +353,7 @@ export async function createFloorAgent(
            (id, session_id, created_by, owner_user_id, name, name_key, role, task, state, provider, credential_kind, model, created_at, updated_at)
          SELECT ?, ?, ?, ?, ?, ?, ?, ?, 'created', ?, ?, ?, ?, ?
          WHERE EXISTS (SELECT 1 FROM sessions WHERE id = ? AND ended_at IS NULL)`,
-      ).bind(id, sessionId, userId, input.ownerUserId, input.name, input.nameKey, input.role, input.task, input.provider, input.credentialKind, input.model, now, now, sessionId),
+      ).bind(id, sessionId, userId, userId, input.name, input.nameKey, input.role, input.task, input.provider, input.credentialKind, input.model, now, now, sessionId),
       bumpFloorRevision(database, sessionId, now),
     ]);
     if (!(await activeBatchApplied(results, sessionId, userId, database))) return null;
@@ -563,9 +563,12 @@ export async function updateFloorAgentSettings(
 ): Promise<FloorSnapshot | null> {
   if (!(await getActiveMembershipRole(sessionId, userId, database))) return null;
   const agent = await database.prepare(
-    "SELECT provider FROM floor_agents WHERE id = ? AND session_id = ? AND kind IS NULL AND deprovisioned_at IS NULL",
-  ).bind(agentId, sessionId).first<{ provider: CredentialProvider }>();
+    "SELECT provider, owner_user_id AS ownerUserId FROM floor_agents WHERE id = ? AND session_id = ? AND kind IS NULL AND deprovisioned_at IS NULL",
+  ).bind(agentId, sessionId).first<{ provider: CredentialProvider; ownerUserId: string }>();
   if (!agent) throw new FloorTargetError("Only active, persistent agents can be edited.");
+  if ((patch.model !== undefined || patch.credentialKind !== undefined) && agent.ownerUserId !== userId) {
+    throw new FloorTargetError("Only this agent's owner can change its model or billing.");
+  }
   if (patch.model !== undefined && patch.model !== null && !PROVIDER_MODELS[agent.provider].includes(patch.model)) {
     throw new FloorTargetError("That model is not available for this agent's provider.");
   }
@@ -619,7 +622,14 @@ export async function pauseFloorAgent(
   paused: boolean,
   database = getDb(),
 ): Promise<FloorSnapshot | null> {
-  if (!(await getActiveMembershipRole(sessionId, userId, database))) return null;
+  const role = await getActiveMembershipRole(sessionId, userId, database);
+  if (!role) return null;
+  if (!paused) {
+    const owner = await database.prepare(
+      "SELECT owner_user_id AS ownerUserId FROM floor_agents WHERE id = ? AND session_id = ? AND (kind IS NULL OR kind = 'worker') AND deprovisioned_at IS NULL",
+    ).bind(agentId, sessionId).first<{ ownerUserId: string }>();
+    if (owner && owner.ownerUserId !== userId) throw new FloorTargetError("Only this agent's owner can resume it.");
+  }
   const now = Date.now();
   const result = await database.prepare(
     `UPDATE floor_agents SET paused_at = ?, updated_at = ?
@@ -730,9 +740,9 @@ export async function resumeAllFloorAgents(sessionId: string, userId: string, da
   await database.batch([
     database.prepare(
       `UPDATE floor_agents SET paused_at = NULL, updated_at = ?
-       WHERE session_id = ? AND (kind IS NULL OR kind = 'worker') AND deprovisioned_at IS NULL AND paused_at IS NOT NULL
+       WHERE session_id = ? AND (kind IS NULL OR kind = 'worker') AND owner_user_id = ? AND deprovisioned_at IS NULL AND paused_at IS NOT NULL
          AND EXISTS (SELECT 1 FROM sessions WHERE id = ? AND ended_at IS NULL)`,
-    ).bind(now, sessionId, sessionId),
+    ).bind(now, sessionId, userId, sessionId),
     bumpFloorRevision(database, sessionId, now),
   ]);
   return readFloorSnapshot(sessionId, userId, database);

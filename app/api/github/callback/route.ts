@@ -38,13 +38,6 @@ export async function GET(request: Request) {
   const config = getGitHubAppConfig();
   const stateId = await verifyGitHubStateToken(stateToken, config.stateSecret);
   if (!stateId) return Response.json({ error: "GitHub setup could not be verified" }, { status: 400 });
-  let account;
-  try {
-    account = await getInstallationAccount(config, installationId);
-  } catch (error) {
-    if (error instanceof GitHubApiError) return Response.json({ error: "GitHub installation is unavailable" }, { status: error.status === 404 ? 404 : 502 });
-    throw error;
-  }
   // The redirect's installation_id alone proves nothing — ids are
   // near-sequential and anyone could have typed one. Proof is the one-time
   // OAuth `code` GitHub appends when "Request user authorization during
@@ -55,12 +48,29 @@ export async function GET(request: Request) {
   // and gets its full fixture scope.
   const code = url.searchParams.get("code");
   let repoScope: string[] = [];
-  if (config.testData) {
-    repoScope = config.testData.repositories.map((repository) => repository.id);
-  } else if (code && config.clientId && config.clientSecret) {
-    repoScope = await installerRepoScope(config, code, installationId) ?? [];
+  try {
+    if (config.testData) {
+      repoScope = config.testData.repositories.map((repository) => repository.id);
+    } else if (code && config.clientId && config.clientSecret) {
+      repoScope = await installerRepoScope(config, code, installationId) ?? [];
+    }
+  } catch {
+    const consumed = await consumeGitHubAccountConnectionState(stateId, user.id, installationId, null, []);
+    if (!consumed) return Response.json({ error: "GitHub setup has expired or was already used" }, { status: 400 });
+    return Response.json({ error: "GitHub installation verification is unavailable" }, { status: 502 });
   }
   const verified = config.testData != null || repoScope.length > 0;
+  let account: { login: string; type: string } | null = null;
+  if (verified) {
+    try {
+      account = await getInstallationAccount(config, installationId);
+    } catch (error) {
+      const consumed = await consumeGitHubAccountConnectionState(stateId, user.id, installationId, null, []);
+      if (!consumed) return Response.json({ error: "GitHub setup has expired or was already used" }, { status: 400 });
+      if (error instanceof GitHubApiError) return Response.json({ error: "GitHub installation is unavailable" }, { status: error.status === 404 ? 404 : 502 });
+      throw error;
+    }
+  }
   const consumed = await consumeGitHubAccountConnectionState(stateId, user.id, installationId, account, repoScope);
   if (!consumed) return Response.json({ error: "GitHub setup has expired or was already used" }, { status: 400 });
   const returnUrl = consumed.purpose === "onboarding"

@@ -314,12 +314,15 @@ export async function ensureFreshChatGptBundle(
     options.encryptionKey,
     credentialAadContext(resolved.ownerUserId, "openai", "oauth"),
   );
+  // Date.now() can collide for concurrent refreshes. A strictly increasing
+  // version keeps compare-and-set single-winner even within one millisecond.
+  const refreshedAt = Math.max(now, resolved.updatedAt + 1);
   const update = await database
     .prepare(
       `UPDATE user_provider_credentials SET ciphertext = ?, updated_at = ?
         WHERE user_id = ? AND provider = 'openai' AND kind = 'oauth' AND updated_at = ?`,
     )
-    .bind(ciphertext, now, resolved.ownerUserId, resolved.updatedAt)
+    .bind(ciphertext, refreshedAt, resolved.ownerUserId, resolved.updatedAt)
     .run();
   if ((update.meta?.changes ?? 0) > 0) return parseChatGptBundle(rotated) ?? bundle;
   // Lost the race. The winner already stored a bundle built from the same

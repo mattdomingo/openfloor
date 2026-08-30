@@ -4,6 +4,7 @@ import type { AuthenticatedIdentity } from "@/lib/identity";
 import { currentMonth, effectivePlan, effectiveSeatLimit, planHourLimit, PLAN_LIMITS, type Plan, type PlanStatus } from "@/lib/plans";
 import type { AppUser, RemovedSessionMember, SessionMember, SessionRole, SessionSummary } from "@/lib/session-types";
 import { getDb, getInviteSigningSecret, type D1DatabaseLike } from "./index";
+import { enqueueAccountStorageCleanup, enqueueSessionStorageCleanup } from "./storage-cleanup";
 import type { CredentialProvider } from "@/lib/provider-credentials";
 
 // Re-exported so existing importers (worker/presence.ts, tests) don't need
@@ -911,22 +912,31 @@ export async function setSessionLocked(
 }
 
 export const ENDED_SESSION_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+export const ENDED_SESSION_PURGE_BATCH_SIZE = 25;
 
 export async function purgeExpiredSessions(database = getDb(), now = Date.now()): Promise<string[]> {
-  // Every session-scoped child cascades on sessions.id, so one statement
-  // clears an eligible graph. Repository connections fail closed because
-  // their D1 records hold the leases needed for future external cleanup.
-  // ponytail: unbatched DELETE — add a LIMIT loop only if row counts demand it.
-  const result = await database
-    .prepare(
-      `DELETE FROM sessions
+  // Every session-scoped child cascades on sessions.id. Repository
+  // connections fail closed because their D1 records hold leases needed for
+  // future external cleanup. Delete only ids selected before their cleanup
+  // intents were queued; a newer eligible row must wait for the next sweep
+  // rather than disappear without an R2 intent in the select/delete race.
+  const eligible = await database.prepare(
+    `SELECT id FROM sessions
        WHERE ended_at IS NOT NULL AND ended_at < ?
          AND NOT EXISTS (SELECT 1 FROM repository_connections WHERE session_id = sessions.id)
+       ORDER BY ended_at, id LIMIT ?`,
+  ).bind(now - ENDED_SESSION_RETENTION_MS, ENDED_SESSION_PURGE_BATCH_SIZE).all<{ id: string }>();
+  const deleted: string[] = [];
+  for (const row of eligible.results) {
+    await enqueueSessionStorageCleanup(row.id, database, now);
+    const result = await database.prepare(
+      `DELETE FROM sessions WHERE id = ? AND ended_at IS NOT NULL AND ended_at < ?
+         AND NOT EXISTS (SELECT 1 FROM repository_connections WHERE session_id = sessions.id)
        RETURNING id`,
-    )
-    .bind(now - ENDED_SESSION_RETENTION_MS)
-    .all<{ id: string }>();
-  return result.results.map((row) => row.id);
+    ).bind(row.id, now - ENDED_SESSION_RETENTION_MS).all<{ id: string }>();
+    if (result.results.length === 1) deleted.push(row.id);
+  }
+  return deleted;
 }
 
 export async function deleteSession(
@@ -960,6 +970,7 @@ export async function deleteSession(
     .bind(sessionId)
     .first<{ branch: string; sha: string | null }>();
   if (liveCandidate) return { blocked: "candidate_live", branch: liveCandidate.branch, sha: liveCandidate.sha };
+  await enqueueSessionStorageCleanup(sessionId, database);
   // Reported to the owner as a post-delete warning: a merged or
   // owner-abandoned candidate whose branch was never (or not yet)
   // verified-deleted on GitHub survives the session's D1 cascade.
@@ -1041,6 +1052,8 @@ export async function deleteAccount(
   // silently losing that work.
   const { ownedSessionIds, blocked } = await getAccountDeletionBlockers(userId, database);
   if (blocked.length > 0) return { blocked: "sessions", sessions: blocked };
+  for (const sessionId of ownedSessionIds) await enqueueSessionStorageCleanup(sessionId, database);
+  await enqueueAccountStorageCleanup(userId, database);
 
   // Read before the scrub below destroys the only copy: prior_email_hash is
   // how upsertUser recognizes this address on a future sign-in and denies

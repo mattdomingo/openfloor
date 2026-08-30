@@ -121,7 +121,7 @@ const child = spawn(
     env: {
       PATH: process.env.PATH ?? "",
       HOME: process.env.HOME ?? "",
-      NODE_OPTIONS: "--import file:///opt/openfloor/gemini-proxy-preload.mjs",
+      NODE_OPTIONS: "--import file:///opt/openfloor/gemini-proxy-preload.mjs --import file:///opt/openfloor/runner-env-preload.mjs",
       GEMINI_API_KEY: gatewayToken,
       GOOGLE_GEMINI_BASE_URL: gatewayUrl,
       ...(systemSettingsPath ? { GEMINI_CLI_SYSTEM_SETTINGS_PATH: systemSettingsPath } : {}),

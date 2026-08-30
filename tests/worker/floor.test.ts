@@ -77,6 +77,42 @@ async function insertRun(sessionId: string, agentId: string, userId: string, que
 }
 
 describe("D1 persistent floor", () => {
+  it("migration 0042 pauses active persistent agents whose creator differs from billing owner", async () => {
+    const room = await floorRoom("agent-billing-quarantine");
+    const now = Date.now();
+    const mismatchedId = crypto.randomUUID();
+    const matchedId = crypto.randomUUID();
+    const generatedId = crypto.randomUUID();
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO floor_agents
+          (id, session_id, created_by, owner_user_id, name, name_key, role, task, state, provider, kind, created_at, updated_at)
+         VALUES (?, ?, ?, ?, 'Legacy mismatch', 'legacy mismatch', 'Engineer', 'Work', 'created', 'openai', NULL, ?, ?)`,
+      ).bind(mismatchedId, room.sessionId, room.member.id, room.owner.id, now, now),
+      env.DB.prepare(
+        `INSERT INTO floor_agents
+          (id, session_id, created_by, owner_user_id, name, name_key, role, task, state, provider, kind, created_at, updated_at)
+         VALUES (?, ?, ?, ?, 'Matched owner', 'matched owner', 'Engineer', 'Work', 'created', 'openai', NULL, ?, ?)`,
+      ).bind(matchedId, room.sessionId, room.owner.id, room.owner.id, now, now),
+      env.DB.prepare(
+        `INSERT INTO floor_agents
+          (id, session_id, created_by, owner_user_id, name, name_key, role, task, state, provider, kind, created_at, updated_at)
+         VALUES (?, ?, ?, ?, 'Generated worker', 'generated worker', 'Engineer', 'Work', 'created', 'openai', 'worker', ?, ?)`,
+      ).bind(generatedId, room.sessionId, room.member.id, room.owner.id, now, now),
+    ]);
+
+    const queries = JSON.parse(env.AGENT_BILLING_QUARANTINE_QUERIES) as string[];
+    expect(queries).toHaveLength(1);
+    await env.DB.batch(queries.map((query) => env.DB.prepare(query)));
+
+    const rows = await env.DB.prepare(
+      "SELECT id, paused_at AS pausedAt FROM floor_agents WHERE id IN (?, ?, ?) ORDER BY name",
+    ).bind(mismatchedId, matchedId, generatedId).all<{ id: string; pausedAt: number | null }>();
+    expect(rows.results.find((row) => row.id === mismatchedId)?.pausedAt).not.toBeNull();
+    expect(rows.results.find((row) => row.id === matchedId)?.pausedAt).toBeNull();
+    expect(rows.results.find((row) => row.id === generatedId)?.pausedAt).toBeNull();
+  });
+
   it("starts empty, derives blank assignments from members, and conceals outsiders", async () => {
     const room = await floorRoom("empty");
     const floor = await getFloorSnapshot(room.sessionId, room.owner.id, env.DB);
@@ -89,10 +125,12 @@ describe("D1 persistent floor", () => {
     await expect(getFloorSnapshot(room.sessionId, room.outsider.id, env.DB)).resolves.toBeNull();
   });
 
-  it("persists uniquely named agents with real member ownership", async () => {
+  it("persists uniquely named self-owned agents and rejects billing another member", async () => {
     const room = await floorRoom("agents");
-    const floor = await createFloorAgent(room.sessionId, room.member.id, agentInput(room.owner.id), env.DB);
-    expect(floor?.agents).toEqual([expect.objectContaining({ name: "Lumen", ownerUserId: room.owner.id, state: "created", provider: "openai", model: null, credentialKind: null })]);
+    const omittedOwner = agentInput(room.member.id);
+    omittedOwner.ownerUserId = "";
+    const floor = await createFloorAgent(room.sessionId, room.member.id, omittedOwner, env.DB);
+    expect(floor?.agents).toEqual([expect.objectContaining({ name: "Lumen", ownerUserId: room.member.id, state: "created", provider: "openai", model: null, credentialKind: null })]);
     expect(floor?.revision).toBe(1);
     await expect(createFloorAgent(room.sessionId, room.owner.id, agentInput(room.owner.id, "LUMEN"), env.DB)).rejects.toBeInstanceOf(FloorConflictError);
     await expect(createFloorAgent(room.sessionId, room.owner.id, agentInput(room.outsider.id, "Other"), env.DB)).rejects.toBeInstanceOf(FloorTargetError);
@@ -101,7 +139,7 @@ describe("D1 persistent floor", () => {
 
   it("sums lifetime cost across runs, flags a mixed cost source, and reports the most recent billed_kind", async () => {
     const room = await floorRoom("cost-aggregate");
-    const floor = await createFloorAgent(room.sessionId, room.member.id, agentInput(room.owner.id), env.DB);
+    const floor = await createFloorAgent(room.sessionId, room.member.id, agentInput(room.member.id), env.DB);
     const agentId = floor!.agents[0].id;
     const firstQueueFloor = await createFloorQueueItem(room.sessionId, room.member.id, { prompt: "Work 1", agentId }, env.DB);
     const firstQueueItemId = firstQueueFloor!.queue[0].id;
@@ -156,14 +194,15 @@ describe("D1 persistent floor", () => {
     if (!input) throw new Error("Invalid test agent");
     const floor = await createFloorAgent(room.sessionId, room.owner.id, input, env.DB);
     const agentId = floor!.agents[0].id;
-    let updated = await updateFloorAgentSettings(room.sessionId, room.member.id, agentId, { model: "claude-sonnet-5" }, env.DB);
+    await expect(updateFloorAgentSettings(room.sessionId, room.member.id, agentId, { model: "claude-sonnet-5" }, env.DB)).rejects.toBeInstanceOf(FloorTargetError);
+    let updated = await updateFloorAgentSettings(room.sessionId, room.owner.id, agentId, { model: "claude-sonnet-5" }, env.DB);
     expect(updated?.agents[0].model).toBe("claude-sonnet-5");
     // The old task-only contract survives the generalization.
     updated = await updateFloorAgentSettings(room.sessionId, room.member.id, agentId, { task: "New task" }, env.DB);
     expect(updated?.agents[0].task).toBe("New task");
     expect(updated?.agents[0].model).toBe("claude-sonnet-5");
     // Explicit null resets to the provider default.
-    updated = await updateFloorAgentSettings(room.sessionId, room.member.id, agentId, { model: null }, env.DB);
+    updated = await updateFloorAgentSettings(room.sessionId, room.owner.id, agentId, { model: null }, env.DB);
     expect(updated?.agents[0].model).toBeNull();
     // A model outside the STORED provider's allowlist is refused — no
     // provider crossed the wire, so a caller cannot pick which list applies.
@@ -260,7 +299,7 @@ describe("D1 persistent floor", () => {
     await expect(createFloorMessage(room.sessionId, room.owner.id, { text: "Bad DM", recipientUserId: room.outsider.id }, env.DB)).rejects.toBeInstanceOf(FloorTargetError);
   });
 
-  it("pauses and resumes persistent agents and generated workers for any member, but refuses Concierge", async () => {
+  it("lets members pause safety controls, owners resume persistent agents, and refuses Concierge", async () => {
     const room = await floorRoom("pause");
     let floor = await createFloorAgent(room.sessionId, room.owner.id, agentInput(room.owner.id), env.DB);
     const agentId = floor!.agents[0].id;
@@ -273,9 +312,10 @@ describe("D1 persistent floor", () => {
 
     floor = await pauseFloorAgent(room.sessionId, room.owner.id, agentId, false, env.DB);
     expect(floor!.agents.find((agent) => agent.id === agentId)?.pausedAt).toBeNull();
-    await expect(pauseFloorAgent(room.sessionId, room.member.id, agentId, false, env.DB)).rejects.toBeInstanceOf(FloorConflictError);
+    await expect(pauseFloorAgent(room.sessionId, room.member.id, agentId, false, env.DB)).rejects.toBeInstanceOf(FloorTargetError);
 
     await expect(pauseFloorAgent(room.sessionId, room.owner.id, answer.id, true, env.DB)).rejects.toBeInstanceOf(FloorConflictError);
+    await expect(pauseFloorAgent(room.sessionId, room.member.id, answer.id, false, env.DB)).rejects.toBeInstanceOf(FloorConflictError);
     floor = await pauseFloorAgent(room.sessionId, room.member.id, worker.id, true, env.DB);
     expect(floor!.agents.find((agent) => agent.id === worker.id)?.pausedAt).not.toBeNull();
     floor = await pauseFloorAgent(room.sessionId, room.owner.id, worker.id, false, env.DB);

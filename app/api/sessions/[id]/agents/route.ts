@@ -10,7 +10,10 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   const user = await requireApiUser();
   if (isApiError(user)) return user;
   const input = parseAgentInput(await readJson(request));
-  if (!input) return Response.json({ error: "Name, role, task, and a valid owner are required" }, { status: 400 });
+  if (!input) return Response.json({ error: "Name, role, and task are required" }, { status: 400 });
+  if (input.ownerUserId && input.ownerUserId !== user.id) {
+    return Response.json({ error: "Agents can only be owned by the member who creates them." }, { status: 403 });
+  }
   // Same convention as the run gates: while a provider's rollout flag is off,
   // its option is hidden in the UI and a direct request is refused, so a
   // gated-provider agent cannot be CREATED. Agents created while the flag was
@@ -21,7 +24,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   }
   const { id } = await params;
   try {
-    const floor = await createFloorAgent(id, user.id, input);
+    const floor = await createFloorAgent(id, user.id, { ...input, ownerUserId: user.id });
     if (!floor) return Response.json({ error: "Session not found" }, { status: 404 });
     await pokeSessionRouter(id, "agent_changed");
     return floorMutationResponse(id, floor, ["agents"], 201);

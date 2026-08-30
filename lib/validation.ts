@@ -102,12 +102,13 @@ export function normalizeAgentName(value: string): string {
 export function parseAgentInput(value: unknown): AgentInput | null {
   if (!value || typeof value !== "object") return null;
   const input = value as Record<string, unknown>;
-  if (typeof input.name !== "string" || typeof input.role !== "string" || typeof input.task !== "string" || typeof input.ownerUserId !== "string") return null;
+  if (typeof input.name !== "string" || typeof input.role !== "string" || typeof input.task !== "string") return null;
   const name = input.name.normalize("NFKC").trim().replace(/\s+/g, " ");
   const role = input.role.trim();
   const task = input.task.trim();
-  const ownerUserId = input.ownerUserId.trim();
-  if (!name || name.length > 24 || !role || role.length > 80 || !task || task.length > 1000 || !ownerUserId || ownerUserId.length > 100) return null;
+  const ownerUserId = typeof input.ownerUserId === "string" ? input.ownerUserId.trim() : "";
+  if (input.ownerUserId !== undefined && typeof input.ownerUserId !== "string") return null;
+  if (!name || name.length > 24 || !role || role.length > 80 || !task || task.length > 1000 || ownerUserId.length > 100) return null;
   if (input.provider !== undefined && parseCredentialProvider(input.provider) === null) return null;
   const provider = parseCredentialProvider(input.provider) ?? "openai";
   // Optional billing choice, valid only among the provider's supported kinds;

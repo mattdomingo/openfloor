@@ -95,7 +95,7 @@ async function runningRun(suffix: string, agentOwner?: "member") {
   const agentOwnerId = agentOwner === "member" ? member.id : owner.id;
   const input = parseAgentInput({ name: "Builder", role: "Engineer", task: "Implement changes", ownerUserId: agentOwnerId });
   if (!input) throw new Error("Invalid test agent");
-  const floor = await createFloorAgent(sessionId, owner.id, input, env.DB);
+  const floor = await createFloorAgent(sessionId, agentOwnerId, input, env.DB);
   const agent = floor?.agents.find((candidate) => candidate.name === "Builder");
   if (!agent) throw new Error("Agent was not created");
   const runId = await insertRunRow(sessionId, agent.id, owner.id, "running");
@@ -1222,13 +1222,15 @@ describe("OpenAI gateway credential resolution", () => {
       }), { status: 200, headers: { "content-type": "application/json" } });
     });
     const resolved = { secret: stale, ownerUserId: owner.id, updatedAt: before!.updatedAt };
-    const winner = await ensureFreshChatGptBundle(resolved, { encryptionKey: ENCRYPTION_SECRET }, env.DB, before!.updatedAt + 100);
+    // Force a same-millisecond clock collision. The persisted version must
+    // still advance or both conditional writes would succeed.
+    const winner = await ensureFreshChatGptBundle(resolved, { encryptionKey: ENCRYPTION_SECRET }, env.DB, before!.updatedAt);
     expect(winner?.refreshToken).toBe("rt-rotated-1");
     // A second dispatch that read the row before the winner's write carries the
     // same now-stale updated_at. Its conditional update must miss, and it must
     // adopt the winner's bundle: the vendor rotates on every exchange, so
     // persisting its own would strand the member on a dead refresh token.
-    const loser = await ensureFreshChatGptBundle(resolved, { encryptionKey: ENCRYPTION_SECRET }, env.DB, before!.updatedAt + 200);
+    const loser = await ensureFreshChatGptBundle(resolved, { encryptionKey: ENCRYPTION_SECRET }, env.DB, before!.updatedAt);
     expect(loser?.refreshToken).toBe("rt-rotated-1");
     expect(loser?.accessToken).toBe(winner?.accessToken);
     const stored = await env.DB.prepare(

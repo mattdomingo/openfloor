@@ -12,10 +12,12 @@ import { getSandbox, type Sandbox } from "@cloudflare/sandbox";
 import { purgeExpiredSessions } from "../db/sessions";
 import { retirePoolSandbox, takeEvictablePoolSandboxes } from "../db/sandbox-pool";
 import { notifyMembersChanged } from "../lib/presence-server";
+import { violatesBrowserMutationPolicy, withSecurityHeaders } from "../lib/http-security";
 import { handlePresenceRequest, SessionPresence } from "./presence";
 import { SessionRouter } from "./session-router";
 import { RepositoryPreflightWorkflow } from "./preflight-workflow";
 import { AgentRunWorkflow } from "./agent-run-workflow";
+import { sweepStorageCleanup } from "./storage-cleanup";
 export { Sandbox, ContainerProxy } from "@cloudflare/sandbox";
 
 export { AgentRunWorkflow, RepositoryPreflightWorkflow, SessionPresence, SessionRouter };
@@ -29,6 +31,14 @@ type DurableObjectNamespaceLike = {
 interface Env extends IdentityEnvironment {
   ASSETS: { fetch(request: Request): Promise<Response> };
   DB: D1DatabaseLike;
+  PREFLIGHT_LOGS: {
+    list(options?: { prefix?: string; cursor?: string; limit?: number }): Promise<{ objects: Array<{ key: string }>; truncated: boolean; cursor?: string }>;
+    delete(keys: string | string[]): Promise<void>;
+  };
+  USER_AVATARS: {
+    list(options?: { prefix?: string; cursor?: string; limit?: number }): Promise<{ objects: Array<{ key: string }>; truncated: boolean; cursor?: string }>;
+    delete(keys: string | string[]): Promise<void>;
+  };
   SANDBOX: DurableObjectNamespace<Sandbox>;
   SESSION_PRESENCE: DurableObjectNamespaceLike;
   IMAGES: {
@@ -71,22 +81,25 @@ function isApiDocumentNavigation(request: Request, url: URL): boolean {
 const worker = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
+    if (violatesBrowserMutationPolicy(request, url)) {
+      return withSecurityHeaders(Response.json({ error: "Cross-site mutation rejected" }, { status: 403 }), url);
+    }
     const presenceResponse = await handlePresenceRequest(request, env);
-    if (presenceResponse) return presenceResponse;
+    if (presenceResponse) return withSecurityHeaders(presenceResponse, url);
 
     if (url.pathname === "/_vinext/image") {
       const allowedWidths = [...DEFAULT_DEVICE_SIZES, ...DEFAULT_IMAGE_SIZES];
-      return handleImageOptimization(request, {
+      return withSecurityHeaders(await handleImageOptimization(request, {
         fetchAsset: (path) => env.ASSETS.fetch(new Request(new URL(path, request.url))),
         transformImage: async (body, { width, format, quality }) => {
           const result = await env.IMAGES.input(body).transform(width > 0 ? { width } : {}).output({ format, quality });
           return result.response();
         },
-      }, allowedWidths);
+      }, allowedWidths), url);
     }
 
     const asset = await serveAsset(request, env);
-    if (asset) return asset;
+    if (asset) return withSecurityHeaders(asset, url);
 
     const identityHeaders = new Headers(request.headers);
     if (!identityHeaders.has("host")) identityHeaders.set("host", url.host);
@@ -94,9 +107,9 @@ const worker = {
       ?? await cloudflareAccessIdentity(identityHeaders, env);
     const response = await handler.fetch(requestWithTrustedIdentity(request, identity), env, ctx);
     if (response.status === 404 && isApiDocumentNavigation(request, url)) {
-      return Response.redirect(new URL(`${BASE_PATH}/home`, url), 302);
+      return withSecurityHeaders(Response.redirect(new URL(`${BASE_PATH}/home`, url), 302), url);
     }
-    return response;
+    return withSecurityHeaders(response, url);
   },
 
   // Cron entry points (wrangler.jsonc triggers.crons). Thin by design: the
@@ -106,10 +119,12 @@ const worker = {
     ctx.waitUntil((async () => {
       if (cron === POOL_SWEEP_CRON) {
         await sweepSandboxPool(env);
+        await sweepStorageCleanup(env);
         return;
       }
       const deletedSessionIds = await purgeExpiredSessions(env.DB);
       await Promise.all(deletedSessionIds.map((sessionId) => notifyMembersChanged(sessionId)));
+      await sweepStorageCleanup(env);
     })());
   },
 };

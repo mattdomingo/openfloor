@@ -1,3 +1,5 @@
+import ipaddr from "ipaddr.js";
+
 // Session-configured MCP servers: shared internal types, bounded validation,
 // and per-provider serialization. Pure module (no cloudflare:workers).
 //
@@ -60,9 +62,23 @@ function parseUrl(value: unknown): string | null {
   } catch {
     return null;
   }
-  // Remote servers only, over TLS — headers may carry credentials.
-  if (parsed.protocol !== "https:") return null;
+  // Remote servers only, over TLS — headers may carry credentials. Restrict
+  // to the default TLS port and globally routable literal IPs; this prevents
+  // obvious SSRF into loopback, link-local, and cloud metadata services.
+  if (parsed.protocol !== "https:" || (parsed.port !== "" && parsed.port !== "443")) return null;
+  if (parsed.username || parsed.password) return null;
+  const hostname = parsed.hostname.toLowerCase().replace(/\.$/, "").replace(/^\[|\]$/g, "");
+  if (hostname === "localhost" || hostname.endsWith(".localhost") || hostname.endsWith(".local") || hostname.endsWith(".internal")) return null;
+  if (ipaddr.isValid(hostname)) {
+    const address = ipaddr.parse(hostname);
+    if (address.kind() === "ipv4" && address.range() !== "unicast") return null;
+    if (address.kind() === "ipv6" && address.range() !== "unicast") return null;
+  }
   return url;
+}
+
+export function isSafeMcpUrl(url: string): boolean {
+  return parseUrl(url) !== null;
 }
 
 function parseHeaders(value: unknown): Record<string, string> | null | undefined {

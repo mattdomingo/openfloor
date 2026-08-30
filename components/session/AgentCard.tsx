@@ -25,7 +25,7 @@ function glyphFor(kind: string): string {
   return KIND_GLYPHS[kind] ?? "•";
 }
 
-export const AgentCard = memo(function AgentCard({ agent, tone, latestRun, activity, selected, owner, conflict, onFocus, onOpenConflict, onHistory, onPause, onStop, onDelete }: { agent: FloorAgent; tone: string; latestRun: AgentRun | null; activity: RunActivitySource; selected: boolean; owner: boolean; conflict?: AgentConflictInfo | null; onFocus: () => void; onOpenConflict?: (caseId: string) => void; onHistory: () => void; onPause: (agentId: string, paused: boolean) => void; onStop: (agentId: string) => void; onDelete: (agentId: string) => void }) {
+export const AgentCard = memo(function AgentCard({ agent, tone, latestRun, activity, selected, owner, agentOwner, conflict, onFocus, onOpenConflict, onHistory, onPause, onStop, onDelete }: { agent: FloorAgent; tone: string; latestRun: AgentRun | null; activity: RunActivitySource; selected: boolean; owner: boolean; agentOwner: boolean; conflict?: AgentConflictInfo | null; onFocus: () => void; onOpenConflict?: (caseId: string) => void; onHistory: () => void; onPause: (agentId: string, paused: boolean) => void; onStop: (agentId: string) => void; onDelete: (agentId: string) => void }) {
   const live = isRunLive(latestRun);
   const activityEvents = useRunEvents(activity, live ? latestRun?.id : null);
   const latestEvent = live ? activityEvents[activityEvents.length - 1] ?? null : null;
@@ -66,7 +66,7 @@ export const AgentCard = memo(function AgentCard({ agent, tone, latestRun, activ
           )}
           {controllable && (
             <>
-              <button type="button" className="button" data-size="sm" title={paused ? "Resume" : "Pause"} aria-label={paused ? `Resume ${agent.name}` : `Pause ${agent.name}`} onClick={() => onPause(agent.id, !paused)}><Icon name={paused ? "play" : "pause"} size={12} /></button>
+              <button type="button" className="button" data-size="sm" disabled={paused && !agentOwner} title={paused && !agentOwner ? "Only this agent's owner can resume it" : paused ? "Resume; shared routing may run it and spend the owner's credential" : "Pause"} aria-label={paused ? `Resume ${agent.name}` : `Pause ${agent.name}`} onClick={() => onPause(agent.id, !paused)}><Icon name={paused ? "play" : "pause"} size={12} /></button>
               <button type="button" className="button" data-size="sm" title={owner ? "Stop: pause future work and cancel the current run" : "Stop: pause future work; the current run will finish"} aria-label={`Stop ${agent.name}`} onClick={() => onStop(agent.id)}><Icon name="stop" size={12} /></button>
               {!agent.kind && <button type="button" className="button danger-button" data-size="sm" title="Delete" aria-label={`Delete ${agent.name}`} onClick={() => onDelete(agent.id)}><Icon name="trash" size={12} /></button>}
             </>
@@ -89,7 +89,7 @@ function AgentReplyBubble({ agentName, reply, onOpen }: { agentName: string; rep
   );
 }
 
-export const AgentSpotlight = memo(function AgentSpotlight({ agent, tone, sessionId, latestRun, activity, owner, conflict, onHistory, onOpenConflict, onUpdateSettings, onPause, onStop, onDelete }: { agent: FloorAgent; tone: string; sessionId: string; latestRun: AgentRun | null; activity: RunActivitySource; owner: boolean; conflict?: AgentConflictInfo | null; onHistory: () => void; onOpenConflict?: (caseId: string) => void; onUpdateSettings: (agentId: string, patch: FloorAgentSettingsPatch) => Promise<boolean>; onPause: (agentId: string, paused: boolean) => void; onStop: (agentId: string) => void; onDelete: (agentId: string) => void }) {
+export const AgentSpotlight = memo(function AgentSpotlight({ agent, tone, sessionId, latestRun, activity, owner, agentOwner, conflict, onHistory, onOpenConflict, onUpdateSettings, onPause, onStop, onDelete }: { agent: FloorAgent; tone: string; sessionId: string; latestRun: AgentRun | null; activity: RunActivitySource; owner: boolean; agentOwner: boolean; conflict?: AgentConflictInfo | null; onHistory: () => void; onOpenConflict?: (caseId: string) => void; onUpdateSettings: (agentId: string, patch: FloorAgentSettingsPatch) => Promise<boolean>; onPause: (agentId: string, paused: boolean) => void; onStop: (agentId: string) => void; onDelete: (agentId: string) => void }) {
   // A reply run never runs checks, exports files, or publishes a branch —
   // that execution summary belongs only to a task run.
   const isReply = latestRun?.kind === "reply";
@@ -117,7 +117,7 @@ export const AgentSpotlight = memo(function AgentSpotlight({ agent, tone, sessio
           )}
           {controllable && (
             <>
-              <button type="button" className="button" data-size="sm" onClick={() => onPause(agent.id, !paused)}><Icon name={paused ? "play" : "pause"} size={12} />{paused ? "Resume" : "Pause"}</button>
+              <button type="button" className="button" data-size="sm" disabled={paused && !agentOwner} title={paused ? agentOwner ? "Shared routing may run this agent and spend your credential" : "Only this agent's owner can resume it" : undefined} onClick={() => onPause(agent.id, !paused)}><Icon name={paused ? "play" : "pause"} size={12} />{paused ? "Resume" : "Pause"}</button>
               <button type="button" className="button" data-size="sm" title={owner ? "Pause future work and cancel the current run" : "Pause future work; the current run will finish"} onClick={() => onStop(agent.id)}><Icon name="stop" size={12} />Stop</button>
               {!agent.kind && <button type="button" className="button danger-button" data-size="sm" onClick={() => onDelete(agent.id)}><Icon name="trash" size={12} />Delete</button>}
             </>
@@ -136,6 +136,7 @@ export const AgentSpotlight = memo(function AgentSpotlight({ agent, tone, sessio
           <SelectMenu
             label={`Model for ${agent.name}`}
             value={agent.model ?? "default"}
+            disabled={!agentOwner}
             onChange={(value) => {
               const model = value === "default" ? null : value;
               if (model !== agent.model) void onUpdateSettings(agent.id, { model });
@@ -152,6 +153,7 @@ export const AgentSpotlight = memo(function AgentSpotlight({ agent, tone, sessio
           <SelectMenu
             label={`Billing for ${agent.name}`}
             value={agent.credentialKind ?? "default"}
+            disabled={!agentOwner}
             onChange={(value) => {
               const kind = parseCredentialKind(value);
               if (kind !== agent.credentialKind) void onUpdateSettings(agent.id, { credentialKind: kind });

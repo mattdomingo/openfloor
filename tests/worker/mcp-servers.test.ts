@@ -40,6 +40,20 @@ async function room(suffix: string) {
 }
 
 describe("session MCP server persistence", () => {
+  it("rejects internal, credential-bearing, and nonstandard-port endpoints", () => {
+    for (const url of [
+      "http://public.example.com/mcp",
+      "https://localhost/mcp",
+      "https://127.0.0.1/mcp",
+      "https://[::1]/mcp",
+      "https://169.254.169.254/latest/meta-data",
+      "https://user:password@public.example.com/mcp",
+      "https://public.example.com:8443/mcp",
+    ]) {
+      expect(parseMcpServerCreateInput({ name: "blocked", transport: "http", url }), url).toBeNull();
+    }
+  });
+
   it("owner configures; members read names only; header values are encrypted at rest", async () => {
     const { sessionId, owner, member, outsider } = await room("crud");
     const created = await createSessionMcpServer(sessionId, owner.id, serverInput("issue-tracker"), SECRET, env.DB);
@@ -78,6 +92,9 @@ describe("session MCP server persistence", () => {
     expect(runtime[0].headers).toEqual({ Authorization: "Bearer secret-for-enabled-server" });
 
     await expect(getEnabledMcpServersForRun(sessionId, "a-rotated-secret", env.DB)).rejects.toThrow(/could not be read/);
+    await env.DB.prepare("UPDATE session_mcp_servers SET url = 'https://127.0.0.1/mcp' WHERE session_id = ? AND name = 'enabled-server'")
+      .bind(sessionId).run();
+    await expect(getEnabledMcpServersForRun(sessionId, SECRET, env.DB)).rejects.toThrow(/blocked URL/);
   });
 
   it("updates keep omitted fields, clear headers on null, and toggle enabled", async () => {
