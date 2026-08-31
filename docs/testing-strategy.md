@@ -17,6 +17,7 @@ Use for pure behavior:
 - Presence and typing-draft reducers.
 - Everyone/Typing/Hidden draft selection.
 - Conflict validation, state/prompt rendering, notification event selection/deduplication, and real multi-file three-way workspace construction.
+- Production deploy-artifact identity: exact D1 database ID, disabled agent execution, and rejection of test-only variables.
 
 ### D1 integration tests
 

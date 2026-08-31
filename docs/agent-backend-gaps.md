@@ -41,10 +41,11 @@ The Anthropic-compat route died on xAI rejecting system-role messages (2026-08-2
 
 ## Deployment order
 
-1. Run `npm test`.
+1. Run `npm audit --omit=dev` and `npm test`.
 2. Apply D1 migrations with `npx wrangler d1 migrations apply DB --remote`.
 3. Build with `npm run build`.
-4. Deploy with `npx wrangler deploy --config dist/server/wrangler.json`.
-5. Smoke-test the owner/member flow from `docs/github-production.md` against only the disposable acceptance repository, including two consecutive integrations into one draft PR, automatic multi-file conflict resolution, a resolver question answered by an original author or owner, unrelated-member waiting UI, owner-only manual resolution with automation off, ready-for-review, protected squash merge, exact-SHA cleanup, a fresh candidate cycle, reload recovery, cancellation, and a failing retryable run.
+4. Verify the production artifact with `npm run verify:deploy-artifact`.
+5. Deploy with `npx wrangler deploy --config dist/server/wrangler.json`.
+6. Smoke-test the owner/member flow from `docs/github-production.md` against only the disposable acceptance repository, including two consecutive integrations into one draft PR, automatic multi-file conflict resolution, a resolver question answered by an original author or owner, unrelated-member waiting UI, owner-only manual resolution with automation off, ready-for-review, protected squash merge, exact-SHA cleanup, a fresh candidate cycle, reload recovery, cancellation, and a failing retryable run.
 
 Known follow-up: Phase 5 discard is still reported by the production UI as unsuccessful in the acceptance repository after the authentication correction. Keep its expected-SHA safety checks intact and diagnose it in the separately requested ticket; it is not part of Phase 6 acceptance.

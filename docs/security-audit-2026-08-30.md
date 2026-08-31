@@ -4,7 +4,7 @@
 
 This follow-up audit reviewed the latest `origin/main` at `96afa2e1c58f66c43c5a2822c9a693eb2eb993b2`, including authentication and authorization boundaries, webhooks, model gateways, agent runtime cancellation, CI/CD, dependencies, committed-secret exposure, GitHub repository controls, uploads, MCP, and the residual risks from the 2026-08-29 audit.
 
-Three medium-severity findings were remediated. Failed GitHub webhook processing can now be retried with the same delivery ID, cancellation immediately revokes new model-spending requests, and the release workflow validates pull requests and gates production mutation behind a production dependency audit and the complete test pipeline while pinning its supply-chain references.
+Four medium-severity findings were remediated. Failed GitHub webhook processing can now be retried with the same delivery ID, cancellation immediately revokes new model-spending requests, the release workflow validates pull requests and gates production mutation behind a production dependency audit and the complete test pipeline while pinning its supply-chain references, and every documented deployment path now rejects artifacts that do not match the authoritative production database and closed agent-execution gate.
 
 No production dependency advisory was found. The full development audit still reports four moderate advisories in `drizzle-kit`'s nested legacy `esbuild`; npm's proposed fix is an incompatible downgrade. Production agent execution remains disabled because the prior same-uid `/proc` gateway-token exposure is not resolved by this change.
 
@@ -53,6 +53,18 @@ No production dependency advisory was found. The full development audit still re
 
 **Verification:** workflow YAML parses, exact action/npm pins are reviewed, Cloudflare credentials remain scoped only to production mutation steps, and the full local pipeline reproduces the pre-mutation gate.
 
+### SEC-12 — Deploy-artifact verification trusted labels and incomplete runbooks (Medium, fixed)
+
+**Evidence:** the E2E preview build writes test identity and execution variables into the same `dist/server/wrangler.json` path used by production deployment. The first artifact guard rejected that exact E2E shape, but validated only D1's display name rather than the authoritative `database_id`, did not enforce the mandatory `AGENT_RUN_ENABLED=false` security hold, and was absent from `docs/github-production.md` and `docs/agent-backend-gaps.md`. `docs/github-production.md` also retained an obsolete instruction to enable agent execution after only the image, Workflow, and OpenAI key were ready, contradicting the newer separate-uid requirement.
+
+**Fix:** the verifier now requires the exact production D1 UUID and `AGENT_RUN_ENABLED=false` in addition to the worker, route, database name, and test-variable checks. Unit fixtures prove the valid production shape passes while a lookalike database ID, enabled execution, and test identity variables fail. Pull-request CI runs the verifier against the render suite's real production artifact before E2E replaces `dist/`; `main` rebuilds and verifies again immediately before deployment. Every operator-facing deployment sequence now includes the verifier, and the stale enablement instruction is replaced by the separate-uid adversarial-container gate.
+
+**Functionality impact:** none. Application, E2E, migration, and deployment behavior are unchanged for valid configurations; only unsafe or misidentified deploy artifacts fail earlier.
+
+**Residual risk:** repository administrators can change the production identifiers and verifier together, and manual raw `wrangler deploy` remains technically possible outside the documented command sequence. Merge review and repository administration remain operational trust boundaries.
+
+**Verification:** focused unit coverage passes all three artifact cases; the existing E2E artifact fails closed with every mismatch reported; a fresh production build passes the strengthened verifier.
+
 The newly enforced full-suite gate also exposed three test-environment gaps: the original workflow had never provisioned Playwright Chromium; the long two-user browser test could switch rapidly from Prompts to History before the first contribution request settled; and Wrangler 4.127.1 can fatally lose its local dev-proxy connection on Linux CI, the upstream `workers-sdk#15317` failure. CI now installs Chromium, the test waits for the active contribution request before changing filters, and the E2E harness builds with the test Wrangler config then serves the built artifact through the Cloudflare Vite plugin's direct Miniflare preview path. This removes the affected proxy layer without retries or vulnerable tool downgrades. None changes product behavior.
 
 ## Additional scope conclusions and residual risks
@@ -70,11 +82,12 @@ The newly enforced full-suite gate also exposed three test-environment gaps: the
 - Targeted worker tests: passed, 2 files / 90 tests.
 - `npm run typecheck`: passed.
 - `npm run lint`: passed with two pre-existing `@next/next/no-img-element` warnings.
-- `npm run test:unit`: passed, 47 files / 315 tests.
-- `npm run test:migrations`: passed, 8 files / 163 tests.
+- `npm run test:unit`: passed, 48 files / 318 tests.
+- `npm run test:migrations`: passed, 8 files / 164 tests.
 - `npm run test:worker`: passed, 6 files / 84 tests.
 - `npm run test:render`: passed, 6 files / 45 tests.
 - `npm run build`: passed in both render and end-to-end pipeline stages with the documented future Vite native-config-loader warning.
+- Strengthened deploy-artifact verification: fresh production build passed; completed E2E build failed closed with all worker, route, D1 name/ID, execution-gate, and test-variable mismatches reported.
 - End-to-end suite: passed, 11 of 11 tests. Port `8940` avoided unrelated local listeners.
 - Workflow YAML parse: passed.
 - `npm audit --omit=dev`: passed, zero advisories.

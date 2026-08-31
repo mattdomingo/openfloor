@@ -10,6 +10,7 @@ const ARTIFACT = "dist/server/wrangler.json";
 const EXPECTED_NAME = "openfloor";
 const EXPECTED_ROUTE = "app.opnflr.com";
 const EXPECTED_DATABASE = "openfloor-production";
+const EXPECTED_DATABASE_ID = "1e5059bf-1f7b-4be8-8ea4-c424a191070a";
 const FORBIDDEN_VAR_PREFIXES = ["OPENFLOOR_TEST_", "OPENFLOOR_E2E_"];
 
 let config;
@@ -29,6 +30,12 @@ if (!(config.routes ?? []).some((route) => route?.pattern === EXPECTED_ROUTE && 
 const database = (config.d1_databases ?? []).find((binding) => binding?.binding === "DB");
 if (database?.database_name !== EXPECTED_DATABASE) {
   problems.push(`DB binding points at "${database?.database_name ?? "nothing"}", expected "${EXPECTED_DATABASE}"`);
+}
+if (database?.database_id !== EXPECTED_DATABASE_ID) {
+  problems.push(`DB binding has id "${database?.database_id ?? "nothing"}", expected production id "${EXPECTED_DATABASE_ID}"`);
+}
+if (config.vars?.AGENT_RUN_ENABLED !== "false") {
+  problems.push(`AGENT_RUN_ENABLED is "${config.vars?.AGENT_RUN_ENABLED ?? "missing"}", expected the production security hold "false"`);
 }
 for (const name of Object.keys(config.vars ?? {})) {
   if (FORBIDDEN_VAR_PREFIXES.some((prefix) => name.startsWith(prefix))) {

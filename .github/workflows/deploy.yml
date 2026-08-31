@@ -44,6 +44,9 @@ jobs:
           npm run test:migrations
           npm run test:worker
           npm run test:render
+          # test:render leaves the real production artifact in dist/. Verify it
+          # on pull requests too, before the browser gate replaces it with E2E.
+          npm run verify:deploy-artifact
       - name: Run browser test gate
         run: npm run test:e2e
       - run: npx wrangler d1 migrations apply DB --remote

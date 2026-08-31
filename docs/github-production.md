@@ -119,13 +119,15 @@ For loopback development, put the same GitHub values in `.dev.vars`. Represent p
 ## Migrate and deploy
 
 ```bash
+npm audit --omit=dev
 npm test
 npx wrangler d1 migrations apply DB --remote
 npm run build
+npm run verify:deploy-artifact
 npx wrangler deploy --config dist/server/wrangler.json
 ```
 
-After the container-enabled deployment succeeds, set `PREFLIGHT_ENABLED` to `true`, rebuild, and deploy again. Keep `AGENT_RUN_ENABLED=false` until the updated Codex image and `AGENT_RUN_WORKFLOW` deploy and `OPENAI_API_KEY` appears in `npx wrangler secret list`. Then set it to `true`, rebuild, and deploy again. Do not enable either flag before its runtime prerequisites are live.
+After the container-enabled deployment succeeds, set `PREFLIGHT_ENABLED` to `true`, rebuild, verify, and deploy again. Keep `AGENT_RUN_ENABLED=false`: provider CLIs and repository-controlled commands still share a Linux uid, so same-uid `/proc` reads can expose the CLI's initial gateway token. Do not enable agent execution until a separate-uid or equivalent kernel boundary passes the adversarial container tests required by `AGENTS.md`; the image, Workflow, and provider credentials alone are not sufficient authorization.
 
 Each passing result is exported as an incremental Git bundle, validated in a clean publisher Sandbox, and pushed as a single commit without force to `openfloor/<session-short>/run/<run-short>`. A D1 candidate lease serializes GitHub merges into the active candidate branch. The first integration opens one draft pull request into the configured base; later integrations update the same PR. Conflicts leave the candidate unchanged and expose owner-only **Retry against latest candidate**, which creates a new attempt and branch.
 
