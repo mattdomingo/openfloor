@@ -16,7 +16,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ pat
   const context = await getRunGatewayContext(claims.runId);
   if (
     !context || context.sessionId !== claims.sessionId || context.repositoryId !== claims.repositoryId
-    || context.candidateSha !== claims.candidateSha || !["running", "cancel_requested"].includes(context.status)
+    || context.candidateSha !== claims.candidateSha || context.status !== "running"
   ) return new Response("Not found", { status: 404 });
   const contentLength = Number(request.headers.get("content-length") ?? 0);
   if (contentLength > MAX_REQUEST_BYTES) return new Response("Payload too large", { status: 413 });

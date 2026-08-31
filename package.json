@@ -14,11 +14,12 @@
     "test:migrations": "vitest run --config vitest.worker.config.ts tests/worker/sessions.test.ts tests/worker/floor.test.ts tests/worker/routing.test.ts tests/worker/conflicts.test.ts tests/worker/conflict-selections.test.ts tests/worker/github-webhook.test.ts tests/worker/stripe-billing.test.ts tests/worker/account-merge.test.ts",
     "test:worker": "vitest run --config vitest.worker.config.ts tests/worker/presence.test.ts tests/worker/run-activity.test.ts tests/worker/credentials.test.ts tests/worker/skills.test.ts tests/worker/mcp-servers.test.ts tests/worker/storage-cleanup.test.ts",
     "test:render": "npm run build && vitest run --config vitest.render.config.ts",
-    "test:e2e": "npm run build && playwright test",
+    "test:e2e": "playwright test",
     "demo:record": "npm run build && node scripts/record-website-demo.mjs",
     "typecheck": "tsc --noEmit",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
-    "db:generate": "drizzle-kit generate"
+    "db:generate": "drizzle-kit generate",
+    "verify:deploy-artifact": "node scripts/verify-deploy-artifact.mjs"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "0.3.239",

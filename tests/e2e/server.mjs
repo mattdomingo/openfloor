@@ -54,6 +54,30 @@ const agentRunTestData = process.env.OPENFLOOR_TEST_AGENT_RUN_DATA ?? JSON.strin
   changedPath: "src/agent-change.ts",
   pathByPrompt: { "second published": "src/second-change.ts", "member rollback": "src/member-change.ts" },
 });
+const e2eEnv = {
+  ...process.env,
+  OPENFLOOR_E2E_PREVIEW: "true",
+  OPENFLOOR_E2E_STATE_PATH: statePath,
+  INVITE_SIGNING_SECRET: "e2e-test-secret",
+  GITHUB_APP_ID: "test-app",
+  GITHUB_APP_SLUG: "openfloor-test",
+  GITHUB_APP_PRIVATE_KEY: "test-private-key",
+  GITHUB_STATE_SECRET: "e2e-test-github-state-secret",
+  GITHUB_WEBHOOK_SECRET: "e2e-test-github-webhook-secret",
+  STRIPE_SECRET_KEY: "sk_test_e2e",
+  STRIPE_WEBHOOK_SECRET: "whsec_e2e-test-stripe-webhook-secret",
+  STRIPE_PRO_PRICE_ID: "price_test_pro",
+  STRIPE_MAX_PRICE_ID: "price_test_max",
+  STRIPE_PORTAL_CONFIGURATION_ID: "bpc_test",
+  STRIPE_CHECKOUT_ENABLED: "true",
+  CREDENTIAL_ENCRYPTION_KEY: "e2e-test-credential-encryption-key",
+  OPENFLOOR_TEST_PROVIDER_KEYS: providerTestKeys,
+  OPENFLOOR_TEST_GITHUB_DATA: githubTestData,
+  PREFLIGHT_ENABLED: "false",
+  AGENT_RUN_ENABLED: "true",
+  OPENFLOOR_TEST_AGENT_RUN_DATA: agentRunTestData,
+  OPENFLOOR_TEST_ALLOW_IDENTITY_HEADERS: "true",
+};
 const migration = spawnSync(
   "npx",
   ["wrangler", "d1", "migrations", "apply", "DB", "--local", "--config", wranglerConfig, "--persist-to", statePath],
@@ -65,38 +89,25 @@ if (migration.status !== 0) {
   process.exit(migration.status ?? 1);
 }
 
+const build = spawnSync("npx", ["vinext", "build"], { stdio: "inherit", env: e2eEnv });
+
+if (build.status !== 0) {
+  rmSync(statePath, { recursive: true, force: true });
+  process.exit(build.status ?? 1);
+}
+
 const server = spawn("npx", [
-  "wrangler",
-  "dev",
-  "--config",
-  wranglerConfig,
+  "vite",
+  "preview",
+  "--host",
+  "127.0.0.1",
   "--port",
   port,
-  "--persist-to",
-  statePath,
-  "--var",
-  "INVITE_SIGNING_SECRET:e2e-test-secret",
-  "GITHUB_APP_ID:test-app",
-  "GITHUB_APP_SLUG:openfloor-test",
-  "GITHUB_APP_PRIVATE_KEY:test-private-key",
-  "GITHUB_STATE_SECRET:e2e-test-github-state-secret",
-  "GITHUB_WEBHOOK_SECRET:e2e-test-github-webhook-secret",
-  "STRIPE_SECRET_KEY:sk_test_e2e",
-  "STRIPE_WEBHOOK_SECRET:whsec_e2e-test-stripe-webhook-secret",
-  "STRIPE_PRO_PRICE_ID:price_test_pro",
-  "STRIPE_MAX_PRICE_ID:price_test_max",
-  "STRIPE_PORTAL_CONFIGURATION_ID:bpc_test",
-  "STRIPE_CHECKOUT_ENABLED:true",
-  "CREDENTIAL_ENCRYPTION_KEY:e2e-test-credential-encryption-key",
-  `OPENFLOOR_TEST_PROVIDER_KEYS:${providerTestKeys}`,
-  `OPENFLOOR_TEST_GITHUB_DATA:${githubTestData}`,
-  "PREFLIGHT_ENABLED:false",
-  "AGENT_RUN_ENABLED:true",
-  `OPENFLOOR_TEST_AGENT_RUN_DATA:${agentRunTestData}`,
-  "--var",
-  "OPENFLOOR_TEST_ALLOW_IDENTITY_HEADERS:true",
-  "--show-interactive-dev-session=false",
-], { stdio: "inherit" });
+  "--strictPort",
+], {
+  stdio: "inherit",
+  env: e2eEnv,
+});
 
 function stop(signal) {
   server.kill(signal);

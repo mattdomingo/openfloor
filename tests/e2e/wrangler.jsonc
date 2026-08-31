@@ -8,6 +8,7 @@
   "rules": [{ "type": "ESModule", "globs": ["**/*.js", "**/*.mjs"] }],
   "assets": { "directory": "../../dist/client", "not_found_handling": "none", "binding": "ASSETS" },
   "images": { "binding": "IMAGES" },
+  "dev": { "enable_containers": false },
   "durable_objects": { "bindings": [
     { "name": "SESSION_PRESENCE", "class_name": "SessionPresence" },
     { "name": "SESSION_ROUTER", "class_name": "SessionRouter" }

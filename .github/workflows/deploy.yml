@@ -1,40 +1,68 @@
-# Production deploy: every push to main runs the documented deploy sequence
-# (AGENTS.md "Deployment order"). Merging to main IS the deploy authorization.
-name: Deploy
+# Pull requests run the complete test pipeline. Every push to main repeats the
+# same gate before the documented migration/build/deploy sequence (AGENTS.md
+# "Deployment order"). Merging to main IS the deploy authorization.
+name: CI and Deploy
 
 permissions:
   contents: read
 
 on:
+  pull_request:
   push:
     branches: [main]
 
-# One deploy at a time, in order; never cancel a running migration/deploy.
+# One production deploy at a time, in order. Superseded PR runs may stop, but a
+# main run never cancels once it could reach migration/deploy.
 concurrency:
-  group: production-deploy
-  cancel-in-progress: false
+  group: ${{ github.event_name == 'push' && 'production-deploy' || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: npm
       # The npm bundled with the setup-node node-22 image mis-validates optional
       # peerDependencies against package-lock.json (reports them "missing" even
       # though npm install leaves the lockfile untouched). npm 11 fixes this.
-      - run: npm install -g npm@11
+      - run: npm install -g npm@11.19.1
       - run: npm ci
+      - run: npm audit --omit=dev
+      - run: npx playwright install --with-deps chromium
+      - name: Run non-browser test gate
+        run: |
+          npm run typecheck
+          npm run lint
+          npm run test:unit
+          npm run test:migrations
+          npm run test:worker
+          npm run test:render
+          # test:render leaves the real production artifact in dist/. Verify it
+          # on pull requests too, before the browser gate replaces it with E2E.
+          npm run verify:deploy-artifact
+      - name: Run browser test gate
+        run: npm run test:e2e
       - run: npx wrangler d1 migrations apply DB --remote
+        if: github.event_name == 'push'
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       - run: npm run build
+        if: github.event_name == 'push'
+      # The browser gate rebuilds dist/ with the E2E Wrangler config, whose vars
+      # enable test identity headers. Refuse to deploy anything but the freshly
+      # rebuilt production artifact.
+      - run: npm run verify:deploy-artifact
+        if: github.event_name == 'push'
       - run: npx wrangler deploy --config dist/server/wrangler.json
+        if: github.event_name == 'push'
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

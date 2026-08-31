@@ -17,6 +17,7 @@ Use for pure behavior:
 - Presence and typing-draft reducers.
 - Everyone/Typing/Hidden draft selection.
 - Conflict validation, state/prompt rendering, notification event selection/deduplication, and real multi-file three-way workspace construction.
+- Production deploy-artifact identity: exact D1 database ID, disabled agent execution, and rejection of test-only variables.
 
 ### D1 integration tests
 
@@ -32,10 +33,11 @@ Use the Cloudflare Vitest worker pool and local migrations to test:
 - Assignment, message, DM privacy, queue, ordering, and merging behavior.
 - Revision increments and persistence after reread.
 - Owner-only repository setup/disconnect, member reads, outsider concealment, and ordered required-check persistence.
-- Candidate uniqueness, webhook delivery deduplication, behind-base reconciliation, and external candidate mutation detection.
+- Candidate uniqueness, webhook delivery deduplication, failed-processing claim release for redelivery, behind-base reconciliation, and external candidate mutation detection.
 - Stripe signature rejection, event replay/order behavior, plan/status/quantity projection, paid-onboarding completion, and dynamic invite seat enforcement.
 - Preflight uniqueness, ordered state recovery, terminal failure/timeout state, gateway-token binding, and R2 log authorization.
 - Conflict default-on migration preservation, idempotent detection, priority/capacity routing, retry budgets, provider/quota handling, owner/member authorization, cross-session concealment, exact-question answer races, runtime-token binding, and ended-session refusal.
+- Model gateways accept run-scoped spend authority only while a run is exactly `running`; `cancel_requested` rejects OpenAI, Anthropic-compatible, Gemini, and OpenAI-chat-compatible traffic before credential lookup or upstream fetch.
 - Integrated-run rollback authorization for session owners, agent owners, and every-prompt authors; owner-only engineer/agent groups; mixed-author exclusion; exact preview SHA/run-set rejection; pagination beyond 20 runs; newest-first atomic child completion/failure; failed-attempt retry; legacy-row preservation; candidate lease release; audit preservation; Queue status; and active/History Review behavior.
 
 ### Durable Object tests
@@ -82,4 +84,3 @@ The Playwright test uses two authenticated browser contexts and verifies the rea
 - Reload persistence, disconnect/reconnect, leave, and roster updates work.
 
 When adding a collaborative feature, prefer extending this two-context flow over testing only one browser.
-

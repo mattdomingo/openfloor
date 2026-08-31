@@ -70,3 +70,9 @@ npx wrangler secret put CF_ACCESS_AUD
 ```
 
 Do not pass the secret value as the `wrangler secret put` name. Never commit `.dev.vars`, Access credentials, signing secrets, tokens, or generated invite URLs.
+
+### CI and deployment gate
+
+`.github/workflows/deploy.yml` runs on every pull request and push to `main`. Both event types install with the exact pinned npm CLI, run `npm audit --omit=dev`, install the lockfile-selected Playwright Chromium build and its runner dependencies, and run the complete `npm test`-equivalent pipeline. Immediately after the render suite's production build, CI verifies that artifact's exact worker, route, D1 database ID, disabled `AGENT_RUN_ENABLED` security gate, and absence of test-only vars; unit fixtures prove the guard rejects lookalike database bindings and enabled/test artifacts. The E2E harness then builds with the test Wrangler config and serves that artifact through the Cloudflare Vite plugin's direct Miniflare preview path, avoiding the Linux dev-proxy failure tracked by upstream `workers-sdk#15317` without retries or vulnerable tool downgrades. Only a push to `main` may continue to the remote D1 migration, fresh production build, repeated artifact verification, and Worker deploy; those steps remain serialized and are never cancelled. Superseded pull-request checks may cancel. GitHub actions are commit-SHA pinned, checkout uses `persist-credentials: false`, and the workflow's default token has only read access to repository contents. Cloudflare credentials are present only on the remote migration and deploy steps.
+
+The manual emergency order is the same trust boundary: run `npm audit --omit=dev` and `npm test` before applying a remote migration, then build, run `npm run verify:deploy-artifact`, and deploy the verified artifact. Merging to `main` remains production authorization; a pull-request run never mutates production.

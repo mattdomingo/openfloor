@@ -408,6 +408,18 @@ export async function recordGitHubWebhookDelivery(
   return Number(result.meta?.changes ?? 0) === 1;
 }
 
+// A delivery row is a completed-processing marker, not permission to lose a
+// signed event. The route claims before applying effects to exclude concurrent
+// replays, then removes the claim if any effect fails so GitHub's manual
+// redelivery can apply the same delivery ID again.
+export async function releaseGitHubWebhookDelivery(
+  deliveryId: string,
+  database = getDb(),
+): Promise<void> {
+  await database.prepare("DELETE FROM github_webhook_deliveries WHERE delivery_id = ?")
+    .bind(deliveryId).run();
+}
+
 export async function findRepositoryWebhookTargets(
   installationId: string | null,
   repositoryId: string | null,
