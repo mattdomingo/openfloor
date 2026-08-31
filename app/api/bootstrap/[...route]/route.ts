@@ -28,6 +28,7 @@ import {
   upsertUser,
 } from "@/db/sessions";
 import { listSessionSkillsForMember } from "@/db/skills";
+import { normalizedTeamDomain } from "@/lib/identity";
 import { verifyInviteToken } from "@/lib/invites";
 import { parseOnboardingStep } from "@/lib/onboarding-plan";
 import { lowHoursRemaining, PLAN_LIMITS } from "@/lib/plans";
@@ -35,6 +36,7 @@ import { CREDENTIAL_PROVIDERS } from "@/lib/provider-credentials";
 import { disabledRunProviders } from "@/lib/provider-rollout";
 import { isRepositoryReadyForFloor } from "@/lib/repository-gate";
 import type { AppUser } from "@/lib/session-types";
+import { isSettingsSection } from "@/lib/settings-plan";
 import { resolveSettingsOrigin } from "@/app/home/settings/origin";
 import { env } from "cloudflare:workers";
 
@@ -71,6 +73,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ rout
       listUserGitHubInstallations(user.id),
       listProviderCredentials(user.id),
     ]);
+    const teamDomain = normalizedTeamDomain(env.CF_ACCESS_TEAM_DOMAIN);
     return Response.json({
       props: {
         fullName: identity.fullName,
@@ -81,6 +84,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ rout
         githubInstallations,
         initialCredentials: credentials,
         initialStep: parseOnboardingStep(query.get("step") ?? undefined),
+        teamLogoutUrl: teamDomain ? `${teamDomain}/cdn-cgi/access/logout` : null,
       },
     });
   }
@@ -112,7 +116,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ rout
       resolveSettingsOrigin(query.get("from") ?? undefined, user.id),
       getMonthlyModelUsage(user.id),
     ]);
-    const section = query.get("section");
+    const section = query.get("section") ?? undefined;
     return Response.json({
       props: {
         user,
@@ -121,7 +125,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ rout
         credentials,
         githubInstallations,
         modelUsage,
-        initialSection: section === "plan" || section === "connections" ? section : "profile",
+        initialSection: isSettingsSection(section) ? section : "profile",
         billingNotice: query.get("billing"),
         backTo: origin,
         originPath: origin.href === "/home" ? null : origin.href,
@@ -133,7 +137,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ rout
     const id = rest[0];
     const gated = gate(`/session/${encodeURIComponent(id)}`);
     if (gated instanceof Response) return gated;
-    const [session, members, removedMembers, repository, candidate, preflight, skills, mcpServers, quota] =
+    const [session, members, removedMembers, repository, candidate, preflight, skills, mcpServers, quota, credentials] =
       await Promise.all([
         getSessionForMember(id, user.id),
         getSessionMembers(id, user.id),
@@ -144,6 +148,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ rout
         listSessionSkillsForMember(id, user.id),
         listSessionMcpServersForMember(id, user.id),
         getOwnerHourQuota(id),
+        listProviderCredentials(user.id),
       ]);
     if (!session || !members) return notFound();
     return Response.json({
@@ -157,6 +162,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ rout
         initialPreflight: preflight,
         preflightEnabled: (env as unknown as { PREFLIGHT_ENABLED?: string }).PREFLIGHT_ENABLED === "true",
         enabledProviders: enabledProviders(),
+        initialCredentials: credentials,
         initialSkills: skills ?? [],
         initialMcpServers: mcpServers ?? [],
         repoGateRequested: query.get("repo") === "required",
