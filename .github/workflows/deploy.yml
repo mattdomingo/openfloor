@@ -53,6 +53,11 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       - run: npm run build
         if: github.event_name == 'push'
+      # The browser gate rebuilds dist/ with the E2E Wrangler config, whose vars
+      # enable test identity headers. Refuse to deploy anything but the freshly
+      # rebuilt production artifact.
+      - run: npm run verify:deploy-artifact
+        if: github.event_name == 'push'
       - run: npx wrangler deploy --config dist/server/wrangler.json
         if: github.event_name == 'push'
         env:

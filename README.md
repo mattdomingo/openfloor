@@ -102,10 +102,11 @@ npm audit --omit=dev
 npm test
 npx wrangler d1 migrations apply openfloor-production --remote
 npm run build
+npm run verify:deploy-artifact
 npx wrangler deploy --config dist/server/wrangler.json
 ```
 
-The production dependency audit and full test pipeline must pass before applying D1 migrations; apply migrations before deploying the Worker revision. Pull requests run the validation-only portion, while pushes to `main` repeat it before the production steps. See [`docs/agent-backend-gaps.md`](docs/agent-backend-gaps.md) for the intentional boundary between the persistent collaboration backend and future agent execution.
+The production dependency audit and full test pipeline must pass before applying D1 migrations; apply migrations before deploying the Worker revision. `npm run test:e2e` rebuilds `dist/` with the E2E Wrangler config, so always rebuild and run `npm run verify:deploy-artifact` — it refuses any artifact that is not the production `openfloor` worker or that carries test-only vars. Pull requests run the validation-only portion, while pushes to `main` repeat it before the production steps. See [`docs/agent-backend-gaps.md`](docs/agent-backend-gaps.md) for the intentional boundary between the persistent collaboration backend and future agent execution.
 
 The deployment expects `DB`, `SESSION_PRESENCE`, `REPOSITORY_PREFLIGHT`, `AGENT_RUN_WORKFLOW`, `SANDBOX`, `PREFLIGHT_LOGS`, `USER_AVATARS`, `IMAGES`, and `ASSETS` bindings configured in `wrangler.jsonc`. It also requires the existing identity/GitHub secrets plus `RUNTIME_GATEWAY_SECRET`, `OPENAI_API_KEY`, `CREDENTIAL_ENCRYPTION_KEY`, the optional `ANTHROPIC_API_KEY` fallback, and the Stripe secrets documented in [`docs/stripe-billing.md`](docs/stripe-billing.md). Docker must be running when Wrangler builds or deploys the pinned Sandbox image, and the Cloudflare account must have Workers Paid/Containers access. Keep each rollout gate disabled until its service, credential, and security prerequisites are live.
 

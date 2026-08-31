@@ -528,10 +528,11 @@ npm audit --omit=dev
 npm test
 npx wrangler d1 migrations apply openfloor-production --remote
 npm run build
+npm run verify:deploy-artifact
 npx wrangler deploy --config dist/server/wrangler.json
 ```
 
-The production dependency audit and complete test pipeline must pass before any production mutation. Migrations must land before code that requires them. The build generates `dist/server/wrangler.json`; deployment uses that built config.
+The production dependency audit and complete test pipeline must pass before any production mutation. Migrations must land before code that requires them. The build generates `dist/server/wrangler.json`; deployment uses that built config. `npm run test:e2e` builds the app with `tests/e2e/wrangler.jsonc` into that same `dist/`, producing a config whose vars set `OPENFLOOR_TEST_ALLOW_IDENTITY_HEADERS` (arbitrary-identity impersonation) and `AGENT_RUN_ENABLED`, so `npm run verify:deploy-artifact` must run between the build and the deploy: it fails unless the artifact is the production `openfloor` worker, on the `app.opnflr.com` custom domain, bound to `openfloor-production`, with no `OPENFLOOR_TEST_*`/`OPENFLOOR_E2E_*` var.
 
 Pull requests run the audit and complete `npm test`-equivalent pipeline through `.github/workflows/deploy.yml`; pushes to `main` repeat both gates and then run the production-only migration/build/deploy steps (GitHub secrets `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`). CI installs the lockfile-selected Playwright Chromium build before the suite. The E2E harness builds with the test Wrangler config and serves that artifact through the Cloudflare Vite plugin's direct Miniflare preview path; this avoids Wrangler 4.127.1's Linux dev-proxy crash (upstream `workers-sdk#15317`) without retries or vulnerable tool downgrades. Merging to `main` is the deploy authorization. Third-party actions and the npm CLI are exact-version pinned, checkout never persists credentials, and production Cloudflare credentials are step-scoped to migration and deployment; dependency installation, audits, tests, and builds must never receive them. Superseded pull-request runs may cancel, but an in-flight `main` deploy never does. The manual sequence above remains for emergencies and for changes GitHub Actions cannot see (secrets, Access policy).
 

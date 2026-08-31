@@ -4,6 +4,7 @@ import { POST as receiveGitHubWebhook } from "@/app/webhooks/github/route";
 import {
   activateRepositoryCandidate,
   getActiveRepositoryCandidateForMember,
+  recordGitHubWebhookDelivery,
   reserveRepositoryCandidate,
   saveRepositoryConnection,
 } from "@/db/repositories";
@@ -221,6 +222,33 @@ describe("GitHub PR feedback nudges", () => {
     } finally {
       bindings.OPENFLOOR_TEST_GITHUB_DATA = previousFixture;
     }
+  });
+
+  it("releases the delivery claim when processing throws so GitHub can redeliver the same ID", async () => {
+    const owner = await upsertUser({
+      providerUserId: "webhook-retry-owner", email: "webhook-retry@example.com", displayName: "Webhook Retry", fullName: "Webhook Retry",
+    }, env.DB);
+    const created = await createSession(owner.id, { title: "Webhook retry room", objective: null }, env.DB);
+    const connection = await saveRepositoryConnection(created.session.id, owner.id, null, "installation-retry", {
+      id: "repository-retry", nodeId: "R_retry", owner: "openfloor", name: "retry",
+      fullName: "openfloor/retry", private: true, defaultBranch: "main",
+    }, "main", env.DB);
+    const candidateId = crypto.randomUUID();
+    const branch = `openfloor/${created.session.id.slice(0, 8)}/candidate/${candidateId.slice(0, 8)}`;
+    await reserveRepositoryCandidate(created.session.id, owner.id, connection!.id, candidateId, "Webhook retry room", "", branch, "main", "a".repeat(40), env.DB);
+    await activateRepositoryCandidate(created.session.id, candidateId, "a".repeat(40), env.DB);
+
+    // A signed but malformed payload fails inside the per-target effect loop,
+    // standing in for any mid-processing failure.
+    const body = JSON.stringify({
+      installation: { id: "installation-retry" }, repository: { id: "repository-retry" },
+      action: "removed", repositories_removed: "not-an-array",
+    });
+    await expect(receiveGitHubWebhook(
+      webhookRequest(body, "delivery-retry", await sign(body), "installation_repositories"),
+    )).rejects.toThrow();
+    // The claim is gone, so a signed redelivery of the same ID is fresh again.
+    expect(await recordGitHubWebhookDelivery("delivery-retry", "installation_repositories", "removed", "installation-retry", "repository-retry", env.DB)).toBe(true);
   });
 });
 
