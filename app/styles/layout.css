@@ -320,6 +320,88 @@
   line-height: 1.5;
 }
 
+.early-access-shell {
+  min-height: 100vh;
+  padding: clamp(32px, 7vw, 80px) 20px;
+  place-items: center;
+  overflow-y: auto;
+}
+
+.early-access-card {
+  position: relative;
+  z-index: 2;
+  width: min(920px, 100%);
+  padding: clamp(28px, 5vw, 56px);
+  border: 1px solid color-mix(in srgb, var(--entry-ink) 18%, transparent);
+  border-radius: 20px;
+  background: color-mix(in srgb, #07101a 88%, transparent);
+  box-shadow: 0 32px 100px rgb(0 0 0 / 42%);
+  color: var(--entry-ink);
+  backdrop-filter: blur(22px);
+}
+
+.early-access-heading { max-width: 700px; }
+.early-access-kicker {
+  margin: 0 0 12px;
+  color: var(--entry-accent);
+  font: 600 12px/1 var(--font-brand-sans);
+  letter-spacing: .12em;
+  text-transform: uppercase;
+}
+.early-access-heading h1 {
+  margin: 0;
+  font: 600 clamp(34px, 5vw, 58px)/.98 var(--font-brand-sans);
+  letter-spacing: -.045em;
+}
+.early-access-heading > p:last-child {
+  max-width: 640px;
+  margin: 18px 0 0;
+  color: var(--entry-ink-muted);
+  font: 400 16px/1.6 var(--font-brand-sans);
+}
+
+.early-access-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+  margin-top: 34px;
+}
+.early-access-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  padding: 24px;
+  border: 1px solid color-mix(in srgb, var(--entry-ink) 16%, transparent);
+  border-radius: 14px;
+  background: rgb(255 255 255 / 4%);
+}
+.early-access-form-label { margin: 0; font: 600 18px/1.2 var(--font-brand-sans); }
+.early-access-form-copy { margin: 6px 0 10px; color: var(--entry-ink-muted); font: 400 13px/1.45 var(--font-brand-sans); }
+.early-access-form label { margin-top: 2px; color: var(--entry-ink-muted); font: 600 12px/1.2 var(--font-brand-sans); }
+.early-access-form .signin-button { width: 100%; margin-top: 6px; }
+.early-access-disclosure, .early-access-existing {
+  margin: 2px 0 0;
+  color: var(--entry-ink-muted);
+  font: 400 11px/1.5 var(--font-brand-sans);
+}
+.early-access-disclosure a, .early-access-existing a { color: inherit; }
+.early-access-existing { margin-top: 8px; text-align: center; }
+.early-access-notice, .early-access-error {
+  margin: 0 0 4px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  font: 500 12px/1.45 var(--font-brand-sans);
+}
+.early-access-notice { background: color-mix(in srgb, #4ac98b 17%, transparent); color: #b8f6d6; }
+.early-access-error { background: color-mix(in srgb, #ef6c71 17%, transparent); color: #ffc8cb; }
+
+@media (max-width: 720px) {
+  .early-access-grid { grid-template-columns: 1fr; }
+  .early-access-card { padding: 26px 18px; }
+  .early-access-form { padding: 20px 16px; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .signin-mark-gap, .signin-mark-text { animation: none; }
   .signin-mark-gap { width: 176px; }

@@ -18,6 +18,8 @@ import { SessionRouter } from "./session-router";
 import { RepositoryPreflightWorkflow } from "./preflight-workflow";
 import { AgentRunWorkflow } from "./agent-run-workflow";
 import { sweepStorageCleanup } from "./storage-cleanup";
+import { purgeExpiredWaitlist, sweepWaitlistSheetSync } from "../db/early-access";
+import type { EarlyAccessBindings } from "../lib/early-access";
 export { Sandbox, ContainerProxy } from "@cloudflare/sandbox";
 
 export { AgentRunWorkflow, RepositoryPreflightWorkflow, SessionPresence, SessionRouter };
@@ -28,7 +30,7 @@ type DurableObjectNamespaceLike = {
   get(id: unknown): DurableObjectStubLike;
 };
 
-interface Env extends IdentityEnvironment {
+interface Env extends IdentityEnvironment, EarlyAccessBindings {
   ASSETS: { fetch(request: Request): Promise<Response> };
   DB: D1DatabaseLike;
   PREFLIGHT_LOGS: {
@@ -118,13 +120,19 @@ const worker = {
     const cron = (controller as { cron?: string } | null)?.cron;
     ctx.waitUntil((async () => {
       if (cron === POOL_SWEEP_CRON) {
-        await sweepSandboxPool(env);
-        await sweepStorageCleanup(env);
+        await Promise.all([
+          sweepSandboxPool(env),
+          sweepStorageCleanup(env),
+          sweepWaitlistSheetSync(env.DB, env),
+        ]);
         return;
       }
-      const deletedSessionIds = await purgeExpiredSessions(env.DB);
+      const [deletedSessionIds] = await Promise.all([
+        purgeExpiredSessions(env.DB),
+        purgeExpiredWaitlist(env.DB),
+        sweepStorageCleanup(env),
+      ]);
       await Promise.all(deletedSessionIds.map((sessionId) => notifyMembersChanged(sessionId)));
-      await sweepStorageCleanup(env);
     })());
   },
 };

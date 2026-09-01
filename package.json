@@ -19,6 +19,7 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "db:generate": "drizzle-kit generate",
+    "early-access": "node scripts/early-access.mjs",
     "verify:deploy-artifact": "node scripts/verify-deploy-artifact.mjs"
   },
   "dependencies": {

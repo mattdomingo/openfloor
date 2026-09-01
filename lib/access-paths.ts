@@ -64,6 +64,11 @@ export function accessRequiredPath(returnTo: string): string {
   return `${landing}?auth=required&return_to=${encodeURIComponent(appPath(safeRelativeReturnPath(returnTo)))}`;
 }
 
+export function earlyAccessPath(returnTo: string): string {
+  const target = appPath(safeRelativeReturnPath(returnTo));
+  return `${BASE_PATH}/early-access?return_to=${encodeURIComponent(target)}`;
+}
+
 function appPath(path: string): string {
   return `${BASE_PATH}${path === "/" ? "" : path}` || "/";
 }

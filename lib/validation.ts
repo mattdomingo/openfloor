@@ -6,6 +6,7 @@ import {
   type CredentialKind,
   type CredentialProvider,
 } from "./provider-credentials";
+import { normalizeEmail } from "./identity";
 
 export type SessionInput = { title: string; objective: string | null };
 export type SessionCreateInput = SessionInput & { accountInstallationId: string; repositoryId: string; candidateName: string | null };
@@ -49,11 +50,23 @@ export type CredentialConnectInput = { kind: CredentialKind; secret: string; fin
 // null clears the limit (no cap). Whole-dollar granularity from the
 // Settings input; the route converts to micro-USD for storage.
 export type CredentialLimitInput = { kind: CredentialKind; monthlyLimitUsd: number | null };
+export type EarlyAccessWaitlistInput = { name: string; email: string };
 
 const MAX_PROFILE_NAME_LENGTH = 50;
 const MAX_GITHUB_HANDLE_LENGTH = 39;
 const MAX_API_KEY_LENGTH = 512;
 const MAX_AUTH_JSON_LENGTH = 8192;
+
+export function parseEarlyAccessWaitlistInput(value: unknown): EarlyAccessWaitlistInput | null {
+  if (!value || typeof value !== "object") return null;
+  const input = value as Record<string, unknown>;
+  if (typeof input.name !== "string" || typeof input.email !== "string") return null;
+  const name = input.name.normalize("NFKC").trim().replace(/\s+/g, " ");
+  const email = normalizeEmail(input.email);
+  if (!name || name.length > 100 || !email || email.length > 254) return null;
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return null;
+  return { name, email };
+}
 
 export function parseSessionInput(value: unknown): SessionInput | null {
   if (!value || typeof value !== "object") return null;

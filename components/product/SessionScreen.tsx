@@ -126,7 +126,11 @@ export function SessionScreen({
 
   const handleLive = useCallback(() => {}, []);
 
-  const handleLeave = useCallback((code: 4001 | 4005, reason: string) => {
+  const handleLeave = useCallback((code: 4001 | 4005 | 4006, reason: string) => {
+    if (code === 4006) {
+      router.replace("/early-access");
+      return;
+    }
     if (code === 4005) {
       // Owner-initiated removal: distinct from a plain 4001 (e.g. voluntary
       // leave) so /home can say what actually happened.

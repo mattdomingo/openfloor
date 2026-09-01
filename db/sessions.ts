@@ -60,7 +60,8 @@ const APP_USER_COLUMNS = `id, chatgpt_user_id AS providerUserId, email, display_
               first_name AS firstName, last_name AS lastName, github_handle AS githubHandle,
               avatar_key AS avatarKey, onboarded_at AS onboardedAt, do_not_disturb AS doNotDisturb,
               plan, plan_status AS planStatus, seat_limit AS seatLimit, created_at AS createdAt, updated_at AS updatedAt,
-              deleted_at AS deletedAt`;
+              deleted_at AS deletedAt, early_access_granted_at AS earlyAccessGrantedAt,
+              early_access_revoked_at AS earlyAccessRevokedAt, early_access_grant_source AS earlyAccessGrantSource`;
 
 // D1 has no native boolean type, so RETURNING/SELECT come back with
 // doNotDisturb as 0/1 — normalize to a real boolean before handing out AppUser.
@@ -1087,6 +1088,9 @@ export async function deleteAccount(
            do_not_disturb = 0,
            plan_status = 'canceled',
            seat_limit = NULL,
+           early_access_granted_at = NULL,
+           early_access_revoked_at = NULL,
+           early_access_grant_source = NULL,
            deleted_at = ?,
            prior_email_hash = ?,
            updated_at = ?

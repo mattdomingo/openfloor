@@ -4,7 +4,7 @@ import {
   identityFromTrustedHeaders,
   type AuthenticatedIdentity,
 } from "@/lib/identity";
-import { accessRequiredPath, accessSignInPath, protectedAccessPath, safeAppReturnPath } from "@/lib/access-paths";
+import { accessRequiredPath, accessSignInPath, earlyAccessPath, protectedAccessPath, safeAppReturnPath } from "@/lib/access-paths";
 
 export type AccessUser = AuthenticatedIdentity;
 
@@ -26,4 +26,4 @@ export async function requireAccessUser(returnTo: string): Promise<AccessUser> {
 // test), should import lib/access-paths.ts directly instead: importing
 // anything from this file also imports next/navigation's `redirect`, which
 // fails outside a real Next-rendered request.
-export { accessSignInPath, protectedAccessPath, safeAppReturnPath };
+export { accessSignInPath, earlyAccessPath, protectedAccessPath, safeAppReturnPath };

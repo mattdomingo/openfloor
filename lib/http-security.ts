@@ -1,7 +1,10 @@
 import { BASE_PATH } from "@/components/basePath";
 
 export function violatesBrowserMutationPolicy(request: Request, url = new URL(request.url)): boolean {
-  if (!["POST", "PUT", "PATCH", "DELETE"].includes(request.method) || !url.pathname.startsWith(`${BASE_PATH}/api/`)) return false;
+  const protectedMutation = url.pathname.startsWith(`${BASE_PATH}/api/`)
+    || url.pathname === `${BASE_PATH}/early-access/waitlist`
+    || url.pathname === `${BASE_PATH}/early-access/unlock`;
+  if (!["POST", "PUT", "PATCH", "DELETE"].includes(request.method) || !protectedMutation) return false;
   if (request.headers.get("sec-fetch-site") === "cross-site") return true;
   const origin = request.headers.get("origin");
   return origin !== null && origin !== url.origin;
@@ -24,6 +27,7 @@ export function withSecurityHeaders(response: Response, url: URL): Response {
     || url.pathname.startsWith(`${BASE_PATH}/signin`)
     || url.pathname.startsWith(`${BASE_PATH}/signout`)
     || url.pathname.startsWith(`${BASE_PATH}/onboarding`)
+    || url.pathname.startsWith(`${BASE_PATH}/early-access`)
   )) headers.set("Cache-Control", "no-store");
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }
