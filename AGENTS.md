@@ -101,7 +101,7 @@ Production code must not seed, fabricate, or animate agents, prompts, messages, 
 
 openfloor has three intentionally separate state classes:
 
-1. **D1-authoritative application state**: users, Stripe entitlement projections, sessions, memberships, invites, objective, routing settings, agents, assignments, messages, queue items, queue prompts, ordering, agent-run rollback groups/attempts, merge-conflict cases/attempts/questions, durable private-storage cleanup intents, and floor revision. Stripe remains authoritative for the external subscription lifecycle; D1 owns the product-facing projection.
+1. **D1-authoritative application state**: users, early-access grants/revocations and waitlist records, Stripe entitlement projections, sessions, memberships, invites, objective, routing settings, agents, assignments, messages, queue items, queue prompts, ordering, agent-run rollback groups/attempts, merge-conflict cases/attempts/questions, durable private-storage cleanup intents, and floor revision. The early-access Google Sheet is an operations mirror only; Stripe remains authoritative for the external subscription lifecycle; D1 owns the product-facing projection.
 2. **Durable Object-coordinated ephemeral state**: online connections and teammate prompt drafts. This state is realtime but is not D1 history.
 3. **Local UI state**: selected tabs, panel order and size, collapsed or expanded panels, queue filters, menus, dialogs, the current onboarding step and its unsaved profile/plan inputs, and the local visibility choice for teammate drafts.
 
@@ -213,6 +213,8 @@ The marketing site (`opnflr.com`) and the application (`app.opnflr.com`) are sib
 ### Current decision: Cloudflare Access
 
 Production identity is Cloudflare Access, not application-owned “Sign in with ChatGPT.” GitHub (primary, since 2026-08-27) and One-time PIN are the intended Access identity providers; Google is removed from the apps' IdP lists. `ACCESS_CUSTOM_LOGIN_ENABLED` (`wrangler.jsonc`) gates the app-owned `/signin` page — flipping it to `"false"` is the rollback path if production sign-in breaks.
+
+Application admission is a separate D1 gate. With `EARLY_ACCESS_GATE_ENABLED=true`, every protected page, API, desktop bootstrap, invitation/onboarding path, and presence connection requires an active early-access grant. Existing users are migration-backfilled; new users are unadmitted. A shared passcode may grant but never clear an explicit revocation. The public `/early-access` routes stay outside Cloudflare Access and hand authentication through the existing protected `/auth/complete` entry. The Sheet is never authoritative. See [`docs/early-access.md`](docs/early-access.md).
 
 See [`docs/cloudflare-access-config.md`](docs/cloudflare-access-config.md) for the full configuration detail: the IdP rationale and app-owned `/signin` mechanism, the explicit-allowlist model, the two-application five-destination-each split, the `home*` vs `home/*` wildcard distinction (and the 2026-08-25 lockout it caused), App Launcher/Cookie Path settings, JWT validation, and the `/signout` mechanism. Read it in full before touching Access configuration or adding a newly protected page.
 
@@ -503,7 +505,7 @@ Viewer-local timestamps are shown through `components/LocalDateTime.tsx`: it ren
 
 Bindings (`wrangler.jsonc`): `DB`, `SESSION_PRESENCE`, `ASSETS`, `IMAGES`, `REPOSITORY_PREFLIGHT`, `AGENT_RUN_WORKFLOW`, `SANDBOX`, `PREFLIGHT_LOGS`, `USER_AVATARS`.
 
-Rollout gate flags: `PREFLIGHT_ENABLED`, `AGENT_RUN_ENABLED`, `STRIPE_CHECKOUT_ENABLED`, `CLAUDE_RUN_ENABLED`, `KIMI_RUN_ENABLED`, `GEMINI_RUN_ENABLED`, `GLM_RUN_ENABLED`, `QWEN_RUN_ENABLED`, `DEEPSEEK_RUN_ENABLED`. `AGENT_RUN_ENABLED` is currently false as a security hold: provider CLIs and repository commands share a Linux uid, so same-uid `/proc` reads can expose a CLI's initial gateway token despite child-environment filtering. Do not enable it until an adversarial container test proves a separate-uid or equivalent process boundary. Durable Object migration `v1` registers `SessionPresence`; `v2` registers `Sandbox`.
+Rollout gate flags: `EARLY_ACCESS_GATE_ENABLED`, `PREFLIGHT_ENABLED`, `AGENT_RUN_ENABLED`, `STRIPE_CHECKOUT_ENABLED`, `CLAUDE_RUN_ENABLED`, `KIMI_RUN_ENABLED`, `GEMINI_RUN_ENABLED`, `GLM_RUN_ENABLED`, `QWEN_RUN_ENABLED`, `DEEPSEEK_RUN_ENABLED`. Early-access enforcement is initially false while its D1/Sheet/WAF acceptance passes; rollback is false without deleting grants or waitlist records. `AGENT_RUN_ENABLED` is currently false as a security hold: provider CLIs and repository commands share a Linux uid, so same-uid `/proc` reads can expose a CLI's initial gateway token despite child-environment filtering. Do not enable it until an adversarial container test proves a separate-uid or equivalent process boundary. Durable Object migration `v1` registers `SessionPresence`; `v2` registers `Sandbox`.
 
 Runner credential containment is defense in depth while that gate is closed. Codex receives an explicit minimal SDK environment and uses `shell_environment_policy.inherit = "none"` plus an explicit safe command environment. Gemini/Qwen preload `scripts/runner-env-preload.mjs`, whose allowlist covers every supported `node:child_process` API and both array/options overloads; only the exact built-in MCP command may receive its explicit context/conflict variables. Preserve the allowlist and overload tests when changing a runner.
 
@@ -511,7 +513,7 @@ See [`docs/deployment-config.md`](docs/deployment-config.md) for what each bindi
 
 ### Required secrets
 
-`INVITE_SIGNING_SECRET`, `CF_ACCESS_TEAM_DOMAIN`, `CF_ACCESS_AUD`, `GITHUB_APP_ID`, `GITHUB_APP_SLUG`, `GITHUB_APP_PRIVATE_KEY`, `GITHUB_STATE_SECRET`, `GITHUB_WEBHOOK_SECRET`, `GITHUB_APP_CLIENT_ID` (optional), `GITHUB_CLIENT_SECRET` (optional), `RUNTIME_GATEWAY_SECRET`, `OPENAI_API_KEY`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRO_PRICE_ID`, `STRIPE_MAX_PRICE_ID`, `STRIPE_PORTAL_CONFIGURATION_ID`, `CREDENTIAL_ENCRYPTION_KEY`, `ANTHROPIC_API_KEY` (optional), `MOONSHOT_API_KEY` (optional), `GEMINI_API_KEY` (optional), `ZAI_API_KEY` (optional), `DASHSCOPE_API_KEY` (optional), `DEEPSEEK_API_KEY` (optional).
+`INVITE_SIGNING_SECRET`, `EARLY_ACCESS_PASSWORD`, `WAITLIST_SHEET_WEBHOOK_URL`, `WAITLIST_SHEET_WEBHOOK_SECRET`, `CF_ACCESS_TEAM_DOMAIN`, `CF_ACCESS_AUD`, `GITHUB_APP_ID`, `GITHUB_APP_SLUG`, `GITHUB_APP_PRIVATE_KEY`, `GITHUB_STATE_SECRET`, `GITHUB_WEBHOOK_SECRET`, `GITHUB_APP_CLIENT_ID` (optional), `GITHUB_CLIENT_SECRET` (optional), `RUNTIME_GATEWAY_SECRET`, `OPENAI_API_KEY`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRO_PRICE_ID`, `STRIPE_MAX_PRICE_ID`, `STRIPE_PORTAL_CONFIGURATION_ID`, `CREDENTIAL_ENCRYPTION_KEY`, `ANTHROPIC_API_KEY` (optional), `MOONSHOT_API_KEY` (optional), `GEMINI_API_KEY` (optional), `ZAI_API_KEY` (optional), `DASHSCOPE_API_KEY` (optional), `DEEPSEEK_API_KEY` (optional).
 
 Set a secret by its variable name, then enter the value when prompted:
 

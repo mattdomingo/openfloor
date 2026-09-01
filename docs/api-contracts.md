@@ -6,6 +6,14 @@
 
 The Worker rejects unsafe `/api/*` mutations when Fetch Metadata says `cross-site` or an `Origin` header does not match the request origin. Absent browser headers remain valid for trusted non-browser clients and tests. All non-WebSocket responses receive `nosniff`, frame denial, a minimal CSP, strict-origin referrer policy, disabled camera/microphone/geolocation, and production HTTPS HSTS. API/runtime/auth responses without an explicit cache policy receive `Cache-Control: no-store`; explicit avatar, authorized-file, and static-asset policies are preserved.
 
+When early-access enforcement is on, authenticated but unadmitted API callers receive `403 { code: "early_access_required" }` before endpoint-specific authorization. Desktop bootstrap returns the matching `/early-access` redirect, and presence uses terminal close code `4006`.
+
+| Public early-access method and path | Authorization | Behavior |
+| --- | --- | --- |
+| `POST /early-access/waitlist` | Public, same-origin browser mutation | Accept name/email JSON or form data, normalize and upsert by email, record the current consent disclosure, and return the same success result for new and duplicate submissions. D1 success does not depend on the Sheet mirror. |
+| `POST /early-access/unlock` | Public, same-origin browser mutation | Constant-time compare the bounded passcode with `EARLY_ACCESS_PASSWORD`. An authenticated non-revoked user receives an account grant; an anonymous user receives a signed HTTP-only 15-minute pending cookie and is sent through Cloudflare Access. |
+| `GET /early-access/complete` | Cloudflare-authenticated return | Accept a valid pending cookie or already-active grant, clear the cookie, and continue to onboarding/validated `return_to`. A pending cookie cannot clear revocation. |
+
 | Method and path | Authorization | Behavior |
 | --- | --- | --- |
 | `PATCH /api/account/onboarding` | Authenticated user | Save pending profile/avatar before the required GitHub redirect without setting `onboarded_at`. |

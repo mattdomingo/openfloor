@@ -5,6 +5,7 @@
 ---
 
 - Cloudflare Access authentication using GitHub or One-time PIN as configured by the production Access application (GitHub primary since 2026-08-27; Google removed from the apps' identity providers), plus a Worker-wide same-origin mutation guard and security-header/cache defaults at the browser boundary.
+- Public early-access waitlist and shared-passcode admission backed by D1, with sticky manual revocation, page/API/desktop/WebSocket enforcement behind a rollout flag, and an HMAC-authenticated retryable Google Sheet operations mirror. Enforcement is initially deployed off; see `docs/early-access.md`.
 - Server-only loopback development identity from `.dev.vars`.
 - Internal user records keyed by the stable external provider subject.
 - Explicit first-login Free/Pro/Max selection for direct signups; valid signed-invite signups receive Free automatically, while Enterprise remains sales-managed.
