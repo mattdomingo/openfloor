@@ -8,6 +8,7 @@ describe("claude sandbox settings", () => {
         enabled: boolean;
         failIfUnavailable: boolean;
         allowUnsandboxedCommands: boolean;
+        bwrapPath: string;
         network: { allowedDomains: string[]; allowManagedDomainsOnly: boolean };
       };
     };
@@ -18,15 +19,9 @@ describe("claude sandbox settings", () => {
     // Disables the dangerouslyDisableSandbox fallback entirely — an
     // unsandboxable command is blocked, not escalated.
     expect(settings.sandbox.allowUnsandboxedCommands).toBe(false);
-    expect(settings.sandbox.network.allowedDomains).toEqual(["opnflr.com"]);
+    expect(settings.sandbox.bwrapPath).toBe("/opt/openfloor/openfloor-workspace-bwrap");
+    expect(settings.sandbox.network.allowedDomains).toEqual([]);
     expect(settings.sandbox.network.allowManagedDomainsOnly).toBe(true);
-  });
-
-  it("appends extra allowed domains after the gateway host", () => {
-    const settings = JSON.parse(
-      buildClaudeSandboxSettings({ gatewayHost: "opnflr.com", extraAllowedDomains: ["mcp.example.com"] }),
-    ) as { sandbox: { network: { allowedDomains: string[] } } };
-    expect(settings.sandbox.network.allowedDomains).toEqual(["opnflr.com", "mcp.example.com"]);
   });
 
   it("emits a settings.json file body", () => {

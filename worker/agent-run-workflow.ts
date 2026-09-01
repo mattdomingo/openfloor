@@ -37,7 +37,7 @@ import { getEnabledMcpServersForRun } from "../db/mcp-servers";
 import { getSessionSkillsForRun } from "../db/skills";
 import { serializeMcpServersForClaude } from "../lib/mcp-config";
 import { buildGeminiSrtSettings, buildGeminiSystemSettings } from "../lib/gemini-settings";
-import { buildQwenSrtSettings, buildQwenSystemSettings } from "../lib/qwen-settings";
+import { buildQwenSystemSettings } from "../lib/qwen-settings";
 import { resumableProvider, usesClaudeRunner, usesQwenRunner, type CredentialProvider } from "../lib/provider-credentials";
 import { buildClaudeSandboxSettings } from "../lib/claude-sandbox-settings";
 import { notifyFloorChanged } from "../lib/presence-server";
@@ -161,23 +161,25 @@ const PUBLISHER_SANDBOX_IMAGE_VERSION = "v2";
 // Namespacing the pool key by image version makes old-image entries
 // unreachable immediately; the existing idle sweep reclaims them.
 // Bump this whenever Dockerfile.sandbox's run-sandbox contents change.
-const RUN_SANDBOX_IMAGE_VERSION = "v8";
-// Non-Codex runs get a fresh HOME per run, inside the per-run scratch tree
-// that prepare wipes and the release reset removes. Pool sandboxes outlive
-// sessions, so everything a CLI persists under its home — transcripts, todos,
-// ~/.claude.json, ~/.gemini state, whatever the next version adds — must die
-// with the run by construction, not by enumerating state paths.
-const RUN_AGENT_HOME = "/tmp/openfloor/agent-home";
+const RUN_SANDBOX_IMAGE_VERSION = "v9";
+// Every provider gets a fresh 0700 HOME owned by openfloor-provider. Model-
+// selected commands run as openfloor-workspace with a separate 0700 HOME.
+// Both live under scratch that prepare/release removes, so pooled sandboxes
+// never carry provider state or repository command state into another run.
+const RUN_PROVIDER_HOME = "/tmp/openfloor/provider-home";
+const RUN_WORKSPACE_HOME = "/tmp/openfloor/workspace-home";
+const WORKSPACE_SRT_SETTINGS = "/tmp/openfloor/workspace-srt-settings.json";
+const RUN_PROMPT_PATH = `${RUN_PROVIDER_HOME}/prompt.txt`;
+const RUN_RESULT_PATH = `${RUN_PROVIDER_HOME}/result.json`;
 // Thread resume: the prior attempt's provider session directory travels
 // through private R2 as a tar.gz (agent_run_artifacts kind session_store),
 // restored into the runner's HOME before it starts and re-captured at run
 // end. The cap keeps a runaway transcript from turning every retry into a
 // multi-megabyte R2 round trip; over it, the next attempt starts fresh.
 const SESSION_STORE_PATH = "/tmp/openfloor/session-store.tgz";
-// Where a resumable provider's session directory lives: the per-run agent
-// HOME for the non-root runners (Claude, Qwen Code), root's HOME for Codex.
-function sessionStoreHome(provider: CredentialProvider): string {
-  return usesClaudeRunner(provider) || usesQwenRunner(provider) ? RUN_AGENT_HOME : "${HOME:-/root}";
+// Every resumable provider now persists under the per-run provider HOME.
+function sessionStoreHome(): string {
+  return RUN_PROVIDER_HOME;
 }
 const MAX_SESSION_STORE_BYTES = 8 * 1024 * 1024;
 
@@ -393,7 +395,7 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
           const store = await this.env.PREFLIGHT_LOGS.get(context.resumeSessionStoreKey);
           if (store?.body) {
             await sandbox.writeFile(SESSION_STORE_PATH, store.body);
-            const home = sessionStoreHome(context.provider);
+            const home = sessionStoreHome();
             const restored = await sandbox.exec(
               `mkdir -p ${home} && tar -xzf ${SESSION_STORE_PATH} -C ${home} && rm -f ${SESSION_STORE_PATH}`,
               { timeout: 60_000 },
@@ -431,25 +433,34 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
           }
         }
         const materializedSkills: string[] = [];
-        await sandbox.writeFile("/tmp/openfloor/prompt.txt", prompt);
+        const identities = await sandbox.exec(
+          `id -u openfloor-provider >/dev/null 2>&1 && id -u openfloor-workspace >/dev/null 2>&1 &&
+           mkdir -p ${RUN_PROVIDER_HOME} ${RUN_WORKSPACE_HOME} &&
+           chown openfloor-provider:openfloor-shared ${RUN_PROVIDER_HOME} && chmod 0700 ${RUN_PROVIDER_HOME} &&
+           chown openfloor-workspace:openfloor-shared ${RUN_WORKSPACE_HOME} && chmod 0700 ${RUN_WORKSPACE_HOME}`,
+          { timeout: 30_000 },
+        );
+        if (!identities.success) throw new Error("Agent runtime identities are unavailable");
+        await sandbox.writeFile(
+          WORKSPACE_SRT_SETTINGS,
+          buildGeminiSrtSettings({
+            gatewayHost: new URL(this.env.OPENFLOOR_RUNTIME_ORIGIN).host,
+            workspace: "/workspace/repository",
+            readOnly: context.kind === "reply",
+          }),
+        );
+        const lockedSettings = await sandbox.exec(`chown root:root ${WORKSPACE_SRT_SETTINGS} && chmod 0444 ${WORKSPACE_SRT_SETTINGS}`, { timeout: 30_000 });
+        if (!lockedSettings.success) throw new Error("Agent command sandbox settings could not be locked");
+        await sandbox.writeFile(RUN_PROMPT_PATH, prompt);
         // Persisted so members can see exactly what a run was told — the
         // honest counterpart to injecting context they can't otherwise see.
         const promptKey = `runs/${runId}/prompt.txt`;
         await this.env.PREFLIGHT_LOGS.put(promptKey, prompt, { httpMetadata: { contentType: "text/plain; charset=utf-8" } });
         await recordRunArtifact(runId, "prompt", promptKey, "text/plain; charset=utf-8", prompt.length, this.env.DB);
         if (usesClaudeRunner(context.provider)) {
-          // Claude runs execute as a dedicated non-root user: the SDK's
-          // kernel sandbox (bubblewrap via sandbox-runtime) cannot initialize
-          // as root, and it is what keeps the two-layer isolation posture
-          // real. Root keeps the pipeline (git reads, bundle export); the
-          // workspace and result paths become agent-owned, and root's git
-          // needs safe.directory once ownership differs.
-          await sandbox.exec(
-            `id -u openfloor-agent >/dev/null 2>&1 || useradd -m openfloor-agent; mkdir -p ${RUN_AGENT_HOME}/.claude`,
-            { timeout: 30_000 },
-          );
+          await sandbox.exec(`mkdir -p ${RUN_PROVIDER_HOME}/.claude`, { timeout: 30_000 });
           await sandbox.writeFile(
-            `${RUN_AGENT_HOME}/.claude/settings.json`,
+            `${RUN_PROVIDER_HOME}/.claude/settings.json`,
             buildClaudeSandboxSettings({ gatewayHost: new URL(this.env.OPENFLOOR_RUNTIME_ORIGIN).host }),
           );
           // Imported session skills materialize into the agent user's home
@@ -459,37 +470,28 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
           // even against a hand-edited row.
           for (const skill of await getSessionSkillsForRun(context.sessionId, this.env.DB)) {
             if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(skill.name)) continue;
-            await sandbox.exec(`mkdir -p ${RUN_AGENT_HOME}/.claude/skills/${skill.name}`, { timeout: 30_000 });
-            await sandbox.writeFile(`${RUN_AGENT_HOME}/.claude/skills/${skill.name}/SKILL.md`, skill.content);
+            await sandbox.exec(`mkdir -p ${RUN_PROVIDER_HOME}/.claude/skills/${skill.name}`, { timeout: 30_000 });
+            await sandbox.writeFile(`${RUN_PROVIDER_HOME}/.claude/skills/${skill.name}/SKILL.md`, skill.content);
             materializedSkills.push(skill.name);
           }
-          const prepared = await sandbox.exec(
-            "chown -R openfloor-agent:openfloor-agent /workspace/repository /tmp/openfloor && git config --global --add safe.directory /workspace/repository",
-            { timeout: 60_000 },
-          );
-          if (!prepared.success) throw new Error(`Claude runtime preparation failed with exit code ${prepared.exitCode}`);
         }
         if (context.provider === "gemini" || usesQwenRunner(context.provider)) {
           // The two headless-CLI runners (Gemini; Qwen Code for qwen AND
-          // deepseek — usesQwenRunner). Same non-root posture as the Claude
-          // runner, with the CLI's pinned configuration in a SYSTEM-scope
+          // deepseek — usesQwenRunner). Same provider/workspace identity split
+          // as the other runners, with pinned configuration in a SYSTEM-scope
           // settings file (beats the target repository's own
           // .gemini/settings.json or .qwen/settings.json in the CLI's merge
-          // order) and an srt settings file for wrapping the whole runner —
-          // see lib/gemini-settings.ts and lib/qwen-settings.ts for why each
-          // value is pinned; the settings directory is the only per-CLI
-          // difference here. No skills and no CLAUDE.md append: skills are a
+          // order). Child commands cross the workspace launcher; the settings
+          // directory is the only per-CLI difference here. No skills and no
+          // CLAUDE.md append: skills are a
           // Claude-runner feature, and each CLI natively reads the
           // repository's own GEMINI.md / QWEN.md context files. The context
           // token is signed here so the settings file is complete at write
           // time; it has the same 60-minute TTL as the start step's tokens.
           const cli = context.provider === "gemini"
-            ? { name: "Gemini", dir: ".gemini", buildSystemSettings: buildGeminiSystemSettings, buildSrtSettings: buildGeminiSrtSettings }
-            : { name: "Qwen Code", dir: ".qwen", buildSystemSettings: buildQwenSystemSettings, buildSrtSettings: buildQwenSrtSettings };
-          await sandbox.exec(
-            `id -u openfloor-agent >/dev/null 2>&1 || useradd -m openfloor-agent; mkdir -p ${RUN_AGENT_HOME}/${cli.dir}`,
-            { timeout: 30_000 },
-          );
+            ? { dir: ".gemini", buildSystemSettings: buildGeminiSystemSettings }
+            : { dir: ".qwen", buildSystemSettings: buildQwenSystemSettings };
+          await sandbox.exec(`mkdir -p ${RUN_PROVIDER_HOME}/${cli.dir}`, { timeout: 30_000 });
           const contextToken = await signRunGatewayToken({
             runId, sessionId: context.sessionId, repositoryId: context.repositoryId,
             candidateSha: context.candidateSha, operation: "context",
@@ -499,7 +501,7 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
             candidateSha: context.candidateSha, operation: "conflict_input",
           }, this.env.RUNTIME_GATEWAY_SECRET) : null;
           await sandbox.writeFile(
-            `${RUN_AGENT_HOME}/${cli.dir}/system-settings.json`,
+            `${RUN_PROVIDER_HOME}/${cli.dir}/system-settings.json`,
             cli.buildSystemSettings({
               contextUrl: `${this.env.OPENFLOOR_RUNTIME_ORIGIN}/runtime/run/context`,
               contextToken,
@@ -511,20 +513,14 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
               readOnly: context.kind === "reply",
             }),
           );
-          await sandbox.writeFile(
-            `${RUN_AGENT_HOME}/srt-settings.json`,
-            cli.buildSrtSettings({
-              gatewayHost: new URL(this.env.OPENFLOOR_RUNTIME_ORIGIN).host,
-              workspace: "/workspace/repository",
-              readOnly: context.kind === "reply",
-            }),
-          );
-          const prepared = await sandbox.exec(
-            "chown -R openfloor-agent:openfloor-agent /workspace/repository /tmp/openfloor && git config --global --add safe.directory /workspace/repository",
-            { timeout: 60_000 },
-          );
-          if (!prepared.success) throw new Error(`${cli.name} runtime preparation failed with exit code ${prepared.exitCode}`);
         }
+        const prepared = await sandbox.exec(
+          `chown -R openfloor-provider:openfloor-shared /workspace/repository ${RUN_PROVIDER_HOME} &&
+           chmod -R g+rwX /workspace/repository && chmod 0700 ${RUN_PROVIDER_HOME} ${RUN_WORKSPACE_HOME} &&
+           git config --global --add safe.directory /workspace/repository`,
+          { timeout: 60_000 },
+        );
+        if (!prepared.success) throw new Error(`Agent runtime preparation failed with exit code ${prepared.exitCode}`);
         return { materializedSkills, conflictPaths, manualApplied, manualApplySummary, resumeThreadId };
       });
 
@@ -570,26 +566,24 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
             runId, sessionId: context.sessionId, repositoryId: context.repositoryId,
             candidateSha: context.candidateSha, operation: "conflict_input",
           }, this.env.RUNTIME_GATEWAY_SECRET) : null;
-          // runuser -p preserves the startProcess env (including the HOME set
-          // below, which is where the pinned sandbox settings live) while
-          // dropping to the non-root user the Claude sandbox requires.
-          // Gemini's and Qwen Code's start command is Plan A from their
-          // posture gates (Spike C 2026-08-24, Spike Q1 2026-08-28): srt
-          // wraps the ENTIRE runner + CLI (neither CLI has a built-in
-          // sandbox, unlike the Agent SDK), with the gateway host as the only
-          // egress. The Gemini runner's fetch preload keeps that CLI's model
-          // traffic working through srt's proxy on the image's Node 22; Qwen
-          // Code honors the proxy env natively.
-          const command = usesClaudeRunner(context.provider)
-            ? "runuser -p -u openfloor-agent -- node /opt/openfloor/claude-runner.mjs"
-            : context.provider === "gemini" || usesQwenRunner(context.provider)
-              ? `runuser -p -u openfloor-agent -- /opt/openfloor/node_modules/.bin/srt -s ${RUN_AGENT_HOME}/srt-settings.json -c "node /opt/openfloor/${context.provider === "gemini" ? "gemini" : "qwen"}-runner.mjs"`
-              : "node /opt/openfloor/codex-runner.mjs";
+          // Every token-holding runner starts as openfloor-provider through a
+          // non-dumpable launcher. Codex selects the workspace shell; Claude
+          // selects the workspace bwrap binary; Gemini/Qwen patch every child
+          // process API. Each model-selected operation therefore crosses the
+          // root-owned uid transition before repository code executes.
+          const runner = usesClaudeRunner(context.provider)
+            ? "claude"
+            : context.provider === "gemini"
+              ? "gemini"
+              : usesQwenRunner(context.provider)
+                ? "qwen"
+                : "codex";
+          const command = `runuser -p -u openfloor-provider -- /opt/openfloor/openfloor-provider-exec node /opt/openfloor/${runner}-runner.mjs`;
           const providerEnv = usesClaudeRunner(context.provider)
             ? {
                 OPENFLOOR_ANTHROPIC_BASE_URL: `${this.env.OPENFLOOR_RUNTIME_ORIGIN}/runtime/${context.provider}`,
                 OPENFLOOR_ANTHROPIC_TOKEN: providerToken,
-                HOME: RUN_AGENT_HOME,
+                HOME: RUN_PROVIDER_HOME,
                 // Names of the materialized skills; the runner passes them as
                 // the SDK's explicit `skills` list ([] disables CLI skill
                 // defaults — omitted is NOT off). The prepare step's snapshot,
@@ -608,8 +602,8 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
               ? {
                   OPENFLOOR_GEMINI_BASE_URL: `${this.env.OPENFLOOR_RUNTIME_ORIGIN}/runtime/gemini`,
                   OPENFLOOR_GEMINI_TOKEN: providerToken,
-                  HOME: RUN_AGENT_HOME,
-                  GEMINI_CLI_SYSTEM_SETTINGS_PATH: `${RUN_AGENT_HOME}/.gemini/system-settings.json`,
+                  HOME: RUN_PROVIDER_HOME,
+                  GEMINI_CLI_SYSTEM_SETTINGS_PATH: `${RUN_PROVIDER_HOME}/.gemini/system-settings.json`,
                 }
               : usesQwenRunner(context.provider)
                 ? {
@@ -619,20 +613,21 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
                     // like the vendor's own (/runtime/openai/v1 precedent).
                     OPENFLOOR_QWEN_BASE_URL: `${this.env.OPENFLOOR_RUNTIME_ORIGIN}/runtime/${context.provider}/v1`,
                     OPENFLOOR_QWEN_TOKEN: providerToken,
-                    HOME: RUN_AGENT_HOME,
-                    QWEN_CODE_SYSTEM_SETTINGS_PATH: `${RUN_AGENT_HOME}/.qwen/system-settings.json`,
+                    HOME: RUN_PROVIDER_HOME,
+                    QWEN_CODE_SYSTEM_SETTINGS_PATH: `${RUN_PROVIDER_HOME}/.qwen/system-settings.json`,
                   }
                 : {
                   OPENFLOOR_OPENAI_BASE_URL: `${this.env.OPENFLOOR_RUNTIME_ORIGIN}/runtime/openai/v1`,
                   OPENFLOOR_OPENAI_TOKEN: providerToken,
+                  HOME: RUN_PROVIDER_HOME,
                 };
           await sandbox.startProcess(command, {
             processId,
             autoCleanup: false,
             cwd: "/workspace/repository",
             env: {
-              OPENFLOOR_PROMPT_PATH: "/tmp/openfloor/prompt.txt",
-              OPENFLOOR_RESULT_PATH: "/tmp/openfloor/result.json",
+              OPENFLOOR_PROMPT_PATH: RUN_PROMPT_PATH,
+              OPENFLOOR_RESULT_PATH: RUN_RESULT_PATH,
               OPENFLOOR_WORKSPACE: "/workspace/repository",
               OPENFLOOR_MODEL: context.model,
               // Defense in depth only: a reply run never exports a bundle or
@@ -701,7 +696,7 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
       // Read result.json before the awaiting-input/cancelled returns below:
       // a killed or failed run still has a thread id worth keeping and a
       // transcript worth persisting, so the next attempt can resume it.
-      const resultFile = await sandbox.exec("cat /tmp/openfloor/result.json", { timeout: 10_000 });
+      const resultFile = await sandbox.exec(`cat ${RUN_RESULT_PATH}`, { timeout: 10_000 });
       codexResult = parseRunResult(resultFile.stdout);
       const resumeAttempted = resumeThreadId !== null;
       await setRunProviderThreadId(runId, codexResult.threadId, resumeAttempted ? codexResult.resumed === true : null, this.env.DB);
@@ -887,13 +882,10 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
             });
             await parked.killAllProcesses();
             // Hard reset between runs: wipe the workspace, run scratch (which
-            // contains the per-run Claude HOME), and Codex state; only the
-            // npm cache survives for the next claim. The /home/openfloor-agent
-            // paths are belt-and-braces — nothing should write there now that
-            // HOME points into the scratch tree, but a process that lost HOME
-            // would fall back to the passwd entry.
+            // contains both per-run homes), and provider state; only the npm
+            // cache survives. Static user homes are belt-and-braces fallbacks.
             const reset = await parked.exec(
-              "rm -rf /workspace/repository /tmp/openfloor ~/.codex /home/openfloor-agent/.claude /home/openfloor-agent/.claude.json /home/openfloor-agent/.claude.json.backup /home/openfloor-agent/.gemini",
+              "rm -rf /workspace/repository /tmp/openfloor && find /home/openfloor-provider /home/openfloor-workspace -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +",
               { timeout: 60_000 },
             );
             if (!reset.success) throw new Error(`Sandbox reset failed with exit code ${reset.exitCode}`);
@@ -928,13 +920,12 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
   // resumes from — into private R2 as a session_store artifact. Best-effort
   // and never throws: a missing directory, an oversized archive, or an R2
   // hiccup just means the next attempt starts a fresh thread. The per-run
-  // HOME (Claude and Qwen Code runners) and the release reset (Codex's
-  // ~/.codex) guarantee the directory holds only this run's transcript plus
-  // the one it resumed.
+  // provider HOME and release reset guarantee the directory holds only this
+  // run's transcript plus the one it resumed.
   private async persistSessionStore(runId: string, provider: CredentialProvider, threadId: string | null, sandbox: ReturnType<typeof getSandbox<Sandbox>>) {
     if (!threadId || !resumableProvider(provider)) return;
     try {
-      const home = sessionStoreHome(provider);
+      const home = sessionStoreHome();
       const subdir = usesClaudeRunner(provider) ? ".claude/projects" : usesQwenRunner(provider) ? ".qwen/projects" : ".codex/sessions";
       const packed = await sandbox.exec(
         `cd ${home} && test -d ${subdir} && tar -czf ${SESSION_STORE_PATH} ${subdir} && wc -c < ${SESSION_STORE_PATH}`,

@@ -111,8 +111,8 @@ const prompt = await readFile(promptPath, "utf8");
 // wrote (auth pinning, folder trust off, tool excludes, the openfloor MCP
 // bridge, telemetry/update kill switches) — see lib/gemini-settings.ts.
 // GEMINI_API_KEY carries the run-scoped gateway JWT; GOOGLE_GEMINI_BASE_URL
-// points model traffic at the openfloor gateway. The proxy preload makes the
-// CLI's fetch honor srt's HTTP(S)_PROXY when the sandbox injects one.
+// points model traffic at the openfloor gateway. The child-process preload
+// routes model-selected commands across the workspace uid/srt boundary.
 const child = spawn(
   "/opt/openfloor/node_modules/.bin/gemini",
   ["-p", prompt, "--output-format", "stream-json", "--approval-mode", "yolo", "-m", model],
@@ -125,7 +125,7 @@ const child = spawn(
       GEMINI_API_KEY: gatewayToken,
       GOOGLE_GEMINI_BASE_URL: gatewayUrl,
       ...(systemSettingsPath ? { GEMINI_CLI_SYSTEM_SETTINGS_PATH: systemSettingsPath } : {}),
-      // srt-injected proxy wiring, passed through so sandboxed egress works.
+      // Provider-level proxy wiring, if the container runtime supplies it.
       ...(process.env.HTTP_PROXY ? { HTTP_PROXY: process.env.HTTP_PROXY } : {}),
       ...(process.env.HTTPS_PROXY ? { HTTPS_PROXY: process.env.HTTPS_PROXY } : {}),
       ...(process.env.NO_PROXY ? { NO_PROXY: process.env.NO_PROXY } : {}),

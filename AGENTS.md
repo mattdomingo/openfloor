@@ -2,7 +2,7 @@
 
 This file is the authoritative repository-level guide for engineers and coding agents working on openfloor. It applies to the entire repository unless a more specific `AGENTS.md` is added in a subdirectory.
 
-Last verified against `main`: 2026-08-26.
+Last verified against `main`: 2026-08-31.
 
 ## Mandatory maintenance rule
 
@@ -198,6 +198,7 @@ Per-session WebSocket
 - `RepositoryPreflightWorkflow` is bound as `REPOSITORY_PREFLIGHT`; it durably coordinates exact-source checkout, ordered checks, result persistence, and cleanup.
 - `AgentRunWorkflow` is bound as `AGENT_RUN_WORKFLOW`; it durably coordinates exact-source checkout, Codex, required checks, Git-bundle export, trusted publication, reconciliation, cancellation, and cleanup.
 - `Sandbox` is the `@cloudflare/sandbox` Durable Object bound as `SANDBOX`, backed by the matching digest-pinned `cloudflare/sandbox:0.12.7` container image.
+- Agent containers separate trusted provider processes (`openfloor-provider`) from model-selected commands (`openfloor-workspace`). A root-owned launcher clears credentials, runs srt as the credential-free `openfloor-broker`, and lets its guarded bubblewrap child create the fixed namespace sandbox before a root-owned non-setuid handoff permanently selects the workspace uid/gid; provider and workspace homes are distinct 0700 directories.
 - Private bounded preflight and run artifacts are stored in R2 bucket `openfloor-preflight-logs`, bound as `PREFLIGHT_LOGS`.
 - Cloudflare static assets are bound as `ASSETS`.
 - Cloudflare Images is bound as `IMAGES` for vinext image optimization.
@@ -505,9 +506,9 @@ Viewer-local timestamps are shown through `components/LocalDateTime.tsx`: it ren
 
 Bindings (`wrangler.jsonc`): `DB`, `SESSION_PRESENCE`, `ASSETS`, `IMAGES`, `REPOSITORY_PREFLIGHT`, `AGENT_RUN_WORKFLOW`, `SANDBOX`, `PREFLIGHT_LOGS`, `USER_AVATARS`.
 
-Rollout gate flags: `EARLY_ACCESS_GATE_ENABLED`, `PREFLIGHT_ENABLED`, `AGENT_RUN_ENABLED`, `STRIPE_CHECKOUT_ENABLED`, `CLAUDE_RUN_ENABLED`, `KIMI_RUN_ENABLED`, `GEMINI_RUN_ENABLED`, `GLM_RUN_ENABLED`, `QWEN_RUN_ENABLED`, `DEEPSEEK_RUN_ENABLED`. Early-access enforcement is enabled in production after its D1/Sheet/WAF acceptance; rollback is false without deleting grants or waitlist records. `AGENT_RUN_ENABLED` is currently false as a security hold: provider CLIs and repository commands share a Linux uid, so same-uid `/proc` reads can expose a CLI's initial gateway token despite child-environment filtering. Do not enable it until an adversarial container test proves a separate-uid or equivalent process boundary. Durable Object migration `v1` registers `SessionPresence`; `v2` registers `Sandbox`.
+Rollout gate flags: `EARLY_ACCESS_GATE_ENABLED`, `PREFLIGHT_ENABLED`, `AGENT_RUN_ENABLED`, `STRIPE_CHECKOUT_ENABLED`, `CLAUDE_RUN_ENABLED`, `KIMI_RUN_ENABLED`, `GEMINI_RUN_ENABLED`, `GLM_RUN_ENABLED`, `QWEN_RUN_ENABLED`, `DEEPSEEK_RUN_ENABLED`. Early-access enforcement is enabled in production after its D1/Sheet/WAF acceptance; rollback is false without deleting grants or waitlist records. `AGENT_RUN_ENABLED` remains false during the runtime-isolation rollout. Image `v9` now contains the separate-uid boundary and CI adversarial test, but production enablement requires the image deployment, disposable-repository acceptance for every enabled provider, and a separately authorized flag change. Durable Object migration `v1` registers `SessionPresence`; `v2` registers `Sandbox`.
 
-Runner credential containment is defense in depth while that gate is closed. Codex receives an explicit minimal SDK environment and uses `shell_environment_policy.inherit = "none"` plus an explicit safe command environment. Gemini/Qwen preload `scripts/runner-env-preload.mjs`, whose allowlist covers every supported `node:child_process` API and both array/options overloads; only the exact built-in MCP command may receive its explicit context/conflict variables. Preserve the allowlist and overload tests when changing a runner.
+Runner credential containment is kernel-enforced. Token-bearing runners and provider CLIs execute as `openfloor-provider` through a non-dumpable launcher. Codex routes its recognized Bash shell to the fixed-policy workspace launcher; Claude routes sandbox-runtime's bubblewrap binary through the guarded bubblewrap launcher; Gemini/Qwen route every supported `node:child_process` API through the fixed-policy launcher. The launcher clears all non-operability environment and starts srt as `openfloor-broker`, an identity with no provider credentials or repository-write group. Only provider, broker, or root callers may enter the guarded bubblewrap seam; workspace callers are rejected. That seam refuses caller-selected uid, gid, capability, and user-namespace options; requires srt's user/network/PID/proc and capability-drop policy; and removes only srt's `--unshare-user` argument because Ubuntu 22.04's pinned bubblewrap 0.6.1 returns `EOVERFLOW` when its root namespace path combines that flag with a non-root target uid. Bubblewrap creates the fixed filesystem, network, and PID sandbox, then starts a root-owned mode-0555 handoff with only `CAP_SYS_ADMIN`, `CAP_SETUID`, and `CAP_SETGID`. The handoff clears supplementary groups, irreversibly selects `openfloor-workspace`, narrows the capability set to ambient `CAP_SYS_ADMIN`, and invokes only a command chain validated to contain the pinned `apply-seccomp` binary. `apply-seccomp` creates its nested PID/mount namespace, clears the ambient capability, and sets `no_new_privs` before model-selected code. The workspace identity may re-enter only the fixed root-owned srt policy. Only the exact built-in MCP process remains under the provider identity with explicit context/conflict variables. Provider and workspace homes are separate 0700 directories; the repository uses their shared primary group and umask 0002 so normal edits keep working. Preserve every seam and the adversarial image test when changing a runner.
 
 See [`docs/deployment-config.md`](docs/deployment-config.md) for what each binding is for and the full explanation of every rollout gate (what stays true while it's off, what must be live before flipping it, and the rollback behavior).
 
@@ -600,6 +601,7 @@ Pull requests run the audit and complete `npm test`-equivalent pipeline through 
 - Preserve invalid-invite and non-member metadata concealment.
 - Preserve the Worker-wide unsafe-`/api/*` browser mutation guard and response security headers. Headerless requests remain supported for trusted non-browser clients; cross-site Fetch Metadata or a mismatched `Origin` must fail before application routing.
 - Remote MCP endpoints are untrusted egress. Require HTTPS on port 443, reject URL credentials and local/internal/non-global literal addresses at write time, and revalidate stored rows at dispatch. DNS rebinding and hostile public MCP responses remain residual risks.
+- Never execute repository-controlled commands as `openfloor-provider`, root, or another token-bearing identity. Every provider's command seam must cross `/opt/openfloor/openfloor-workspace-*`; the root-owned srt policy and setuid launcher must not become repository-writable or environment-selectable.
 - Enqueue internal-ID-derived R2 prefixes before deleting sessions or scrubbing accounts. The scheduled cleaner must keep session-scoped jobs until the source session is gone, defer live-source rows so the 25-job window cannot starve later work, retry failures, paginate, and require the 24-hour delayed-write hold plus a final empty confirmation before removing an intent. Retention purges at most 25 sessions per scheduled invocation.
 
 ### Git and change hygiene
@@ -641,6 +643,7 @@ Before handing off a change, verify the applicable items:
 - SSR markup is deterministic and hydration-safe.
 - Empty, error, and responsive UI states still work.
 - Unit, worker, rendering, and two-user browser tests cover the risk.
+- Agent runtime image changes pass the adversarial separate-uid container gate in CI.
 - `npm test` passes.
 - `README.md`, `docs/agent-backend-gaps.md`, and this file are updated where relevant.
 - New durable decisions are appended to [`docs/decision-log.md`](docs/decision-log.md).

@@ -18,6 +18,11 @@ Use for pure behavior:
 - Everyone/Typing/Hidden draft selection.
 - Conflict validation, state/prompt rendering, notification event selection/deduplication, and real multi-file three-way workspace construction.
 - Production deploy-artifact identity: exact D1 database ID, disabled agent execution, and rejection of test-only variables.
+- Runner environment construction: exact built-in MCP exemption, child-process overload preservation, credential scrubbing, and Codex/Claude/Gemini workspace-launcher seams.
+
+### Sandbox image tests
+
+Pull-request and `main` CI build `Dockerfile.sandbox` and run `/opt/openfloor/runtime-isolation-test.sh` inside that exact image before application tests. The adversarial test verifies the setuid helper's root ownership and mode, provider/workspace uid separation, empty workspace credential environment, inaccessible provider `/proc` environment/memory/file descriptors and home, absence of tokens from readable process environments and command lines, and the Codex shell and Claude bubblewrap identity transitions. This Linux container test is mandatory because macOS unit tests cannot prove kernel uid or `/proc` behavior.
 
 ### D1 integration tests
 

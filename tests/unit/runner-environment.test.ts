@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 
 const preload = resolve("scripts/runner-env-preload.mjs");
 const forkFixture = resolve("tests/fixtures/runner-env-child.mjs");
+const workspaceExecFixture = resolve("tests/fixtures/workspace-exec.sh");
 
 function runProbe(script: string) {
   return spawnSync(process.execPath, ["--import", preload, "-e", script], {
@@ -15,6 +16,7 @@ function runProbe(script: string) {
       DASHSCOPE_API_KEY: "dashscope-secret",
       OPENFLOOR_TEST_TOKEN: "openfloor-secret",
       RUNTIME_GATEWAY_SECRET: "gateway-secret",
+      OPENFLOOR_WORKSPACE_EXEC_TEST_ONLY: workspaceExecFixture,
     },
   });
 }
@@ -35,6 +37,7 @@ describe("agent runner environment hardening", () => {
     const codexRunner = readFileSync(resolve("scripts/codex-runner.mjs"), "utf8");
     expect(codexRunner).toContain('env: safeCliEnvironment');
     expect(codexRunner).toContain('shell_environment_policy: { inherit: "none", set: safeCliEnvironment }');
+    expect(codexRunner).toContain('safeCliEnvironment.SHELL = "/opt/openfloor/workspace-shell/bash"');
   });
 
   it("does not treat a shell command mentioning the MCP filename as the trusted bridge", () => {
@@ -62,5 +65,19 @@ describe("agent runner environment hardening", () => {
     const forkResult = runProbe(`const {fork}=require("node:child_process");const c=fork(${JSON.stringify(forkFixture)},{silent:true});c.stdout.pipe(process.stdout)`);
     expect(forkResult.status).toBe(0);
     expect(forkResult.stdout).toBe("clean|path|home");
+  });
+
+  it("scrubs async exec and execFile plus sync execFile overloads", () => {
+    const execResult = runProbe(`const {exec}=require("node:child_process");exec('printf "%s|%s" "\${OPENFLOOR_TEST_TOKEN:-clean}" "$PWD"',{cwd:"/",shell:"/bin/bash"},(error,stdout)=>{if(error)throw error;process.stdout.write(stdout)})`);
+    expect(execResult.status).toBe(0);
+    expect(execResult.stdout).toBe("clean|/");
+
+    const execFileResult = runProbe(`const {execFile}=require("node:child_process");execFile(process.execPath,["-e","process.stdout.write(process.env.DASHSCOPE_API_KEY||'clean')"],{cwd:"/"},(error,stdout)=>{if(error)throw error;process.stdout.write(stdout)})`);
+    expect(execFileResult.status).toBe(0);
+    expect(execFileResult.stdout).toBe("clean");
+
+    const execFileSyncResult = runProbe(`const {execFileSync}=require("node:child_process");process.stdout.write(execFileSync(process.execPath,["-e","process.stdout.write((process.env.ANTHROPIC_API_KEY||'clean')+'|'+process.cwd())"],{cwd:"/",encoding:"utf8"}))`);
+    expect(execFileSyncResult.status).toBe(0);
+    expect(execFileSyncResult.stdout).toBe("clean|/");
   });
 });

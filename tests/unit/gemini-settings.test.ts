@@ -54,16 +54,18 @@ describe("gemini system settings", () => {
 });
 
 describe("gemini srt settings", () => {
-  it("allowlists only the gateway host and confines writes", () => {
+  it("denies command egress and confines writes", () => {
     const settings = JSON.parse(buildGeminiSrtSettings({ gatewayHost: "opnflr.com", workspace: "/workspace/repository" })) as {
       network: { allowedDomains: string[]; deniedDomains: string[]; allowUnixSockets: string[] };
       filesystem: { denyRead: string[]; allowWrite: string[]; denyWrite: string[] };
+      bwrapPath: string;
     };
-    expect(settings.network.allowedDomains).toEqual(["opnflr.com"]);
+    expect(settings.network.allowedDomains).toEqual([]);
     expect(settings.network.deniedDomains).toEqual([]);
     expect(settings.network.allowUnixSockets).toEqual([]);
     expect(settings.filesystem.allowWrite).toEqual(["/workspace/repository", "/tmp"]);
     expect(settings.filesystem.denyRead).toEqual([]);
     expect(settings.filesystem.denyWrite).toEqual([]);
+    expect(settings.bwrapPath).toBe("/opt/openfloor/openfloor-workspace-bwrap");
   });
 });

@@ -14,12 +14,6 @@ const contextToken = process.env.OPENFLOOR_CONTEXT_TOKEN;
 const mcpServerPath = process.env.OPENFLOOR_MCP_SERVER_PATH;
 const conflictInputUrl = process.env.OPENFLOOR_CONFLICT_INPUT_URL;
 const conflictInputToken = process.env.OPENFLOOR_CONFLICT_INPUT_TOKEN;
-// Defense in depth only (worker/agent-run-workflow.ts never exports a bundle
-// or publishes for a reply run, so nothing written here can escape the
-// container regardless) — a reply run still gets Codex's own read-only
-// sandbox so it cannot touch the workspace while answering.
-const isReply = process.env.OPENFLOOR_RUN_MODE === "reply";
-
 if (!promptPath || !resultPath || !workspace || !gatewayUrl || !gatewayToken || !model) {
   throw new Error("openfloor Codex runner configuration is incomplete");
 }
@@ -150,6 +144,10 @@ const safeCliEnvironment = Object.fromEntries([
   "TMP", "TMPDIR", "TZ", "USER", "XDG_CACHE_HOME", "XDG_CONFIG_HOME",
   "XDG_DATA_HOME", "XDG_RUNTIME_DIR", "XDG_STATE_HOME",
 ].flatMap((name) => process.env[name] === undefined ? [] : [[name, process.env[name]]]));
+// Codex resolves model-selected shell execution through SHELL. This root-owned
+// launcher clears credentials, changes to openfloor-workspace, and applies the
+// same srt policy used by the Node-based provider CLIs.
+safeCliEnvironment.SHELL = "/opt/openfloor/workspace-shell/bash";
 const codex = new Codex({
   baseUrl: gatewayUrl,
   apiKey: gatewayToken,
@@ -167,7 +165,11 @@ const codex = new Codex({
 const threadOptions = {
   model,
   workingDirectory: workspace,
-  sandboxMode: isReply ? "read-only" : "workspace-write",
+  // Codex's in-process Landlock sandbox sets no_new_privs before launching
+  // SHELL, which would suppress the setuid identity transition. The external
+  // workspace launcher now owns command sandboxing (uid, no network, bounded
+  // writes), so the CLI must not apply a second inner sandbox first.
+  sandboxMode: "danger-full-access",
   approvalPolicy: "never",
   networkAccessEnabled: false,
   webSearchMode: "disabled",
