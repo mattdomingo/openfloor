@@ -73,6 +73,7 @@ function renderCodeStep(nonce: string, callbackUrl: string, email: string, resta
 <title>Enter your code — openfloor</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="referrer" content="no-referrer">
+<script>${INLINE_THEME_SCRIPT}</script>
 <style>${INLINE_STYLE}</style>
 </head>
 <body>
@@ -111,8 +112,9 @@ const INLINE_STYLE = `
 html,body{margin:0;min-height:100%}
 body{font-family:Archivo,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
 .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
-.entry-shell{position:relative;display:grid;place-items:center;min-height:100vh;overflow:hidden;background:#000;--entry-ink:#d7dadf;--entry-ink-muted:#9aa0a8;--entry-accent:#1b45b8;--entry-accent-hover:#2a56d1;--entry-glow-tint:rgba(27,69,184,.28)}
-@media (prefers-color-scheme:light){.entry-shell{background:#c6ccd4;--entry-ink:#12181f;--entry-ink-muted:#565f6b;--entry-glow-tint:rgba(27,69,184,.12)}}
+.entry-shell{position:relative;display:grid;place-items:center;min-height:100vh;overflow:hidden;color-scheme:dark;background:#000;--entry-ink:#d7dadf;--entry-ink-muted:#9aa0a8;--entry-accent:#1b45b8;--entry-accent-hover:#2a56d1;--entry-glow-tint:rgba(27,69,184,.28)}
+:root[data-theme="light"] .entry-shell,:root[data-theme="stone"] .entry-shell{color-scheme:light;background:#c6ccd4;--entry-ink:#12181f;--entry-ink-muted:#565f6b;--entry-glow-tint:rgba(27,69,184,.12)}
+@media (prefers-color-scheme:light){:root:not([data-theme]) .entry-shell{color-scheme:light;background:#c6ccd4;--entry-ink:#12181f;--entry-ink-muted:#565f6b;--entry-glow-tint:rgba(27,69,184,.12)}}
 .entry-backdrop{position:absolute;inset:0}
 .entry-glow{position:absolute;inset:0;background:radial-gradient(ellipse 640px 420px at 50% 42%,var(--entry-glow-tint),transparent 70%)}
 .entry-grain{position:absolute;inset:0;opacity:.035;mix-blend-mode:overlay;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")}
@@ -134,6 +136,11 @@ body{font-family:Archivo,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
 .signin-google:hover,.signin-google:focus-visible{color:var(--entry-ink);text-decoration:underline}
 .signin-code-body{margin:0;color:var(--entry-ink-muted);font-family:inherit;font-size:14px;line-height:1.5}
 `.trim();
+
+// This route bypasses app/layout.tsx, so it needs the same pre-paint saved
+// theme read as the normal React document. Keep the accepted values aligned
+// with layout.tsx and components/ThemeToggle.tsx.
+const INLINE_THEME_SCRIPT = `try{var t=localStorage.getItem("openfloor:theme");if(t==="light"||t==="dark"||t==="stone"||t==="charcoal")document.documentElement.dataset.theme=t}catch(e){}`;
 
 function escapeHtml(value: string): string {
   return value

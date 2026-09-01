@@ -46,6 +46,9 @@ describe("POST /signin/code", () => {
     expect(html).toContain("<style>");
     expect(html).toContain(".entry-shell{");
     expect(html).toContain(".signin-input{");
+    expect(html).toContain('localStorage.getItem("openfloor:theme")');
+    expect(html).toContain(':root[data-theme="light"] .entry-shell');
+    expect(html).toContain(':root:not([data-theme]) .entry-shell');
   });
 
   it("HTML-escapes the submitted email rather than injecting it raw", async () => {

@@ -1,11 +1,10 @@
 .product-shell, .join-shell { min-height: 100vh; }
 
-/* Pre-auth gate: this is opnflr.com's own identity (black canvas,
-   Archivo-bold logotype, sharp-cornered blue CTA), not the app's
-   light/dark/stone/charcoal theme system — nobody has a session yet, so
-   there's nothing to personalize, only the brand to represent consistently
-   with the marketing site at the domain apex. Tokens are fixed and local to
-   this shell rather than pulled from tokens.css on purpose. */
+/* Pre-auth gate: this is opnflr.com's own identity (Archivo-bold logotype,
+   sharp-cornered blue CTA), so its tokens stay local instead of pulling from
+   the product surface stack. It still resolves the saved app theme: Light
+   and Stone use this shell's light brand palette, Dark and Charcoal use its
+   dark palette, and System follows prefers-color-scheme. */
 .entry-shell {
   --entry-ink: #d7dadf;
   --entry-ink-muted: #9aa0a8;
@@ -14,29 +13,55 @@
   --entry-bg: #000;
   --entry-glow-tint: rgba(27, 69, 184, .28);
   --entry-wave: 190, 200, 214;
+  --entry-panel: rgb(7 16 26 / 88%);
+  --entry-panel-shadow: rgb(0 0 0 / 42%);
+  --entry-form-surface: rgb(255 255 255 / 4%);
+  --entry-success-ink: #b8f6d6;
+  --entry-error-ink: #ffc8cb;
 
   position: relative;
   display: grid;
   place-items: center;
   min-height: 100vh;
   overflow: hidden;
+  color-scheme: dark;
   background: var(--entry-bg);
 }
 
-/* opnflr.com's own light mode: the CTA blue is unchanged, but ink flips
-   dark-on-light and the canvas becomes the same light gray the real site's
-   nav strip uses (confirmed live — the hero itself barely lightens between
-   the site's own toggle states, so that nav gray is the one genuinely
-   "light" surface the brand actually uses). System-driven only, per the
-   OS's prefers-color-scheme — this page still ignores the app's own manual
-   theme toggle. */
+/* opnflr.com's own light mode: the CTA blue is unchanged, but ink and every
+   layered surface flip together. The manual light themes share this palette;
+   an attribute-free System selection reaches the same block through the
+   media query below. Keep the declarations byte-identical. */
+:root[data-theme="light"] .entry-shell,
+:root[data-theme="stone"] .entry-shell {
+  --entry-ink: #12181f;
+  --entry-ink-muted: #565f6b;
+  --entry-bg: #c6ccd4;
+  --entry-glow-tint: rgba(27, 69, 184, .12);
+  --entry-wave: 30, 38, 47;
+  --entry-panel: rgb(244 245 247 / 92%);
+  --entry-panel-shadow: rgb(18 24 31 / 18%);
+  --entry-form-surface: rgb(255 255 255 / 56%);
+  --entry-success-ink: #1e684a;
+  --entry-error-ink: #9b343a;
+
+  color-scheme: light;
+}
+
 @media (prefers-color-scheme: light) {
-  .entry-shell {
+  :root:not([data-theme]) .entry-shell {
     --entry-ink: #12181f;
     --entry-ink-muted: #565f6b;
     --entry-bg: #c6ccd4;
     --entry-glow-tint: rgba(27, 69, 184, .12);
     --entry-wave: 30, 38, 47;
+    --entry-panel: rgb(244 245 247 / 92%);
+    --entry-panel-shadow: rgb(18 24 31 / 18%);
+    --entry-form-surface: rgb(255 255 255 / 56%);
+    --entry-success-ink: #1e684a;
+    --entry-error-ink: #9b343a;
+
+    color-scheme: light;
   }
 }
 
@@ -334,8 +359,8 @@
   padding: clamp(28px, 5vw, 56px);
   border: 1px solid color-mix(in srgb, var(--entry-ink) 18%, transparent);
   border-radius: 20px;
-  background: color-mix(in srgb, #07101a 88%, transparent);
-  box-shadow: 0 32px 100px rgb(0 0 0 / 42%);
+  background: var(--entry-panel);
+  box-shadow: 0 32px 100px var(--entry-panel-shadow);
   color: var(--entry-ink);
   backdrop-filter: blur(22px);
 }
@@ -374,7 +399,7 @@
   padding: 24px;
   border: 1px solid color-mix(in srgb, var(--entry-ink) 16%, transparent);
   border-radius: 14px;
-  background: rgb(255 255 255 / 4%);
+  background: var(--entry-form-surface);
 }
 .early-access-form-label { margin: 0; font: 600 18px/1.2 var(--font-brand-sans); }
 .early-access-form-copy { margin: 6px 0 10px; color: var(--entry-ink-muted); font: 400 13px/1.45 var(--font-brand-sans); }
@@ -393,8 +418,8 @@
   border-radius: 8px;
   font: 500 12px/1.45 var(--font-brand-sans);
 }
-.early-access-notice { background: color-mix(in srgb, #4ac98b 17%, transparent); color: #b8f6d6; }
-.early-access-error { background: color-mix(in srgb, #ef6c71 17%, transparent); color: #ffc8cb; }
+.early-access-notice { background: color-mix(in srgb, #4ac98b 17%, transparent); color: var(--entry-success-ink); }
+.early-access-error { background: color-mix(in srgb, #ef6c71 17%, transparent); color: var(--entry-error-ink); }
 
 @media (max-width: 720px) {
   .early-access-grid { grid-template-columns: 1fr; }
