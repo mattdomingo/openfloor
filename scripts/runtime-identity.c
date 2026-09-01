@@ -35,12 +35,11 @@ static struct passwd *required_user(const char *name) {
   return entry;
 }
 
-static void drop_to(uid_t uid, gid_t gid, const char *user, int lock_privileges) {
+static void drop_to(uid_t uid, gid_t gid, const char *user) {
   if (setgroups(0, NULL) != 0) fail("could not clear supplementary groups");
   if (setresgid(gid, gid, gid) != 0) fail("could not set runtime group");
   if (setresuid(uid, uid, uid) != 0) fail("could not set runtime user");
   if (prctl(PR_SET_DUMPABLE, 0, 0, 0, 0) != 0) fail("could not disable process inspection");
-  if (lock_privileges && prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0) fail("could not disable privilege gain");
   if (setenv("USER", user, 1) != 0 || setenv("LOGNAME", user, 1) != 0) fail("could not set runtime identity environment");
   umask(0002);
 }
@@ -148,10 +147,7 @@ int main(int argc, char **argv) {
 
   if (strcmp(program, "openfloor-provider-exec") == 0) {
     if (caller != 0 && caller != provider_uid) fail_message("provider launcher called by unexpected user");
-    // Provider children must still be able to cross the setuid workspace
-    // launcher. PR_SET_NO_NEW_PRIVS is therefore applied only after that
-    // transition, never to the provider process that invokes it.
-    drop_to(provider_uid, provider_gid, PROVIDER_USER, 0);
+    drop_to(provider_uid, provider_gid, PROVIDER_USER);
     execvp(argv[1], &argv[1]);
     fail("could not start provider process");
   }
@@ -160,7 +156,10 @@ int main(int argc, char **argv) {
     fail_message("workspace launcher called by unexpected user");
   }
   install_workspace_environment();
-  drop_to(workspace_uid, workspace_gid, WORKSPACE_USER, 1);
+  // srt/bubblewrap creates user/network namespaces before setting
+  // no_new_privs on the model-selected command. Setting it here would
+  // suppress bubblewrap's required namespace setup on Ubuntu's package.
+  drop_to(workspace_uid, workspace_gid, WORKSPACE_USER);
 
   if (strcmp(program, "openfloor-workspace-bwrap") == 0) {
     char **arguments = calloc((size_t)argc + 1, sizeof(char *));

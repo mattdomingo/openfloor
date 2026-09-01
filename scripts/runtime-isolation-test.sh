@@ -43,6 +43,7 @@ cat >"$scratch/attack.sh" <<'SH'
 set -eu
 provider_pid=$1
 [ "$(id -un)" = openfloor-workspace ]
+[ "$(awk '/^NoNewPrivs:/ { print $2 }' /proc/self/status)" = 1 ]
 [ "${OPENFLOOR_OPENAI_TOKEN-}" = '' ]
 [ "${OPENFLOOR_CONTEXT_TOKEN-}" = '' ]
 ! cat "/proc/$provider_pid/environ" >/tmp/openfloor-isolation-test/environ 2>/dev/null
