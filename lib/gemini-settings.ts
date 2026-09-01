@@ -102,6 +102,7 @@ export function buildGeminiSrtSettings(input: GeminiSrtSettingsInput): string {
         allowWrite: input.readOnly ? ["/tmp"] : [input.workspace, "/tmp"],
         denyWrite: [],
       },
+      bwrapPath: "/opt/openfloor/openfloor-workspace-bwrap",
     },
     null,
     2,

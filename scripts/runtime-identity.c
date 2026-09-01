@@ -13,6 +13,7 @@
 #include <unistd.h>
 
 #define PROVIDER_USER "openfloor-provider"
+#define BROKER_USER "openfloor-broker"
 #define WORKSPACE_USER "openfloor-workspace"
 #define WORKSPACE_SRT_SETTINGS "/tmp/openfloor/workspace-srt-settings.json"
 #define SRT_BINARY "/opt/openfloor/node_modules/.bin/srt"
@@ -41,6 +42,20 @@ static void drop_to(uid_t uid, gid_t gid, const char *user) {
   if (setresuid(uid, uid, uid) != 0) fail("could not set runtime user");
   if (prctl(PR_SET_DUMPABLE, 0, 0, 0, 0) != 0) fail("could not disable process inspection");
   if (setenv("USER", user, 1) != 0 || setenv("LOGNAME", user, 1) != 0) fail("could not set runtime identity environment");
+  umask(0002);
+}
+
+static void prepare_bwrap_identity(uid_t uid, gid_t gid) {
+  // bwrap maps its real uid/gid into the user namespace. Preserve effective
+  // root only for bwrap's namespace and mount setup; mapping the provider or
+  // broker real uid here would make the final command provider-readable from
+  // the outer namespace even if `id` reported openfloor-workspace inside.
+  if (setgroups(0, NULL) != 0) fail("could not clear supplementary groups");
+  if (setresgid(gid, 0, 0) != 0) fail("could not prepare bubblewrap group");
+  if (setresuid(uid, 0, 0) != 0) fail("could not prepare bubblewrap user");
+  if (setenv("USER", WORKSPACE_USER, 1) != 0 || setenv("LOGNAME", WORKSPACE_USER, 1) != 0) {
+    fail("could not set bubblewrap identity environment");
+  }
   umask(0002);
 }
 
@@ -123,13 +138,84 @@ static char *quote_command(char *const arguments[]) {
   return command;
 }
 
-static void run_workspace_command(char *const arguments[]) {
+static void run_workspace_command(char *const arguments[], uid_t broker_uid, gid_t broker_gid) {
   char *command = quote_command(arguments);
   char *const srt_arguments[] = {
     "srt", "-s", WORKSPACE_SRT_SETTINGS, "-c", command, NULL
   };
+  // srt is trusted broker code. It must retain a non-workspace identity so
+  // only its bwrap child can enter the setuid namespace launcher. The bwrap
+  // launcher performs the final uid/gid drop after namespace setup.
+  drop_to(broker_uid, broker_gid, BROKER_USER);
   execv(SRT_BINARY, srt_arguments);
   fail("could not start workspace sandbox");
+}
+
+static int is_forbidden_bwrap_option(const char *argument) {
+  const char *forbidden[] = {
+    "--uid", "--gid", "--cap-add", "--userns", "--userns2",
+    "--userns-block-fd", "--disable-userns", "--assert-userns-disabled",
+    "--args", "--share-net", NULL
+  };
+  for (const char **option = forbidden; *option != NULL; option++) {
+    size_t length = strlen(*option);
+    if (strcmp(argument, *option) == 0 ||
+        (strncmp(argument, *option, length) == 0 && argument[length] == '=')) {
+      return 1;
+    }
+  }
+  return 0;
+}
+
+static void run_workspace_bwrap(int argc, char **argv, uid_t workspace_uid, gid_t workspace_gid) {
+  int separator = -1;
+  int has_user_namespace = 0;
+  int drops_all_capabilities = 0;
+  int has_network_namespace = 0;
+  int has_pid_namespace = 0;
+  int has_private_proc = 0;
+  for (int index = 1; index < argc; index++) {
+    if (strcmp(argv[index], "--") == 0) {
+      separator = index;
+      break;
+    }
+    if (is_forbidden_bwrap_option(argv[index])) fail_message("forbidden bubblewrap identity option");
+    if (strcmp(argv[index], "--unshare-user") == 0) has_user_namespace = 1;
+    if (strcmp(argv[index], "--unshare-net") == 0) has_network_namespace = 1;
+    if (strcmp(argv[index], "--unshare-pid") == 0) has_pid_namespace = 1;
+    if (strcmp(argv[index], "--proc") == 0 && index + 1 < argc && strcmp(argv[index + 1], "/proc") == 0) {
+      has_private_proc = 1;
+    }
+    if (strcmp(argv[index], "--cap-drop") == 0 && index + 1 < argc && strcmp(argv[index + 1], "ALL") == 0) {
+      drops_all_capabilities = 1;
+    }
+  }
+  if (separator < 0 || separator == argc - 1) fail_message("bubblewrap command separator is missing");
+  if (!has_user_namespace || !drops_all_capabilities || !has_network_namespace ||
+      !has_pid_namespace || !has_private_proc) {
+    fail_message("bubblewrap identity policy is incomplete");
+  }
+
+  char uid[32];
+  char gid[32];
+  if (snprintf(uid, sizeof(uid), "%lu", (unsigned long)workspace_uid) < 0 ||
+      snprintf(gid, sizeof(gid), "%lu", (unsigned long)workspace_gid) < 0) {
+    fail_message("could not format workspace identity");
+  }
+  char **arguments = calloc((size_t)argc + 5, sizeof(char *));
+  if (arguments == NULL) fail("could not allocate bubblewrap arguments");
+  int out = 0;
+  arguments[out++] = "bwrap";
+  for (int index = 1; index < separator; index++) arguments[out++] = argv[index];
+  arguments[out++] = "--uid";
+  arguments[out++] = uid;
+  arguments[out++] = "--gid";
+  arguments[out++] = gid;
+  for (int index = separator; index < argc; index++) arguments[out++] = argv[index];
+  arguments[out] = NULL;
+  prepare_bwrap_identity(workspace_uid, workspace_gid);
+  execv(REAL_BWRAP, arguments);
+  fail("could not start workspace bubblewrap");
 }
 
 int main(int argc, char **argv) {
@@ -140,6 +226,9 @@ int main(int argc, char **argv) {
   struct passwd *provider = required_user(PROVIDER_USER);
   uid_t provider_uid = provider->pw_uid;
   gid_t provider_gid = provider->pw_gid;
+  struct passwd *broker = required_user(BROKER_USER);
+  uid_t broker_uid = broker->pw_uid;
+  gid_t broker_gid = broker->pw_gid;
   struct passwd *workspace = required_user(WORKSPACE_USER);
   uid_t workspace_uid = workspace->pw_uid;
   gid_t workspace_gid = workspace->pw_gid;
@@ -152,33 +241,29 @@ int main(int argc, char **argv) {
     fail("could not start provider process");
   }
 
-  if (caller != 0 && caller != provider_uid && caller != workspace_uid) {
+  if (caller != 0 && caller != provider_uid && caller != broker_uid && caller != workspace_uid) {
     fail_message("workspace launcher called by unexpected user");
   }
-  install_workspace_environment();
-  // srt/bubblewrap creates user/network namespaces before setting
-  // no_new_privs on the model-selected command. Setting it here would
-  // suppress bubblewrap's required namespace setup on Ubuntu's package.
-  drop_to(workspace_uid, workspace_gid, WORKSPACE_USER);
 
   if (strcmp(program, "openfloor-workspace-bwrap") == 0) {
-    char **arguments = calloc((size_t)argc + 1, sizeof(char *));
-    if (arguments == NULL) fail("could not allocate bubblewrap arguments");
-    arguments[0] = "bwrap";
-    for (int index = 1; index < argc; index++) arguments[index] = argv[index];
-    execv(REAL_BWRAP, arguments);
-    fail("could not start workspace bubblewrap");
+    // Model-selected commands already run as openfloor-workspace. They may
+    // re-enter only the fixed-policy srt launcher, never choose privileged
+    // bwrap mount or namespace arguments directly.
+    if (caller == workspace_uid) fail_message("bubblewrap launcher called by workspace user");
+    install_workspace_environment();
+    run_workspace_bwrap(argc, argv, workspace_uid, workspace_gid);
   }
 
+  install_workspace_environment();
   if (strcmp(program, "openfloor-workspace-shell") == 0 || strcmp(program, "bash") == 0) {
     char **arguments = calloc((size_t)argc + 1, sizeof(char *));
     if (arguments == NULL) fail("could not allocate shell arguments");
     arguments[0] = (char *)REAL_SHELL;
     for (int index = 1; index < argc; index++) arguments[index] = argv[index];
-    run_workspace_command(arguments);
+    run_workspace_command(arguments, broker_uid, broker_gid);
   }
 
   if (strcmp(program, "openfloor-workspace-exec") != 0) fail_message("unknown launcher name");
-  run_workspace_command(&argv[1]);
+  run_workspace_command(&argv[1], broker_uid, broker_gid);
   return 126;
 }

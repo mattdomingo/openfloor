@@ -58,6 +58,7 @@ describe("gemini srt settings", () => {
     const settings = JSON.parse(buildGeminiSrtSettings({ gatewayHost: "opnflr.com", workspace: "/workspace/repository" })) as {
       network: { allowedDomains: string[]; deniedDomains: string[]; allowUnixSockets: string[] };
       filesystem: { denyRead: string[]; allowWrite: string[]; denyWrite: string[] };
+      bwrapPath: string;
     };
     expect(settings.network.allowedDomains).toEqual([]);
     expect(settings.network.deniedDomains).toEqual([]);
@@ -65,5 +66,6 @@ describe("gemini srt settings", () => {
     expect(settings.filesystem.allowWrite).toEqual(["/workspace/repository", "/tmp"]);
     expect(settings.filesystem.denyRead).toEqual([]);
     expect(settings.filesystem.denyWrite).toEqual([]);
+    expect(settings.bwrapPath).toBe("/opt/openfloor/openfloor-workspace-bwrap");
   });
 });
