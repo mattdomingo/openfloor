@@ -54,6 +54,12 @@ export const users = sqliteTable(
     // so a fresh row would otherwise get a fresh 2h/month for free). See
     // planHourLimit() in lib/plans.ts.
     freeAllowanceUsedAt: integer("free_allowance_used_at"),
+    // Product-level admission is distinct from Cloudflare Access identity.
+    // A revocation is sticky: the shared passcode may grant only rows whose
+    // revoked_at is null; an operator must explicitly clear a revocation.
+    earlyAccessGrantedAt: integer("early_access_granted_at"),
+    earlyAccessRevokedAt: integer("early_access_revoked_at"),
+    earlyAccessGrantSource: text("early_access_grant_source", { enum: ["existing", "passcode", "manual"] }),
   },
   (table) => [
     uniqueIndex("idx_users_chatgpt_user_id").on(table.providerUserId),
@@ -67,6 +73,30 @@ export const users = sqliteTable(
     index("idx_users_prior_email_hash").on(table.priorEmailHash),
     check("users_plan_check", sql`${table.plan} in ('pro', 'max', 'enterprise')`),
     check("users_plan_status_check", sql`${table.planStatus} in ('inactive', 'active', 'past_due', 'canceled')`),
+  ],
+);
+
+export const earlyAccessWaitlist = sqliteTable(
+  "early_access_waitlist",
+  {
+    id: text("id").primaryKey(),
+    email: text("email").notNull(),
+    name: text("name").notNull(),
+    status: text("status", { enum: ["waiting", "admitted"] }).notNull().default("waiting"),
+    consentVersion: text("consent_version").notNull(),
+    consentedAt: integer("consented_at").notNull(),
+    sheetSyncState: text("sheet_sync_state", { enum: ["pending", "synced"] }).notNull().default("pending"),
+    sheetSyncAttempts: integer("sheet_sync_attempts").notNull().default(0),
+    sheetNextAttemptAt: integer("sheet_next_attempt_at").notNull(),
+    sheetLastError: text("sheet_last_error"),
+    sheetSyncedAt: integer("sheet_synced_at"),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("idx_early_access_waitlist_email").on(table.email),
+    index("idx_early_access_waitlist_sheet_sync").on(table.sheetSyncState, table.sheetNextAttemptAt),
+    index("idx_early_access_waitlist_updated_at").on(table.updatedAt),
   ],
 );
 

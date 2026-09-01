@@ -82,6 +82,9 @@ export type AppUser = {
   seatLimit: number | null;
   createdAt: number;
   updatedAt: number;
+  earlyAccessGrantedAt: number | null;
+  earlyAccessRevokedAt: number | null;
+  earlyAccessGrantSource: "existing" | "passcode" | "manual" | null;
   // Tombstone set only by deleteAccount; see db/schema.ts's users.deletedAt
   // comment. Not used to filter reads — a live AppUser is never expected to
   // have this set.

@@ -1,4 +1,7 @@
-import { accessSignInPath, getAccessUser, safeAppReturnPath } from "./access-auth";
+import { env } from "cloudflare:workers";
+import { accessSignInPath, earlyAccessPath, getAccessUser, safeAppReturnPath } from "./access-auth";
+import { upsertUser } from "@/db/sessions";
+import { earlyAccessGateEnabled, hasEarlyAccess } from "@/lib/early-access";
 import { BASE_PATH } from "@/components/basePath";
 import { EntryReplay } from "./entry-replay";
 import { ParallaxLayer } from "./entry-parallax";
@@ -41,8 +44,15 @@ export default async function LandingPage({ searchParams }: { searchParams: Prom
   // Signed out, the mark must enter the sign-in flow carrying the return
   // target — pointing straight at the target looped back here now that page
   // paths sit outside Access and can't start a login themselves.
-  const signInHref = accessSignInPath(returnTo ?? "/home");
-  const primaryHref = user ? `${BASE_PATH}/home` : signInHref;
+  const target = returnTo ?? "/home";
+  const appUser = user ? await upsertUser(user) : null;
+  const gateEnabled = earlyAccessGateEnabled(env as unknown as Record<string, string | undefined>);
+  const admitted = Boolean(appUser && (!gateEnabled || hasEarlyAccess(appUser)));
+  const primaryHref = admitted
+    ? `${BASE_PATH}/home`
+    : gateEnabled
+      ? earlyAccessPath(target)
+      : accessSignInPath(target);
   return (
     <main className="entry-shell">
       <EntryReplay />
@@ -54,7 +64,7 @@ export default async function LandingPage({ searchParams }: { searchParams: Prom
         <div className="entry-grain" aria-hidden="true" />
       </div>
       <div className="entry-card">
-        <SignInMark href={primaryHref} label={user ? "Open your sessions" : "Sign in"} />
+        <SignInMark href={primaryHref} label={admitted ? "Open your sessions" : gateEnabled ? "Request early access" : "Sign in"} />
         {authRequired && (
           <>
             <p className="entry-note entry-anim" role="status">
@@ -62,7 +72,7 @@ export default async function LandingPage({ searchParams }: { searchParams: Prom
             </p>
             {/* The bracket mark is also the sign-in link, but nobody guesses
                 that mid-bounce — the notice carries an explicit button. */}
-            <a className="button entry-anim" data-variant="primary" href={signInHref}>Sign in</a>
+            <a className="button entry-anim" data-variant="primary" href={primaryHref}>Continue</a>
           </>
         )}
       </div>

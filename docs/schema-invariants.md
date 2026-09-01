@@ -11,6 +11,7 @@
 - Email updates on authentication (`upsertUser`). `display_name`, `first_name`, `last_name`, `github_handle`, and `avatar_key` are owned by onboarding and account settings, not the IdP — `upsertUser` never touches them.
 - `first_name`/`last_name`/`github_handle`/`avatar_key` are set once by onboarding (`completeOnboarding`, `POST /api/account/onboarding`) and are editable afterward through account settings (`updateProfile`, `PATCH /api/account/profile`). `display_name` is always derived as `"First L."` (`lib/display-name.ts`'s `displayNameFrom`) by both writers, so it can never drift out of that format. Unlike onboarding's `COALESCE`-based avatar write (which can only add a picture, never remove one), `updateProfile`'s `avatarKey` is a genuine three-state argument — omitted keeps the existing key, `null` clears it — so account settings is the only place a picture can be removed.
 - Creation and update timestamps are epoch milliseconds.
+- `early_access_granted_at`, `early_access_revoked_at`, and `early_access_grant_source` (`existing`/`passcode`/`manual`) are the product-admission projection. Access is active only with a grant and no revocation. Migration `0044` backfills every existing non-deleted row as `existing`; later `upsertUser` inserts intentionally leave the fields null. Passcode grants update only rows with no revocation; manual grant is the sole restoration path. Account deletion clears all three fields.
 - `plan` (`pro`/`max`/`enterprise`, default `pro`), `plan_status` (`inactive`/`active`/`past_due`/`canceled`, default `inactive`), and nullable `seat_limit` decide entitlement — see "Plan limits and metering" below. `upsertUser` writes none of them. Stripe subscription reconciliation projects Pro/Max status and purchased quantity; active Enterprise remains a sales-managed override. A legacy/manual active Pro/Max row with null `seat_limit` keeps the historical 5/10-seat cap.
 - `deleted_at` is a tombstone, not a soft-delete filter — no read path queries against it. Set only by `deleteAccount` (`DELETE /api/account`), it marks a row that account deletion scrubbed and released rather than one currently in use; see "Account deletion" below for the full contract.
 - The inbound cascade set now also includes `github_account_connection_states.user_id` and `user_github_installations.user_id`; the historic four-FK count in the migration warning below predates account-level GitHub setup. This strengthens, rather than changes, the never-recreate invariant.
@@ -26,6 +27,14 @@
 5. Scrubs and releases the identity: `chatgpt_user_id` and `email` are rewritten to values the IdP can never present again (`'deleted:' || id`, `'deleted+' || id || '@invalid'`), name/handle/avatar are cleared, `display_name` becomes `"Deleted user"`, `plan_status` becomes `canceled`, `seat_limit` becomes null, `prior_email_hash` is stamped with the departing address's HMAC, and `deleted_at` is stamped. `upsertUser`'s two identity lookups both add `AND deleted_at IS NULL`, so the next sign-in with the same Access identity creates a brand-new row rather than resurrecting the tombstone.
 
 Deliberately left alone: `usage_months` rows survive (see that table's own no-FK note — "future account deletion" is this), and authored `floor_messages`/`floor_agents`/`floor_queue_prompts`/`repository_*` rows in sessions the user did not own survive too, now attributed to the scrubbed `"Deleted user"` display name — the tombstone row exists specifically to keep those foreign keys valid.
+
+#### `early_access_waitlist`
+
+- D1 is authoritative. One normalized lowercase email maps to one stable UUID; a repeat submission updates name, consent version/time, timestamps, and Sheet retry state without changing the record ID or downgrading an `admitted` status.
+- Consent covers only waitlist status, beta invitations, and essential beta updates. `consent_version` and `consented_at` preserve the accepted disclosure.
+- `sheet_sync_state`, attempt count, next-attempt time, bounded last error, and sync time make Google Sheet delivery observable and retryable. Sheet delivery never participates in the D1 write transaction and the Sheet never grants access.
+- A matching account grant changes status to `admitted` and queues a new Sheet sync. Operator `resync` only queues delivery.
+- The 10-minute Worker cron sends at most 25 due records with exponential backoff. The daily cron removes at most 100 rows whose `updated_at` is older than 12 months; the Apps Script independently removes mirrored rows on the same retention horizon.
 
 #### `sessions`
 

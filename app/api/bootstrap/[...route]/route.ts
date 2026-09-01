@@ -39,6 +39,8 @@ import type { AppUser } from "@/lib/session-types";
 import { isSettingsSection } from "@/lib/settings-plan";
 import { resolveSettingsOrigin } from "@/app/home/settings/origin";
 import { env } from "cloudflare:workers";
+import { earlyAccessPath } from "@/lib/access-paths";
+import { earlyAccessGateEnabled, hasEarlyAccess } from "@/lib/early-access";
 
 const unauthenticated = () => Response.json({ error: "Authentication required" }, { status: 401 });
 const notFound = () => Response.json({ error: "Not found" }, { status: 404 });
@@ -61,6 +63,10 @@ export async function GET(request: Request, { params }: { params: Promise<{ rout
   const { route } = await params;
   const query = new URL(request.url).searchParams;
   const [head, ...rest] = route;
+
+  if (earlyAccessGateEnabled(env as unknown as Record<string, string | undefined>) && !hasEarlyAccess(user)) {
+    return redirectTo(earlyAccessPath(bootstrapReturnPath(head, rest, query)));
+  }
 
   if (head === "me" && rest.length === 0) {
     return Response.json({ user, onboarded: user.onboardedAt != null });
@@ -216,4 +222,15 @@ export async function GET(request: Request, { params }: { params: Promise<{ rout
   }
 
   return notFound();
+}
+
+function bootstrapReturnPath(head: string | undefined, rest: string[], query: URLSearchParams): string {
+  if (head === "onboarding") return safeAppReturnPath(query.get("return_to")) ?? `${BASE_PATH}/home`;
+  if (head === "settings") return `${BASE_PATH}/home/settings`;
+  if (head === "session" && rest.length > 0) {
+    const suffix = rest[1] === "floor" ? "/floor" : "";
+    return `${BASE_PATH}/session/${encodeURIComponent(rest[0])}${suffix}`;
+  }
+  if (head === "join" && rest.length > 0) return `${BASE_PATH}/join/${encodeURIComponent(rest[0])}`;
+  return `${BASE_PATH}/home`;
 }

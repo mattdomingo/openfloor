@@ -25,10 +25,11 @@ export type PresenceSocketHandlers = {
   // own returned `send`) so there is no ordering dependency between defining
   // this callback and destructuring the hook's return value.
   onLive: (send: (update: TypingUpdate) => void) => void;
-  // 4001 (membership ended) or 4005 (owner removed this member): terminal,
+  // 4001 (membership ended), 4005 (owner removed this member), or 4006
+  // (early-access admission ended): terminal,
   // but a navigation rather than a connection state, so callers decide what
   // to do rather than the hook rendering anything for them.
-  onLeave: (code: 4001 | 4005, reason: string) => void;
+  onLeave: (code: 4001 | 4005 | 4006, reason: string) => void;
 };
 
 // Single presence-socket lifecycle shared by the lobby (SessionScreen) and
@@ -103,7 +104,7 @@ export function usePresenceSocket(sessionId: string, handlers: PresenceSocketHan
       socket.addEventListener("close", (event) => {
         if (socketRef.current === socket) socketRef.current = null;
         if (disposed) return;
-        if (event.code === 4001 || event.code === 4005) {
+        if (event.code === 4001 || event.code === 4005 || event.code === 4006) {
           handlersRef.current.onLeave(event.code, event.reason);
           return;
         }

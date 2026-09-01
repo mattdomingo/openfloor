@@ -1,8 +1,8 @@
 import { env } from "cloudflare:workers";
 import { redirect } from "next/navigation";
-import { requireAccessUser, safeAppReturnPath } from "@/app/access-auth";
+import { safeAppReturnPath } from "@/app/access-auth";
 import { BASE_PATH } from "@/components/basePath";
-import { upsertUser } from "@/db/sessions";
+import { requireEarlyAccessUser } from "@/lib/server-auth";
 import { OnboardingScreen } from "@/components/product/OnboardingScreen";
 import { normalizedTeamDomain } from "@/lib/identity";
 import { parseOnboardingStep } from "@/lib/onboarding-plan";
@@ -18,8 +18,7 @@ export default async function OnboardingPage({
 }) {
   const { return_to, step } = await searchParams;
   const returnTo = safeAppReturnPath(return_to) ?? `${BASE_PATH}/home`;
-  const identity = await requireAccessUser("/onboarding");
-  const user = await upsertUser(identity);
+  const user = await requireEarlyAccessUser("/onboarding");
   if (user.onboardedAt != null) redirect(returnTo);
   const [githubInstallations, credentials] = await Promise.all([
     listUserGitHubInstallations(user.id),
@@ -31,7 +30,7 @@ export default async function OnboardingPage({
   const teamDomain = normalizedTeamDomain(env.CF_ACCESS_TEAM_DOMAIN);
   const teamLogoutUrl = teamDomain ? `${teamDomain}/cdn-cgi/access/logout` : null;
   return <OnboardingScreen
-    fullName={identity.fullName}
+    fullName={user.displayName}
     firstName={user.firstName}
     lastName={user.lastName}
     githubHandle={user.githubHandle}

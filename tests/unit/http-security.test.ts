@@ -10,6 +10,12 @@ describe("HTTP security boundary", () => {
       method: "PATCH", headers: { origin: "https://app.opnflr.com", "sec-fetch-site": "same-origin" },
     }))).toBe(false);
     expect(violatesBrowserMutationPolicy(new Request("https://app.opnflr.com/api/sessions/x", { method: "DELETE" }))).toBe(false);
+    expect(violatesBrowserMutationPolicy(new Request("https://app.opnflr.com/early-access/unlock", {
+      method: "POST", headers: { origin: "https://evil.example", "sec-fetch-site": "cross-site" },
+    }))).toBe(true);
+    expect(violatesBrowserMutationPolicy(new Request("https://app.opnflr.com/early-access/waitlist", {
+      method: "POST", headers: { origin: "https://app.opnflr.com", "sec-fetch-site": "same-origin" },
+    }))).toBe(false);
     expect(violatesBrowserMutationPolicy(new Request("https://app.opnflr.com/webhooks/github", {
       method: "POST", headers: { origin: "https://evil.example", "sec-fetch-site": "cross-site" },
     }))).toBe(false);
@@ -22,6 +28,7 @@ describe("HTTP security boundary", () => {
     expect(hardened.headers.get("content-security-policy")).toContain("frame-ancestors 'none'");
     expect(hardened.headers.get("strict-transport-security")).toBe("max-age=31536000");
     expect(hardened.headers.get("cache-control")).toBe("no-store");
+    expect(withSecurityHeaders(new Response("ok"), new URL("https://app.opnflr.com/early-access")).headers.get("cache-control")).toBe("no-store");
 
     const cached = withSecurityHeaders(new Response("ok", { headers: { "cache-control": "private, max-age=60" } }), new URL("https://app.opnflr.com/api/account/avatar/u"));
     expect(cached.headers.get("cache-control")).toBe("private, max-age=60");

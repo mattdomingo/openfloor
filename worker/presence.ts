@@ -1,5 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import { authorizePresence, currentMonth, getOwnerHourQuota } from "../db/sessions";
+import { earlyAccessActiveForUser } from "../db/early-access";
 import type { D1DatabaseLike } from "../db";
 import {
   cloudflareAccessIdentity,
@@ -8,6 +9,7 @@ import {
 } from "../lib/identity";
 import type { PresenceEvent, TypingDraft, TypingUpdate } from "../lib/session-types";
 import type { FloorDomain, RunActivityEvent } from "../lib/floor-types";
+import { EARLY_ACCESS_SOCKET_CLOSE_CODE, earlyAccessGateEnabled, type EarlyAccessBindings } from "../lib/early-access";
 
 type DurableObjectStubLike = { fetch(request: Request): Promise<Response> };
 type DurableObjectNamespaceLike = {
@@ -15,7 +17,7 @@ type DurableObjectNamespaceLike = {
   get(id: unknown): DurableObjectStubLike;
 };
 
-export interface PresenceEnv extends IdentityEnvironment {
+export interface PresenceEnv extends IdentityEnvironment, EarlyAccessBindings {
   DB: D1DatabaseLike;
   SESSION_PRESENCE: DurableObjectNamespaceLike;
 }
@@ -74,6 +76,9 @@ export class SessionPresence extends DurableObject<PresenceEnv> {
       // though — an ended session must not keep booking hours to the owner
       // while a client is mid-navigation.
       await this.stopMetering();
+      if (earlyAccessGateEnabled(this.env) && this.sockets().some((socket) => socket.readyState === WebSocket.OPEN)) {
+        await this.ctx.storage.setAlarm(Date.now() + USAGE_FLUSH_INTERVAL_MS);
+      }
       this.broadcast({ type: "session.ended", endedAt: body.endedAt, reason: body.reason });
       return new Response(null, { status: 204 });
     }
@@ -150,6 +155,9 @@ export class SessionPresence extends DurableObject<PresenceEnv> {
         await this.ctx.storage.put("clockStart", Date.now());
         await this.ctx.storage.setAlarm(Date.now() + USAGE_FLUSH_INTERVAL_MS);
       }
+    }
+    if (earlyAccessGateEnabled(this.env) && (await this.ctx.storage.getAlarm()) == null) {
+      await this.ctx.storage.setAlarm(Date.now() + USAGE_FLUSH_INTERVAL_MS);
     }
 
     const pair = new WebSocketPair();
@@ -235,17 +243,33 @@ export class SessionPresence extends DurableObject<PresenceEnv> {
     // instance (a mid-request crash between the D1 write and the DO call):
     // notice the session ended, stop the clock, and don't re-arm.
     const meteredSessionId = await this.ctx.storage.get<string>("meterSessionId");
+    let meteringEnded = false;
     if (meteredSessionId) {
       const row = await this.env.DB.prepare("SELECT ended_at AS endedAt FROM sessions WHERE id = ?")
         .bind(meteredSessionId)
         .first<{ endedAt: number | null }>();
       if (row?.endedAt != null) {
         await this.stopMetering();
-        return;
+        meteringEnded = true;
       }
     }
     const now = Date.now();
-    const open = this.sockets().filter((socket) => socket.readyState === WebSocket.OPEN);
+    let open = this.sockets().filter((socket) => socket.readyState === WebSocket.OPEN);
+    const admissionAlarm = earlyAccessGateEnabled(this.env);
+    if (admissionAlarm) {
+      const access = new Map<string, boolean>();
+      for (const userId of [...new Set(open.map((socket) => socket.deserializeAttachment()?.userId).filter((id): id is string => Boolean(id)))]) {
+        access.set(userId, await earlyAccessActiveForUser(userId, this.env.DB));
+      }
+      for (const socket of open) {
+        const userId = socket.deserializeAttachment()?.userId;
+        if (!userId || access.get(userId) !== true) socket.close(EARLY_ACCESS_SOCKET_CLOSE_CODE, "Early access is required");
+      }
+      open = open.filter((socket) => {
+        const userId = socket.deserializeAttachment()?.userId;
+        return Boolean(userId && access.get(userId));
+      });
+    }
     const idle = open.filter((socket) => (socket.deserializeAttachment()?.lastActivityAt ?? 0) < now - IDLE_TIMEOUT_MS);
     const active = open.filter((socket) => !idle.includes(socket));
 
@@ -254,9 +278,9 @@ export class SessionPresence extends DurableObject<PresenceEnv> {
     // no clockStart left to book — flushUsage's early return is what makes
     // that safe — rather than racing to double-book the same interval.
     if (active.length > 0) {
-      await this.flushUsage(true, now);
+      await this.flushUsage(!meteringEnded, now);
       for (const socket of idle) socket.close(4004, "Disconnected for inactivity");
-      await this.ctx.storage.setAlarm(now + USAGE_FLUSH_INTERVAL_MS);
+      if (!meteringEnded || admissionAlarm) await this.ctx.storage.setAlarm(now + USAGE_FLUSH_INTERVAL_MS);
     } else {
       // Every open socket (if any) is idle: occupancy is effectively zero.
       // Book only up to the last real activity, not up to this alarm firing.
@@ -386,6 +410,9 @@ export async function handlePresenceRequest(request: Request, env: PresenceEnv):
   const sessionId = decodeURIComponent(presenceMatch[1]);
   const member = await authorizePresence(sessionId, identity.providerUserId, env.DB);
   if (!member) return new Response("Session not found", { status: 404 });
+  if (earlyAccessGateEnabled(env) && !(await earlyAccessActiveForUser(member.userId, env.DB))) {
+    return rejectedWebSocket(EARLY_ACCESS_SOCKET_CLOSE_CODE, "Early access is required");
+  }
 
   const headers = new Headers(request.headers);
   headers.set("x-openfloor-user-id", member.userId);
@@ -415,16 +442,12 @@ export async function handlePresenceRequest(request: Request, env: PresenceEnv):
     if (quota.seconds >= quota.limitHours * 3600) {
       // Accept-then-close so the browser sees a close code; a 4xx upgrade
       // failure is opaque to the WebSocket API.
-      const rejected = new WebSocketPair();
-      const server = rejected[1] as WebSocket & { accept(): void };
-      server.accept();
-      server.close(
+      return rejectedWebSocket(
         4003,
         quota.limitHours === 0
           ? "This session's host already used their free openfloor hours."
           : "This session's host has used up their plan's monthly session hours.",
       );
-      return new Response(null, { status: 101, webSocket: rejected[0] });
     }
     headers.set("x-openfloor-meter-owner-id", quota.ownerId);
     headers.set("x-openfloor-meter-session-id", sessionId);
@@ -432,4 +455,12 @@ export async function handlePresenceRequest(request: Request, env: PresenceEnv):
 
   const stub = env.SESSION_PRESENCE.get(env.SESSION_PRESENCE.idFromName(sessionId));
   return stub.fetch(new Request("https://presence.internal/connect", { method: "GET", headers }));
+}
+
+function rejectedWebSocket(code: number, reason: string): Response {
+  const rejected = new WebSocketPair();
+  const server = rejected[1] as WebSocket & { accept(): void };
+  server.accept();
+  server.close(code, reason);
+  return new Response(null, { status: 101, webSocket: rejected[0] });
 }

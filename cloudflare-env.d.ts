@@ -19,6 +19,10 @@ declare global {
       STRIPE_MAX_PRICE_ID: string;
       STRIPE_PORTAL_CONFIGURATION_ID: string;
       STRIPE_CHECKOUT_ENABLED: string;
+      EARLY_ACCESS_GATE_ENABLED?: string;
+      EARLY_ACCESS_PASSWORD?: string;
+      WAITLIST_SHEET_WEBHOOK_URL?: string;
+      WAITLIST_SHEET_WEBHOOK_SECRET?: string;
       SESSION_PRESENCE: DurableObjectNamespace<SessionPresence>;
       TEST_MIGRATIONS: string;
       ACCOUNT_EMAIL_MERGE_QUERIES: string;

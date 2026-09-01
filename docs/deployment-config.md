@@ -22,6 +22,8 @@ The phased GitHub rollout currently uses the existing production Worker and D1 d
 
 Cloudflare Containers requires a Workers Paid account. `PREFLIGHT_ENABLED` is the production rollout gate: production is enabled only after the container image, `SANDBOX`, and `REPOSITORY_PREFLIGHT` bindings deploy successfully. While disabled, the UI omits **Verify runner** and the start endpoint returns `503`; repository connection and candidate reconciliation remain available. Tests explicitly enable the deterministic test adapter.
 
+`EARLY_ACCESS_GATE_ENABLED` controls enforcement only. Its first production rollout must remain `false` while D1 waitlist writes, signed Sheet delivery, secrets, and WAF rate limits are accepted. Forms, Sheet retries, retention, and operator commands work with enforcement off. After acceptance, changing the versioned flag to `true` gates protected pages, APIs, desktop bootstrap, invitations/onboarding, and presence. Rollback is `false`; grants, revocations, and waitlist rows remain intact. See `docs/early-access.md`.
+
 `AGENT_RUN_ENABLED` independently gates all agent execution. It is currently **false in production as a security hold**: provider CLIs and repository-controlled processes share the `openfloor-agent` Linux uid, and Linux exposes each process's initial environment through same-uid `/proc` reads even after JavaScript deletes those variables. Child-process environment filtering therefore does not prove gateway-token isolation. Keep this global gate false until the container uses a separate uid/process boundary (or equivalent kernel isolation) and adversarial tests prove environment, command-line, child-process, and `/proc` isolation. While false the UI omits **Run**, direct starts return `503`, and provider-specific gates cannot override it. Tests enable only deterministic test adapters.
 
 Defense in depth still must remain complete while the gate is closed: Codex receives only an explicit safe SDK environment and gives repository commands an explicit `PATH`/`HOME`-class environment with no inheritance; Gemini/Qwen apply the same safe allowlist to every supported `node:child_process` API and overload. The exact built-in MCP command alone receives its explicit context/conflict variables. These controls reduce accidental child inheritance but do not authorize enabling runs while same-uid `/proc` remains.
@@ -37,6 +39,9 @@ The Sandbox image is `cloudflare/sandbox:0.12.7` pinned to digest `sha256:6d7417
 ### Required secrets
 
 - `INVITE_SIGNING_SECRET`
+- `EARLY_ACCESS_PASSWORD` (shared beta passcode; rotation affects future admissions, not existing grants)
+- `WAITLIST_SHEET_WEBHOOK_URL` (Apps Script `/exec` deployment URL)
+- `WAITLIST_SHEET_WEBHOOK_SECRET` (same random HMAC key stored in Apps Script Project Properties)
 - `CF_ACCESS_TEAM_DOMAIN`
 - `CF_ACCESS_AUD`
 - `GITHUB_APP_ID`

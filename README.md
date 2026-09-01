@@ -1,6 +1,6 @@
 # openfloor
 
-openfloor is a persistent multiplayer session shell for teams coordinating agent work. Cloudflare D1 stores users, sessions, memberships, reusable signed invites, agents, assignments, prompts, queue ordering, and team/direct messages. A per-session Durable Object provides live WebSocket presence and floor-change notifications.
+openfloor is a persistent multiplayer session shell for teams coordinating agent work. Cloudflare D1 stores users, early-access admission and waitlist state, sessions, memberships, reusable signed invites, agents, assignments, prompts, queue ordering, and team/direct messages. A per-session Durable Object provides live WebSocket presence and floor-change notifications.
 
 Members enter a session at `/app/session/[id]`, then continue to the authenticated workspace at `/app/session/[id]/floor`. A new floor starts empty. Everything shown comes from the session, persisted member actions, or a connected backend; openfloor does not seed sample agents, prompts, files, checks, or review candidates.
 
@@ -19,6 +19,8 @@ openssl rand -hex 32
 ```
 
 Open `.dev.vars` and replace `INVITE_SIGNING_SECRET` with the random value printed by the last command. You can also change the three `OPENFLOOR_DEV_USER_*` values to the local name and email you want displayed. The Cloudflare Access placeholders can remain unchanged for local development.
+
+The early-access gate is committed off for its first rollout. `/early-access` and local passcode testing use `EARLY_ACCESS_PASSWORD`; production Sheet, WAF, operator, rollout, and rollback setup is in [`docs/early-access.md`](docs/early-access.md).
 
 Repository execution additionally requires a GitHub App, Cloudflare Workflows/Sandbox/private R2, and an OpenAI project API key. Production `AGENT_RUN_ENABLED` is currently false because same-uid `/proc` inspection can expose a provider CLI's initial gateway token; do not enable it until a separate-uid or equivalent boundary passes adversarial container tests. Follow [`docs/github-production.md`](docs/github-production.md). Self-serve paid plans require Stripe products, prices, Portal configuration, secrets, and a signed webhook; follow [`docs/stripe-billing.md`](docs/stripe-billing.md). Keep `STRIPE_CHECKOUT_ENABLED=false` until that runbook is complete.
 
@@ -69,7 +71,7 @@ for the capture boundary, outputs, and voiceover.
 
 ## Cloudflare Access
 
-Production authentication is provided by Cloudflare Access, applied as an **explicit allowlist of protected paths, not a protect-everything-then-bypass setup**. A path Cloudflare Access has no destination for is not specially exempted — it simply never goes through Access and reaches the Worker directly. That's what keeps the public landing page (`/`), static assets, `/webhooks/*`, and `/runtime/*` public: none of them are listed in any Access application. (A blank or `*` Path is *not* a way to scope a destination to "just the root" — per Cloudflare's own docs, `example.com` and `example.com/*` are equivalent and both mean the hostname plus everything beneath it. There is no root-only destination syntax.)
+Production authentication is provided by Cloudflare Access, applied as an **explicit allowlist of protected paths, not a protect-everything-then-bypass setup**. A path Cloudflare Access has no destination for is not specially exempted — it simply never goes through Access and reaches the Worker directly. That's what keeps the public landing page (`/`), early-access flow (`/early-access*`), static assets, `/webhooks/*`, and `/runtime/*` public: none of them are listed in any Access application. (A blank or `*` Path is *not* a way to scope a destination to "just the root" — per Cloudflare's own docs, `example.com` and `example.com/*` are equivalent and both mean the hostname plus everything beneath it. There is no root-only destination syntax.)
 
 Self-hosted applications cap at five destinations each, and there are six protected paths, so this uses two applications sharing one policy — attach the existing policy to the second app via "Add existing policy" rather than duplicating it:
 
@@ -108,7 +110,7 @@ npx wrangler deploy --config dist/server/wrangler.json
 
 The production dependency audit and full test pipeline must pass before applying D1 migrations; apply migrations before deploying the Worker revision. `npm run test:e2e` rebuilds `dist/` with the E2E Wrangler config, so always rebuild and run `npm run verify:deploy-artifact` — it requires the exact production worker, route, D1 database ID, and disabled agent-run security gate, and refuses test-only vars. Pull requests verify the production artifact before E2E replaces it, while pushes to `main` rebuild and verify again before deployment. See [`docs/agent-backend-gaps.md`](docs/agent-backend-gaps.md) for the intentional boundary between the persistent collaboration backend and future agent execution.
 
-The deployment expects `DB`, `SESSION_PRESENCE`, `REPOSITORY_PREFLIGHT`, `AGENT_RUN_WORKFLOW`, `SANDBOX`, `PREFLIGHT_LOGS`, `USER_AVATARS`, `IMAGES`, and `ASSETS` bindings configured in `wrangler.jsonc`. It also requires the existing identity/GitHub secrets plus `RUNTIME_GATEWAY_SECRET`, `OPENAI_API_KEY`, `CREDENTIAL_ENCRYPTION_KEY`, the optional `ANTHROPIC_API_KEY` fallback, and the Stripe secrets documented in [`docs/stripe-billing.md`](docs/stripe-billing.md). Docker must be running when Wrangler builds or deploys the pinned Sandbox image, and the Cloudflare account must have Workers Paid/Containers access. Keep each rollout gate disabled until its service, credential, and security prerequisites are live.
+The deployment expects `DB`, `SESSION_PRESENCE`, `REPOSITORY_PREFLIGHT`, `AGENT_RUN_WORKFLOW`, `SANDBOX`, `PREFLIGHT_LOGS`, `USER_AVATARS`, `IMAGES`, and `ASSETS` bindings configured in `wrangler.jsonc`. It also requires the existing identity/GitHub secrets plus `EARLY_ACCESS_PASSWORD`, `WAITLIST_SHEET_WEBHOOK_URL`, `WAITLIST_SHEET_WEBHOOK_SECRET`, `RUNTIME_GATEWAY_SECRET`, `OPENAI_API_KEY`, `CREDENTIAL_ENCRYPTION_KEY`, the optional `ANTHROPIC_API_KEY` fallback, and the Stripe secrets documented in [`docs/stripe-billing.md`](docs/stripe-billing.md). Docker must be running when Wrangler builds or deploys the pinned Sandbox image, and the Cloudflare account must have Workers Paid/Containers access. Keep each rollout gate disabled until its service, credential, and security prerequisites are live.
 
 ## Project direction
 

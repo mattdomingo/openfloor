@@ -108,7 +108,11 @@ export function AgentFloorScreen({
     catchUpActivity(activeRunIdsRef.current);
   }, [refreshFloor, catchUpActivity]);
 
-  const handleLeave = useCallback((code: 4001 | 4005, reason: string) => {
+  const handleLeave = useCallback((code: 4001 | 4005 | 4006, reason: string) => {
+    if (code === 4006) {
+      router.replace("/early-access");
+      return;
+    }
     if (code === 4005) {
       // Owner-initiated removal: distinct from 4001 so /home can say what
       // actually happened. sessionStorage is the only way to carry the
