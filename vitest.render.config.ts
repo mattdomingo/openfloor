@@ -67,6 +67,8 @@ export default defineConfig({
             deepseek: ["sk-deepseek-render-accepted"],
           }),
           ACCESS_CUSTOM_LOGIN_ENABLED: "true",
+          EARLY_ACCESS_GATE_ENABLED: "false",
+          EARLY_ACCESS_PASSWORD: "render-test-early-access-password",
           OPENFLOOR_TEST_ACCESS_LOGIN_HTML: RENDER_TEST_LOGIN_HTML,
           OPENFLOOR_TEST_ACCESS_LOGIN_LOCATION: RENDER_TEST_LOGIN_LOCATION,
           TEST_MIGRATIONS: JSON.stringify(migrations),

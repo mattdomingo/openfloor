@@ -15,9 +15,26 @@ import {
   parseRoutingSettingsInput,
   parseConflictInputRequest,
   parseConflictAnswersInput,
+  parseEarlyAccessWaitlistInput,
   parseSessionCreateInput,
   parseSessionInput,
 } from "@/lib/validation";
+
+describe("early-access waitlist validation", () => {
+  it("normalizes names and email addresses", () => {
+    expect(parseEarlyAccessWaitlistInput({ name: "  Ada   Lovelace ", email: " ADA@Example.COM " })).toEqual({
+      name: "Ada Lovelace",
+      email: "ada@example.com",
+    });
+  });
+
+  it("rejects malformed and oversized fields", () => {
+    expect(parseEarlyAccessWaitlistInput(null)).toBeNull();
+    expect(parseEarlyAccessWaitlistInput({ name: "", email: "person@example.com" })).toBeNull();
+    expect(parseEarlyAccessWaitlistInput({ name: "A", email: "not-an-email" })).toBeNull();
+    expect(parseEarlyAccessWaitlistInput({ name: "x".repeat(101), email: "person@example.com" })).toBeNull();
+  });
+});
 
 describe("session input validation", () => {
   it("normalizes valid input", () => {

@@ -116,6 +116,99 @@ describe("server rendering", () => {
   });
 });
 
+describe("early access", () => {
+  it("renders the public forms and idempotently mirrors duplicate waitlist submissions in D1", async () => {
+    const page = await SELF.fetch("http://localhost/early-access", { headers: { accept: "text/html" } });
+    expect(page.status).toBe(200);
+    expect(page.headers.get("cache-control")).toContain("no-store");
+    const html = await page.text();
+    expect(html).toContain("Join the waitlist");
+    expect(html).toContain("Beta passcode");
+    expect(html).toContain("Already have access?");
+    expect(html).toContain("hello@opnflr.com");
+
+    const submit = async (name: string) => {
+      const form = new FormData();
+      form.set("name", name);
+      form.set("email", " Waitlist.Render@Example.COM ");
+      return SELF.fetch("http://localhost/early-access/waitlist", {
+        method: "POST",
+        headers: { origin: "http://localhost", "sec-fetch-site": "same-origin" },
+        body: form,
+        redirect: "manual",
+      });
+    };
+    const first = await submit("Waitlist Person");
+    const second = await submit("Updated Person");
+    expect(first.status).toBe(303);
+    expect(second.status).toBe(303);
+    expect(first.headers.get("location")).toContain("waitlist=joined");
+    expect(second.headers.get("location")).toContain("waitlist=joined");
+    const rows = await env.DB.prepare("SELECT id, name, email FROM early_access_waitlist WHERE email = ?")
+      .bind("waitlist.render@example.com").all<{ id: string; name: string; email: string }>();
+    expect(rows.results).toHaveLength(1);
+    expect(rows.results[0]).toMatchObject({ name: "Updated Person", email: "waitlist.render@example.com" });
+  });
+
+  it("carries an anonymous passcode through identity and grants the resulting account", async () => {
+    const form = new FormData();
+    form.set("passcode", "render-test-early-access-password");
+    form.set("return_to", "/home");
+    const unlocked = await SELF.fetch("http://localhost/early-access/unlock", {
+      method: "POST",
+      headers: { origin: "http://localhost", "sec-fetch-site": "same-origin" },
+      body: form,
+      redirect: "manual",
+    });
+    expect(unlocked.status).toBe(303);
+    expect(unlocked.headers.get("location")).toContain("/signin?return_to=");
+    const cookie = unlocked.headers.get("set-cookie")?.split(";", 1)[0];
+    expect(cookie).toContain("openfloor_early_access_pending=");
+
+    const headers = {
+      ...authenticatedHeaders,
+      "x-openfloor-dev-user-id": "render-early-access-user",
+      "x-openfloor-dev-user-email": "render-early-access@example.com",
+      cookie: cookie!,
+    };
+    const completed = await SELF.fetch("http://localhost/early-access/complete?return_to=%2Fhome", { headers, redirect: "manual" });
+    expect(completed.status).toBe(303);
+    expect(completed.headers.get("location")).toContain("/onboarding?return_to=%2Fhome");
+    expect(completed.headers.get("set-cookie")).toContain("Max-Age=0");
+    const user = await env.DB.prepare(
+      "SELECT early_access_granted_at AS grantedAt, early_access_grant_source AS source FROM users WHERE chatgpt_user_id = ?",
+    ).bind("render-early-access-user").first<{ grantedAt: number | null; source: string | null }>();
+    expect(user?.grantedAt).not.toBeNull();
+    expect(user?.source).toBe("passcode");
+  });
+
+  it("gates pages, APIs, desktop bootstrap, onboarding, and invitations when enforcement is enabled", async () => {
+    const bindings = env as unknown as Record<string, string | undefined>;
+    const previous = bindings.EARLY_ACCESS_GATE_ENABLED;
+    bindings.EARLY_ACCESS_GATE_ENABLED = "true";
+    const headers = {
+      ...authenticatedHeaders,
+      "x-openfloor-dev-user-id": "render-unadmitted-user",
+      "x-openfloor-dev-user-email": "render-unadmitted@example.com",
+    };
+    try {
+      for (const path of ["/home", "/onboarding", "/join/not-a-token"]) {
+        const response = await SELF.fetch(`http://localhost${path}`, { headers, redirect: "manual" });
+        expect(response.status).toBeGreaterThanOrEqual(300);
+        expect(response.headers.get("location")).toContain("/early-access?return_to=");
+      }
+      const api = await SELF.fetch("http://localhost/api/account/github", { headers: { ...headers, accept: "application/json" } });
+      expect(api.status).toBe(403);
+      await expect(api.json()).resolves.toMatchObject({ code: "early_access_required" });
+      const bootstrap = await SELF.fetch("http://localhost/api/bootstrap/home", { headers: { ...headers, accept: "application/json" } });
+      await expect(bootstrap.json()).resolves.toMatchObject({ redirect: expect.stringContaining("/early-access?return_to=") });
+    } finally {
+      if (previous === undefined) delete bindings.EARLY_ACCESS_GATE_ENABLED;
+      else bindings.EARLY_ACCESS_GATE_ENABLED = previous;
+    }
+  });
+});
+
 async function onboardedUser(providerUserId: string, firstName: string, lastName: string, email = `${providerUserId}@example.com`) {
   const headers = {
     accept: "text/html",

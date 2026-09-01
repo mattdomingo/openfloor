@@ -5,6 +5,7 @@ import { acceptInvite, createSession, currentMonth, endSession, removeMember, up
 import worker from "./entry";
 import type { PresenceEvent } from "@/lib/session-types";
 import type { SessionPresence } from "@/worker/presence";
+import { grantEarlyAccess, revokeEarlyAccess } from "@/db/early-access";
 
 function nextMessage(socket: WebSocket): Promise<PresenceEvent> {
   return new Promise((resolve, reject) => {
@@ -376,6 +377,53 @@ describe("authenticated presence upgrade", () => {
     socket.accept();
     const event = await closed;
     expect(event.code).toBe(4003);
+  });
+
+  it("rejects unadmitted upgrades and closes an admitted socket after revocation", async () => {
+    const bindings = env as unknown as Record<string, string | undefined>;
+    const previous = bindings.EARLY_ACCESS_GATE_ENABLED;
+    bindings.EARLY_ACCESS_GATE_ENABLED = "true";
+    try {
+      const owner = await upsertUser({
+        providerUserId: "early-access-presence-owner",
+        email: "early-access-presence@example.com",
+        displayName: "Early Access Owner",
+        fullName: "Early Access Owner",
+      }, env.DB);
+      const created = await createSession(owner.id, { title: "Admission", objective: null }, env.DB);
+      const url = `http://localhost/api/sessions/${created.session.id}/presence`;
+      const headers = {
+        host: "localhost",
+        upgrade: "websocket",
+        "x-openfloor-dev-user-id": owner.providerUserId,
+        "x-openfloor-dev-user-email": owner.email,
+      };
+
+      const rejected = await worker.fetch(new Request(url, { headers }), env);
+      expect(rejected.status).toBe(101);
+      const rejectedSocket = rejected.webSocket;
+      if (!rejectedSocket) throw new Error("Missing rejected WebSocket");
+      const rejectedClose = nextClose(rejectedSocket);
+      rejectedSocket.accept();
+      expect((await rejectedClose).code).toBe(4006);
+
+      await grantEarlyAccess(owner.id, "manual", env.DB);
+      const accepted = await worker.fetch(new Request(url, { headers }), env);
+      const socket = accepted.webSocket;
+      if (!socket) throw new Error("Missing accepted WebSocket");
+      const initial = nextMessage(socket);
+      socket.accept();
+      await expect(initial).resolves.toMatchObject({ type: "presence.snapshot" });
+
+      await revokeEarlyAccess(owner.id, env.DB);
+      const revokedClose = nextClose(socket);
+      const stub = env.SESSION_PRESENCE.get(env.SESSION_PRESENCE.idFromName(created.session.id));
+      await runInDurableObject(stub as unknown as DurableObjectStub<SessionPresence>, (instance) => instance.alarm());
+      expect((await revokedClose).code).toBe(4006);
+    } finally {
+      if (previous === undefined) delete bindings.EARLY_ACCESS_GATE_ENABLED;
+      else bindings.EARLY_ACCESS_GATE_ENABLED = previous;
+    }
   });
 
   it("books active seconds to the owner and session when the last socket closes", async () => {
