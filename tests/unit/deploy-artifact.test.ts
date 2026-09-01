@@ -13,7 +13,7 @@ const productionConfig = {
     database_name: "openfloor-production",
     database_id: "1e5059bf-1f7b-4be8-8ea4-c424a191070a",
   }],
-  vars: { AGENT_RUN_ENABLED: "false" },
+  vars: { AGENT_RUN_ENABLED: "true" },
 };
 
 function verify(config: unknown) {
@@ -28,7 +28,7 @@ function verify(config: unknown) {
 }
 
 describe("production deploy artifact verifier", () => {
-  it("accepts the exact production identity and closed execution gate", () => {
+  it("accepts the exact production identity and enabled beta execution gate", () => {
     const result = verify(productionConfig);
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("verified as the production openfloor artifact");
@@ -46,16 +46,16 @@ describe("production deploy artifact verifier", () => {
     expect(result.stderr).toContain("expected production id");
   });
 
-  it("rejects enabled agent execution and test-only variables", () => {
+  it("rejects disabled agent execution and test-only variables", () => {
     const result = verify({
       ...productionConfig,
       vars: {
-        AGENT_RUN_ENABLED: "true",
+        AGENT_RUN_ENABLED: "false",
         OPENFLOOR_TEST_ALLOW_IDENTITY_HEADERS: "true",
       },
     });
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain('AGENT_RUN_ENABLED is "true"');
+    expect(result.stderr).toContain('AGENT_RUN_ENABLED is "false"');
     expect(result.stderr).toContain("test-only var OPENFLOOR_TEST_ALLOW_IDENTITY_HEADERS is present");
   });
 });

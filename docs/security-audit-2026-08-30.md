@@ -6,7 +6,7 @@ This follow-up audit reviewed the latest `origin/main` at `96afa2e1c58f66c43c5a2
 
 Four medium-severity findings were remediated. Failed GitHub webhook processing can now be retried with the same delivery ID, cancellation immediately revokes new model-spending requests, the release workflow validates pull requests and gates production mutation behind a production dependency audit and the complete test pipeline while pinning its supply-chain references, and every documented deployment path now rejects artifacts that do not match the authoritative production database and closed agent-execution gate.
 
-No production dependency advisory was found. The full development audit still reports four moderate advisories in `drizzle-kit`'s nested legacy `esbuild`; npm's proposed fix is an incompatible downgrade. A 2026-08-31 follow-up resolves the prior same-uid `/proc` gateway-token exposure in Sandbox image `v9`; production agent execution remains disabled until image deployment and provider acceptance.
+No production dependency advisory was found. The full development audit still reports four moderate advisories in `drizzle-kit`'s nested legacy `esbuild`; npm's proposed fix is an incompatible downgrade. A 2026-08-31 follow-up resolves the prior same-uid `/proc` gateway-token exposure in Sandbox image `v9`. On 2026-09-01 that image deployed successfully and a separate reviewed rollout enabled production agent execution for admitted beta testers; the verifier now requires that reviewed `true` posture.
 
 ## Severity model
 
@@ -37,7 +37,7 @@ No production dependency advisory was found. The full development audit still re
 
 **Functionality impact:** no new model request can begin after cancellation is recorded. A provider request already in flight may still finish because D1 status changes cannot recall bytes already sent upstream.
 
-**Residual risk:** Sandbox image `v9` separates token-bearing provider CLIs from model-selected commands by Linux uid and CI adversarially tests the boundary. Production `AGENT_RUN_ENABLED=false` remains mandatory until that image is deployed and every enabled provider passes disposable-repository acceptance.
+**Residual risk:** At audit time, production `AGENT_RUN_ENABLED=false` remained mandatory until Sandbox image `v9` deployed and its separate-uid boundary passed adversarial CI. That condition was satisfied before the separately reviewed 2026-09-01 beta rollout; the underlying isolation and cancellation controls remain mandatory.
 
 **Verification:** worker coverage changes a live run to `cancel_requested`, exercises OpenAI, Anthropic-compatible, Gemini, and the shared Qwen/DeepSeek chat-compatible gateway, expects `404` from every route, and proves no upstream fetch occurs.
 
@@ -57,7 +57,7 @@ No production dependency advisory was found. The full development audit still re
 
 **Evidence:** the E2E preview build writes test identity and execution variables into the same `dist/server/wrangler.json` path used by production deployment. The first artifact guard rejected that exact E2E shape, but validated only D1's display name rather than the authoritative `database_id`, did not enforce the mandatory `AGENT_RUN_ENABLED=false` security hold, and was absent from `docs/github-production.md` and `docs/agent-backend-gaps.md`. `docs/github-production.md` also retained an obsolete instruction to enable agent execution after only the image, Workflow, and OpenAI key were ready, contradicting the newer separate-uid requirement.
 
-**Fix:** the verifier now requires the exact production D1 UUID and `AGENT_RUN_ENABLED=false` in addition to the worker, route, database name, and test-variable checks. Unit fixtures prove the valid production shape passes while a lookalike database ID, enabled execution, and test identity variables fail. Pull-request CI runs the verifier against the render suite's real production artifact before E2E replaces `dist/`; `main` rebuilds and verifies again immediately before deployment. Every operator-facing deployment sequence now includes the verifier, and the stale enablement instruction is replaced by the separate-uid adversarial-container gate.
+**Fix:** at remediation time, the verifier required the exact production D1 UUID and `AGENT_RUN_ENABLED=false` in addition to the worker, route, database name, and test-variable checks. Unit fixtures proved the valid production shape passed while a lookalike database ID, enabled execution, and test identity variables failed. Pull-request CI runs the verifier against the render suite's real production artifact before E2E replaces `dist/`; `main` rebuilds and verifies again immediately before deployment. Every operator-facing deployment sequence includes the verifier. The separately reviewed 2026-09-01 beta rollout changed the verifier's exact expected execution value to `true`; all identity and test-variable checks remain unchanged.
 
 **Functionality impact:** none. Application, E2E, migration, and deployment behavior are unchanged for valid configurations; only unsafe or misidentified deploy artifacts fail earlier.
 
@@ -74,7 +74,7 @@ The newly enforced full-suite gate also exposed three test-environment gaps: the
 - Public OTP email triggering still needs Cloudflare WAF/rate limiting.
 - Uploads retain per-file and count caps but still need product-level aggregate byte and storage quotas.
 - Remote MCP validation blocks direct internal targets, but DNS rebinding remains possible and a selected public MCP server receives context.
-- Production `AGENT_RUN_ENABLED` must remain false until Sandbox image `v9` is deployed and every enabled provider passes disposable-repository acceptance; enabling execution requires a separate authorized change.
+- The original false-gate condition was satisfied by the Sandbox image `v9` deployment and the separate 2026-09-01 rollout change. Beta acceptance remains active and monitored; GLM, Qwen, and DeepSeek stay independently disabled.
 - `npm audit --omit=dev` is clean. Full `npm audit` reports four moderate development-only advisories through `drizzle-kit`'s legacy `esbuild`; the available automated remediation is not compatible with the repository's current tooling.
 
 ## Verification record

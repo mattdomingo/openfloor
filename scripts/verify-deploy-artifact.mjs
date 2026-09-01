@@ -1,8 +1,10 @@
 // The E2E harness builds the app with tests/e2e/wrangler.jsonc into the same
 // dist/ directory the production deploy reads, so dist/server/wrangler.json can
 // legitimately hold a config whose vars enable OPENFLOOR_TEST_ALLOW_IDENTITY_HEADERS
-// (arbitrary-identity impersonation) and AGENT_RUN_ENABLED. Deploying a stale
-// artifact must fail loudly instead of depending on the worker-name mismatch.
+// (arbitrary-identity impersonation). Deploying a stale artifact must fail
+// loudly instead of depending on the worker-name mismatch. The production
+// execution flag is also pinned here so a deploy cannot silently undo or widen
+// the reviewed rollout posture.
 // Run this between `npm run build` and `wrangler deploy`.
 import { readFileSync } from "node:fs";
 
@@ -34,8 +36,8 @@ if (database?.database_name !== EXPECTED_DATABASE) {
 if (database?.database_id !== EXPECTED_DATABASE_ID) {
   problems.push(`DB binding has id "${database?.database_id ?? "nothing"}", expected production id "${EXPECTED_DATABASE_ID}"`);
 }
-if (config.vars?.AGENT_RUN_ENABLED !== "false") {
-  problems.push(`AGENT_RUN_ENABLED is "${config.vars?.AGENT_RUN_ENABLED ?? "missing"}", expected the production security hold "false"`);
+if (config.vars?.AGENT_RUN_ENABLED !== "true") {
+  problems.push(`AGENT_RUN_ENABLED is "${config.vars?.AGENT_RUN_ENABLED ?? "missing"}", expected the production beta rollout value "true"`);
 }
 for (const name of Object.keys(config.vars ?? {})) {
   if (FORBIDDEN_VAR_PREFIXES.some((prefix) => name.startsWith(prefix))) {
