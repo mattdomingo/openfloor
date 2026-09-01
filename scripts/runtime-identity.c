@@ -2,12 +2,14 @@
 
 #include <errno.h>
 #include <grp.h>
+#include <linux/capability.h>
 #include <limits.h>
 #include <pwd.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/prctl.h>
+#include <sys/syscall.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -47,16 +49,40 @@ static void drop_to(uid_t uid, gid_t gid, const char *user) {
   umask(0002);
 }
 
-static void prepare_bwrap_identity(uid_t uid, gid_t gid) {
-  // bwrap maps its real uid/gid into the user namespace. Preserve effective
-  // root only for bwrap's namespace and mount setup; mapping the provider or
-  // broker real uid here would make the final command provider-readable from
-  // the outer namespace even if `id` reported openfloor-workspace inside.
+static void prepare_bwrap_root(void) {
+  // The pinned bwrap's root path owns namespace setup. Model-selected code
+  // never runs under this identity: bwrap's command is the fixed handoff
+  // binary below, which irreversibly selects openfloor-workspace before the
+  // validated apply-seccomp chain starts.
   if (setgroups(0, NULL) != 0) fail("could not clear supplementary groups");
-  if (setresgid(gid, 0, 0) != 0) fail("could not prepare bubblewrap group");
-  if (setresuid(uid, 0, 0) != 0) fail("could not prepare bubblewrap user");
-  if (setenv("USER", WORKSPACE_USER, 1) != 0 || setenv("LOGNAME", WORKSPACE_USER, 1) != 0) {
+  if (setresgid(0, 0, 0) != 0) fail("could not prepare bubblewrap group");
+  if (setresuid(0, 0, 0) != 0) fail("could not prepare bubblewrap user");
+  if (setenv("USER", "root", 1) != 0 || setenv("LOGNAME", "root", 1) != 0) {
     fail("could not set bubblewrap identity environment");
+  }
+  umask(0002);
+}
+
+static void handoff_to_workspace(uid_t uid, gid_t gid) {
+  if (getuid() != 0 || geteuid() != 0) fail_message("workspace handoff called without root identity");
+  if (setgroups(0, NULL) != 0) fail("could not clear handoff groups");
+  if (prctl(PR_SET_KEEPCAPS, 1, 0, 0, 0) != 0) fail("could not retain sandbox capability");
+  if (setresgid(gid, gid, gid) != 0) fail("could not set handoff group");
+  if (setresuid(uid, uid, uid) != 0) fail("could not set handoff user");
+
+  struct __user_cap_header_struct header = { _LINUX_CAPABILITY_VERSION_3, 0 };
+  struct __user_cap_data_struct data[2] = { { 0 } };
+  data[CAP_SYS_ADMIN / 32].effective = 1U << (CAP_SYS_ADMIN % 32);
+  data[CAP_SYS_ADMIN / 32].permitted = 1U << (CAP_SYS_ADMIN % 32);
+  data[CAP_SYS_ADMIN / 32].inheritable = 1U << (CAP_SYS_ADMIN % 32);
+  if (syscall(SYS_capset, &header, data) != 0) fail("could not narrow sandbox capability");
+  if (prctl(PR_CAP_AMBIENT, PR_CAP_AMBIENT_RAISE, CAP_SYS_ADMIN, 0, 0) != 0) {
+    fail("could not pass sandbox capability");
+  }
+  if (prctl(PR_SET_KEEPCAPS, 0, 0, 0, 0) != 0) fail("could not lock sandbox capability");
+  if (prctl(PR_SET_DUMPABLE, 0, 0, 0, 0) != 0) fail("could not disable handoff inspection");
+  if (setenv("USER", WORKSPACE_USER, 1) != 0 || setenv("LOGNAME", WORKSPACE_USER, 1) != 0) {
+    fail("could not set handoff identity environment");
   }
   umask(0002);
 }
@@ -182,7 +208,7 @@ static int has_trusted_seccomp_command(int argc, char **argv, int separator) {
   return 0;
 }
 
-static void run_workspace_bwrap(int argc, char **argv, uid_t workspace_uid, gid_t workspace_gid) {
+static void run_workspace_bwrap(int argc, char **argv) {
   int separator = -1;
   int has_user_namespace = 0;
   int drops_all_capabilities = 0;
@@ -214,12 +240,6 @@ static void run_workspace_bwrap(int argc, char **argv, uid_t workspace_uid, gid_
     fail_message("bubblewrap command is not guarded by apply-seccomp");
   }
 
-  char uid[32];
-  char gid[32];
-  if (snprintf(uid, sizeof(uid), "%lu", (unsigned long)workspace_uid) < 0 ||
-      snprintf(gid, sizeof(gid), "%lu", (unsigned long)workspace_gid) < 0) {
-    fail_message("could not format workspace identity");
-  }
   char **arguments = calloc((size_t)argc + 16, sizeof(char *));
   if (arguments == NULL) fail("could not allocate bubblewrap arguments");
   int out = 0;
@@ -229,33 +249,26 @@ static void run_workspace_bwrap(int argc, char **argv, uid_t workspace_uid, gid_
     // combines a non-root target uid with --unshare-user. The guarded helper
     // already gives bwrap real uid/gid = workspace and effective uid/gid =
     // root, so bwrap's native setuid mode owns namespace setup and drops to
-    // the same outer workspace identity. The nested seccomp helper still
-    // creates its own user namespace before applying no_new_privs.
+    // a root-owned handoff. That handoff selects the outer workspace identity
+    // before the nested seccomp helper applies no_new_privs.
     if (strcmp(argv[index], "--unshare-user") == 0) continue;
+    if (strcmp(argv[index], "--cap-drop") == 0 && index + 1 < separator && strcmp(argv[index + 1], "ALL") == 0) {
+      index++;
+      continue;
+    }
     arguments[out++] = argv[index];
   }
-  arguments[out++] = "--uid";
-  arguments[out++] = uid;
-  arguments[out++] = "--gid";
-  arguments[out++] = gid;
-  // The outer setuid bwrap owns the fixed filesystem/network/PID policy and
-  // drops into the real workspace identity. A minimal unprivileged inner
-  // bwrap then creates the user namespace that Ubuntu's AppArmor policy
-  // grants to bwrap, giving only the trusted apply-seccomp chain CAP_SYS_ADMIN
-  // in that namespace. apply-seccomp clears the ambient capability and sets
-  // no_new_privs before model-selected code starts.
-  arguments[out++] = "--";
-  arguments[out++] = (char *)REAL_BWRAP;
-  arguments[out++] = "--unshare-user";
   arguments[out++] = "--cap-add";
   arguments[out++] = "CAP_SYS_ADMIN";
-  arguments[out++] = "--bind";
-  arguments[out++] = "/";
-  arguments[out++] = "/";
+  arguments[out++] = "--cap-add";
+  arguments[out++] = "CAP_SETUID";
+  arguments[out++] = "--cap-add";
+  arguments[out++] = "CAP_SETGID";
   arguments[out++] = "--";
+  arguments[out++] = "/opt/openfloor/openfloor-workspace-handoff";
   for (int index = separator + 1; index < argc; index++) arguments[out++] = argv[index];
   arguments[out] = NULL;
-  prepare_bwrap_identity(workspace_uid, workspace_gid);
+  prepare_bwrap_root();
   execv(REAL_BWRAP, arguments);
   fail("could not start workspace bubblewrap");
 }
@@ -276,6 +289,12 @@ int main(int argc, char **argv) {
   gid_t workspace_gid = workspace->pw_gid;
   uid_t caller = getuid();
 
+  if (strcmp(program, "openfloor-workspace-handoff") == 0) {
+    handoff_to_workspace(workspace_uid, workspace_gid);
+    execvp(argv[1], &argv[1]);
+    fail("could not start sandboxed workspace command");
+  }
+
   if (strcmp(program, "openfloor-provider-exec") == 0) {
     if (caller != 0 && caller != provider_uid) fail_message("provider launcher called by unexpected user");
     drop_to(provider_uid, provider_gid, PROVIDER_USER);
@@ -293,7 +312,7 @@ int main(int argc, char **argv) {
     // bwrap mount or namespace arguments directly.
     if (caller == workspace_uid) fail_message("bubblewrap launcher called by workspace user");
     install_workspace_environment();
-    run_workspace_bwrap(argc, argv, workspace_uid, workspace_gid);
+    run_workspace_bwrap(argc, argv);
   }
 
   install_workspace_environment();

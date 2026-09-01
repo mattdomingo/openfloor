@@ -5,6 +5,7 @@ scratch=/tmp/openfloor-isolation-test
 provider_token='provider-token-must-not-cross-boundary'
 mcp_token='mcp-token-must-not-cross-boundary'
 [ "$(stat -c '%u:%g:%a' /opt/openfloor/runtime-identity)" = '0:0:4755' ]
+[ "$(stat -c '%u:%g:%a' /opt/openfloor/openfloor-workspace-handoff)" = '0:0:555' ]
 rm -rf "$scratch"
 mkdir -p "$scratch" /tmp/openfloor/workspace-home
 chown openfloor-provider:openfloor-shared "$scratch"
@@ -45,6 +46,7 @@ set -eu
 provider_pid=$1
 [ "$(id -un)" = openfloor-workspace ]
 [ "$(awk '/^NoNewPrivs:/ { print $2 }' /proc/self/status)" = 1 ]
+[ "$(awk '/^CapEff:/ { print $2 }' /proc/self/status)" = 0000000000000000 ]
 [ "${OPENFLOOR_OPENAI_TOKEN-}" = '' ]
 [ "${OPENFLOOR_CONTEXT_TOKEN-}" = '' ]
 ! cat "/proc/$provider_pid/environ" >/tmp/openfloor-isolation-test/environ 2>/dev/null
@@ -84,6 +86,8 @@ bwrap_user=$(runuser -p -u openfloor-provider -- /opt/openfloor/openfloor-worksp
   --ro-bind / / --dev /dev --unshare-user --unshare-net --unshare-pid --cap-drop ALL --proc /proc -- \
   /bin/bash -c "$apply_seccomp /usr/bin/id -un" \
   >/tmp/openfloor-isolation-test/workspace-bwrap 2>&1
+! runuser -p -u openfloor-workspace -- /opt/openfloor/openfloor-workspace-handoff /usr/bin/id -un \
+  >/tmp/openfloor-isolation-test/workspace-handoff 2>&1
 ! runuser -p -u openfloor-provider -- /opt/openfloor/openfloor-workspace-bwrap \
   --ro-bind / / --dev /dev --unshare-user --unshare-net --unshare-pid --cap-drop ALL --uid 0 --proc /proc -- \
   /bin/bash -c "$apply_seccomp /usr/bin/id -un" \

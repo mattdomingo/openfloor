@@ -26,6 +26,8 @@ RUN apt-get update -qq && apt-get install -y -qq bubblewrap socat ripgrep && rm 
     chmod 0700 /home/openfloor-provider /home/openfloor-workspace
 COPY --from=runtime-identity-builder /tmp/runtime-identity /opt/openfloor/runtime-identity
 RUN chown root:root /opt/openfloor/runtime-identity && chmod 4755 /opt/openfloor/runtime-identity && \
+    cp /opt/openfloor/runtime-identity /opt/openfloor/openfloor-workspace-handoff && \
+    chown root:root /opt/openfloor/openfloor-workspace-handoff && chmod 0555 /opt/openfloor/openfloor-workspace-handoff && \
     ln -s runtime-identity /opt/openfloor/openfloor-provider-exec && \
     ln -s runtime-identity /opt/openfloor/openfloor-workspace-exec && \
     ln -s runtime-identity /opt/openfloor/openfloor-workspace-shell && \
