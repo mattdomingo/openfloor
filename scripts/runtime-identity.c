@@ -19,6 +19,8 @@
 #define SRT_BINARY "/opt/openfloor/node_modules/.bin/srt"
 #define REAL_BWRAP "/usr/bin/bwrap"
 #define REAL_SHELL "/bin/bash"
+#define APPLY_SECCOMP_X64_SUFFIX "/@anthropic-ai/sandbox-runtime/vendor/seccomp/x64/apply-seccomp"
+#define APPLY_SECCOMP_ARM64_SUFFIX "/@anthropic-ai/sandbox-runtime/vendor/seccomp/arm64/apply-seccomp"
 
 static void fail(const char *message) {
   fprintf(stderr, "openfloor runtime identity: %s: %s\n", message, strerror(errno));
@@ -167,6 +169,19 @@ static int is_forbidden_bwrap_option(const char *argument) {
   return 0;
 }
 
+static int has_trusted_seccomp_command(int argc, char **argv, int separator) {
+  if (argc != separator + 4 || strcmp(argv[separator + 2], "-c") != 0) return 0;
+  const char *shell = strrchr(argv[separator + 1], '/');
+  shell = shell == NULL ? argv[separator + 1] : shell + 1;
+  if (strcmp(shell, "bash") != 0) return 0;
+  const char *command = argv[separator + 3];
+  const char *suffixes[] = { APPLY_SECCOMP_X64_SUFFIX, APPLY_SECCOMP_ARM64_SUFFIX, NULL };
+  for (const char **suffix = suffixes; *suffix != NULL; suffix++) {
+    if (strstr(command, *suffix) != NULL) return 1;
+  }
+  return 0;
+}
+
 static void run_workspace_bwrap(int argc, char **argv, uid_t workspace_uid, gid_t workspace_gid) {
   int separator = -1;
   int has_user_namespace = 0;
@@ -195,6 +210,9 @@ static void run_workspace_bwrap(int argc, char **argv, uid_t workspace_uid, gid_
       !has_pid_namespace || !has_private_proc) {
     fail_message("bubblewrap identity policy is incomplete");
   }
+  if (!has_trusted_seccomp_command(argc, argv, separator)) {
+    fail_message("bubblewrap command is not guarded by apply-seccomp");
+  }
 
   char uid[32];
   char gid[32];
@@ -202,7 +220,7 @@ static void run_workspace_bwrap(int argc, char **argv, uid_t workspace_uid, gid_
       snprintf(gid, sizeof(gid), "%lu", (unsigned long)workspace_gid) < 0) {
     fail_message("could not format workspace identity");
   }
-  char **arguments = calloc((size_t)argc + 5, sizeof(char *));
+  char **arguments = calloc((size_t)argc + 16, sizeof(char *));
   if (arguments == NULL) fail("could not allocate bubblewrap arguments");
   int out = 0;
   arguments[out++] = "bwrap";
@@ -213,13 +231,29 @@ static void run_workspace_bwrap(int argc, char **argv, uid_t workspace_uid, gid_
     // root, so bwrap's native setuid mode owns namespace setup and drops to
     // the same outer workspace identity. The nested seccomp helper still
     // creates its own user namespace before applying no_new_privs.
-    if (strcmp(argv[index], "--unshare-user") != 0) arguments[out++] = argv[index];
+    if (strcmp(argv[index], "--unshare-user") == 0) continue;
+    arguments[out++] = argv[index];
   }
   arguments[out++] = "--uid";
   arguments[out++] = uid;
   arguments[out++] = "--gid";
   arguments[out++] = gid;
-  for (int index = separator; index < argc; index++) arguments[out++] = argv[index];
+  // The outer setuid bwrap owns the fixed filesystem/network/PID policy and
+  // drops into the real workspace identity. A minimal unprivileged inner
+  // bwrap then creates the user namespace that Ubuntu's AppArmor policy
+  // grants to bwrap, giving only the trusted apply-seccomp chain CAP_SYS_ADMIN
+  // in that namespace. apply-seccomp clears the ambient capability and sets
+  // no_new_privs before model-selected code starts.
+  arguments[out++] = "--";
+  arguments[out++] = (char *)REAL_BWRAP;
+  arguments[out++] = "--unshare-user";
+  arguments[out++] = "--cap-add";
+  arguments[out++] = "CAP_SYS_ADMIN";
+  arguments[out++] = "--bind";
+  arguments[out++] = "/";
+  arguments[out++] = "/";
+  arguments[out++] = "--";
+  for (int index = separator + 1; index < argc; index++) arguments[out++] = argv[index];
   arguments[out] = NULL;
   prepare_bwrap_identity(workspace_uid, workspace_gid);
   execv(REAL_BWRAP, arguments);

@@ -70,14 +70,23 @@ output=$(OPENFLOOR_OPENAI_TOKEN="$provider_token" \
 
 shell_user=$(runuser -p -u openfloor-provider -- /opt/openfloor/workspace-shell/bash -c 'id -un')
 [ "$shell_user" = 'openfloor-workspace' ]
+case "$(uname -m)" in
+  x86_64) seccomp_arch=x64 ;;
+  aarch64|arm64) seccomp_arch=arm64 ;;
+  *) echo 'unsupported seccomp test architecture' >&2; exit 1 ;;
+esac
+apply_seccomp=/opt/openfloor/node_modules/@anthropic-ai/sandbox-runtime/vendor/seccomp/$seccomp_arch/apply-seccomp
 bwrap_user=$(runuser -p -u openfloor-provider -- /opt/openfloor/openfloor-workspace-bwrap \
-  --ro-bind / / --dev /dev --unshare-user --unshare-net --unshare-pid --cap-drop ALL --proc /proc -- /usr/bin/id -un)
+  --ro-bind / / --dev /dev --unshare-user --unshare-net --unshare-pid --cap-drop ALL --proc /proc -- \
+  /bin/bash -c "$apply_seccomp /usr/bin/id -un")
 [ "$bwrap_user" = 'openfloor-workspace' ]
 ! runuser -p -u openfloor-workspace -- /opt/openfloor/openfloor-workspace-bwrap \
-  --ro-bind / / --dev /dev --unshare-user --unshare-net --unshare-pid --cap-drop ALL --proc /proc -- /usr/bin/id -un \
+  --ro-bind / / --dev /dev --unshare-user --unshare-net --unshare-pid --cap-drop ALL --proc /proc -- \
+  /bin/bash -c "$apply_seccomp /usr/bin/id -un" \
   >/tmp/openfloor-isolation-test/workspace-bwrap 2>&1
 ! runuser -p -u openfloor-provider -- /opt/openfloor/openfloor-workspace-bwrap \
-  --ro-bind / / --dev /dev --unshare-user --unshare-net --unshare-pid --cap-drop ALL --uid 0 --proc /proc -- /usr/bin/id -un \
+  --ro-bind / / --dev /dev --unshare-user --unshare-net --unshare-pid --cap-drop ALL --uid 0 --proc /proc -- \
+  /bin/bash -c "$apply_seccomp /usr/bin/id -un" \
   >/tmp/openfloor-isolation-test/forged-uid 2>&1
 
 kill "$holder" 2>/dev/null || true
