@@ -73,12 +73,10 @@ export function buildGeminiSystemSettings(input: GeminiSystemSettingsInput): str
   )}\n`;
 }
 
-// srt settings for wrapping the whole Gemini runner + CLI (Plan A). Unlike
-// the Claude runner — where the Agent SDK invokes srt internally around Bash
-// only — the Gemini CLI has no built-in sandbox, so the workflow wraps the
-// entire runner process: repository-controlled run_shell_command children get
-// --unshare-net with the gateway host as the only egress, and the CLI's own
-// model traffic rides the same proxy via scripts/gemini-proxy-preload.mjs.
+// Root-owned srt settings for repository-controlled commands. Provider runner
+// and CLI stay outside srt as openfloor-provider so model traffic works; the
+// child-process preload sends every model-selected command through the
+// openfloor-workspace launcher and this no-network policy.
 export type GeminiSrtSettingsInput = {
   gatewayHost: string;
   workspace: string;
@@ -92,7 +90,7 @@ export function buildGeminiSrtSettings(input: GeminiSrtSettingsInput): string {
   return `${JSON.stringify(
     {
       network: {
-        allowedDomains: [input.gatewayHost],
+        allowedDomains: [],
         deniedDomains: [],
         allowUnixSockets: [],
       },

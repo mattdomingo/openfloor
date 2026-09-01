@@ -11,30 +11,26 @@
 //   command is blocked, not escalated into the permission flow. Verified
 //   empirically for headless sessions before this shipped (see AGENTS.md
 //   decision log); re-verify if the SDK pin changes.
-// - allowedDomains + allowManagedDomainsOnly: sandboxed subprocess egress is
-//   limited to the openfloor gateway host (belt-and-braces: the CLI's own
-//   model traffic bypasses the sandbox proxy per the docs, and §4's remote
-//   MCP servers are contacted by the CLI, not by sandboxed Bash — so in
-//   practice this allowlist keeps repository-controlled commands at
-//   no-network, matching the Codex runner's networkAccessEnabled: false).
-//   allowManagedDomainsOnly prevents a lower-precedence settings scope from
-//   widening the list.
+// - bwrapPath: srt launches each Bash command through the root-owned identity
+//   transition helper. The provider CLI remains openfloor-provider; only the
+//   sandboxed command becomes openfloor-workspace.
+// - allowedDomains is empty: model traffic and remote MCP stay in the trusted
+//   provider process, while repository-controlled Bash needs no egress. This
+//   also avoids a provider-owned proxy socket crossing the uid boundary.
 
-export type ClaudeSandboxSettingsInput = {
-  gatewayHost: string;
-  extraAllowedDomains?: string[];
-};
+export type ClaudeSandboxSettingsInput = { gatewayHost: string };
 
 export function buildClaudeSandboxSettings(input: ClaudeSandboxSettingsInput): string {
-  const allowedDomains = [input.gatewayHost, ...(input.extraAllowedDomains ?? [])];
+  void input;
   return `${JSON.stringify(
     {
       sandbox: {
         enabled: true,
         failIfUnavailable: true,
         allowUnsandboxedCommands: false,
+        bwrapPath: "/opt/openfloor/openfloor-workspace-bwrap",
         network: {
-          allowedDomains,
+          allowedDomains: [],
           allowManagedDomainsOnly: true,
         },
       },

@@ -126,9 +126,9 @@ const prompt = await readFile(promptPath, "utf8");
 // wrote (auth pinning, folder trust off, tool denies, the openfloor MCP
 // bridge, telemetry/usage-stats/memory kill switches) — see
 // lib/qwen-settings.ts. OPENAI_API_KEY carries the run-scoped gateway JWT;
-// OPENAI_BASE_URL points model traffic at the openfloor gateway. The CLI
-// honors srt's HTTP(S)_PROXY natively (Spike Q1 step 5, in-container on
-// Node 22), so no fetch preload is needed, unlike the Gemini runner.
+// OPENAI_BASE_URL points model traffic at the openfloor gateway. The child-
+// process preload routes model-selected commands across the workspace uid/srt
+// boundary.
 function spawnCli(resumeId) {
   return spawn(
     qwenBin,
@@ -143,7 +143,7 @@ function spawnCli(resumeId) {
         OPENAI_BASE_URL: gatewayUrl,
         QWEN_CODE_SUPPRESS_YOLO_WARNING: "1",
         ...(systemSettingsPath ? { QWEN_CODE_SYSTEM_SETTINGS_PATH: systemSettingsPath } : {}),
-        // srt-injected proxy wiring, passed through so sandboxed egress works.
+        // Provider-level proxy wiring, if the container runtime supplies it.
         ...(process.env.HTTP_PROXY ? { HTTP_PROXY: process.env.HTTP_PROXY } : {}),
         ...(process.env.HTTPS_PROXY ? { HTTPS_PROXY: process.env.HTTPS_PROXY } : {}),
         ...(process.env.NO_PROXY ? { NO_PROXY: process.env.NO_PROXY } : {}),

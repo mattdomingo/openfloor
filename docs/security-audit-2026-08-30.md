@@ -6,7 +6,7 @@ This follow-up audit reviewed the latest `origin/main` at `96afa2e1c58f66c43c5a2
 
 Four medium-severity findings were remediated. Failed GitHub webhook processing can now be retried with the same delivery ID, cancellation immediately revokes new model-spending requests, the release workflow validates pull requests and gates production mutation behind a production dependency audit and the complete test pipeline while pinning its supply-chain references, and every documented deployment path now rejects artifacts that do not match the authoritative production database and closed agent-execution gate.
 
-No production dependency advisory was found. The full development audit still reports four moderate advisories in `drizzle-kit`'s nested legacy `esbuild`; npm's proposed fix is an incompatible downgrade. Production agent execution remains disabled because the prior same-uid `/proc` gateway-token exposure is not resolved by this change.
+No production dependency advisory was found. The full development audit still reports four moderate advisories in `drizzle-kit`'s nested legacy `esbuild`; npm's proposed fix is an incompatible downgrade. A 2026-08-31 follow-up resolves the prior same-uid `/proc` gateway-token exposure in Sandbox image `v9`; production agent execution remains disabled until image deployment and provider acceptance.
 
 ## Severity model
 
@@ -37,7 +37,7 @@ No production dependency advisory was found. The full development audit still re
 
 **Functionality impact:** no new model request can begin after cancellation is recorded. A provider request already in flight may still finish because D1 status changes cannot recall bytes already sent upstream.
 
-**Residual risk:** the unresolved same-uid `/proc` weakness could expose a gateway token while agent execution is enabled. Production `AGENT_RUN_ENABLED=false` remains mandatory until a kernel-enforced process boundary passes adversarial testing.
+**Residual risk:** Sandbox image `v9` separates token-bearing provider CLIs from model-selected commands by Linux uid and CI adversarially tests the boundary. Production `AGENT_RUN_ENABLED=false` remains mandatory until that image is deployed and every enabled provider passes disposable-repository acceptance.
 
 **Verification:** worker coverage changes a live run to `cancel_requested`, exercises OpenAI, Anthropic-compatible, Gemini, and the shared Qwen/DeepSeek chat-compatible gateway, expects `404` from every route, and proves no upstream fetch occurs.
 
@@ -74,7 +74,7 @@ The newly enforced full-suite gate also exposed three test-environment gaps: the
 - Public OTP email triggering still needs Cloudflare WAF/rate limiting.
 - Uploads retain per-file and count caps but still need product-level aggregate byte and storage quotas.
 - Remote MCP validation blocks direct internal targets, but DNS rebinding remains possible and a selected public MCP server receives context.
-- Production `AGENT_RUN_ENABLED` must remain false until provider CLIs and repository commands are separated by Linux uid/process namespace or an equivalent kernel boundary and adversarial `/proc`, environment, command-line, and child-process tests pass.
+- Production `AGENT_RUN_ENABLED` must remain false until Sandbox image `v9` is deployed and every enabled provider passes disposable-repository acceptance; enabling execution requires a separate authorized change.
 - `npm audit --omit=dev` is clean. Full `npm audit` reports four moderate development-only advisories through `drizzle-kit`'s legacy `esbuild`; the available automated remediation is not compatible with the repository's current tooling.
 
 ## Verification record
