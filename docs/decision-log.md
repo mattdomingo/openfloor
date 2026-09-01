@@ -870,3 +870,11 @@ Agent runtime posture is also tightened: Codex receives only an explicit safe SD
 **Rationale:** Marketing needs a public conversion surface before the full product is ready, but expanding or frequently editing Cloudflare Access policies would couple product rollout to an upstream identity allowlist. Binding admission to a verified account gives beta testers durable access without re-entering a passcode and makes individual revocation possible. Keeping D1 authoritative prevents Sheet edits, transient Google failures, or operational workflows from becoming authorization decisions.
 
 **Consequences:** `/early-access*` remains outside Access and unsafe public mutations require same-origin browser metadata plus a source-IP WAF rate limit. The current Cloudflare plan's single 10-second rule covers both waitlist and unlock POSTs at five requests before a 10-minute block; this stops bursts but not paced abuse, so a plan upgrade or application-owned longer-window limiter remains the escalation if abuse becomes material. Every deep link still authenticates and then enforces admission before onboarding, membership, or session data. Existing sockets close with code `4006` on the 15-minute presence alarm after revocation. Sheet failures remain pending with bounded retry; removing a user from the Sheet does not remove application data or access. Rollback flips the versioned enforcement flag off and preserves all waitlist and grant state. Production requires the passcode, Sheet URL/HMAC secrets, combined WAF rule, bound Apps Script, and staged acceptance in `docs/early-access.md` before enabling the flag.
+
+### 2026-09-01 — Enable production early-access enforcement
+
+**Decision:** After the disabled-mode deployment accepted D1 writes, Sheet delivery, secret configuration, and the combined source-IP WAF rule, set the versioned production `EARLY_ACCESS_GATE_ENABLED` flag to `true`.
+
+**Rationale:** Marketing traffic should reach the public waitlist and passcode gate while unadmitted accounts remain outside the product. The flag is independently reversible without deleting grants, revocations, or waitlist data.
+
+**Consequences:** Existing migration-backfilled accounts continue to enter; new or revoked accounts must use the documented admission paths. Agent execution remains disabled by its separate security hold.

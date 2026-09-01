@@ -124,7 +124,10 @@ export async function syncWaitlistRecordToSheet(
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ timestamp: now, payload, signature }),
-      signal: AbortSignal.timeout(3_000),
+      // Apps Script web apps can take several seconds on a cold start. Keep
+      // the request bounded, but do not turn a successful execution into a
+      // false Sheet-sync failure at the old three-second cutoff.
+      signal: AbortSignal.timeout(15_000),
     });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const acknowledgement = await response.json().catch(() => null) as { ok?: unknown } | null;

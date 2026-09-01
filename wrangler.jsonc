@@ -117,10 +117,10 @@
 		// per-provider acceptance runbook passes — Spikes Q2/D1 first.
 		"QWEN_RUN_ENABLED": "false",
 		"DEEPSEEK_RUN_ENABLED": "false",
-		// First rollout is intentionally non-enforcing: the public forms,
-		// D1 waitlist, and Sheet delivery can be verified before admission
-		// becomes a prerequisite for pages, APIs, desktop, and presence.
-		"EARLY_ACCESS_GATE_ENABLED": "false",
+		// Production early-access enforcement is enabled after the disabled-mode
+		// deployment, Sheet delivery, and WAF acceptance checks passed.
+		// Rollback is "false"; grants, revocations, and waitlist rows remain intact.
+		"EARLY_ACCESS_GATE_ENABLED": "true",
 		// Custom sign-in page rollout gate: on per explicit ship decision
 		// 2026-08-25, ahead of the live production Access verification
 		// (real Google + real email-code sign-in, plus the upstream-

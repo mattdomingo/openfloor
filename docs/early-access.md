@@ -4,7 +4,7 @@ The application-level early-access gate is independent from Cloudflare Access. C
 
 ## Production model
 
-- `EARLY_ACCESS_GATE_ENABLED=false` leaves every existing page, API, desktop bootstrap, invitation, onboarding flow, and WebSocket behavior unchanged. The public forms, D1 writes, Sheet delivery, and operator commands still work.
+- `EARLY_ACCESS_GATE_ENABLED=false` leaves every existing page, API, desktop bootstrap, invitation, onboarding flow, and WebSocket behavior unchanged. The public forms, D1 writes, Sheet delivery, and operator commands still work. Production has completed this disabled-mode acceptance and now runs with the flag set to `true`.
 - With the flag `true`, a user needs `users.early_access_granted_at` and no `early_access_revoked_at`. Existing non-deleted accounts were backfilled by migration `0044`; new accounts begin unadmitted.
 - A correct shared passcode grants an authenticated account. Before authentication it creates a signed, HTTP-only, SameSite=Lax cookie that expires after 15 minutes; `/early-access/complete` consumes it after Cloudflare authentication.
 - Revocation is sticky. The shared passcode cannot clear `early_access_revoked_at`; only the `grant` operator command restores the account.
