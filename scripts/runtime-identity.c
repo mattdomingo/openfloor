@@ -154,7 +154,7 @@ static void run_workspace_command(char *const arguments[], uid_t broker_uid, gid
 static int is_forbidden_bwrap_option(const char *argument) {
   const char *forbidden[] = {
     "--uid", "--gid", "--cap-add", "--userns", "--userns2",
-    "--userns-block-fd", "--disable-userns", "--assert-userns-disabled",
+    "--userns-block-fd", "--unshare-user-try", "--disable-userns", "--assert-userns-disabled",
     "--args", "--share-net", NULL
   };
   for (const char **option = forbidden; *option != NULL; option++) {
@@ -206,7 +206,15 @@ static void run_workspace_bwrap(int argc, char **argv, uid_t workspace_uid, gid_
   if (arguments == NULL) fail("could not allocate bubblewrap arguments");
   int out = 0;
   arguments[out++] = "bwrap";
-  for (int index = 1; index < separator; index++) arguments[out++] = argv[index];
+  for (int index = 1; index < separator; index++) {
+    // Ubuntu 22.04's bwrap 0.6.1 fails with EOVERFLOW when its setuid path
+    // combines a non-root target uid with --unshare-user. The guarded helper
+    // already gives bwrap real uid/gid = workspace and effective uid/gid =
+    // root, so bwrap's native setuid mode owns namespace setup and drops to
+    // the same outer workspace identity. The nested seccomp helper still
+    // creates its own user namespace before applying no_new_privs.
+    if (strcmp(argv[index], "--unshare-user") != 0) arguments[out++] = argv[index];
+  }
   arguments[out++] = "--uid";
   arguments[out++] = uid;
   arguments[out++] = "--gid";
