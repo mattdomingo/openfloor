@@ -49,14 +49,22 @@ npx wrangler secret put EARLY_ACCESS_PASSWORD
 
 Rotation affects only future passcode checks and any unconsumed 15-minute admission cookie. Existing account grants remain valid.
 
-## Configure WAF rate limits
+## Configure the WAF rate limit
 
-In Cloudflare Security → WAF → Rate limiting rules for `app.opnflr.com`, create both rules before enabling enforcement:
+The current Cloudflare plan permits one rate-limit rule with a 10-second counting period. In Cloudflare Security → WAF → Rate limiting rules, create one active rule named `Early access abuse protection` with this expression:
 
-1. `POST /early-access/unlock`: count by source IP, 10 requests per 10 minutes, block for 1 hour.
-2. `POST /early-access/waitlist`: count by source IP, 5 requests per 10 minutes, block for 10 minutes.
+```text
+(http.host eq "app.opnflr.com" and
+ http.request.method eq "POST" and
+ http.request.uri.path in {
+   "/early-access/unlock"
+   "/early-access/waitlist"
+ })
+```
 
-Scope both to method `POST`, exact hostname `app.opnflr.com`, and the exact path. Do not include `/early-access/complete`; it consumes a signed cookie and does not accept a passcode.
+Count by source IP, allow 5 requests per 10 seconds, then block for 10 minutes. This is burst protection rather than the preferred rolling 10-minute limit: a slower scripted client can evade it. The random 256-bit beta passcode makes a paced passcode brute-force infeasible, while D1 uniqueness and bounded Sheet retry limit duplicate-submission impact. Upgrade the WAF rule or add an application-owned longer-window limiter if paced waitlist abuse becomes material.
+
+Do not include `/early-access/complete`; it consumes a signed cookie and does not accept a passcode.
 
 Do not change Cloudflare Access applications, destinations, identity providers, or policies. In particular, do not add `/early-access*` to Access. The existing `/auth/complete` protected entry mints the Access session and returns to the public completion route. If the upstream Access policy restricts eligible email addresses, an admitted user must still satisfy that policy; application admission cannot override an Access denial.
 
@@ -79,7 +87,7 @@ npm run early-access -- resync person@example.com --remote
 
 ## Rollout and rollback
 
-1. Deploy migration and code with the committed `EARLY_ACCESS_GATE_ENABLED=false` value. Configure the Sheet, three secrets, and two WAF rules. Submit both a new and duplicate waitlist entry; confirm one D1 row and one Sheet row update. Exercise an operator resync.
+1. Deploy migration and code with the committed `EARLY_ACCESS_GATE_ENABLED=false` value. Configure the Sheet, three secrets, and the combined WAF rule. Submit both a new and duplicate waitlist entry; confirm one D1 row and one Sheet row update. Exercise an operator resync.
 2. Change the versioned production flag to `true`, run the full release pipeline, and test an existing backfilled account, an incognito visitor, invalid and valid passcodes, onboarding, an invitation deep link, desktop bootstrap, and a returning admitted account.
 
 Rollback is changing `EARLY_ACCESS_GATE_ENABLED` back to `false` and redeploying. Waitlist data, grants, and revocations remain intact and can continue syncing while enforcement is off.
