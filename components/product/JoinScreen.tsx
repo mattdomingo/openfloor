@@ -50,6 +50,11 @@ export function JoinScreen({ token, preview, displayName, alreadyMember }: {
         {full && !locked && !error && <p className="form-error" role="alert">This session is full ({preview.memberCount} of {preview.seatLimit} seats).</p>}
         {error && <p className="form-error" role="alert">{error}</p>}
         <button className="button" data-variant="primary" data-size="lg" disabled={joining || full || locked} onClick={join}>{joining ? "Joining…" : locked ? "Session locked" : full ? "Session full" : "Join session"}</button>
+        {/* Invite links are https, so they always open in a browser; this hands
+            the same invite to the desktop app (openfloor-ai/openfloorapp),
+            which registers the openfloor:// scheme. Inside the app itself the
+            link is a harmless reload of this route. */}
+        <a className="join-desktop-link" href={`openfloor://join/${encodeURIComponent(token)}`}>Open in the desktop app</a>
         <Link href="/home">Back to your sessions</Link>
       </section>
     </main>
