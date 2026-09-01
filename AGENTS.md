@@ -433,7 +433,7 @@ The theme choice is deliberately a per-device preference: localStorage `openfloo
 
 ### Styling
 
-`tokens.css` is the design-token source (System → Light → Stone → Dark → Charcoal themes). `components/session/SelectMenu.tsx` is the house dropdown — do not introduce native `<select>` elements. The `legacy-floor-*` filenames describe their origin in the preserved demo UI, not permission to restore demo behavior. See [`docs/frontend-architecture.md`](docs/frontend-architecture.md#guided-tour-and-styling-detail) for the full guided-tour mechanics and the theming/token-scoping detail (`.shop-shell` vs `.app-shell` vs `.entry-shell`, per-agent tone retuning).
+`tokens.css` is the design-token source (System → Light → Stone → Dark → Charcoal themes). Every themed shell, including the public `.entry-shell`, must honor the pre-paint `html[data-theme]` choice; only an attribute-free System selection follows `prefers-color-scheme`. `components/session/SelectMenu.tsx` is the house dropdown — do not introduce native `<select>` elements. The `legacy-floor-*` filenames describe their origin in the preserved demo UI, not permission to restore demo behavior. See [`docs/frontend-architecture.md`](docs/frontend-architecture.md#guided-tour-and-styling-detail) for the full guided-tour mechanics and the theming/token-scoping detail (`.shop-shell` vs `.app-shell` vs `.entry-shell`, per-agent tone retuning).
 
 ### Preserved prototype
 
