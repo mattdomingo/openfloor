@@ -879,10 +879,20 @@ Agent runtime posture is also tightened: Codex receives only an explicit safe SD
 
 **Consequences:** CI builds the exact Sandbox image and runs `/opt/openfloor/runtime-isolation-test.sh`, which adversarially verifies helper ownership/mode, credential-free workspace environments, inaccessible provider `/proc` environment/memory/file descriptors and home, clean readable process metadata, the Codex-shell and Claude-bubblewrap identity seams, workspace refusal at the raw bubblewrap seam, forged-uid refusal, and `no_new_privs` on the final command. Image-content changes must bump `RUN_SANDBOX_IMAGE_VERSION`. Provider and workspace state are removed between pooled runs. Production `AGENT_RUN_ENABLED` remains false: merging this code, deploying the image, or configuring credentials does not authorize execution. After image deployment, every enabled provider must pass disposable-repository acceptance for model calls, streaming, shell and file tools, built-in MCP, cancellation, required checks, publication/integration, and thread resume; enabling the global gate requires a separate authorized change.
 
+**Partial supersession (2026-09-01):** The image deployed successfully and the separately authorized beta rollout below enables the global gate. The identity boundary and adversarial-test requirements remain current.
+
 ### 2026-09-01 — Enable production early-access enforcement
 
 **Decision:** After the disabled-mode deployment accepted D1 writes, Sheet delivery, secret configuration, and the combined source-IP WAF rule, set the versioned production `EARLY_ACCESS_GATE_ENABLED` flag to `true`.
 
 **Rationale:** Marketing traffic should reach the public waitlist and passcode gate while unadmitted accounts remain outside the product. The flag is independently reversible without deleting grants, revocations, or waitlist data.
 
-**Consequences:** Existing migration-backfilled accounts continue to enter; new or revoked accounts must use the documented admission paths. Agent execution remains disabled by its separate security hold.
+**Consequences:** Existing migration-backfilled accounts continue to enter; new or revoked accounts must use the documented admission paths. At this rollout step, agent execution remained disabled by its separate security hold.
+
+### 2026-09-01 — Enable agent execution for admitted beta testers
+
+**Decision:** Set production `AGENT_RUN_ENABLED=true` after the successful `main` deployment of Sandbox image `v9` and its required adversarial CI boundary test. Keep OpenAI available and keep the already accepted `CLAUDE_RUN_ENABLED`, `KIMI_RUN_ENABLED`, and `GEMINI_RUN_ENABLED` provider gates true. Keep `GLM_RUN_ENABLED`, `QWEN_RUN_ENABLED`, and `DEEPSEEK_RUN_ENABLED` false until their separate live-key acceptance requirements pass. Keep `PREFLIGHT_ENABLED=false` because owner-configured check commands were removed this release and preflight has nothing to execute.
+
+**Rationale:** The global false gate blocks every production start, so real provider acceptance cannot occur until a reviewed rollout deploy opens it. Early-access admission limits this beta to granted users, while existing membership, agent ownership, provider credential, quota, concurrency, cancellation, gateway-status, repository, and runtime-isolation controls remain authoritative. Enabling providers without their required credentials and live-wire acceptance would widen the beta beyond the reviewed evidence.
+
+**Consequences:** Admitted beta testers can create and run OpenAI, Claude, Kimi, and Gemini agents in production. The first beta runs must use the disposable acceptance repository and cover model traffic, streaming, shell/file tools, built-in MCP, cancellation, publication/integration, and thread resume while operators review gateway rejection and isolation logs. Rollback sets the global gate to false and deploys, which hides run controls and rejects new starts without deleting agents or history. The deploy-artifact verifier now requires the reviewed `true` posture and still rejects test-only variables, the wrong worker/route, or a lookalike production database.

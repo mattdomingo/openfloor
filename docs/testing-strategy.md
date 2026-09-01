@@ -17,7 +17,7 @@ Use for pure behavior:
 - Presence and typing-draft reducers.
 - Everyone/Typing/Hidden draft selection.
 - Conflict validation, state/prompt rendering, notification event selection/deduplication, and real multi-file three-way workspace construction.
-- Production deploy-artifact identity: exact D1 database ID, disabled agent execution, and rejection of test-only variables.
+- Production deploy-artifact identity: exact D1 database ID, reviewed `AGENT_RUN_ENABLED=true` beta posture, and rejection of test-only variables.
 - Runner environment construction: exact built-in MCP exemption, child-process overload preservation, credential scrubbing, and Codex/Claude/Gemini workspace-launcher seams.
 
 ### Sandbox image tests

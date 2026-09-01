@@ -84,12 +84,10 @@
 		"SANDBOX_TRANSPORT": "rpc",
 		"OPENFLOOR_RUNTIME_ORIGIN": "https://app.opnflr.com",
 		"PREFLIGHT_ENABLED": "false",
-		// Security hold: provider CLIs and repository-controlled commands share
-		// a Linux uid. Child env filtering works, but /proc still exposes each
-		// CLI's initial gateway-token environment to same-uid processes. Keep
-		// global execution off until container acceptance proves a separate-uid
-		// or equivalent process boundary; preflight remains independently gated.
-		"AGENT_RUN_ENABLED": "false",
+		// Global beta execution is enabled after Sandbox image v9 deployed with
+		// the adversarially tested provider/workspace uid boundary. Provider-level
+		// gates below still restrict unaccepted providers independently.
+		"AGENT_RUN_ENABLED": "true",
 		// Checkout rollout gate: enabled and selling. The docs/stripe-billing.md
 		// acceptance flow passed against production on test-mode keys, and the
 		// Worker's five STRIPE_* secrets have since been swapped to live mode —

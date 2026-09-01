@@ -4,7 +4,7 @@
 
 This audit reviewed authentication, authorization, billing credentials, GitHub installation proof, provider gateways and agent runtimes, MCP, uploads and private R2 storage, WebSockets, webhooks, browser trust boundaries, dependencies, deployment configuration, and committed-secret exposure at `aaf76743039b7dda3f0a920a70e11d360fbd042f` (`origin/main` when the audit began).
 
-Seven security weaknesses were remediated in code and migrations. The audit also found one high-severity runtime isolation weakness that child-environment filtering could not fix: provider CLIs and repository-controlled commands shared a Linux uid, allowing same-uid `/proc` inspection of a CLI's initial gateway token. The 2026-08-31 follow-up implements and adversarially tests a separate-uid boundary in Sandbox image `v9`. Production agent execution remains disabled with `AGENT_RUN_ENABLED = "false"` until that image is deployed and provider acceptance is recorded.
+Seven security weaknesses were remediated in code and migrations. The audit also found one high-severity runtime isolation weakness that child-environment filtering could not fix: provider CLIs and repository-controlled commands shared a Linux uid, allowing same-uid `/proc` inspection of a CLI's initial gateway token. The 2026-08-31 follow-up implements and adversarially tests a separate-uid boundary in Sandbox image `v9`. On 2026-09-01 that image deployed successfully and a separate reviewed rollout enabled production agent execution for admitted beta testers.
 
 No production dependency advisory remains. Full development audit reports four moderate build-time advisories in `drizzle-kit`'s nested legacy `esbuild`; npm proposes an unsafe downgrade and no compatible upgrade removes them.
 
