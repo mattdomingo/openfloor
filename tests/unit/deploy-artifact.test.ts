@@ -44,7 +44,7 @@ const developmentConfig = {
   ],
   vars: {
     OPENFLOOR_RUNTIME_ORIGIN: "https://dev.app.opnflr.com",
-    AGENT_RUN_ENABLED: "false",
+    AGENT_RUN_ENABLED: "true",
     STRIPE_CHECKOUT_ENABLED: "false",
     EARLY_ACCESS_GATE_ENABLED: "false",
   },
@@ -97,6 +97,18 @@ describe("deploy artifact verifier", () => {
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('PREFLIGHT_LOGS points at "openfloor-preflight-logs"');
     expect(result.stderr).toContain('USER_AVATARS points at "openfloor-user-avatars"');
+  });
+
+  it("rejects a disabled development execution gate", () => {
+    const result = verify({
+      ...developmentConfig,
+      vars: {
+        ...developmentConfig.vars,
+        AGENT_RUN_ENABLED: "false",
+      },
+    }, "development");
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('AGENT_RUN_ENABLED is "false"');
   });
 
   it("rejects a mismatched rollout posture and test-only variables", () => {

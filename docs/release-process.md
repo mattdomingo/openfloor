@@ -108,10 +108,14 @@ npx wrangler secret put CREDENTIAL_ENCRYPTION_KEY --env development
 
 Use newly generated values for every signing/encryption secret. Do not copy the
 production waitlist Sheet destination into development. Development starts with
-`EARLY_ACCESS_GATE_ENABLED=false`, `STRIPE_CHECKOUT_ENABLED=false`, and
-`AGENT_RUN_ENABLED=false`; provider and Stripe secrets are unnecessary until a
-separate reviewed development rollout enables those paths. If billing is later
-tested here, use Stripe test-mode objects and a separate test webhook only.
+`EARLY_ACCESS_GATE_ENABLED=false` and `STRIPE_CHECKOUT_ENABLED=false`.
+Development agent execution is enabled after the isolated runtime and identity
+setup was accepted, but no shared provider fallback key is required: each
+tester may connect a personal provider credential in Settings. Keep GLM, Qwen,
+and DeepSeek disabled until their separate provider acceptance passes. If
+billing is later tested here, use Stripe test-mode objects and a separate test
+webhook only. Roll back execution by setting development
+`AGENT_RUN_ENABLED=false` and deploying; do not delete run history.
 
 ### 5. GitHub deployment environments
 

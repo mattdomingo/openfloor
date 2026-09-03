@@ -43,7 +43,7 @@ const TARGETS = {
     },
     vars: {
       OPENFLOOR_RUNTIME_ORIGIN: "https://dev.app.opnflr.com",
-      AGENT_RUN_ENABLED: "false",
+      AGENT_RUN_ENABLED: "true",
       STRIPE_CHECKOUT_ENABLED: "false",
       EARLY_ACCESS_GATE_ENABLED: "false",
     },
