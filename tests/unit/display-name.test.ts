@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { displayNameFrom, initials, initialsFromParts } from "@/lib/display-name";
+import { displayNameFrom, initials, initialsFromParts, visiblePersonName } from "@/lib/display-name";
 
 describe("displayNameFrom", () => {
   it("formats as \"First L.\"", () => {
@@ -8,6 +8,28 @@ describe("displayNameFrom", () => {
 
   it("still appends a bare period when lastName is empty", () => {
     expect(displayNameFrom("Matt", "")).toBe("Matt .");
+  });
+});
+
+describe("visiblePersonName", () => {
+  it("leaves a short given name alone", () => {
+    expect(visiblePersonName("Ardy D.")).toEqual({ text: "Ardy D.", full: "Ardy D.", truncated: false });
+  });
+
+  it("shortens only the given-name token and keeps the rest", () => {
+    expect(visiblePersonName("matthew.domingo2022@gmail.com D.")).toEqual({
+      text: "matthew.doming… D.",
+      full: "matthew.domingo2022@gmail.com D.",
+      truncated: true,
+    });
+  });
+
+  it("shortens a single long token with no last-name suffix", () => {
+    expect(visiblePersonName("BartholomewAlexander")).toEqual({
+      text: "BartholomewAle…",
+      full: "BartholomewAlexander",
+      truncated: true,
+    });
   });
 });
 

@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { BASE_PATH } from "@/components/basePath";
 import type { InvitePreview } from "@/db/sessions";
 import { Brand } from "./Brand";
+import { PersonName } from "@/components/session/primitives";
 
 export function JoinScreen({ token, preview, displayName, alreadyMember }: {
   token: string;
@@ -45,7 +46,7 @@ export function JoinScreen({ token, preview, displayName, alreadyMember }: {
         <p className="eyebrow">Session invitation</p>
         <h1>{preview.title}</h1>
         <p className="join-objective">{preview.objective || "No objective has been written yet."}</p>
-        <dl><div><dt>Host</dt><dd>{preview.ownerName}</dd></div><div><dt>Joining as</dt><dd>{displayName}</dd></div></dl>
+        <dl><div><dt>Host</dt><dd><PersonName name={preview.ownerName} /></dd></div><div><dt>Joining as</dt><dd><PersonName name={displayName} /></dd></div></dl>
         {locked && !error && <p className="form-error" role="alert">This session is locked. Ask the owner to unlock it.</p>}
         {full && !locked && !error && <p className="form-error" role="alert">This session is full ({preview.memberCount} of {preview.seatLimit} seats).</p>}
         {error && <p className="form-error" role="alert">{error}</p>}

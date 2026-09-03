@@ -3,6 +3,7 @@
 import { MouseEvent as ReactMouseEvent, ReactNode, SyntheticEvent, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { BASE_PATH } from "@/components/basePath";
+import { visiblePersonName } from "@/lib/display-name";
 
 /* Instant, mouse-following tooltip for any hoverable element. Native `title`
    has a long, browser-controlled show delay and stays pinned where the
@@ -39,6 +40,18 @@ export function HoverTip({ position, children, wrap = false }: { position: { x: 
       {children}
     </span>,
     document.body,
+  );
+}
+
+export function PersonName({ name, className }: { name: string; className?: string }) {
+  const tip = useHoverTip();
+  const { text, full, truncated } = visiblePersonName(name);
+  if (!truncated) return <span className={className ? `person-name ${className}` : "person-name"}>{text}</span>;
+  return (
+    <>
+      <span className={className ? `person-name ${className}` : "person-name"} aria-label={full} {...tip.handlers}>{text}</span>
+      <HoverTip position={tip.position}>{full}</HoverTip>
+    </>
   );
 }
 
