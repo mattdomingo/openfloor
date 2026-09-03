@@ -26,7 +26,7 @@ The GitHub repository and agent-execution milestone is delivered one accepted ph
 
 1. Contain only that phase's documented functionality; do not pre-implement later phases behind hidden UI or dormant production paths.
 2. Pass the complete automated test pipeline before handoff.
-3. Deploy to the active production environment when its browser acceptance flow depends on GitHub, Cloudflare runtime resources, or OpenAI, unless the user establishes a separate staging environment.
+3. Deploy to the isolated development environment from `release` when its browser acceptance flow depends on GitHub, Cloudflare runtime resources, or OpenAI; promote `release` to `main` only after acceptance.
 4. End with browser-based acceptance instructions that exercise the newly real end-to-end behavior.
 5. Stop after handoff until the user explicitly accepts the phase.
 
@@ -164,9 +164,10 @@ The request and synchronization flow is:
 
 ```text
 Browser
-  -> Cloudflare Access policy for protected production paths
+  -> Cloudflare Access on /auth/complete and /api/*; other paths reach Worker
   -> openfloor Worker
-       -> verifies Access JWT or explicit loopback development identity
+       -> verifies Access assertion header or CF_Authorization cookie
+       -> or resolves explicit loopback development identity
        -> strips any client-supplied trusted identity headers
        -> forwards verified identity to the vinext/Next application
   -> Server Component or API route
@@ -193,7 +194,7 @@ Per-session WebSocket
 - Next.js App Router and React Server Components.
 - vinext and Vite compile the application for Cloudflare Workers.
 - `worker/index.ts` is the production Worker entry point.
-- Cloudflare D1 is the relational database bound as `DB`.
+- Cloudflare D1 is the relational database bound as `DB`; production and development bind separate databases.
 - `SessionPresence` is a SQLite-backed Durable Object bound as `SESSION_PRESENCE`.
 - `RepositoryPreflightWorkflow` is bound as `REPOSITORY_PREFLIGHT`; it durably coordinates exact-source checkout, ordered checks, result persistence, and cleanup.
 - `AgentRunWorkflow` is bound as `AGENT_RUN_WORKFLOW`; it durably coordinates exact-source checkout, Codex, required checks, Git-bundle export, trusted publication, reconciliation, cancellation, and cleanup.
@@ -207,17 +208,17 @@ Per-session WebSocket
 
 ### Important hosting topology
 
-The marketing site (`opnflr.com`) and the application (`app.opnflr.com`) are sibling Cloudflare deployments, not a path-prefixed pair — the app owns its own origin, `BASE_PATH` is `""` everywhere, and `wrangler.jsonc` claims the subdomain via a `custom_domain: true` route. See [`docs/system-architecture.md`](docs/system-architecture.md#important-hosting-topology) for the full topology detail, including why `components/basePath.ts` is still wired through and the asset/Sites-metadata caveats.
+The marketing site (`opnflr.com`) and production application (`app.opnflr.com`) are sibling Cloudflare deployments, not a path-prefixed pair. The permanent `release` branch deploys an isolated named Wrangler environment at `dev.app.opnflr.com`; `main` deploys production. `BASE_PATH` is `""` in both application environments, and `wrangler.jsonc` claims each hostname through its target-specific custom-domain route. See [`docs/system-architecture.md`](docs/system-architecture.md#important-hosting-topology) and [`docs/release-process.md`](docs/release-process.md).
 
 ## Authentication and identity
 
 ### Current decision: Cloudflare Access
 
-Production identity is Cloudflare Access, not application-owned “Sign in with ChatGPT.” GitHub (primary, since 2026-08-27) and One-time PIN are the intended Access identity providers; Google is removed from the apps' IdP lists. `ACCESS_CUSTOM_LOGIN_ENABLED` (`wrangler.jsonc`) gates the app-owned `/signin` page — flipping it to `"false"` is the rollback path if production sign-in breaks.
+Production identity is Cloudflare Access, not application-owned “Sign in with ChatGPT.” GitHub (primary, since 2026-08-27) and One-time PIN are the intended Access identity providers; Google is removed from the application's IdP list. `ACCESS_CUSTOM_LOGIN_ENABLED` (`wrangler.jsonc`) gates the app-owned `/signin` page — flipping it to `"false"` is the rollback path if production sign-in breaks.
 
-Application admission is a separate D1 gate. Production now runs with `EARLY_ACCESS_GATE_ENABLED=true` after the disabled-mode Sheet/WAF acceptance. Every protected page, API, desktop bootstrap, invitation/onboarding path, and presence connection requires an active early-access grant. Existing users are migration-backfilled; new users are unadmitted. A shared passcode may grant but never clear an explicit revocation. The public `/early-access` routes stay outside Cloudflare Access and hand authentication through the existing protected `/auth/complete` entry. The Sheet is never authoritative. Rollback is the versioned flag set to `false`. See [`docs/early-access.md`](docs/early-access.md).
+Application admission is a separate D1 gate. Production now runs with `EARLY_ACCESS_GATE_ENABLED=true` after the disabled-mode Sheet/WAF acceptance. Every authenticated product page, API, desktop bootstrap, invitation/onboarding path, and presence connection requires an active early-access grant. Existing users are migration-backfilled; new users are unadmitted. A shared passcode may grant but never clear an explicit revocation. The public `/early-access` routes stay outside Cloudflare Access and hand authentication through the existing protected `/auth/complete` entry. The Sheet is never authoritative. Rollback is the versioned flag set to `false`. See [`docs/early-access.md`](docs/early-access.md).
 
-See [`docs/cloudflare-access-config.md`](docs/cloudflare-access-config.md) for the full configuration detail: the IdP rationale and app-owned `/signin` mechanism, the explicit-allowlist model, the two-application five-destination-each split, the `home*` vs `home/*` wildcard distinction (and the 2026-08-25 lockout it caused), App Launcher/Cookie Path settings, JWT validation, and the `/signout` mechanism. Read it in full before touching Access configuration or adding a newly protected page.
+Production has one self-hosted Access application with exactly `app.opnflr.com/api/*` and `app.opnflr.com/auth/complete` as destinations. Real pages sit outside Access and verify the signed `CF_Authorization` cookie minted at `/auth/complete`; API paths normally verify Access's assertion header. The production Allow policy includes `Everyone`, with D1 early-access admission layered afterward. Development mirrors the destination topology but must use a developer/tester-only Access policy because its D1 admission gate starts off. See [`docs/cloudflare-access-config.md`](docs/cloudflare-access-config.md) for the app-owned `/signin` mechanism, App Launcher/Cookie Path settings, JWT validation, and `/signout`. Read it before changing Access configuration.
 
 ### Legacy schema naming
 
@@ -236,7 +237,7 @@ The WebSocket path does not rely on the application handoff. `handlePresenceRequ
 ### Local development and tests
 
 - Local identity works only for loopback hosts (`localhost` or `127.0.0.1`) using `OPENFLOOR_DEV_USER_ID`, `OPENFLOOR_DEV_USER_EMAIL`, and `OPENFLOOR_DEV_USER_NAME`.
-- Protected production requests must reject requests without a valid Access identity; the `/app` landing page remains public by design.
+- Authenticated production routes reject requests without a valid Access identity; the `/` landing page remains public by design.
 - Test-controlled identity headers work only when `OPENFLOOR_TEST_ALLOW_IDENTITY_HEADERS=true`, which test configuration provides explicitly.
 - Never broaden the development fallback to arbitrary hosts.
 - Never enable test identity headers in production.
@@ -500,11 +501,11 @@ Server-rendered text must be deterministic. Do not render `Date.now()`, `Math.ra
 
 Viewer-local timestamps are shown through `components/LocalDateTime.tsx`: it renders the deterministic UTC form on the server and on the first client render, then swaps to the host-timezone `formatShort*Local` variants after mount. Use it for any user-facing timestamp instead of calling the local formatters during render.
 
-## Production configuration and deployment
+## Deployment environments and release flow
 
 ### Required bindings
 
-Bindings (`wrangler.jsonc`): `DB`, `SESSION_PRESENCE`, `ASSETS`, `IMAGES`, `REPOSITORY_PREFLIGHT`, `AGENT_RUN_WORKFLOW`, `SANDBOX`, `PREFLIGHT_LOGS`, `USER_AVATARS`.
+Bindings (`wrangler.jsonc`): `DB`, `SESSION_PRESENCE`, `ASSETS`, `IMAGES`, `REPOSITORY_PREFLIGHT`, `AGENT_RUN_WORKFLOW`, `SANDBOX`, `PREFLIGHT_LOGS`, `USER_AVATARS`. The top-level config is production; `env.development` repeats every non-inherited or stateful binding and points it at an isolated resource. Never share D1, R2, Workflow, Durable Object, GitHub App, Stripe, signing, or encryption authority between those environments.
 
 Rollout gate flags: `EARLY_ACCESS_GATE_ENABLED`, `PREFLIGHT_ENABLED`, `AGENT_RUN_ENABLED`, `STRIPE_CHECKOUT_ENABLED`, `CLAUDE_RUN_ENABLED`, `KIMI_RUN_ENABLED`, `GEMINI_RUN_ENABLED`, `GLM_RUN_ENABLED`, `QWEN_RUN_ENABLED`, `DEEPSEEK_RUN_ENABLED`. Early-access enforcement is enabled in production after its D1/Sheet/WAF acceptance; rollback is false without deleting grants or waitlist records. `AGENT_RUN_ENABLED` is enabled for admitted beta testers after the successful Sandbox image `v9` deployment and adversarial CI proof. OpenAI, Claude, Kimi, and Gemini are available; GLM, Qwen, and DeepSeek remain disabled until their own live-key acceptance passes. `PREFLIGHT_ENABLED` remains false because required check commands were removed this release. Durable Object migration `v1` registers `SessionPresence`; `v2` registers `Sandbox`.
 
@@ -526,20 +527,37 @@ Do not pass the secret value as the `wrangler secret put` name. Never commit `.d
 
 ### Deployment order
 
+Normal feature/fix branches target the permanent `release` branch. A push to `release` runs the complete gate and deploys the named `development` environment at `dev.app.opnflr.com`. A reviewed `release` → `main` merge is production authorization and deploys `app.opnflr.com`. Only `hotfix/*` branches created from `main` may target `main` directly, and their merge must be synchronized back into `release`. Git tags are immutable SemVer markers created only after a production deployment succeeds. See [`docs/release-process.md`](docs/release-process.md) for the branch, protection, external setup, versioning, and rollback runbook.
+
+Manual development order:
+
 ```bash
 npm audit --omit=dev
 npm test
-npx wrangler d1 migrations apply openfloor-production --remote
-npm run build
-npm run verify:deploy-artifact
+npx wrangler d1 migrations apply DB --env development --remote
+npm run build:development
+npm run verify:deploy-artifact -- development
 npx wrangler deploy --config dist/server/wrangler.json
 ```
 
-The production dependency audit and complete test pipeline must pass before any production mutation. Migrations must land before code that requires them. The build generates `dist/server/wrangler.json`; deployment uses that built config. `npm run test:e2e` builds the app with `tests/e2e/wrangler.jsonc` into that same `dist/`, producing a config whose vars set `OPENFLOOR_TEST_ALLOW_IDENTITY_HEADERS` (arbitrary-identity impersonation), so `npm run verify:deploy-artifact` must run between the build and the deploy: it fails unless the artifact is the production `openfloor` worker, on the `app.opnflr.com` custom domain, bound to D1 database `openfloor-production` at exact ID `1e5059bf-1f7b-4be8-8ea4-c424a191070a`, with the reviewed production `AGENT_RUN_ENABLED=true` beta posture and no `OPENFLOOR_TEST_*`/`OPENFLOOR_E2E_*` var.
+Manual production order:
 
-Pull requests run the audit and the complete `npm test`-equivalent pipeline as sibling jobs in `.github/workflows/deploy.yml`, so a newly published production advisory cannot hide whether the suite passed. After the render suite's production build they verify the generated production artifact before E2E replaces `dist/`. Pushes to `main` require both jobs, then run the production-only migration/build/deploy job (GitHub secrets `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`). CI installs the lockfile-selected Playwright Chromium build before the suite. Playwright actions use a 15s `actionTimeout` so a missing-element click fails at the action instead of hanging until the test budget. The E2E harness builds with the test Wrangler config and serves that artifact through the Cloudflare Vite plugin's direct Miniflare preview path; this avoids Wrangler 4.127.1's Linux dev-proxy crash (upstream `workers-sdk#15317`) without retries or vulnerable tool downgrades. Merging to `main` is the deploy authorization. Third-party actions and the npm CLI are exact-version pinned, checkout never persists credentials, and production Cloudflare credentials are step-scoped to migration and deployment; dependency installation, audits, tests, and builds must never receive them. Superseded pull-request runs may cancel, but an in-flight `main` deploy never does. The manual sequence above remains for emergencies and for changes GitHub Actions cannot see (secrets, Access policy).
+```bash
+npm audit --omit=dev
+npm test
+npx wrangler d1 migrations apply DB --remote
+npm run build
+npm run verify:deploy-artifact -- production
+npx wrangler deploy --config dist/server/wrangler.json
+```
+
+The dependency audit and complete test pipeline must pass before either environment mutates. Migrations must land before code that requires them. The build generates `dist/server/wrangler.json`; deployment uses that built config. `npm run test:e2e` builds the app with `tests/e2e/wrangler.jsonc` into that same `dist/`, producing a test-only config, so the target-specific artifact verifier must run between the final build and deployment. It rejects test variables and pins the target Worker name, custom domain, exact D1 ID, both private R2 bindings, both Workflow bindings, runtime origin, and reviewed rollout flags. Development additionally pins agent execution, Stripe Checkout, and early-access admission off for its initial external setup.
+
+Pull requests run the audit and the complete `npm test`-equivalent pipeline as sibling jobs in `.github/workflows/deploy.yml`, so a newly published production advisory cannot hide whether the suite passed. After the render suite's production build, the test job verifies production, builds and verifies development, then lets E2E replace `dist/`. Pushes to `release` and `main` require both jobs, then run separate target-specific migration/build/verify/deploy jobs through GitHub `development` and `production` environments. CI installs the lockfile-selected Playwright Chromium build before the suite. Playwright actions use a 15s `actionTimeout` so a missing-element click fails at the action instead of hanging until the test budget. The E2E harness uses the Cloudflare Vite plugin's direct Miniflare preview path, avoiding Wrangler 4.127.1's Linux dev-proxy crash without retries or vulnerable tool downgrades. Third-party actions and npm are exact-version pinned, checkout never persists credentials, and Cloudflare credentials are step-scoped to migration and deployment; dependency installation, audits, tests, and builds never receive them. Superseded pull-request runs may cancel, but neither in-flight branch deployment does. The manual sequences remain for emergencies and for external state Actions cannot create safely.
 
 ### Smoke test after deployment
+
+Run the relevant flow first against development after every `release` deployment and repeat it against production after promotion.
 
 1. Open public `https://app.opnflr.com` without an Access session.
 2. Sign in through a protected path and verify return to `/home`.

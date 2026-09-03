@@ -64,9 +64,8 @@ async function serveAsset(request: Request, env: Env): Promise<Response | null> 
 }
 
 // A browser can land a signed-in document navigation on a bare /api/* path
-// in production: a wildcard-path Access application's App Launcher tile is
-// literally app.opnflr.com/api/* (see AGENTS.md "Authentication and
-// identity"). No route serves that path, so without this it renders a bare
+// if the path-scoped Access application is exposed in the App Launcher. No
+// route serves that path, so without this it renders a bare
 // "Not Found" instead of a real page. sec-fetch-mode: navigate is a Fetch
 // Metadata header every modern browser attaches only to top-level document
 // navigations — never to a fetch()/XHR call — so this is the one signal that

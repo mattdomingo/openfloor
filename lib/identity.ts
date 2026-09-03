@@ -163,14 +163,10 @@ export function normalizedTeamDomain(value: string | undefined): string | null {
   }
 }
 
-// Production splits the protected paths across two self-hosted Access
-// applications on the same hostname (five-destination cap per app — see
-// AGENTS.md "Authentication and identity"), so a page request and its first
-// /api call can carry JWTs minted for two different AUD tags. Whether one
-// hostname's CF_Authorization cookie merges both apps' tags into a single
-// token's aud array is undocumented by Cloudflare, so this trusts either tag
-// explicitly rather than depending on that. CF_ACCESS_AUD is a comma-
-// separated list; a single value (today's secret) keeps working unchanged.
+// Production currently uses one Access application and one audience. Keep the
+// parser tolerant of a comma-separated list so an audience can be rotated, or
+// a deployment can temporarily split destinations across applications,
+// without an authentication outage.
 function parseAudienceList(value: string | undefined): string[] | null {
   const audiences = (value ?? "").split(",").map((entry) => entry.trim()).filter(Boolean);
   return audiences.length > 0 ? audiences : null;

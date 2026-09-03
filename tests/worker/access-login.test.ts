@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fetchAccessCodeChallenge, fetchAccessLoginTarget } from "@/lib/access-login";
+import { accessLoginUrl, fetchAccessCodeChallenge, fetchAccessLoginTarget } from "@/lib/access-login";
 
 // Lives in tests/worker/, not tests/unit/, because lib/access-login.ts uses
 // HTMLRewriter — a Workers-runtime global, unavailable under vitest.unit
@@ -31,6 +31,18 @@ function loginPageHtml(actionUrl: string): string {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+});
+
+describe("accessLoginUrl", () => {
+  it("uses the configured development origin for the Access anchor", () => {
+    expect(accessLoginUrl("/auth/complete?return_to=%2Fhome", "https://dev.app.opnflr.com"))
+      .toBe("https://dev.app.opnflr.com/auth/complete?return_to=%2Fhome");
+  });
+
+  it("rejects a configured URL that is not an HTTPS origin", () => {
+    expect(() => accessLoginUrl("/auth/complete", "https://dev.app.opnflr.com/path"))
+      .toThrow("must be an HTTPS origin");
+  });
 });
 
 describe("fetchAccessLoginTarget", () => {

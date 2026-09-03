@@ -2,18 +2,28 @@
 
 openfloor requires each account to install the GitHub App during onboarding, supports multiple personal or organization installations per account, keeps one real candidate branch per session, and runs Codex in Cloudflare Sandbox. It stores installation authority only, never a GitHub OAuth or user token. Every passing result is retained on a separate verified run branch, then serialized into the candidate and its single draft pull request. The owner can mark that PR ready and request an exact-head squash merge after GitHub reports clean mergeability and passing checks. During acceptance, install the App only on a real disposable repository.
 
+This runbook describes the production GitHub App. The release-branch deployment
+uses a separate development App with the same permissions and environment-
+specific callback/webhook URLs; never reuse the production App's private key or
+signing secrets. See `docs/release-process.md`.
+
 ## Production host and Cloudflare Access
 
-The application is served at `https://app.opnflr.com`. Cloudflare Access protects it as an explicit allowlist — split across two self-hosted applications sharing one policy, since Access caps a single application at five destinations and there are six protected paths:
+The application is served at `https://app.opnflr.com`. Production uses one
+self-hosted Cloudflare Access application named `openfloor` with exactly two
+destinations:
 
-- App 1 ("OpenFloor authenticated users"): `app.opnflr.com/home`, `app.opnflr.com/settings`, `app.opnflr.com/onboarding`, `app.opnflr.com/session/*`, `app.opnflr.com/join/*`
-- App 2 (same policy, attached via "Add existing policy"): `app.opnflr.com/api/*`
+- `app.opnflr.com/api/*`
+- `app.opnflr.com/auth/complete`
 
-This list is per-path, dashboard-configured state (see `docs/cloudflare-access-branding.md` and AGENTS.md's "Authentication and identity") — every new protected page needs its path added to whichever Access application has room in Zero Trust, or visitors get bounced back to sign-in on that page even while authenticated everywhere else.
+The current policy is Allow → Include `Everyone`. Access establishes identity;
+the D1 early-access grant and session membership are separate product-admission
+boundaries. Real pages stay outside Access, receive the signed
+`CF_Authorization` cookie minted through `/auth/complete`, and verify it in the
+Worker. Keep Cookie Path Attribute off. Hide the application from the App
+Launcher unless its target is explicitly set to a real page.
 
-App 2's only destination is a wildcard path, so its App Launcher tile must stay hidden (**Experience settings → "Show application in App Launcher"** off) — otherwise it's the literal, unroutable `app.opnflr.com/api/*`, and a user re-entering through the team domain after signing out has a real chance of picking it (2026-08-24 decision log).
-
-Do not put `app.opnflr.com/webhooks/github` or `app.opnflr.com/webhooks/stripe` behind Access. Both are public only so GitHub and Stripe can reach them; the Worker rejects payloads without the configured HMAC signature. Neither is `app.opnflr.com/runtime/*`, which run containers fetch with bearer tokens — an Access rule over those paths breaks every agent run. None of the three need a bypass rule: a path with no matching Access-application destination is simply never touched by Access. (Do not try to express "public" as a bypass destination scoped to `/` — Cloudflare has no root-only Path syntax; a blank or `*` Path means the hostname plus everything beneath it, so a "bypass `/`" destination bypasses the whole domain.)
+Do not put `app.opnflr.com/webhooks/github` or `app.opnflr.com/webhooks/stripe` behind Access. Both are public only so GitHub and Stripe can reach them; the Worker rejects payloads without the configured HMAC signature. Neither is `app.opnflr.com/runtime/*`, which run containers fetch with bearer tokens — an Access rule over those paths breaks every agent run. None of the three need a bypass rule: a path with no matching Access-application destination is simply never touched by Access. The same is true of real page routes. (Do not try to express "public" as a bypass destination scoped to `/` — Cloudflare has no root-only Path syntax; a blank or `*` Path means the hostname plus everything beneath it, so a "bypass `/`" destination bypasses the whole domain.)
 
 Verify all three stay reachable after any Zero Trust edit:
 
@@ -123,7 +133,7 @@ npm audit --omit=dev
 npm test
 npx wrangler d1 migrations apply DB --remote
 npm run build
-npm run verify:deploy-artifact
+npm run verify:deploy-artifact -- production
 npx wrangler deploy --config dist/server/wrangler.json
 ```
 

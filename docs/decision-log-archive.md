@@ -2,6 +2,16 @@
 
 Entries from [`decision-log.md`](decision-log.md) whose decision was superseded in its entirety — kept for history, not needed for day-to-day reads. Each is replaced in the main log by a one-line pointer at its original position.
 
+### 2026-08-19 — Temporarily deliver repository phases directly to production
+
+**Status:** Superseded by "Permanent release branch deploys an isolated development environment" (2026-09-03); retained for history.
+
+**Decision:** Until the user establishes a staging environment, deploy each accepted repository-execution phase to the existing production openfloor Worker and D1 database at `opnflr.com/app`. Use a real disposable GitHub repository as the only App installation target during acceptance.
+
+**Rationale:** Reusing the working production application, Access policy, domain, and bindings removes a second environment's DNS, Access, secret, and deployment setup from the critical path. A disposable repository limits the GitHub-side impact while the integration matures.
+
+**Consequences:** The unused `openfloor-development` D1 database may remain for later cleanup but is not referenced by application configuration. Production migrations must precede code deployment. The five GitHub App secrets must be configured before deploying the repository UI, and each phase must still pass the complete pipeline and stop for explicit browser acceptance. Expanding the App beyond the disposable repository requires a separate deliberate decision.
+
 ### 2026-08-19 — Two themes from one token sheet
 
 **Status:** Superseded by “Add Polar and Midnight as explicit manual product themes” (2026-08-22); retained for history.
@@ -44,5 +54,4 @@ Entries from [`decision-log.md`](decision-log.md) whose decision was superseded 
 **Rationale:** Separating identity from billing makes the required choices easier to scan without adding a draft entity or weakening the existing single onboarding mutation. Reusing the API's final multipart submission keeps profile validation, invite verification, Stripe Checkout, safe redirects, and membership acceptance at their current authoritative boundaries.
 
 **Consequences:** The current step and every unsaved field belong only to `OnboardingScreen`; no schema, API, Access, billing, or invite contract changed. The screen now shares the shop palette, wave field, Archivo type, bracket buttons, and theme resolution used by `/home` and the lobby, while onboarding-only responsive/rounded-surface rules remain scoped under `.onboarding-shell` in `app/styles/shop.css`. Step changes focus the active heading, progress exposes `aria-current="step"`, inactive panels are hidden, and narrow layouts stack profile, plan, seat, and action controls.
-
 
