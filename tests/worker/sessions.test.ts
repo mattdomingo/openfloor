@@ -54,6 +54,7 @@ import {
   markCandidateMerged,
   markCandidateReviewDraft,
   markCandidateReviewReady,
+  setCandidateMergeLocked,
   updateRepositoryPushState,
 } from "@/db/repositories";
 import { abandonSessionCandidate } from "@/lib/candidate-abandon";
@@ -1087,6 +1088,14 @@ describe("D1 session persistence", () => {
     await markCandidateReviewReady(created.session.id, candidateId, owner.id, env.DB);
     floor = await getFloorSnapshot(created.session.id, owner.id, env.DB);
     expect(floor?.review).toEqual(expect.objectContaining({ status: "ready", pullRequest: expect.objectContaining({ draft: false }) }));
+    const unlockedRevision = floor!.revision;
+    await setCandidateMergeLocked(created.session.id, candidateId, true, env.DB);
+    floor = await getFloorSnapshot(created.session.id, owner.id, env.DB);
+    expect(floor?.revision).toBeGreaterThan(unlockedRevision);
+    expect(floor?.review?.mergeLockedAt).not.toBeNull();
+    await setCandidateMergeLocked(created.session.id, candidateId, false, env.DB);
+    floor = await getFloorSnapshot(created.session.id, owner.id, env.DB);
+    expect(floor?.review?.mergeLockedAt).toBeNull();
     const squashSha = "6".repeat(40);
     await markCandidateMerged(created.session.id, candidateId, owner.id, squashSha, env.DB);
     await finishCandidateCleanup(created.session.id, candidateId, [run.id], true, true, env.DB);

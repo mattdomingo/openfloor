@@ -18,8 +18,26 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  validate:
-    name: Validate
+  # Sibling of `test` so a newly published production advisory cannot hide
+  # whether the suite actually passed. Both deployments need both jobs.
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+      # The npm bundled with the setup-node node-22 image mis-validates optional
+      # peerDependencies against package-lock.json. npm 11 fixes this.
+      - run: npm install -g npm@11.19.1
+      - run: npm ci
+      - run: npm audit --omit=dev
+
+  test:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -52,11 +70,8 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      # The npm bundled with the setup-node node-22 image mis-validates optional
-      # peerDependencies against package-lock.json. npm 11 fixes this.
       - run: npm install -g npm@11.19.1
       - run: npm ci
-      - run: npm audit --omit=dev
       - name: Build and test agent runtime identity boundary
         run: |
           docker build --file Dockerfile.sandbox --tag openfloor-runtime-isolation:test .
@@ -80,10 +95,10 @@ jobs:
 
   deploy-development:
     name: Deploy development
-    needs: validate
+    needs: [audit, test]
     if: github.event_name == 'push' && github.ref == 'refs/heads/release'
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 20
     environment:
       name: development
       url: https://dev.app.opnflr.com
@@ -112,10 +127,10 @@ jobs:
 
   deploy-production:
     name: Deploy production
-    needs: validate
+    needs: [audit, test]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 20
     environment:
       name: production
       url: https://app.opnflr.com

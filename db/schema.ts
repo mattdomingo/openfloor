@@ -585,6 +585,7 @@ export const repositoryCandidates = sqliteTable(
     reviewReadyAt: integer("review_ready_at"),
     reviewReadyBy: text("review_ready_by").references(() => users.id),
     reviewSyncedAt: integer("review_synced_at"),
+    mergeLockedAt: integer("merge_locked_at"),
     mergeCommitSha: text("merge_commit_sha"),
     mergedAt: integer("merged_at"),
     mergedBy: text("merged_by").references(() => users.id),

@@ -109,12 +109,16 @@ Do not pass the secret value as the `wrangler secret put` name. Never commit `.d
 ### CI and deployment gate
 
 `.github/workflows/deploy.yml` runs on every pull request and on pushes to
-`release` and `main`. Every event installs the exact pinned npm CLI, runs
-`npm audit --omit=dev`, installs the lockfile-selected Playwright Chromium build
-and runner dependencies, and runs the complete `npm test`-equivalent pipeline.
-After the render build, CI verifies production, builds and verifies development,
-then lets E2E replace `dist/`. Unit fixtures prove that the verifier rejects a
-wrong D1 ID, cross-environment R2 bindings, rollout drift, and test artifacts.
+`release` and `main`. `audit` (`npm audit --omit=dev`) and `test` (pinned npm
+CLI, lockfile-selected Playwright Chromium, complete `npm test`-equivalent
+pipeline) are sibling jobs so a newly published production advisory cannot hide
+test results. After the render build, the test job verifies production, builds
+and verifies development, then lets E2E replace `dist/`. Unit fixtures prove
+that the verifier rejects a wrong D1 ID, cross-environment R2 bindings, rollout
+drift, and test artifacts. The E2E harness uses the Cloudflare Vite plugin's
+direct Miniflare preview path, avoiding the Linux dev-proxy failure tracked by
+upstream `workers-sdk#15317` without retries or vulnerable tool downgrades.
+Playwright actions use a 15s `actionTimeout`.
 
 Pull requests stop after validation. CI accepts ordinary PRs only when they
 target `release`; the only `main`-targeted exceptions are `release` promotions

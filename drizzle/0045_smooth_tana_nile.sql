@@ -1,0 +1,1 @@
+ALTER TABLE `repository_candidates` ADD `merge_locked_at` integer;

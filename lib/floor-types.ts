@@ -408,6 +408,7 @@ export type FloorReviewSnapshot = {
   conflicts: MergeConflictCase[];
   updatedAt: number;
   githubChecksPassing: boolean | null;
+  mergeLockedAt: number | null;
   cleanupStatus: "pending" | "complete" | "partial" | null;
   branchDeletedAt: number | null;
   integrationRunId: string | null;

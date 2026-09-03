@@ -68,7 +68,7 @@ worker/
   preflight-workflow.ts      Durable exact-source Sandbox preflight orchestration
   agent-run-workflow.ts      Durable Codex/check/cancellation Sandbox orchestration
 Dockerfile.sandbox           Version-matched Cloudflare Sandbox runtime image
-.github/workflows/deploy.yml Push-to-main production deploy (test → migrate → build → deploy)
+.github/workflows/deploy.yml Sibling audit + test jobs; push-to-main deploy needs both
 scripts/codex-runner.mjs     Pinned server-side Codex SDK runner inside the Sandbox image
 scripts/claude-runner.mjs    Pinned Claude Agent SDK runner (non-root, kernel-sandboxed) in the same image
 scripts/gemini-runner.mjs    Pinned Gemini CLI runner (non-root, srt-wrapped) in the same image

@@ -111,7 +111,10 @@ export type IconName =
   | "play"
   | "stop"
   | "copy"
-  | "trash";
+  | "trash"
+  | "refresh"
+  | "lock"
+  | "unlock";
 
 const glyphs: Record<IconName, ReactNode> = {
   grip: (
@@ -229,6 +232,26 @@ const glyphs: Record<IconName, ReactNode> = {
       <path d="M6.3 5V3.6a1 1 0 0 1 1-1h1.4a1 1 0 0 1 1 1V5" />
       <path d="M4.3 5l.6 7.4a1 1 0 0 0 1 .9h4.2a1 1 0 0 0 1-.9L11.7 5" />
       <path d="M6.7 7.5v3.3M9.3 7.5v3.3" />
+    </>
+  ),
+  refresh: (
+    <>
+      <path d="M12.6 5.8A5.2 5.2 0 0 0 3.3 5L2.4 6.4" />
+      <path d="M2.4 3.5v2.9h2.9" />
+      <path d="M3.4 10.2a5.2 5.2 0 0 0 9.3.8l.9-1.4" />
+      <path d="M13.6 12.5V9.6h-2.9" />
+    </>
+  ),
+  lock: (
+    <>
+      <rect x="3.4" y="7" width="9.2" height="6.5" rx="1.4" />
+      <path d="M5.4 7V5.2a2.6 2.6 0 0 1 5.2 0V7M8 9.6v1.5" />
+    </>
+  ),
+  unlock: (
+    <>
+      <rect x="3.4" y="7" width="9.2" height="6.5" rx="1.4" />
+      <path d="M10.6 7V5.2a2.6 2.6 0 0 0-5.1-.7M8 9.6v1.5" />
     </>
   ),
 };

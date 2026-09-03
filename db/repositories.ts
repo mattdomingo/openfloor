@@ -226,7 +226,7 @@ export async function getActiveRepositoryCandidate(
             pull_request_state AS pullRequestState, pull_request_draft AS pullRequestDraft,
             pull_request_merged AS pullRequestMerged, pull_request_mergeable AS pullRequestMergeable,
             pull_request_mergeable_state AS pullRequestMergeableState, github_checks_passing AS githubChecksPassing,
-            review_ready_at AS reviewReadyAt, review_synced_at AS reviewSyncedAt,
+            review_ready_at AS reviewReadyAt, review_synced_at AS reviewSyncedAt, merge_locked_at AS mergeLockedAt,
             merge_commit_sha AS mergeCommitSha, merged_at AS mergedAt, cleanup_status AS cleanupStatus,
             cleanup_completed_at AS cleanupCompletedAt, branch_deleted_at AS branchDeletedAt, abandoned_at AS abandonedAt,
             status, created_by AS createdBy, created_at AS createdAt, updated_at AS updatedAt,
@@ -250,7 +250,7 @@ export async function getLatestRepositoryReviewCandidate(sessionId: string, data
             pull_request_state AS pullRequestState, pull_request_draft AS pullRequestDraft,
             pull_request_merged AS pullRequestMerged, pull_request_mergeable AS pullRequestMergeable,
             pull_request_mergeable_state AS pullRequestMergeableState, github_checks_passing AS githubChecksPassing,
-            review_ready_at AS reviewReadyAt, review_synced_at AS reviewSyncedAt,
+            review_ready_at AS reviewReadyAt, review_synced_at AS reviewSyncedAt, merge_locked_at AS mergeLockedAt,
             merge_commit_sha AS mergeCommitSha, merged_at AS mergedAt, cleanup_status AS cleanupStatus,
             cleanup_completed_at AS cleanupCompletedAt, branch_deleted_at AS branchDeletedAt, abandoned_at AS abandonedAt,
             status, created_by AS createdBy, created_at AS createdAt, updated_at AS updatedAt,
@@ -525,7 +525,7 @@ export async function getCandidateReviewMutationContext(
   const candidate = await database.prepare(
     `SELECT c.id AS candidateId, c.branch_name AS candidateBranch, c.base_branch AS baseBranch,
             c.candidate_sha AS candidateSha, c.remote_candidate_sha AS remoteCandidateSha,
-            c.integration_run_id AS integrationRunId,
+            c.integration_run_id AS integrationRunId, c.merge_locked_at AS mergeLockedAt,
             c.pull_request_number AS pullRequestNumber, c.pull_request_node_id AS pullRequestNodeId,
             c.pull_request_draft AS pullRequestDraft, CASE WHEN c.merged_at IS NOT NULL THEN 'merged' ELSE c.status END AS candidateStatus,
             rc.status AS connectionStatus, rc.installation_id AS installationId,
@@ -536,7 +536,7 @@ export async function getCandidateReviewMutationContext(
      WHERE c.session_id = ? AND c.status = 'active' AND c.abandoned_at IS NULL ORDER BY c.created_at DESC LIMIT 1`,
   ).bind(sessionId).first<{
     candidateId: string; candidateBranch: string; baseBranch: string; candidateSha: string | null; remoteCandidateSha: string | null;
-    integrationRunId: string | null;
+    integrationRunId: string | null; mergeLockedAt: number | null;
     pullRequestNumber: number | null; pullRequestNodeId: string | null; pullRequestDraft: number | boolean | null;
     candidateStatus: "active" | "merged"; connectionStatus: RepositoryConnectionStatus; installationId: string;
     repositoryId: string; repositoryOwner: string; repositoryName: string; repositoryFullName: string;
@@ -685,6 +685,23 @@ export async function markCandidateReviewDraft(
       `UPDATE repository_candidates SET pull_request_draft = 1, updated_at = ?
        WHERE id = ? AND session_id = ? AND status = 'active' AND merged_at IS NULL AND abandoned_at IS NULL`,
     ).bind(now, candidateId, sessionId),
+    database.prepare("UPDATE sessions SET floor_revision = floor_revision + 1, updated_at = ? WHERE id = ?").bind(now, sessionId),
+  ]);
+  return getFloorRevision(sessionId, database);
+}
+
+export async function setCandidateMergeLocked(
+  sessionId: string,
+  candidateId: string,
+  locked: boolean,
+  database = getDb(),
+): Promise<number> {
+  const now = Date.now();
+  await database.batch([
+    database.prepare(
+      `UPDATE repository_candidates SET merge_locked_at = ?, updated_at = ?
+       WHERE id = ? AND session_id = ? AND status = 'active' AND merged_at IS NULL AND abandoned_at IS NULL`,
+    ).bind(locked ? now : null, now, candidateId, sessionId),
     database.prepare("UPDATE sessions SET floor_revision = floor_revision + 1, updated_at = ? WHERE id = ?").bind(now, sessionId),
   ]);
   return getFloorRevision(sessionId, database);
