@@ -768,9 +768,14 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await owner.goto(owner.url().replace(/\/floor$/, ""));
   await owner.getByRole("button", { name: "End session", exact: true }).click();
   await owner.getByRole("dialog").getByRole("button", { name: "End session", exact: true }).click();
+  // Navigating straight to /home can abort the in-flight end-session request,
+  // leaving the session Active and absent from the Ended tab below. Wait for
+  // the lobby to actually show the ended state first.
+  await expect(owner.getByText("Ended session", { exact: true })).toBeVisible();
   await owner.goto("/home");
   await owner.getByRole("button", { name: /^Ended/ }).click();
   const disposableCard = owner.locator(".session-card", { hasText: "Disposable session" });
+  await expect(disposableCard).toBeVisible();
   await disposableCard.getByRole("button", { name: "Session actions" }).click();
   await disposableCard.getByRole("button", { name: "Delete" }).click();
   await owner.getByRole("dialog").getByRole("button", { name: "Delete session" }).click();
