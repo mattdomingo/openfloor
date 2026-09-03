@@ -117,6 +117,7 @@ export type RepositoryCandidate = {
   githubChecksPassing: boolean | null;
   reviewReadyAt: number | null;
   reviewSyncedAt: number | null;
+  mergeLockedAt: number | null;
   mergeCommitSha: string | null;
   mergedAt: number | null;
   cleanupStatus: "pending" | "complete" | "partial" | null;

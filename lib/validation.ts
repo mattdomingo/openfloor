@@ -31,6 +31,7 @@ export type AssignmentInput = { task: string | null };
 export type MessageInput = { text: string; recipientUserId: string | null; attachmentIds?: string[] };
 export type QueuePromptInput = { prompt: string; agentId: string | null };
 export type RoutingSettingsInput = { autoDispatch?: boolean; autoProvisionAgents?: boolean; autoAgentProvider?: CredentialProvider | null; autoResolveConflicts?: boolean; autoInjectFeedback?: boolean };
+export type MergeLockInput = { locked: boolean };
 export type ConflictInputRequest = { explanation: string; questions: string[] };
 export type ConflictAnswersInput = { answers: Array<{ questionId: string; answer: string }> };
 export type ConflictSelectionsInput = { snapshotRunId: string; selections: Array<{ path: string; hunkIndex: number; choice: "ours" | "theirs" | "both" }> };
@@ -224,6 +225,12 @@ export function parseRoutingSettingsInput(value: unknown): RoutingSettingsInput 
     ...(typeof input.autoResolveConflicts === "boolean" ? { autoResolveConflicts: input.autoResolveConflicts } : {}),
     ...(typeof input.autoInjectFeedback === "boolean" ? { autoInjectFeedback: input.autoInjectFeedback } : {}),
   };
+}
+
+export function parseMergeLockInput(value: unknown): MergeLockInput | null {
+  if (!value || typeof value !== "object") return null;
+  const locked = (value as Record<string, unknown>).locked;
+  return typeof locked === "boolean" ? { locked } : null;
 }
 
 export function parseConflictInputRequest(value: unknown): ConflictInputRequest | null {

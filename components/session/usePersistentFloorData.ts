@@ -203,6 +203,8 @@ export function usePersistentFloorData(sessionId: string, initialFloor: FloorSna
   }, [onMissing, request, sessionId]);
   const squashMergeReview = useCallback((deleteCandidateBranch: boolean) =>
     request("/review/merge", "POST", { deleteCandidateBranch }), [request]);
+  const setReviewMergeLocked = useCallback((locked: boolean) =>
+    request("/review/merge-lock", "PATCH", { locked }), [request]);
   const deleteReviewBranch = useCallback(() => request("/review/branch", "DELETE"), [request]);
   const abandonCandidate = useCallback((deleteBranch: boolean) =>
     request("/repository/candidate", "DELETE", { deleteBranch }), [request]);
@@ -251,6 +253,7 @@ export function usePersistentFloorData(sessionId: string, initialFloor: FloorSna
     unreadyReview,
     syncReview,
     squashMergeReview,
+    setReviewMergeLocked,
     deleteReviewBranch,
     abandonCandidate,
   }), [
@@ -295,6 +298,7 @@ export function usePersistentFloorData(sessionId: string, initialFloor: FloorSna
     unreadyReview,
     syncReview,
     squashMergeReview,
+    setReviewMergeLocked,
     deleteReviewBranch,
     abandonCandidate,
   ]);

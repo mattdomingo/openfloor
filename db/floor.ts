@@ -313,6 +313,7 @@ function buildRunReview(
     conflicts,
     updatedAt: Math.max(candidate.updatedAt, ...candidateRuns.map((run) => run.updatedAt), ...conflicts.map((conflict) => conflict.updatedAt), 0),
     githubChecksPassing: candidate.githubChecksPassing,
+    mergeLockedAt: candidate.mergeLockedAt,
     cleanupStatus: candidate.cleanupStatus,
     branchDeletedAt: candidate.branchDeletedAt,
     integrationRunId: candidate.integrationRunId,

@@ -13,6 +13,7 @@ import {
   parseRepositoryCandidateInput,
   parseRepositoryConnectionInput,
   parseRoutingSettingsInput,
+  parseMergeLockInput,
   parseConflictInputRequest,
   parseConflictAnswersInput,
   parseEarlyAccessWaitlistInput,
@@ -301,6 +302,13 @@ describe("credential connect input validation", () => {
 });
 
 describe("merge conflict input validation", () => {
+  it("requires an explicit boolean merge lock state", () => {
+    expect(parseMergeLockInput({ locked: true })).toEqual({ locked: true });
+    expect(parseMergeLockInput({ locked: false })).toEqual({ locked: false });
+    expect(parseMergeLockInput({})).toBeNull();
+    expect(parseMergeLockInput({ locked: "true" })).toBeNull();
+  });
+
   it("preserves omitted routing settings and requires at least one setting", () => {
     expect(parseRoutingSettingsInput({ autoResolveConflicts: false })).toEqual({ autoResolveConflicts: false });
     expect(parseRoutingSettingsInput({ autoDispatch: true, autoResolveConflicts: false })).toEqual({ autoDispatch: true, autoResolveConflicts: false });
