@@ -34,6 +34,9 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     return mutationErrorResponse(error);
   }
   if (!context) return Response.json({ error: "Session not found" }, { status: 404 });
+  if (context.mergeLockedAt) {
+    return Response.json({ error: "Squash merge is locked for this candidate" }, { status: 409 });
+  }
   if (context.integrationRunId) {
     return Response.json({ error: "The candidate is still being updated", runId: context.integrationRunId }, { status: 409 });
   }

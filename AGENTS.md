@@ -101,7 +101,7 @@ Production code must not seed, fabricate, or animate agents, prompts, messages, 
 
 openfloor has three intentionally separate state classes:
 
-1. **D1-authoritative application state**: users, early-access grants/revocations and waitlist records, Stripe entitlement projections, sessions, memberships, invites, objective, routing settings, agents, assignments, messages, queue items, queue prompts, ordering, agent-run rollback groups/attempts, merge-conflict cases/attempts/questions, durable private-storage cleanup intents, and floor revision. The early-access Google Sheet is an operations mirror only; Stripe remains authoritative for the external subscription lifecycle; D1 owns the product-facing projection.
+1. **D1-authoritative application state**: users, early-access grants/revocations and waitlist records, Stripe entitlement projections, sessions, memberships, invites, objective, routing settings, agents, assignments, messages, queue items, queue prompts, ordering, candidate merge locks, agent-run rollback groups/attempts, merge-conflict cases/attempts/questions, durable private-storage cleanup intents, and floor revision. The early-access Google Sheet is an operations mirror only; Stripe remains authoritative for the external subscription lifecycle; D1 owns the product-facing projection.
 2. **Durable Object-coordinated ephemeral state**: online connections and teammate prompt drafts. This state is realtime but is not D1 history.
 3. **Local UI state**: selected tabs, panel order and size, collapsed or expanded panels, queue filters, menus, dialogs, the current onboarding step and its unsaved profile/plan inputs, and the local visibility choice for teammate drafts.
 
