@@ -56,11 +56,9 @@ describe("Cloudflare Access identity", () => {
     )).resolves.toBeNull();
   });
 
-  it("trusts a token minted for either tag when CF_ACCESS_AUD lists two apps", async () => {
-    // Production splits protected paths across two self-hosted Access
-    // applications on one hostname (five-destination cap per app — see
-    // AGENTS.md "Authentication and identity"), so a page request and its
-    // first /api call can carry JWTs for two different AUD tags.
+  it("trusts a token minted for either configured audience during rotation or an application split", async () => {
+    // Production currently has one Access application. Multi-audience support
+    // keeps audience rotation and a temporary application split compatible.
     // A distinct team domain from the other test in this file: identity.ts
     // caches the remote JWKS by URL for production reuse, and reusing the
     // same domain here would resolve against a stale keyset from that test.

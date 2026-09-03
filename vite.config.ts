@@ -1,5 +1,6 @@
 import vinext from "vinext";
 import { defineConfig } from "vite";
+import type { WorkerConfig } from "@cloudflare/vite-plugin";
 import hostingConfig from "./.openai/hosting.json";
 import { sites } from "./build/sites-vite-plugin";
 
@@ -9,6 +10,7 @@ const { r2 } = hostingConfig;
 const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === "seatbelt";
 const isE2ePreview = process.env.OPENFLOOR_E2E_PREVIEW === "true";
 const e2eStatePath = process.env.OPENFLOOR_E2E_STATE_PATH;
+const buildEnvironment = process.env.OPENFLOOR_BUILD_ENV;
 const e2eVarNames = [
   "INVITE_SIGNING_SECRET",
   "GITHUB_APP_ID",
@@ -72,6 +74,16 @@ export default defineConfig(async () => {
 
   // Wrangler snapshots its log path while the Cloudflare plugin is imported.
   const { cloudflare } = await import("@cloudflare/vite-plugin");
+  if (buildEnvironment && buildEnvironment !== "development") {
+    throw new Error(`Unsupported OPENFLOOR_BUILD_ENV: ${buildEnvironment}`);
+  }
+  // The Cloudflare Vite plugin emits only one flattened Worker config and does
+  // not carry wrangler.jsonc's named environments into dist/. Resolve the named
+  // target through Wrangler itself, then give that effective config to Vite so
+  // the artifact deployed by CI contains no ambiguous environment selection.
+  const deploymentBindingConfig = buildEnvironment === "development"
+    ? await developmentBindingConfig()
+    : localBindingConfig;
 
   return {
     server: isCodexSeatbeltSandbox
@@ -92,8 +104,41 @@ export default defineConfig(async () => {
           }
         : {
             viteEnvironment: { name: "rsc", childEnvironments: ["ssr"] },
-            config: localBindingConfig,
+            config: deploymentBindingConfig,
           }),
     ],
   };
 });
+
+async function developmentBindingConfig() {
+  const { unstable_readConfig: readWranglerConfig } = await import("wrangler");
+  const config = readWranglerConfig({
+    config: "./wrangler.jsonc",
+    env: "development",
+  });
+
+  const targetConfig = {
+    name: config.name,
+    compatibility_date: config.compatibility_date,
+    compatibility_flags: config.compatibility_flags,
+    main: config.main,
+    triggers: config.triggers,
+    durable_objects: config.durable_objects,
+    migrations: config.migrations,
+    containers: config.containers,
+    workflows: config.workflows,
+    vars: config.vars,
+    r2_buckets: config.r2_buckets,
+    routes: config.routes,
+    assets: config.assets,
+    images: config.images,
+    d1_databases: config.d1_databases,
+  };
+
+  // Returning a partial config makes the plugin append binding arrays to the
+  // top-level production arrays. Mutating the supplied config replaces those
+  // arrays, which is the environment isolation Wrangler itself resolves.
+  return (pluginConfig: WorkerConfig) => {
+    Object.assign(pluginConfig, targetConfig);
+  };
+}

@@ -12,7 +12,7 @@
 | `/app/early-access/unlock` | `/early-access/unlock` | Public POST | Verify the server-side passcode; grant an authenticated account or set the 15-minute signed admission cookie and begin Cloudflare sign-in. |
 | `/app/early-access/complete` | `/early-access/complete` | Public/auth-return | Consume the pending cookie after Cloudflare identity, bind access to the account, clear the cookie, and continue to onboarding or a validated return path. |
 | `/app/home` | `/home` | Protected | Sessions where the current user is a member; session creation. |
-| `/app/home/settings` | `/home/settings` | Protected | Account settings: profile, plan and usage, connections, preferences, and account deletion. The account menu supplies an optional membership-checked `from` path so the header can return to the originating home/session/floor page. Nested under `/home` (not its own top-level route) so it shares the `home*` Access destination — see "Authentication and identity". |
+| `/app/home/settings` | `/home/settings` | Protected | Account settings: profile, plan and usage, connections, preferences, and account deletion. The account menu supplies an optional membership-checked `from` path so the header can return to the originating home/session/floor page. |
 | `/app/onboarding` | `/onboarding` | Protected | Two-step first-login setup: profile + required GitHub App installation together, then optional AI provider connections. Every signup is enrolled on Free automatically — the plan step is hidden for now (2026-08-27 decision). Gates `/home`, `/join/*`, and `/session/*` until final submission. |
 | `/app/join/[token]` | `/join/[token]` | Protected | Valid invite preview followed by explicit acceptance. |
 | `/app/session/[id]` | `/session/[id]` | Protected/member-only | Session lobby, roster, invite controls, leave, and floor entry. |
@@ -24,12 +24,19 @@
 
 ## Important behavior (route-level invariants)
 
+“Protected” in this table means the application requires a verified Access
+identity; it does not mean every page is a Cloudflare Access destination. The
+dashboard destinations are only `/auth/complete` and `/api/*`. Real pages verify
+the signed `CF_Authorization` cookie after sign-in anchors on `/auth/complete`.
+
 - The landing page owns no password, OAuth callback, or application login session.
 - `/early-access` owns no identity session: the passcode is a product-admission credential, stored only as a Cloudflare secret, while Cloudflare Access remains the identity provider. Waitlist and unlock POSTs share the Worker's same-origin mutation guard and every early-access response is `no-store`.
 - With `EARLY_ACCESS_GATE_ENABLED=true`, onboarding, home, settings, invitation, session, API, desktop-bootstrap, and WebSocket entry all require an active D1 grant. Disabling the flag restores pre-gate behavior without removing forms or data.
 - `/onboarding`, `/home`, `/home/settings`, and the session lobby share the Archivo/shop-palette `shop-shell` visual system and wave field. Route-specific layout stays under `.onboarding-shell`, `.settings-shell`, or `.session-lobby-shell`; `/join` retains its established styling. `/floor` keeps its own `legacy-floor-*` layout and components, but resolves its tokens onto the same shop palette via a `.app-shell`-scoped block in `tokens.css` — see the Styling section below.
 - `/home/settings?from=` is local navigation state, not authority: only `/home` or a current member-visible `/session/[id]` or `/session/[id]/floor` is accepted, and every invalid, stale, or non-member origin falls back to `/home` without revealing the session.
-- Clicking Sign in navigates to a protected path; Cloudflare Access performs the login and returns the browser.
+- Clicking Sign in anchors on the Access-protected `/auth/complete` path;
+  Cloudflare Access performs the login and returns the browser to the requested
+  page.
 - `/signout` is the production sign-out endpoint (an application route, not Cloudflare's own `/cdn-cgi/access/logout` — see "Authentication and identity" for why).
 - A join page reveals session title and owner only after authentication and only for a valid, active signed token.
 - Opening a join URL does not change membership. The user must click Join.

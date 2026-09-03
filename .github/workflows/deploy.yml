@@ -1,6 +1,6 @@
-# Pull requests run the complete test pipeline. Every push to main repeats the
-# same gate before the documented migration/build/deploy sequence (AGENTS.md
-# "Deployment order"). Merging to main IS the deploy authorization.
+# Pull requests validate without mutating Cloudflare. Pushes to the permanent
+# release branch deploy development; pushes to main deploy production. Merging
+# release to main (or an explicit hotfix PR) is production authorization.
 name: CI and Deploy
 
 permissions:
@@ -9,19 +9,42 @@ permissions:
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [release, main]
 
-# One production deploy at a time, in order. Superseded PR runs may stop, but a
-# main run never cancels once it could reach migration/deploy.
+# A deployment is never cancelled after it may have applied migrations. Newer
+# pull-request validation may replace an older run for the same PR.
 concurrency:
-  group: ${{ github.event_name == 'push' && 'production-deploy' || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'push' && github.ref_name || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  deploy:
+  validate:
+    name: Validate
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
+      - name: Enforce pull-request branch boundaries
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_BRANCH: ${{ github.base_ref }}
+          HEAD_BRANCH: ${{ github.head_ref }}
+        run: |
+          case "$BASE_BRANCH" in
+            release) ;;
+            main)
+              case "$HEAD_BRANCH" in
+                release|hotfix/*) ;;
+                *)
+                  echo "Pull requests to main must come from release or hotfix/*."
+                  exit 1
+                  ;;
+              esac
+              ;;
+            *)
+              echo "Pull requests must target release, except release promotions or hotfix/* pull requests to main."
+              exit 1
+              ;;
+          esac
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
@@ -30,8 +53,7 @@ jobs:
           node-version: 22
           cache: npm
       # The npm bundled with the setup-node node-22 image mis-validates optional
-      # peerDependencies against package-lock.json (reports them "missing" even
-      # though npm install leaves the lockfile untouched). npm 11 fixes this.
+      # peerDependencies against package-lock.json. npm 11 fixes this.
       - run: npm install -g npm@11.19.1
       - run: npm ci
       - run: npm audit --omit=dev
@@ -48,25 +70,74 @@ jobs:
           npm run test:migrations
           npm run test:worker
           npm run test:render
-          # test:render leaves the real production artifact in dist/. Verify it
-          # on pull requests too, before the browser gate replaces it with E2E.
-          npm run verify:deploy-artifact
+          # test:render leaves the production artifact in dist/. Verify it,
+          # build and verify development, then let E2E replace dist/.
+          npm run verify:deploy-artifact -- production
+          npm run build:development
+          npm run verify:deploy-artifact -- development
       - name: Run browser test gate
         run: npm run test:e2e
-      - run: npx wrangler d1 migrations apply DB --remote
-        if: github.event_name == 'push'
+
+  deploy-development:
+    name: Deploy development
+    needs: validate
+    if: github.event_name == 'push' && github.ref == 'refs/heads/release'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment:
+      name: development
+      url: https://dev.app.opnflr.com
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm install -g npm@11.19.1
+      - run: npm ci
+      - name: Apply development migrations
+        run: npx wrangler d1 migrations apply DB --env development --remote
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      - run: npm run build:development
+      - run: npm run verify:deploy-artifact -- development
+      - name: Deploy development Worker
+        run: npx wrangler deploy --config dist/server/wrangler.json --message "git:${{ github.sha }}"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+  deploy-production:
+    name: Deploy production
+    needs: validate
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment:
+      name: production
+      url: https://app.opnflr.com
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm install -g npm@11.19.1
+      - run: npm ci
+      - name: Apply production migrations
+        run: npx wrangler d1 migrations apply DB --remote
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       - run: npm run build
-        if: github.event_name == 'push'
-      # The browser gate rebuilds dist/ with the E2E Wrangler config, whose vars
-      # enable test identity headers. Refuse to deploy anything but the freshly
-      # rebuilt production artifact.
-      - run: npm run verify:deploy-artifact
-        if: github.event_name == 'push'
-      - run: npx wrangler deploy --config dist/server/wrangler.json
-        if: github.event_name == 'push'
+      - run: npm run verify:deploy-artifact -- production
+      - name: Deploy production Worker
+        run: npx wrangler deploy --config dist/server/wrangler.json --message "git:${{ github.sha }}"
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

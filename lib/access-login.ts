@@ -27,14 +27,24 @@ export type AccessLoginTargetOptions = {
   testHtml?: string | null;
 };
 
+const PRODUCTION_APP_ORIGIN = "https://app.opnflr.com";
+
+export function accessLoginUrl(destination: string, configuredOrigin?: string): string {
+  const origin = new URL(configuredOrigin ?? PRODUCTION_APP_ORIGIN);
+  if (origin.protocol !== "https:" || origin.pathname !== "/" || origin.search || origin.hash) {
+    throw new Error("OPENFLOOR_RUNTIME_ORIGIN must be an HTTPS origin");
+  }
+  return new URL(destination, origin).toString();
+}
+
 // `meta` is a signed JWT Cloudflare mints fresh per request with a 300-second
 // lifetime (confirmed live), so this can never be cached — call it once per
-// /signin render. `loginUrl` is expected to be this Worker's own
-// app.opnflr.com origin (a Custom Domain, which — unlike a plain zone
-// Route — Cloudflare Workers can fetch from within the same zone; confirmed
-// against Cloudflare's own docs) for a real Access-protected path, so the
-// request is intercepted by Access at the edge exactly as a browser's would
-// be, redirecting through to the hosted login page.
+// /signin render. `loginUrl` is expected to be this Worker's configured public
+// origin (app.opnflr.com or dev.app.opnflr.com). Both are Custom Domains,
+// which — unlike a plain zone Route — Cloudflare Workers can fetch from within
+// the same zone. The /auth/complete destination is intercepted by Access at
+// the edge exactly as a browser's request would be and redirects to the hosted
+// login page.
 export async function fetchAccessLoginTarget(
   loginUrl: string,
   teamDomain: string | null,

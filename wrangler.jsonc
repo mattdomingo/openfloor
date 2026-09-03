@@ -171,5 +171,124 @@
 			"database_id": "1e5059bf-1f7b-4be8-8ea4-c424a191070a",
 			"migrations_dir": "drizzle"
 		}
-	]
+	],
+	// The permanent release branch deploys through this named environment. Every
+	// non-inherited/stateful binding is repeated deliberately so a development
+	// deploy cannot read or mutate production state. Runtime secrets are also
+	// environment-scoped and are configured separately in Cloudflare.
+	"env": {
+		"development": {
+			"name": "openfloor-development",
+			"triggers": {
+				"crons": [
+					"0 4 * * *",
+					"*/10 * * * *"
+				]
+			},
+			"durable_objects": {
+				"bindings": [
+					{
+						"name": "SESSION_PRESENCE",
+						"class_name": "SessionPresence"
+					},
+					{
+						"name": "SESSION_ROUTER",
+						"class_name": "SessionRouter"
+					},
+					{
+						"name": "SANDBOX",
+						"class_name": "Sandbox"
+					}
+				]
+			},
+			"migrations": [
+				{
+					"tag": "v1",
+					"new_sqlite_classes": [
+						"SessionPresence"
+					]
+				},
+				{
+					"tag": "v2",
+					"new_sqlite_classes": [
+						"Sandbox"
+					]
+				},
+				{
+					"tag": "v3",
+					"new_sqlite_classes": [
+						"SessionRouter"
+					]
+				}
+			],
+			"containers": [
+				{
+					"class_name": "Sandbox",
+					"image": "./Dockerfile.sandbox",
+					"instance_type": "standard-2",
+					"max_instances": 12
+				}
+			],
+			"workflows": [
+				{
+					"name": "openfloor-development-repository-preflight",
+					"binding": "REPOSITORY_PREFLIGHT",
+					"class_name": "RepositoryPreflightWorkflow"
+				},
+				{
+					"name": "openfloor-development-agent-run",
+					"binding": "AGENT_RUN_WORKFLOW",
+					"class_name": "AgentRunWorkflow"
+				}
+			],
+			"vars": {
+				"SANDBOX_TRANSPORT": "rpc",
+				"OPENFLOOR_RUNTIME_ORIGIN": "https://dev.app.opnflr.com",
+				"PREFLIGHT_ENABLED": "false",
+				// Development execution is an explicit second rollout after its
+				// isolated credentials, GitHub App, and runtime acceptance are live.
+				"AGENT_RUN_ENABLED": "false",
+				// Never accept production payments from the development deployment.
+				// A later test-mode Stripe rollout may deliberately enable this.
+				"STRIPE_CHECKOUT_ENABLED": "false",
+				"CLAUDE_RUN_ENABLED": "true",
+				"KIMI_RUN_ENABLED": "true",
+				"GEMINI_RUN_ENABLED": "true",
+				"GLM_RUN_ENABLED": "false",
+				"QWEN_RUN_ENABLED": "false",
+				"DEEPSEEK_RUN_ENABLED": "false",
+				// Access still authenticates the development hostname; the separate
+				// D1 admission gate starts open so setup does not copy production grants.
+				"EARLY_ACCESS_GATE_ENABLED": "false",
+				"ACCESS_CUSTOM_LOGIN_ENABLED": "true"
+			},
+			"r2_buckets": [
+				{
+					"binding": "PREFLIGHT_LOGS",
+					"bucket_name": "openfloor-development-preflight-logs"
+				},
+				{
+					"binding": "USER_AVATARS",
+					"bucket_name": "openfloor-development-user-avatars"
+				}
+			],
+			"routes": [
+				{
+					"pattern": "dev.app.opnflr.com",
+					"custom_domain": true
+				}
+			],
+			"images": {
+				"binding": "IMAGES"
+			},
+			"d1_databases": [
+				{
+					"binding": "DB",
+					"database_name": "openfloor-development",
+					"database_id": "fe7e3046-8cd8-4aae-a226-87534b2d9f15",
+					"migrations_dir": "drizzle"
+				}
+			]
+		}
+	}
 }

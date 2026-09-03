@@ -71,46 +71,74 @@ for the capture boundary, outputs, and voiceover.
 
 ## Cloudflare Access
 
-Production authentication is provided by Cloudflare Access, applied as an **explicit allowlist of protected paths, not a protect-everything-then-bypass setup**. A path Cloudflare Access has no destination for is not specially exempted — it simply never goes through Access and reaches the Worker directly. That's what keeps the public landing page (`/`), early-access flow (`/early-access*`), static assets, `/webhooks/*`, and `/runtime/*` public: none of them are listed in any Access application. (A blank or `*` Path is *not* a way to scope a destination to "just the root" — per Cloudflare's own docs, `example.com` and `example.com/*` are equivalent and both mean the hostname plus everything beneath it. There is no root-only destination syntax.)
+Production authentication uses one self-hosted Cloudflare Access application
+with two destinations: `app.opnflr.com/api/*` and
+`app.opnflr.com/auth/complete`. Its current Allow policy includes `Everyone`;
+GitHub and One-time PIN establish identity, while the D1 early-access gate and
+session membership enforce product admission.
 
-Self-hosted applications cap at five destinations each, and there are six protected paths, so this uses two applications sharing one policy — attach the existing policy to the second app via "Add existing policy" rather than duplicating it:
+Real pages are intentionally outside Access. A sign-in passes through the
+protected `/auth/complete` anchor to mint `CF_Authorization`; the Worker then
+verifies that signed cookie on page requests. `/api/*` is protected directly and
+normally receives Access's assertion header. The landing page, early-access and
+sign-in routes, static assets, webhooks, and runtime endpoints remain outside
+Access and enforce their own relevant trust boundaries.
 
-- App 1 ("OpenFloor authenticated users"): `app.opnflr.com/home`, `app.opnflr.com/settings`, `app.opnflr.com/onboarding`, `app.opnflr.com/session/*`, `app.opnflr.com/join/*`
-- App 2 (same policy attached): `app.opnflr.com/api/*`
-
-This path list is manually maintained in the Access applications, not covered by a wildcard — every new protected page needs its path added to whichever app has room (or a new app sharing the policy) here (and in the two copies of this list in `AGENTS.md` and `docs/github-production.md`) in the same change, or the page bounces every visitor back to sign-in.
-
-Check Zero Trust → Settings → "Require Access Protection" is off. If it's on, an unmatched hostname/path is blocked (error 1050) instead of passed through, which breaks the "unlisted = public" assumption this setup relies on.
-
-App 2's only destination is a wildcard path, so its App Launcher tile would otherwise be the literal, unroutable `app.opnflr.com/api/*`. Turn off App 2's **Experience settings → "Show application in App Launcher"** so the launcher only ever offers App 1's real tile. Also leave **Cookie Path Attribute** off on both apps, or moving between App 1's paths and App 2's forces re-authentication on every crossing.
-
-Enable Google and One-time PIN as identity providers. The application policy determines who may authenticate; session membership and invite acceptance remain enforced by openfloor.
+Keep Zero Trust's **Require Access Protection** setting off and **Cookie Path
+Attribute** off. Hide the application from the App Launcher unless its launcher
+target is a real page. Development uses the same two-destination topology on
+`dev.app.opnflr.com`, but its policy allows only developers/testers—not
+`Everyone`. See [`docs/cloudflare-access-config.md`](docs/cloudflare-access-config.md).
 
 Sign out through the app's own `/signout` route, not Cloudflare's `/cdn-cgi/access/logout` directly — neither Access logout endpoint accepts a return URL, and the app-domain one alone leaves the team-domain global session (and therefore silent re-authentication on the next sign-in) intact. `/signout` clears the app-domain cookie and hands off to the team-domain logout itself.
 
-Copy the Access team domain and both applications' Audience (AUD) tags into Worker secrets:
+Copy the Access team domain and the target application's Audience (AUD) tag into
+Worker secrets:
 
 ```bash
 npx wrangler secret put CF_ACCESS_TEAM_DOMAIN
 npx wrangler secret put CF_ACCESS_AUD
 ```
 
-`CF_ACCESS_TEAM_DOMAIN` must be the full origin, for example `https://your-team.cloudflareaccess.com`. `CF_ACCESS_AUD` is comma-separated, one tag per Access application, e.g. `app-1-aud,app-2-aud` — a page load and its first `/api` call can each carry a JWT minted for a different app. The Worker validates the Access JWT signature, issuer, audience (against either tag), and expiry before forwarding trusted identity to the application.
+`CF_ACCESS_TEAM_DOMAIN` must be the full origin, for example
+`https://your-team.cloudflareaccess.com`. `CF_ACCESS_AUD` is the environment's
+single Access Audience tag. The Worker validates signature, issuer, audience,
+and expiry before forwarding trusted identity to the application.
 
-## Test and deploy
+## Release and deploy
+
+Normal work targets the permanent `release` branch, which deploys the isolated
+development environment at `https://dev.app.opnflr.com`. A reviewed
+`release` → `main` merge deploys production at `https://app.opnflr.com`.
+Production hotfixes alone branch from and target `main`, then merge back into
+`release`. One-time Cloudflare/GitHub setup, branch protections, SemVer tagging,
+and rollback instructions are in [`docs/release-process.md`](docs/release-process.md).
+
+Manual development deployment:
 
 ```bash
 npm audit --omit=dev
 npm test
-npx wrangler d1 migrations apply openfloor-production --remote
-npm run build
-npm run verify:deploy-artifact
+npx wrangler d1 migrations apply DB --env development --remote
+npm run build:development
+npm run verify:deploy-artifact -- development
 npx wrangler deploy --config dist/server/wrangler.json
 ```
 
-The production dependency audit and full test pipeline must pass before applying D1 migrations; apply migrations before deploying the Worker revision. `npm run test:e2e` rebuilds `dist/` with the E2E Wrangler config, so always rebuild and run `npm run verify:deploy-artifact` — it requires the exact production worker, route, D1 database ID, reviewed agent-run rollout value, and absence of test-only vars. Pull requests verify the production artifact before E2E replaces it, while pushes to `main` rebuild and verify again before deployment. See [`docs/agent-backend-gaps.md`](docs/agent-backend-gaps.md) for the intentional boundary between the persistent collaboration backend and future agent execution.
+Manual production deployment:
 
-The deployment expects `DB`, `SESSION_PRESENCE`, `REPOSITORY_PREFLIGHT`, `AGENT_RUN_WORKFLOW`, `SANDBOX`, `PREFLIGHT_LOGS`, `USER_AVATARS`, `IMAGES`, and `ASSETS` bindings configured in `wrangler.jsonc`. It also requires the existing identity/GitHub secrets plus `EARLY_ACCESS_PASSWORD`, `WAITLIST_SHEET_WEBHOOK_URL`, `WAITLIST_SHEET_WEBHOOK_SECRET`, `RUNTIME_GATEWAY_SECRET`, `OPENAI_API_KEY`, `CREDENTIAL_ENCRYPTION_KEY`, the optional `ANTHROPIC_API_KEY` fallback, and the Stripe secrets documented in [`docs/stripe-billing.md`](docs/stripe-billing.md). Docker must be running when Wrangler builds or deploys the pinned Sandbox image, and the Cloudflare account must have Workers Paid/Containers access. Keep each rollout gate disabled until its service, credential, and security prerequisites are live.
+```bash
+npm audit --omit=dev
+npm test
+npx wrangler d1 migrations apply DB --remote
+npm run build
+npm run verify:deploy-artifact -- production
+npx wrangler deploy --config dist/server/wrangler.json
+```
+
+The full gate must pass before either environment's D1 migrations. `npm run test:e2e` rebuilds `dist/` with the E2E Wrangler config, so always rebuild and run the target-specific artifact verifier before deploying. It pins the Worker, route, exact D1 database, private R2 buckets, Workflows, runtime origin, rollout values, and absence of test variables. Pull requests validate without deployment; pushes to `release` deploy development and pushes to `main` deploy production through separate GitHub environments. See [`docs/agent-backend-gaps.md`](docs/agent-backend-gaps.md) for the product boundary around agent execution.
+
+Each environment expects `DB`, `SESSION_PRESENCE`, `REPOSITORY_PREFLIGHT`, `AGENT_RUN_WORKFLOW`, `SANDBOX`, `PREFLIGHT_LOGS`, `USER_AVATARS`, `IMAGES`, and `ASSETS`. Production and development must use isolated stateful bindings and runtime secrets. Docker must be running when Wrangler builds or deploys the pinned Sandbox image, and the Cloudflare account must have Workers Paid/Containers access. Keep each rollout gate disabled until that environment's service, credential, and acceptance prerequisites are live.
 
 ## Project direction
 
