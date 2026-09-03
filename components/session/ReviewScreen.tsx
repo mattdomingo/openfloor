@@ -1,12 +1,12 @@
 "use client";
 
-import { memo, useEffect, useMemo, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
+import { memo, useEffect, useMemo, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, Fragment } from "react";
 import { LocalDateTime } from "@/components/LocalDateTime";
 import type { FloorMessage, FloorParticipant, FloorReviewSnapshot, ReviewContribution, ReviewContributor, ReviewContributorFacet, SessionFile } from "@/lib/floor-types";
 import type { RepositoryTreeEntry } from "@/lib/github";
 import type { RepositoryConnection } from "@/lib/session-types";
 import { agentTone } from "./data";
-import { HoverTip, Icon, SegmentedControl, useDialogDismiss, useHoverTip } from "./primitives";
+import { HoverTip, Icon, PersonName, SegmentedControl, useDialogDismiss, useHoverTip } from "./primitives";
 import { Markdown } from "./Markdown";
 import { TeamChat } from "./TeamChat";
 import type { RollbackIntent } from "./RollbackImpactDialog";
@@ -111,6 +111,7 @@ export const ReviewScreen = memo(function ReviewScreen({ sessionId, revision, re
   const refreshTip = useHoverTip();
   const lockTip = useHoverTip();
   const mergeTip = useHoverTip();
+  const filePathTip = useHoverTip();
 
   // Auto-refresh the review pull request state from GitHub when mounting the review screen
   // if an active PR exists (ENG-review-auto-sync).
@@ -311,7 +312,7 @@ export const ReviewScreen = memo(function ReviewScreen({ sessionId, revision, re
   </aside>;
 
   const centerPane = selectedChangedFile ? (
-    <section className="review-pane review-diff" aria-label="Diff preview"><div className="review-pane-head"><h3>{selectedChangedFile.path}</h3><FileAttribution contributors={selectedChangedFile.contributors} expanded /></div><ContributionCards source={fileContributions} onOpen={(runId) => { setSelectedPromptRunId(runId); setContributionStatus("active"); setBrowseOverride("prompts"); }} onRollback={(runId) => onRequestRollback({ scope: "prompt", subjectId: runId })} />{selectedChangedFile.summary && <Markdown className="review-summary">{selectedChangedFile.summary}</Markdown>}{selectedChangedFile.diff.length > 0 ? <pre className="review-code" aria-label={`Diff preview for ${selectedChangedFile.path}`}>{selectedChangedFile.diff.map((line, index) => <span key={`${index}-${line.text}`} className="review-line" data-type={line.type}><i>{line.type === "add" ? "+" : line.type === "remove" ? "−" : " "}</i><code>{line.text}</code></span>)}</pre> : <p className="review-empty">No diff preview available.</p>}</section>
+    <section className="review-pane review-diff" aria-label="Diff preview"><div className="review-pane-head"><h3 tabIndex={0} aria-label={selectedChangedFile.path} {...filePathTip.handlers}>{selectedChangedFile.path.split("/").pop()}</h3><FileAttribution contributors={selectedChangedFile.contributors} expanded /><HoverTip position={filePathTip.position}>{selectedChangedFile.path}</HoverTip></div><ContributionCards source={fileContributions} onOpen={(runId) => { setSelectedPromptRunId(runId); setContributionStatus("active"); setBrowseOverride("prompts"); }} onRollback={(runId) => onRequestRollback({ scope: "prompt", subjectId: runId })} />{selectedChangedFile.summary && <Markdown className="review-summary">{selectedChangedFile.summary}</Markdown>}{selectedChangedFile.diff.length > 0 ? <pre className="review-code" aria-label={`Diff preview for ${selectedChangedFile.path}`}>{selectedChangedFile.diff.map((line, index) => <span key={`${index}-${line.text}`} className="review-line" data-type={line.type}><i>{line.type === "add" ? "+" : line.type === "remove" ? "−" : " "}</i><code>{line.text}</code></span>)}</pre> : <p className="review-empty">No diff preview available.</p>}</section>
   ) : selectedRepoPath ? (
     <section className="review-pane review-diff review-file-pane" aria-label="File preview"><div className="review-pane-head"><h3>{selectedRepoPath}</h3></div>{
       selectedRepoFileState === "idle" || selectedRepoFileState === "loading" ? <p className="review-empty">Loading file…</p>
@@ -461,8 +462,9 @@ function contributionPreview(contribution: ReviewContribution) {
   return contribution.prompts.map((prompt) => prompt.text).join(" · ");
 }
 
-function engineerNames(contribution: ReviewContribution) {
-  return [...new Set(contribution.prompts.map((prompt) => prompt.authorName))].join(", ");
+function EngineerNames({ contribution }: { contribution: ReviewContribution }) {
+  const names = [...new Set(contribution.prompts.map((prompt) => prompt.authorName))];
+  return names.map((name, index) => <Fragment key={name}>{index > 0 ? ", " : ""}<PersonName name={name} /></Fragment>);
 }
 
 function ContributionCards({ source, onOpen, onRollback }: {
@@ -475,7 +477,7 @@ function ContributionCards({ source, onOpen, onRollback }: {
   if (source.items.length === 0) return <p className="review-empty">No active prompt attribution for this file.</p>;
   return <div className="review-contribution-cards" aria-label="Prompt contributions">
     {source.items.map((contribution) => <details key={contribution.runId} className="review-contribution-card">
-      <summary><span><strong>{contribution.agentName}</strong><small>{engineerNames(contribution)}</small></span><span className="queue-chip" data-kind="status" data-status={contribution.rollbackStatus ?? "active"}>{contributionLabel(contribution)}</span></summary>
+      <summary><span><strong>{contribution.agentName}</strong><small><EngineerNames contribution={contribution} /></small></span><span className="queue-chip" data-kind="status" data-status={contribution.rollbackStatus ?? "active"}>{contributionLabel(contribution)}</span></summary>
       <p>{contributionPreview(contribution)}</p>
       {contribution.rollbackStatus === "failed" && contribution.rollbackFailureReason && <p className="review-empty" role="alert">{contribution.rollbackFailureReason}</p>}
       <div className="review-contribution-actions"><button type="button" className="button" data-size="sm" onClick={() => onOpen(contribution.runId)}>View prompt changes</button>{contribution.canRollback && <button type="button" className="button danger-button" data-size="sm" onClick={() => onRollback(contribution.runId)}>Remove changes</button>}</div>
@@ -493,9 +495,9 @@ function PromptContributionDetail({ detail, status, onRollback }: {
   const contribution = detail.contribution;
   if (!contribution) return <section className="review-pane review-prompt-detail"><div className="review-empty-state"><Icon name="file" size={22} /><h2>Select a prompt</h2><p>Choose a prompt group to inspect its original historical diff.</p></div></section>;
   return <section className="review-pane review-prompt-detail" aria-label="Prompt contribution detail">
-    <div className="review-pane-head"><div><h3>{contribution.prompts.length === 1 ? "Prompt changes" : `${contribution.prompts.length} merged prompts`}</h3><small>{contribution.agentName} · {engineerNames(contribution)}</small></div><span className="queue-chip" data-kind="status" data-status={contribution.rollbackStatus ?? "active"}>{contributionLabel(contribution)}</span></div>
+    <div className="review-pane-head"><div><h3>{contribution.prompts.length === 1 ? "Prompt changes" : `${contribution.prompts.length} merged prompts`}</h3><small>{contribution.agentName} · <EngineerNames contribution={contribution} /></small></div><span className="queue-chip" data-kind="status" data-status={contribution.rollbackStatus ?? "active"}>{contributionLabel(contribution)}</span></div>
     <div className="review-prompt-detail-body">
-      <ol className="review-prompt-copy">{contribution.prompts.map((prompt) => <li key={prompt.id}><strong>{prompt.authorName}</strong><p>{prompt.text}</p><small><LocalDateTime timestamp={prompt.createdAt} /></small></li>)}</ol>
+      <ol className="review-prompt-copy">{contribution.prompts.map((prompt) => <li key={prompt.id}><strong><PersonName name={prompt.authorName} /></strong><p>{prompt.text}</p><small><LocalDateTime timestamp={prompt.createdAt} /></small></li>)}</ol>
       {contribution.rollbackStatus === "failed" && contribution.rollbackFailureReason && <p className="review-empty" role="alert">{contribution.rollbackFailureReason}</p>}
       {status === "active" && contribution.canRollback && <div className="review-prompt-detail-actions"><button type="button" className="button danger-button" onClick={() => onRollback({ scope: "prompt", subjectId: contribution.runId })}>Remove changes</button></div>}
       <div className="review-historical-files"><span className="label">Original historical diff</span>{contribution.files.length === 0 ? <p className="review-empty">No historical diff was recorded.</p> : contribution.files.map((file) => <details key={file.id} open className="review-historical-file"><summary><code>{file.path}</code><span className="diff-stat"><i className="add">+{file.additions}</i><i className="del">−{file.deletions}</i></span></summary>{file.summary && <p className="review-summary">{file.summary}</p>}{file.diff && file.diff.length > 0 ? <pre className="review-code" aria-label={`Historical diff for ${file.path}`}>{file.diff.map((line, index) => <span key={`${index}-${line.text}`} className="review-line" data-type={line.type}><i>{line.type === "add" ? "+" : line.type === "remove" ? "−" : " "}</i><code>{line.text}</code></span>)}</pre> : <p className="review-empty">No diff preview available.</p>}</details>)}</div>
@@ -512,7 +514,7 @@ function ContributorList({ title, facets, selectedId, owner, scope, onFilter, on
   onFilter: (id: string | null) => void;
   onRollback: (intent: RollbackIntent) => void;
 }) {
-  return <section className="review-pane"><div className="review-pane-head"><h3>{title}</h3><span>{facets.length}</span></div>{facets.length === 0 ? <p className="review-empty">No active contributors.</p> : <ul className="review-contributor-list">{facets.map((facet) => <li key={facet.id} data-selected={selectedId === facet.id ? "true" : undefined}><button type="button" className="review-contributor-filter" aria-pressed={selectedId === facet.id} onClick={() => onFilter(selectedId === facet.id ? null : facet.id)}><strong>{facet.name}</strong><small>{facet.activePromptGroups} group{facet.activePromptGroups === 1 ? "" : "s"} · {facet.activeFiles} file{facet.activeFiles === 1 ? "" : "s"}</small></button>{owner && <button type="button" className="button danger-button" data-size="sm" onClick={() => onRollback({ scope, subjectId: facet.id })}>Remove all changes</button>}</li>)}</ul>}</section>;
+  return <section className="review-pane"><div className="review-pane-head"><h3>{title}</h3><span>{facets.length}</span></div>{facets.length === 0 ? <p className="review-empty">No active contributors.</p> : <ul className="review-contributor-list">{facets.map((facet) => <li key={facet.id} data-selected={selectedId === facet.id ? "true" : undefined}><button type="button" className="review-contributor-filter" aria-pressed={selectedId === facet.id} onClick={() => onFilter(selectedId === facet.id ? null : facet.id)}><strong><PersonName name={facet.name} /></strong><small>{facet.activePromptGroups} group{facet.activePromptGroups === 1 ? "" : "s"} · {facet.activeFiles} file{facet.activeFiles === 1 ? "" : "s"}</small></button>{owner && <button type="button" className="button danger-button" data-size="sm" onClick={() => onRollback({ scope, subjectId: facet.id })}>Remove all changes</button>}</li>)}</ul>}</section>;
 }
 
 type TreeNode = { name: string; path: string; type: "file" | "dir"; children?: TreeNode[] };
@@ -576,10 +578,10 @@ function RepositoryTreeBranch({ nodes, depth, expandedDirs, onToggleDir, selecte
   </ul>;
 }
 
-function requesterLabel(requestedBy: ReviewContributor["requestedBy"]) {
+function requesterNames(requestedBy: ReviewContributor["requestedBy"]) {
   if (requestedBy.length === 0) return "someone";
-  if (requestedBy.length <= 2) return requestedBy.map((requester) => requester.userName).join(", ");
-  return `${requestedBy[0].userName} +${requestedBy.length - 1}`;
+  const shown = requestedBy.length <= 2 ? requestedBy : requestedBy.slice(0, 1);
+  return <>{shown.map((requester, index) => <Fragment key={requester.userId}>{index > 0 ? ", " : ""}<PersonName name={requester.userName} /></Fragment>)}{requestedBy.length > 2 && ` +${requestedBy.length - 1}`}</>;
 }
 
 function contributorTitle(contributors: ReviewContributor[]) {
@@ -588,9 +590,9 @@ function contributorTitle(contributors: ReviewContributor[]) {
 
 function FileAttribution({ contributors, expanded }: { contributors: ReviewContributor[]; expanded?: boolean }) {
   if (contributors.length === 0) return <span className="review-attribution is-empty">Unattributed</span>;
-  if (expanded) return <span className="review-attribution" data-expanded="true">{contributors.map((contributor) => <span key={contributor.agentId} className="review-attribution-row" data-tone={agentTone(contributor.agentId)}><span className="queue-chip" data-kind="agent" data-tone={agentTone(contributor.agentId)}>{contributor.agentName}</span><span className="review-attribution-who">asked by {requesterLabel(contributor.requestedBy)}</span></span>)}</span>;
+  if (expanded) return <span className="review-attribution" data-expanded="true">{contributors.map((contributor) => <span key={contributor.agentId} className="review-attribution-row" data-tone={agentTone(contributor.agentId)}><span className="queue-chip" data-kind="agent" data-tone={agentTone(contributor.agentId)}>{contributor.agentName}</span><span className="review-attribution-who">asked by {requesterNames(contributor.requestedBy)}</span></span>)}</span>;
   const [first, ...rest] = contributors;
-  return <span className="review-attribution" data-tone={agentTone(first.agentId)} title={contributorTitle(contributors)}><span className="queue-chip" data-kind="agent" data-tone={agentTone(first.agentId)}>{first.agentName}</span><span className="review-attribution-who">asked by {requesterLabel(first.requestedBy)}</span>{rest.length > 0 && <span className="review-attribution-more">+{rest.length}</span>}</span>;
+  return <span className="review-attribution" data-tone={agentTone(first.agentId)} title={contributorTitle(contributors)}><span className="queue-chip" data-kind="agent" data-tone={agentTone(first.agentId)}>{first.agentName}</span><span className="review-attribution-who">asked by {requesterNames(first.requestedBy)}</span>{rest.length > 0 && <span className="review-attribution-more">+{rest.length}</span>}</span>;
 }
 
 function ReadyConfirmDialog({ busy, onClose, onConfirm }: { busy: boolean; onClose: () => void; onConfirm: () => Promise<void> }) {

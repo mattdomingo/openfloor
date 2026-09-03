@@ -15,6 +15,19 @@ export function displayNameFrom(firstName: string, lastName: string): string {
   return `${firstName} ${lastName.charAt(0)}.`;
 }
 
+// Stored display_name stays "First L." in full. The UI shortens only the
+// given-name token when it would blow a chip, heading, or attribution row.
+export const GIVEN_NAME_VISIBLE = 14;
+
+export function visiblePersonName(displayName: string, maxGiven = GIVEN_NAME_VISIBLE): { text: string; full: string; truncated: boolean } {
+  const trimmed = displayName.trim();
+  const space = trimmed.search(/\s/);
+  const given = space === -1 ? trimmed : trimmed.slice(0, space);
+  const rest = space === -1 ? "" : trimmed.slice(space);
+  if (given.length <= maxGiven) return { text: trimmed, full: trimmed, truncated: false };
+  return { text: `${given.slice(0, maxGiven)}…${rest}`, full: trimmed, truncated: true };
+}
+
 // Initials derived from an existing display name (used wherever only the
 // AppUser/SessionMember is available, e.g. avatars in rosters and chat).
 export function initials(name: string): string {

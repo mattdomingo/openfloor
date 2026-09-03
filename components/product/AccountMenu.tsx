@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { DoNotDisturbToggle } from "@/components/DoNotDisturbToggle";
-import { Avatar, Icon } from "@/components/session/primitives";
+import { Avatar, Icon, PersonName } from "@/components/session/primitives";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { BASE_PATH } from "@/components/basePath";
 import { initials } from "@/lib/display-name";
@@ -61,7 +61,7 @@ export function AccountMenu({ user }: { user: AppUser }) {
       {open && (
         <div className="account-menu-panel">
           <div className="account-menu-identity">
-            <strong title={user.displayName}>{user.displayName}</strong>
+            <strong><PersonName name={user.displayName} /></strong>
             <span title={user.email}>{user.email}</span>
           </div>
           <Link href={settingsHref} className="account-menu-item" onClick={() => setOpen(false)}>

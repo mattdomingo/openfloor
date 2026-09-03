@@ -922,3 +922,11 @@ Agent runtime posture is also tightened: Codex receives only an explicit safe SD
 **Rationale:** Putting the production audit first in a single job meant a newly published advisory failed CI before typecheck, lint, or any test ran, so a merge could reach `main` with the browser gate never executed. A click on an element that never appears used Playwright's default unbounded action timeout and hung until the per-test budget expired, which hid the missing element behind a 300s timeout instead of a 15s action failure.
 
 **Consequences:** GitHub Checks show `audit` and `test` independently; either failure still blocks production mutation. Manual emergency deploys keep the documented `npm audit --omit=dev` then `npm test` order — both must pass before a remote migration. E2E locators that previously leaned on unbounded `.click()` waits must `expect` the element first, or they fail at 15s.
+
+### 2026-09-03 — Truncate long given names; keep Review heads aligned; keep agent controls visible
+
+**Decision:** `visiblePersonName` shortens only the given-name token past 14 characters; `PersonName` renders that text and shows the stored `First L.` value in `HoverTip`. D1 `display_name` stays full. Review's three `.review-pane-head` rows are a fixed `56px` like `.panel-head`, and expanded file attribution sits on that row beside the basename. Agent reply text is an in-flow clamped block above Pause/Stop. Folded queue groups tint from existing status tokens (`conflicted` attention, `failed` blocked, `answered` review, `integrated` running, `cancelled` waiting) with an inset spine. Reply-driven `.agent-grid` padding stays forbidden.
+
+**Rationale:** A long given name — often a pasted email — blew chips, "asked by" rows, and headings. Expanded attribution wrapped under the filename and made the center Review header taller than Files and Checks. Absolutely positioned replies covered the card controls. Folded queue sections were indistinguishable gray bars.
+
+**Consequences:** New person-name surfaces use `PersonName`, not a native `title`. Future reply chrome stays inside the card column. A new queue group needs a `data-status` color map next to the existing bars.

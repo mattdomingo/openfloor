@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { LocalDateTime } from "@/components/LocalDateTime";
 import type { ConflictChoice, MergeConflictCase } from "@/lib/floor-types";
-import { Icon, useDialogDismiss } from "./primitives";
+import { Icon, PersonName, useDialogDismiss } from "./primitives";
 import { Markdown } from "./Markdown";
 import { ConflictResolverBody } from "./ConflictResolver";
 
@@ -104,10 +104,10 @@ function ConflictCasePanel({ conflict, owner, canAnswer, busy, onResolve, onAnsw
     {conflict.status === "failed" && <p className="conflict-center-nudge"><Icon name="alert" size={12} />Automatic resolution didn&rsquo;t succeed — the resolver stopped after {automaticAttempts} automatic attempt{automaticAttempts === 1 ? "" : "s"}.{canResolveManually ? " You can retry it, or resolve the conflict manually below." : ""}</p>}
     <p>{conflict.explanation ?? conflict.conflictReason}</p>
     <dl><div><dt>Source</dt><dd>{conflict.agentName} · run {conflict.sourceRunId.slice(0, 8)}</dd></div><div><dt>Attempts</dt><dd>{conflict.automaticAttempts}/2 automatic attempts since last answer</dd></div></dl>
-    {conflict.prompts.length > 0 && <><span className="label">Original intent</span><ul className="conflict-answer-audit">{conflict.prompts.map((prompt) => <li key={prompt.id}><strong>{prompt.authorName}</strong><p>{prompt.text}</p></li>)}</ul></>}
+    {conflict.prompts.length > 0 && <><span className="label">Original intent</span><ul className="conflict-answer-audit">{conflict.prompts.map((prompt) => <li key={prompt.id}><strong><PersonName name={prompt.authorName} /></strong><p>{prompt.text}</p></li>)}</ul></>}
     {conflict.conflictPaths.length > 0 && <><span className="label">Affected paths</span><ul className="conflict-paths">{conflict.conflictPaths.map((path) => <li key={path}><code>{path}</code></li>)}</ul></>}
     {conflict.attempts.length > 0 && <><span className="label">Resolver attempts</span><ul className="conflict-answer-audit">{conflict.attempts.map((attempt, index) => <li key={attempt.runId}><strong>Attempt {index + 1} · {attempt.launchKind} · {attempt.status.replace("_", " ")}</strong>{attempt.summary && <Markdown>{attempt.summary}</Markdown>}{attempt.checks.map((check) => <small key={check.command}>{check.status} · <code>{check.command}</code></small>)}</li>)}</ul></>}
-    {conflict.questions.some((question) => question.answer !== null) && <ul className="conflict-answer-audit">{conflict.questions.filter((question) => question.answer !== null).map((question) => <li key={question.id}><strong>{question.question}</strong><p>{question.answer}</p><small>Answered by {question.answeredByName ?? "former member"}{question.answeredAt && <> · <LocalDateTime timestamp={question.answeredAt} /></>}</small></li>)}</ul>}
+    {conflict.questions.some((question) => question.answer !== null) && <ul className="conflict-answer-audit">{conflict.questions.filter((question) => question.answer !== null).map((question) => <li key={question.id}><strong>{question.question}</strong><p>{question.answer}</p><small>Answered by {question.answeredByName ? <PersonName name={question.answeredByName} /> : "former member"}{question.answeredAt && <> · <LocalDateTime timestamp={question.answeredAt} /></>}</small></li>)}</ul>}
     {conflict.status === "awaiting_input" && unanswered.length > 0 && canAnswer && <form className="conflict-answer-form" onSubmit={submitAnswers}>{unanswered.map((question) => <label key={question.id}><span>{question.question}</span><textarea required maxLength={2000} value={answers[question.id] ?? ""} onChange={(event) => setAnswers((current) => ({ ...current, [question.id]: event.target.value }))} /></label>)}<button type="submit" className="button" data-variant="primary" disabled={busy || submitting || !canSubmit}>Submit answers</button><small>First complete submission wins. Team chat remains available for discussion.</small></form>}
     {conflict.status === "awaiting_input" && unanswered.length > 0 && !canAnswer && <p className="review-empty">Waiting for the session owner or an original prompt author to answer. Team chat remains available for discussion.</p>}
     <div className="conflict-case-actions">

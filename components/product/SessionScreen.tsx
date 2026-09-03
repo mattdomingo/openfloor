@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { BASE_PATH } from "@/components/basePath";
 import { LocalDateTime } from "@/components/LocalDateTime";
-import { useDialogDismiss } from "@/components/session/primitives";
+import { PersonName, useDialogDismiss } from "@/components/session/primitives";
 import { QuotaNotice } from "@/components/session/QuotaNotice";
 import { usePresenceSocket } from "@/components/session/usePresenceSocket";
 import { initials } from "@/lib/display-name";
@@ -255,7 +255,7 @@ export function SessionScreen({
               {visibleMembers.map((member) => (
                 <li key={member.id}>
                   <span className="avatar" aria-hidden="true">{initials(member.displayName)}</span>
-                  <div><strong title={member.displayName}>{member.displayName}{member.id === user.id && <em> You</em>}</strong><span>Joined <LocalDateTime timestamp={member.joinedAt} mode="date" /></span></div>
+                  <div><strong><PersonName name={member.displayName} />{member.id === user.id && <em> You</em>}</strong><span>Joined <LocalDateTime timestamp={member.joinedAt} mode="date" /></span></div>
                   <span className="member-role">{member.role}</span>
                   <span className="presence-label" data-online={member.online}>{member.online ? "Online" : "Offline"}</span>
                   {session.role === "owner" && member.id !== user.id && endedAt == null && (
@@ -271,7 +271,7 @@ export function SessionScreen({
                   {removedMembers.map((member) => (
                     <li key={member.id}>
                       <span className="avatar" aria-hidden="true">{initials(member.displayName)}</span>
-                      <div><strong title={member.displayName}>{member.displayName}</strong><span>Removed <LocalDateTime timestamp={member.removedAt} mode="date" /></span></div>
+                      <div><strong><PersonName name={member.displayName} /></strong><span>Removed <LocalDateTime timestamp={member.removedAt} mode="date" /></span></div>
                       {endedAt == null && <button type="button" className="button" data-size="sm" disabled={restoreBusy === member.id} onClick={() => restoreMemberAccess(member.id)}>{restoreBusy === member.id ? "Restoring…" : "Allow back in"}</button>}
                     </li>
                   ))}

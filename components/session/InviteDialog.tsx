@@ -4,7 +4,7 @@ import { useEffect, useId, useState } from "react";
 import { BASE_PATH } from "@/components/basePath";
 import { initials } from "@/lib/display-name";
 import type { SessionMember, SessionSummary } from "@/lib/session-types";
-import { Avatar, Icon, useDialogDismiss } from "./primitives";
+import { Avatar, Icon, PersonName, useDialogDismiss } from "./primitives";
 
 export function InviteDialog({
   session,
@@ -82,7 +82,7 @@ export function InviteDialog({
           <span className="label">Already in this session</span>
           <ul className="invite-members">
             {members.map((member, index) => (
-              <li key={member.id}><Avatar userId={member.id} initials={initials(member.displayName)} tone={`member-${index}`} online={member.online} />{member.displayName}<span className="value">{member.role}</span></li>
+              <li key={member.id}><Avatar userId={member.id} initials={initials(member.displayName)} tone={`member-${index}`} online={member.online} /><PersonName name={member.displayName} /><span className="value">{member.role}</span></li>
             ))}
           </ul>
         </div>

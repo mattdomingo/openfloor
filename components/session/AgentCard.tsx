@@ -5,7 +5,7 @@ import type { AgentRun, FloorAgent, FloorAgentSettingsPatch } from "@/lib/floor-
 import { AGENT_PROVIDER_LABELS, credentialKindLabel, credentialKindsForProvider, MODEL_CONTEXT_TOKENS, parseCredentialKind, PROVIDER_MODELS } from "@/lib/provider-credentials";
 import { BASE_PATH } from "@/components/basePath";
 import { LocalDateTime } from "@/components/LocalDateTime";
-import { Icon } from "./primitives";
+import { Icon, PersonName } from "./primitives";
 import { Markdown } from "./Markdown";
 import { SelectMenu } from "./SelectMenu";
 import { type RunActivitySource, useRunEvents } from "./useRunActivity";
@@ -73,7 +73,7 @@ export const AgentCard = memo(function AgentCard({ agent, tone, latestRun, activ
           )}
         </div>
       )}
-      <div className="agent-foot"><span>Owned by {agent.ownerName}</span><span className="agent-cost" title={cost.title}>{cost.label}</span><span><LocalDateTime timestamp={agent.createdAt} /></span></div>
+      <div className="agent-foot"><span>Owned by <PersonName name={agent.ownerName} /></span><span className="agent-cost" title={cost.title}>{cost.label}</span><span><LocalDateTime timestamp={agent.createdAt} /></span></div>
     </article>
   );
 });
@@ -102,7 +102,7 @@ export const AgentSpotlight = memo(function AgentSpotlight({ agent, tone, sessio
     <article className="spotlight" data-status={conflictStatus ?? (paused ? "paused" : latestRun ? runStatusToken(latestRun) : "idle")} data-tone={tone}>
       <div className="spotlight-head">
         <span className="agent-glyph" data-size="lg" aria-hidden="true">{agent.name.slice(0, 1)}</span>
-        <div className="agent-identity"><h3>{agent.name}{agent.kind && <em className="kind-tag" data-kind="auto">Auto-generated</em>}</h3><span>{agent.role} · {AGENT_PROVIDER_LABELS[agent.provider]}{agent.model ? ` · ${agent.model}` : ""}{agent.credentialKind ? ` · ${credentialKindLabel(agent.provider, agent.credentialKind)}` : ""} · owned by {agent.ownerName}</span></div>
+        <div className="agent-identity"><h3>{agent.name}{agent.kind && <em className="kind-tag" data-kind="auto">Auto-generated</em>}</h3><span>{agent.role} · {AGENT_PROVIDER_LABELS[agent.provider]}{agent.model ? ` · ${agent.model}` : ""}{agent.credentialKind ? ` · ${credentialKindLabel(agent.provider, agent.credentialKind)}` : ""} · owned by <PersonName name={agent.ownerName} /></span></div>
         <span className="agent-state">{stateLabel}</span>
       </div>
       {(controllable || (conflict && conflictStatus && onOpenConflict)) && (
