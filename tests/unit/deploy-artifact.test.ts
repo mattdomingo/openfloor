@@ -13,28 +13,71 @@ const productionConfig = {
     database_name: "openfloor-production",
     database_id: "1e5059bf-1f7b-4be8-8ea4-c424a191070a",
   }],
-  vars: { AGENT_RUN_ENABLED: "true" },
+  r2_buckets: [
+    { binding: "PREFLIGHT_LOGS", bucket_name: "openfloor-preflight-logs" },
+    { binding: "USER_AVATARS", bucket_name: "openfloor-user-avatars" },
+  ],
+  workflows: [
+    { binding: "REPOSITORY_PREFLIGHT", name: "openfloor-repository-preflight" },
+    { binding: "AGENT_RUN_WORKFLOW", name: "openfloor-agent-run" },
+  ],
+  vars: {
+    OPENFLOOR_RUNTIME_ORIGIN: "https://app.opnflr.com",
+    AGENT_RUN_ENABLED: "true",
+  },
+};
+const developmentConfig = {
+  name: "openfloor-development",
+  routes: [{ pattern: "dev.app.opnflr.com", custom_domain: true }],
+  d1_databases: [{
+    binding: "DB",
+    database_name: "openfloor-development",
+    database_id: "fe7e3046-8cd8-4aae-a226-87534b2d9f15",
+  }],
+  r2_buckets: [
+    { binding: "PREFLIGHT_LOGS", bucket_name: "openfloor-development-preflight-logs" },
+    { binding: "USER_AVATARS", bucket_name: "openfloor-development-user-avatars" },
+  ],
+  workflows: [
+    { binding: "REPOSITORY_PREFLIGHT", name: "openfloor-development-repository-preflight" },
+    { binding: "AGENT_RUN_WORKFLOW", name: "openfloor-development-agent-run" },
+  ],
+  vars: {
+    OPENFLOOR_RUNTIME_ORIGIN: "https://dev.app.opnflr.com",
+    AGENT_RUN_ENABLED: "false",
+    STRIPE_CHECKOUT_ENABLED: "false",
+    EARLY_ACCESS_GATE_ENABLED: "false",
+  },
 };
 
-function verify(config: unknown) {
+function verify(config: unknown, target?: "production" | "development") {
   const directory = mkdtempSync(join(tmpdir(), "openfloor-deploy-artifact-"));
   try {
     mkdirSync(join(directory, "dist/server"), { recursive: true });
     writeFileSync(join(directory, "dist/server/wrangler.json"), JSON.stringify(config));
-    return spawnSync(process.execPath, [verifier], { cwd: directory, encoding: "utf8" });
+    return spawnSync(process.execPath, [verifier, ...(target ? [target] : [])], {
+      cwd: directory,
+      encoding: "utf8",
+    });
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
 }
 
-describe("production deploy artifact verifier", () => {
-  it("accepts the exact production identity and enabled beta execution gate", () => {
+describe("deploy artifact verifier", () => {
+  it("accepts the exact production identity by default", () => {
     const result = verify(productionConfig);
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("verified as the production openfloor artifact");
   });
 
-  it("rejects a lookalike D1 binding whose display name hides the wrong database id", () => {
+  it("accepts the isolated development environment", () => {
+    const result = verify(developmentConfig, "development");
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("verified as the development openfloor-development artifact");
+  });
+
+  it("rejects a lookalike production D1 binding whose display name hides the wrong id", () => {
     const result = verify({
       ...productionConfig,
       d1_databases: [{
@@ -46,10 +89,21 @@ describe("production deploy artifact verifier", () => {
     expect(result.stderr).toContain("expected production id");
   });
 
-  it("rejects disabled agent execution and test-only variables", () => {
+  it("rejects any production resource leaked into development", () => {
+    const result = verify({
+      ...developmentConfig,
+      r2_buckets: productionConfig.r2_buckets,
+    }, "development");
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('PREFLIGHT_LOGS points at "openfloor-preflight-logs"');
+    expect(result.stderr).toContain('USER_AVATARS points at "openfloor-user-avatars"');
+  });
+
+  it("rejects a mismatched rollout posture and test-only variables", () => {
     const result = verify({
       ...productionConfig,
       vars: {
+        ...productionConfig.vars,
         AGENT_RUN_ENABLED: "false",
         OPENFLOOR_TEST_ALLOW_IDENTITY_HEADERS: "true",
       },

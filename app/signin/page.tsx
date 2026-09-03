@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
 import { redirect } from "next/navigation";
-import { fetchAccessLoginTarget, normalizedTeamDomain } from "@/lib/access-login";
+import { accessLoginUrl, fetchAccessLoginTarget, normalizedTeamDomain } from "@/lib/access-login";
 import { protectedAccessPath, safeAppReturnPath } from "@/lib/access-paths";
 import { EntryReplay } from "../entry-replay";
 import { ParallaxLayer } from "../entry-parallax";
@@ -35,6 +35,7 @@ export default async function SignInPage({ searchParams }: { searchParams: Promi
 
   const bindings = env as unknown as {
     ACCESS_CUSTOM_LOGIN_ENABLED?: string;
+    OPENFLOOR_RUNTIME_ORIGIN?: string;
     OPENFLOOR_TEST_ACCESS_LOGIN_HTML?: string;
   };
   // Someone can always navigate here directly with the flag off (a stale
@@ -50,7 +51,13 @@ export default async function SignInPage({ searchParams }: { searchParams: Promi
   // renders with the GitHub button alone — bailing to the hosted screen here
   // defeated the entire custom page.
   const teamDomain = normalizedTeamDomain(env.CF_ACCESS_TEAM_DOMAIN);
-  const target = await fetchAccessLoginTarget(`https://app.opnflr.com${destination}`, teamDomain, {
+  // OPENFLOOR_RUNTIME_ORIGIN is the reviewed, target-specific public origin:
+  // app.opnflr.com in production and dev.app.opnflr.com on release. Keeping
+  // this request on that origin matters because Access selects the application
+  // and audience from the hostname. The fallback preserves local/E2E fixtures,
+  // where the request is not made against a real Access application.
+  const loginUrl = accessLoginUrl(destination, bindings.OPENFLOOR_RUNTIME_ORIGIN);
+  const target = await fetchAccessLoginTarget(loginUrl, teamDomain, {
     testHtml: bindings.OPENFLOOR_TEST_ACCESS_LOGIN_HTML,
   });
 

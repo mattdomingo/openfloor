@@ -9,7 +9,7 @@
 - Next `Link` and manual `fetch` have different base-path responsibilities, even though `BASE_PATH` is currently empty.
 - Cloudflare Access configuration is external state; code passing locally does not prove the production policy paths are correct. The hosted login screen's branding is dashboard-applied too — steps in `docs/cloudflare-access-branding.md`.
 - The Worker claims `app.opnflr.com` via a `custom_domain: true` route in `wrangler.jsonc`, which has Cloudflare manage the DNS record.
-- Access protects the app at the edge, but the Worker still verifies JWTs. Do not remove defense in depth.
+- Access protects `/auth/complete` and `/api/*` at the edge. Real pages sit outside Access and depend on the Worker verifying the signed `CF_Authorization` cookie; do not remove that trust boundary.
 - `/webhooks/github` is deliberately public and must never process a payload before its raw-body HMAC and size are verified.
 - `/webhooks/stripe` is deliberately public and must never process a payload before its 256 KB limit and raw-body Stripe signature are verified. Cloudflare Access must not protect it.
 - Stripe Portal behavior is dashboard state: the configured Portal must allow only the two exact monthly prices and their seat quantities, prorate changes immediately, and cancel immediately. A permissive Portal configuration weakens application-side validation.
