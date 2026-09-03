@@ -3858,9 +3858,9 @@
 }
 
 .review-icon-action[aria-pressed="true"] {
-  border-color: var(--status-waiting);
-  background: var(--status-waiting-soft);
-  color: var(--status-waiting);
+  border-color: var(--status-attention);
+  background: var(--status-attention-soft);
+  color: var(--status-attention);
 }
 
 .review-merge-button[aria-disabled="true"] {
@@ -3880,9 +3880,9 @@
 }
 
 .review-merge-button[data-state="locked"] {
-  border-color: var(--status-waiting);
-  background: var(--status-waiting-soft);
-  color: var(--status-waiting);
+  border-color: var(--status-attention);
+  background: var(--status-attention-soft);
+  color: var(--status-attention);
 }
 
 .review-action-count {
