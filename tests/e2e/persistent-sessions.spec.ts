@@ -360,7 +360,7 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   // An integrated prompt's card is itself a link into Review's Prompts mode
   // for that exact contribution — no need to hunt through the file browser.
   await inspectContractItem.locator(".queue-prompt").click();
-  await expect(owner.getByRole("heading", { name: "Review", exact: true })).toBeVisible();
+  await expect(owner.getByLabel("Review candidate")).toBeVisible();
   await expect(owner.getByRole("button", { name: "Prompts", exact: true })).toHaveAttribute("aria-pressed", "true");
   const promptContributionDetail = owner.getByLabel("Prompt contribution detail");
   await expect(promptContributionDetail.getByText("Inspect the real session contract", { exact: true })).toBeVisible();
@@ -368,14 +368,16 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await owner.getByRole("button", { name: "Workspace" }).click();
 
   await owner.getByRole("button", { name: /Review/ }).first().click();
-  await expect(owner.getByRole("heading", { name: "Review", exact: true })).toBeVisible();
-  await expect(owner.getByRole("heading", { name: /openfloor\// })).toBeVisible();
-  const commitFact = owner.locator(".review-hero-facts > div", { hasText: "Commit" });
-  await expect(commitFact.locator("strong")).toHaveText(/^[0-9a-f]{8}$/);
-  await expect(commitFact.locator("strong")).toHaveAttribute("title", /^[0-9a-f]{40}$/);
+  const reviewCandidate = owner.getByLabel("Review candidate");
+  await expect(reviewCandidate).toBeVisible();
+  const branchPath = owner.locator(".review-branch-path");
+  await expect(branchPath).toHaveAccessibleName(/openfloor\/.* into main/);
+  await branchPath.hover();
+  await expect(owner.getByRole("tooltip")).toContainText(/Candidate SHA\s+[0-9a-f]{40}/);
+  await expect(owner.locator(".review-gate")).toHaveCount(0);
   await expect(owner.getByText("agent-change.ts", { exact: true })).toBeVisible();
   await expect(owner.getByText("export const implemented = true;", { exact: true })).toBeVisible();
-  await expect(owner.getByRole("link", { name: /Draft PR #1/ })).toHaveAttribute("href", /\/pull\/1$/);
+  await expect(owner.getByRole("link", { name: /Draft pull request 1/ })).toHaveAttribute("href", /\/pull\/1$/);
 
   // The changed file is still reachable through the repository browser, and
   // selecting it there shows its diff, not the raw candidate-head content.
@@ -399,7 +401,7 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await expect(secondPublishedItem.locator("code.queue-run-branch")).toHaveCount(1);
   await owner.getByRole("button", { name: /Review/ }).first().click();
   await expect(owner.getByText("second-change.ts", { exact: true })).toBeVisible();
-  await expect(owner.getByRole("link", { name: /Draft PR #1/ })).toHaveCount(1);
+  await expect(owner.getByRole("link", { name: /Draft pull request 1/ })).toHaveCount(1);
   await owner.getByRole("button", { name: "Workspace" }).click();
 
   // A non-owner engineer can roll back the integrated change produced from
@@ -464,13 +466,13 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await owner.mouse.up();
   await expect.poll(() => reviewGrid.evaluate((element) => getComputedStyle(element).gridTemplateColumns)).not.toBe(columnsBefore);
 
-  // Conflicts live behind the hero button now — no inline list in Status.
+  // Conflicts live in the command bar — no duplicate inline warning section.
   await owner.getByRole("button", { name: /Conflicts/ }).click();
   const automaticCenter = owner.getByRole("dialog", { name: "Merge conflicts" });
   const automaticConflict = automaticCenter.locator(".conflict-case", { hasText: "Create a deliberate integration conflict" });
   await expect(automaticConflict.getByText("resolved", { exact: true })).toBeVisible();
   await automaticCenter.getByRole("button", { name: "Close" }).click();
-  await expect(owner.getByLabel("Integration warnings").getByText("No integration warnings.")).toBeVisible();
+  await expect(owner.getByLabel("Integration warnings")).toHaveCount(0);
 
   await owner.getByRole("button", { name: "Workspace" }).click();
   await owner.getByRole("region", { name: "Open floor" }).getByRole("combobox", { name: "Queue target" }).click();
@@ -490,7 +492,7 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await member.evaluate(() => {
     (window as typeof window & { __conflictAlertTest: { notifications: Array<{ click: () => void }> } }).__conflictAlertTest.notifications[0].click();
   });
-  await expect(member.getByRole("heading", { name: "Review", exact: true })).toBeVisible();
+  await expect(member.getByLabel("Review candidate")).toBeVisible();
   // The notification deep-link opens the conflict center straight onto the case.
   const memberCenter = member.getByRole("dialog", { name: "Merge conflicts" });
   await expect(memberCenter).toBeVisible();
@@ -508,6 +510,8 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   // An open case needing a person lights the hero button red (attention).
   const ownerConflictsButton = owner.getByRole("button", { name: /Conflicts/ });
   await expect(ownerConflictsButton).toHaveAttribute("data-attention", "action");
+  await ownerConflictsButton.hover();
+  await expect(owner.getByRole("tooltip")).toContainText(/conflict.*need input/i);
   await ownerConflictsButton.click();
   const ownerCenter = owner.getByRole("dialog", { name: "Merge conflicts" });
   await ownerCenter.locator(".conflict-center-case", { hasText: "Create a conflict needing a session decision" }).click();
@@ -643,7 +647,12 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await owner.getByRole("button", { name: /Review/ }).first().click();
   await member.getByRole("button", { name: /Review/ }).first().click();
   await expect(member.getByRole("button", { name: "Ready for review" })).toHaveCount(0);
-  await expect(member.getByRole("button", { name: "Squash merge" })).toHaveCount(0);
+  await expect(member.getByRole("button", { name: "Squash merge", exact: true })).toHaveCount(0);
+  await expect(member.getByRole("button", { name: "Lock squash merge" })).toHaveCount(0);
+  const refreshReview = owner.getByRole("button", { name: "Refresh GitHub status" });
+  await expect(refreshReview).toBeVisible();
+  await refreshReview.hover();
+  await expect(owner.getByRole("tooltip")).toHaveText("Refresh GitHub status");
   // The ready action confirms through a dialog before touching GitHub, and
   // cancelling that dialog leaves the pull request a draft.
   await owner.getByRole("button", { name: "Ready for review" }).click();
@@ -652,26 +661,36 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   // Wait for the dialog to actually unmount — otherwise the next unscoped
   // "Ready for review" click can resolve to both the hero and dialog buttons.
   await expect(owner.getByRole("dialog", { name: "Mark this pull request ready for review?" })).toHaveCount(0);
-  await expect(owner.getByRole("link", { name: /Draft PR #1 on GitHub/ })).toBeVisible();
+  await expect(owner.getByRole("link", { name: /Draft pull request 1 on GitHub/ })).toBeVisible();
   await owner.getByRole("button", { name: "Ready for review" }).click();
   await owner.getByRole("dialog", { name: "Mark this pull request ready for review?" })
     .getByRole("button", { name: "Ready for review" }).click();
-  // PR #217 split the link ("PR #1 on GitHub") from the state line ("open").
-  await expect(owner.getByRole("link", { name: /PR #1 on GitHub/ })).toBeVisible();
-  await expect(owner.getByText("open", { exact: true })).toBeVisible();
-  await expect(owner.getByText("clean", { exact: true })).toBeVisible();
-  await expect(owner.getByText("passing", { exact: true })).toBeVisible();
+  await expect(owner.getByRole("link", { name: /pull request 1 on GitHub/ })).toBeVisible();
+  const squashMerge = owner.getByRole("button", { name: "Squash merge", exact: true });
+  await expect(squashMerge).toHaveAttribute("data-state", "ready");
+  await expect(squashMerge).toHaveAttribute("aria-disabled", "false");
+  await squashMerge.hover();
+  await expect(owner.getByRole("tooltip")).toHaveText("Ready to squash merge into main");
   // A ready pull request can be converted back to a draft — also behind a
   // confirmation — and then marked ready again.
   await owner.getByRole("button", { name: "Mark as not ready" }).click();
   await owner.getByRole("dialog", { name: "Convert this pull request back to a draft?" })
     .getByRole("button", { name: "Mark as not ready" }).click();
-  await expect(owner.getByRole("link", { name: /Draft PR #1 on GitHub/ })).toBeVisible();
+  await expect(owner.getByRole("link", { name: /Draft pull request 1 on GitHub/ })).toBeVisible();
   await owner.getByRole("button", { name: "Ready for review" }).click();
   await owner.getByRole("dialog", { name: "Mark this pull request ready for review?" })
     .getByRole("button", { name: "Ready for review" }).click();
   await expect(owner.getByRole("button", { name: "Mark as not ready" })).toBeVisible();
-  await owner.getByRole("button", { name: "Squash merge" }).click();
+  await owner.getByRole("button", { name: "Lock squash merge" }).click();
+  await expect(owner.getByRole("button", { name: "Unlock squash merge" })).toHaveAttribute("aria-pressed", "true");
+  await expect(squashMerge).toHaveAttribute("data-state", "locked");
+  await expect(squashMerge).toHaveAttribute("aria-disabled", "true");
+  await squashMerge.hover();
+  await expect(owner.getByRole("tooltip")).toHaveText("Locked by the session owner");
+  await owner.getByRole("button", { name: "Unlock squash merge" }).click();
+  await expect(owner.getByRole("button", { name: "Lock squash merge" })).toHaveAttribute("aria-pressed", "false");
+  await expect(squashMerge).toHaveAttribute("data-state", "ready");
+  await squashMerge.click();
   await owner.getByRole("dialog", { name: "Squash merge this candidate?" })
     .getByRole("button", { name: "Merge, delete branch" }).click();
 

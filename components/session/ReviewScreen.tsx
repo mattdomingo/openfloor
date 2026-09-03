@@ -6,7 +6,7 @@ import type { FloorMessage, FloorParticipant, FloorReviewSnapshot, ReviewContrib
 import type { RepositoryTreeEntry } from "@/lib/github";
 import type { RepositoryConnection } from "@/lib/session-types";
 import { agentTone } from "./data";
-import { Icon, SegmentedControl, useDialogDismiss } from "./primitives";
+import { HoverTip, Icon, SegmentedControl, useDialogDismiss, useHoverTip } from "./primitives";
 import { Markdown } from "./Markdown";
 import { TeamChat } from "./TeamChat";
 import type { RollbackIntent } from "./RollbackImpactDialog";
@@ -19,33 +19,35 @@ type PendingAction = { type: "merge"; deleteCandidateBranch: boolean } | { type:
 type Selection = { kind: "changed"; id: string } | { kind: "repo"; path: string };
 type Browse = "changed" | "all" | "prompts";
 type InspectorTab = "status" | "chat" | "contributors";
-type GateState = "ok" | "blocked" | "pending" | "waiting";
+type MergeReadiness = "ready" | "waiting" | "blocked" | "locked";
 const DISCONNECTED_STATUSES = new Set(["disconnected", "revoked", "inaccessible"]);
 const REVIEW_RAIL_MIN = 250;
 const REVIEW_RAIL_MAX = 560;
 
-/* Drives the merge-gate strip: the same signals `canMerge` already checks,
-   restated as one glanceable row instead of a single tooltip on the disabled
-   Squash-merge button. Purely presentational — no new data. */
-function mergeGateItems(review: FloorReviewSnapshot): Array<{ label: string; state: GateState }> {
+function mergeBlockers(review: FloorReviewSnapshot): string[] {
   const pr = review.pullRequest;
-  const openConflicts = review.conflicts.some((conflict) => conflict.status !== "resolved");
-  return [
-    { label: "Ready for review", state: review.status === "ready" ? "ok" : review.status === "draft" ? "waiting" : "blocked" },
-    { label: "Mergeable", state: pr?.mergeable == null ? "waiting" : pr.mergeable && pr.mergeableState === "clean" ? "ok" : "blocked" },
-    { label: "Checks passing", state: review.githubChecksPassing == null ? "waiting" : review.githubChecksPassing ? "ok" : "blocked" },
-    { label: "No conflicts", state: openConflicts ? "blocked" : "ok" },
-    { label: "Not mid-integration", state: review.integrationRunId ? "pending" : "ok" },
-  ];
+  const blockers: string[] = [];
+  if (review.mergeLockedAt) blockers.push("Locked by the session owner");
+  if (!pr) blockers.push("Waiting for a pull request");
+  if (review.status === "draft") blockers.push("Mark the pull request ready");
+  if (pr && pr.state !== "open") blockers.push("Pull request is closed");
+  if (pr?.mergeable == null) blockers.push("GitHub is calculating mergeability");
+  else if (!pr.mergeable) blockers.push("GitHub reports this pull request is not mergeable");
+  else if (pr.mergeableState !== "clean") blockers.push(`GitHub merge requirements: ${pr.mergeableState ?? "not ready"}`);
+  if (review.githubChecksPassing == null) blockers.push("GitHub checks are not synchronized");
+  else if (!review.githubChecksPassing) blockers.push("GitHub checks are not passing");
+  if (review.integrationRunId) blockers.push("Candidate update is in progress");
+  return blockers;
 }
 
-function MergeGateRow({ review }: { review: FloorReviewSnapshot }) {
-  return <div className="review-gate" role="status" aria-label="Merge readiness">
-    {mergeGateItems(review).map((item) => <span key={item.label} className="review-gate-item" data-state={item.state}><i aria-hidden="true">{item.state === "ok" ? "✓" : item.state === "blocked" ? "✗" : "…"}</i>{item.label}</span>)}
-  </div>;
+function mergeReadiness(review: FloorReviewSnapshot, blockers: string[]): MergeReadiness {
+  if (review.mergeLockedAt) return "locked";
+  if (blockers.length === 0) return "ready";
+  if (review.pullRequest?.mergeable == null || review.githubChecksPassing == null || review.integrationRunId) return "waiting";
+  return "blocked";
 }
 
-export const ReviewScreen = memo(function ReviewScreen({ sessionId, revision, review, repository, repositoryTree, selectedConflictCaseId, promptRequest, owner, busy, blockingRunId, onRequestRollback, onSync, onReady, onUnready, onMerge, onDeleteBranch, onAbandon, onCancelRun, onResolveConflict, onAnswerConflict, onSubmitConflictSelections, teamChat, onSendTeamMessage, participants, currentUserId, sessionFiles }: {
+export const ReviewScreen = memo(function ReviewScreen({ sessionId, revision, review, repository, repositoryTree, selectedConflictCaseId, promptRequest, owner, busy, blockingRunId, onRequestRollback, onSync, onReady, onUnready, onMerge, onMergeLock, onDeleteBranch, onAbandon, onCancelRun, onResolveConflict, onAnswerConflict, onSubmitConflictSelections, teamChat, onSendTeamMessage, participants, currentUserId, sessionFiles }: {
   sessionId: string;
   revision: number;
   review: FloorReviewSnapshot | null;
@@ -61,6 +63,7 @@ export const ReviewScreen = memo(function ReviewScreen({ sessionId, revision, re
   onReady: () => Promise<void>;
   onUnready: () => Promise<void>;
   onMerge: (deleteCandidateBranch: boolean) => Promise<boolean>;
+  onMergeLock: (locked: boolean) => Promise<void>;
   onDeleteBranch: () => Promise<boolean>;
   onAbandon: (deleteBranch: boolean) => Promise<boolean>;
   onCancelRun: (runId: string) => Promise<void>;
@@ -103,6 +106,11 @@ export const ReviewScreen = memo(function ReviewScreen({ sessionId, revision, re
   const [resizing, setResizing] = useState(false);
   const [retrying, setRetrying] = useState(false);
   const [handledPromptRequest, setHandledPromptRequest] = useState(promptRequest);
+  const branchTip = useHoverTip();
+  const conflictTip = useHoverTip();
+  const refreshTip = useHoverTip();
+  const lockTip = useHoverTip();
+  const mergeTip = useHoverTip();
 
   // Auto-refresh the review pull request state from GitHub when mounting the review screen
   // if an active PR exists (ENG-review-auto-sync).
@@ -327,8 +335,15 @@ export const ReviewScreen = memo(function ReviewScreen({ sessionId, revision, re
 
   const additions = review.files.reduce((total, file) => total + file.additions, 0);
   const deletions = review.files.reduce((total, file) => total + file.deletions, 0);
-  const commitLabel = review.commitSha ? review.commitSha.slice(0, 8) : "Not committed";
-  const canMerge = review.status === "ready" && review.pullRequest?.state === "open" && review.pullRequest.mergeable === true && review.pullRequest.mergeableState === "clean" && review.githubChecksPassing === true && !review.integrationRunId;
+  const blockers = mergeBlockers(review);
+  const canMerge = blockers.length === 0;
+  const readiness = mergeReadiness(review, blockers);
+  const mergeTipText = canMerge ? `Ready to squash merge into ${review.baseBranch}` : blockers.join("\n");
+  const conflictTipText = openConflicts.length === 0
+    ? "No open conflicts"
+    : conflictAttention === "action"
+      ? `${openConflicts.length} conflict${openConflicts.length === 1 ? "" : "s"} need input`
+      : `${openConflicts.length} conflict${openConflicts.length === 1 ? "" : "s"} being resolved`;
   const isMerged = review.status === "merged";
   const isAbandoned = review.status === "abandoned";
 
@@ -355,7 +370,7 @@ export const ReviewScreen = memo(function ReviewScreen({ sessionId, revision, re
     : centerPane;
 
   const inspectorTabs: Array<{ value: InspectorTab; label: string }> = [
-    { value: "status", label: "Status" },
+    { value: "status", label: "Checks" },
     { value: "chat", label: "Chat" },
     ...(browse === "prompts" ? [{ value: "contributors" as InspectorTab, label: "Contributors" }] : []),
   ];
@@ -364,8 +379,12 @@ export const ReviewScreen = memo(function ReviewScreen({ sessionId, revision, re
     <div className="review-pane-head"><SegmentedControl label="Panel" value={rightTab} onChange={setRightTabOverride} options={inspectorTabs} /></div>
     <div className="review-inspector-body" data-tab={rightTab}>
       {rightTab === "status" && <>
-        <section aria-label="Integration warnings"><div className="review-pane-head"><h3>Integration</h3><span>{review.warnings.length}</span></div>{review.warnings.length === 0 ? <p className="review-empty">No integration warnings.</p> : <ul className="review-warning-list">{review.warnings.map((warning) => <li key={warning.id} data-severity={warning.severity}><strong>{warning.title}</strong><p>{warning.detail}</p></li>)}</ul>}</section>
-        <section aria-label="Checks"><div className="review-pane-head"><h3>Checks</h3><span>{review.checks.length}</span></div>{review.checks.length === 0 ? <p className="review-empty">No checks reported by GitHub or openfloor.</p> : <ul className="review-check-list">{review.checks.map((check) => <li key={check.id}><span className="check-mark" aria-label={check.state}>{check.state === "passed" ? "✓" : check.state === "failed" ? "!" : "…"}</span><div><strong>{check.name}</strong>{check.detail && <span>{check.detail}</span>}</div></li>)}</ul>}</section>
+        {review.warnings.length === 0 && review.checks.length === 0
+          ? <p className="review-empty review-status-empty"><Icon name="check" size={14} />No reported issues</p>
+          : <>
+              {review.warnings.length > 0 && <section aria-label="Integration warnings"><div className="review-pane-head"><h3>Issues</h3><span>{review.warnings.length}</span></div><ul className="review-warning-list">{review.warnings.map((warning) => <li key={warning.id} data-severity={warning.severity}><strong>{warning.title}</strong><p>{warning.detail}</p></li>)}</ul></section>}
+              {review.checks.length > 0 && <section aria-label="Checks"><div className="review-pane-head"><h3>Checks</h3><span>{review.checks.length}</span></div><ul className="review-check-list">{review.checks.map((check) => <li key={check.id}><span className="check-mark" aria-label={check.state}>{check.state === "passed" ? "✓" : check.state === "failed" ? "!" : "…"}</span><div><strong>{check.name}</strong>{check.detail && <span>{check.detail}</span>}</div></li>)}</ul></section>}
+            </>}
         {(isMerged || isAbandoned) && <section aria-label="Branch cleanup"><div className="review-pane-head"><h3>Branch cleanup</h3><span>{review.cleanupStatus ?? "pending"}</span></div><p className="review-empty">{isAbandoned && !review.cleanupStatus ? "This candidate was abandoned without attempting to delete its branch." : review.cleanupStatus === "complete" ? "Recorded candidate and run branches were deleted after exact-SHA verification." : "Any branch that did not match its recorded SHA was preserved."}</p>{owner && !review.branchDeletedAt && <div className="review-actions"><button type="button" className="button danger-button" disabled={busy || retrying} onClick={() => isMerged ? setDeleteConfirmOpen(true) : void runAbandon(true)}>Delete candidate branch</button></div>}</section>}
       </>}
       {rightTab === "chat" && <div className="review-inspector-chat" aria-label="Team chat"><div className="review-pane-head"><h3>Team chat</h3><span>{teamChat.filter((message) => message.recipientUserId === null).length}</span></div><TeamChat messages={teamChat} onSend={onSendTeamMessage} participants={participants} currentUserId={currentUserId} sessionId={sessionId} files={sessionFiles} /></div>}
@@ -377,11 +396,45 @@ export const ReviewScreen = memo(function ReviewScreen({ sessionId, revision, re
   </div>;
 
   return <section className="review-screen" aria-label="Review candidate" data-resizing={resizing ? "true" : "false"}>
-    <header className="review-hero">
-      <div className="review-hero-copy"><div className="review-title-row"><h2 className="review-title">Review</h2>{review.pullRequest && <a className="button" data-size="sm" href={review.pullRequest.url} target="_blank" rel="noreferrer"><Icon name="external" size={14} />{review.pullRequest.draft ? "Draft " : ""}PR #{review.pullRequest.number} on GitHub</a>}<button type="button" className="button conflicts-button" data-size="sm" data-attention={conflictAttention} onClick={() => setConflictCenter({ caseId: null })}><Icon name="alert" size={14} />Conflicts{openConflicts.length > 0 ? ` (${openConflicts.length})` : ""}</button></div><div className="review-branch-summary"><span className="label">Candidate branch</span><h3><Icon name="branch" size={16} />{review.branch}</h3><p>{review.pullRequest ? `${review.pullRequest.merged ? "Merged" : review.pullRequest.state}` : "Waiting for the candidate pull request."}</p></div></div>
-      <div className="review-hero-facts"><div><span className="label">Commit</span><strong className="value" title={review.commitSha ?? undefined}>{commitLabel}</strong></div><div><span className="label">Base</span><strong className="value">{review.baseBranch}</strong></div><div><span className="label">Diff</span><strong><span className="add">+{additions}</span> <span className="del">−{deletions}</span></strong></div><div><span className="label">Status</span><strong>{review.status}</strong></div><div><span className="label">Mergeability</span><strong>{review.pullRequest?.mergeable == null ? "unknown" : review.pullRequest.mergeable ? review.pullRequest.mergeableState ?? "mergeable" : "blocked"}</strong></div><div><span className="label">GitHub checks</span><strong>{review.githubChecksPassing == null ? "not synchronized" : review.githubChecksPassing ? "passing" : "blocked"}</strong></div></div>
-      {owner && !isMerged && !isAbandoned && <div className="review-actions">{review.pullRequest && review.status === "draft" && <button type="button" className="button" disabled={busy} onClick={() => setReadyConfirmOpen(true)}>Ready for review</button>}{review.pullRequest && review.status === "ready" && <button type="button" className="button" disabled={busy} onClick={() => setUnreadyConfirmOpen(true)}>Mark as not ready</button>}{review.pullRequest && <button type="button" className="button" data-variant="quiet" disabled={busy} title="Reconcile the pull request state from GitHub" onClick={() => void onSync()}>Refresh GitHub status</button>}{review.pullRequest && <button type="button" className="button primary-button" disabled={busy || !canMerge} title={canMerge ? "Squash merge through GitHub" : "See the merge gate below"} onClick={() => setMergeConfirmOpen(true)}>Squash merge</button>}<button type="button" className="button danger-button" disabled={busy} title={review.integrationRunId ? "The candidate is still being updated" : "Retire this candidate without merging"} onClick={() => setAbandonConfirmOpen(true)}>Abandon candidate</button></div>}
-      {!isMerged && !isAbandoned && review.pullRequest && <MergeGateRow review={review} />}
+    <header className="review-hero review-command-bar">
+      <div className="review-candidate-context">
+        <div className="review-branch-path" tabIndex={0} aria-label={`${review.branch} into ${review.baseBranch}`} {...branchTip.handlers}>
+          <Icon name="branch" size={16} />
+          <strong>{review.branch}</strong>
+          <Icon name="arrowRight" size={13} className="review-branch-arrow" />
+          <span>{review.baseBranch}</span>
+        </div>
+        <div className="review-compact-meta">
+          {review.pullRequest && <a className="review-pr-link" href={review.pullRequest.url} target="_blank" rel="noreferrer" aria-label={`${review.pullRequest.draft ? "Draft " : ""}pull request ${review.pullRequest.number} on GitHub`}>PR #{review.pullRequest.number}<Icon name="external" size={12} /></a>}
+          <span className="review-diff-stat" aria-label={`${additions} additions and ${deletions} deletions`}><i className="add">+{additions}</i><i className="del">−{deletions}</i></span>
+        </div>
+        <HoverTip position={branchTip.position} wrap>{review.commitSha ? `Candidate SHA\n${review.commitSha}` : "Candidate has not been committed"}</HoverTip>
+      </div>
+      <div className="review-actions review-command-actions">
+        <button type="button" className="button conflicts-button" data-size="sm" data-attention={conflictAttention} onClick={() => setConflictCenter({ caseId: null })} {...conflictTip.handlers}>
+          <Icon name={openConflicts.length > 0 ? "alert" : "check"} size={14} />
+          Conflicts
+          {openConflicts.length > 0 && <strong className="review-action-count">{openConflicts.length}</strong>}
+        </button>
+        {owner && !isMerged && !isAbandoned && <>
+          {review.pullRequest && review.status === "draft" && <button type="button" className="button" disabled={busy} onClick={() => setReadyConfirmOpen(true)}>Ready for review</button>}
+          {review.pullRequest && review.status === "ready" && <button type="button" className="button" disabled={busy} onClick={() => setUnreadyConfirmOpen(true)}>Mark as not ready</button>}
+          {review.pullRequest && <button type="button" className="button review-icon-action" data-size="sm" disabled={busy} aria-label="Refresh GitHub status" onClick={() => void onSync()} {...refreshTip.handlers}><Icon name="refresh" size={15} /></button>}
+          {review.pullRequest && <button type="button" className="button review-icon-action" data-size="sm" disabled={busy} aria-label={review.mergeLockedAt ? "Unlock squash merge" : "Lock squash merge"} aria-pressed={Boolean(review.mergeLockedAt)} onClick={() => void onMergeLock(!review.mergeLockedAt)} {...lockTip.handlers}><Icon name={review.mergeLockedAt ? "lock" : "unlock"} size={15} /></button>}
+          {review.pullRequest && <>
+            <button type="button" className="button primary-button review-merge-button" data-state={readiness} aria-disabled={busy || !canMerge} aria-describedby={`${sessionId}-merge-readiness`} onClick={() => { if (!busy && canMerge) setMergeConfirmOpen(true); }} {...mergeTip.handlers}>
+              <Icon name={readiness === "ready" ? "check" : readiness === "locked" ? "lock" : readiness === "waiting" ? "clock" : "alert"} size={14} />
+              Squash merge
+            </button>
+            <span id={`${sessionId}-merge-readiness`} className="sr-only">{mergeTipText}</span>
+          </>}
+          <button type="button" className="button danger-button" disabled={busy} title={review.integrationRunId ? "The candidate is still being updated" : "Retire this candidate without merging"} onClick={() => setAbandonConfirmOpen(true)}>Abandon candidate</button>
+        </>}
+      </div>
+      <HoverTip position={conflictTip.position}>{conflictTipText}</HoverTip>
+      <HoverTip position={refreshTip.position}>Refresh GitHub status</HoverTip>
+      <HoverTip position={lockTip.position}>{review.mergeLockedAt ? "Unlock squash merge" : "Lock squash merge"}</HoverTip>
+      <HoverTip position={mergeTip.position} wrap>{mergeTipText}</HoverTip>
     </header>
     <div className="review-grid" style={reviewGridStyle}>{leftPane}{mainCenterPane}<aside className="review-side">{rightPane}</aside>{reviewResizeHandles}</div>
     {readyConfirmOpen && <ReadyConfirmDialog busy={busy} onClose={() => setReadyConfirmOpen(false)} onConfirm={runReady} />}
