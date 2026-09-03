@@ -154,6 +154,10 @@
   line-height: 1.45;
 }
 
+.person-name {
+  white-space: nowrap;
+}
+
 .session-timer {
   font-variant-numeric: tabular-nums;
 }

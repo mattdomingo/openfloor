@@ -6,7 +6,7 @@ import { BASE_PATH } from "@/components/basePath";
 import { LocalDateTime } from "@/components/LocalDateTime";
 import type { ChatThread } from "./data";
 import { initials } from "./data";
-import { Avatar, Icon } from "./primitives";
+import { Avatar, Icon, PersonName } from "./primitives";
 import { Markdown } from "./Markdown";
 
 const EMPTY_ATTACHMENTS: SessionFile[] = [];
@@ -27,7 +27,7 @@ const ChatMessageItem = memo(function ChatMessageItem({
       <Avatar userId={message.authorUserId} initials={initials(message.authorName)} tone={message.authorUserId === currentUserId ? "you" : "member"} />
       <div className="team-chat-body">
         <div className="team-chat-head">
-          <strong>{message.authorName}</strong>
+          <strong><PersonName name={message.authorName} /></strong>
           <span><LocalDateTime timestamp={message.createdAt} /></span>
         </div>
         <Markdown className="chat-markdown">{message.text}</Markdown>
@@ -118,7 +118,7 @@ export const TeamChat = memo(function TeamChat({ messages, onSend, thread, onThr
   }
 
   return <div className="team-chat">
-    <div className="team-chat-threads" role="group" aria-label="Chat thread"><button type="button" className="team-chat-thread" data-selected={activeThread === "team" ? "true" : "false"} aria-pressed={activeThread === "team"} onClick={() => setThread("team")}>Team</button>{participants.filter((person) => !person.isCurrentUser).map((person) => <button key={person.id} type="button" className="team-chat-thread" data-selected={activeThread === person.id ? "true" : "false"} aria-pressed={activeThread === person.id} onClick={() => setThread(person.id)}><Avatar userId={person.id} initials={person.initials} tone={person.tone} />{person.name}</button>)}</div>
+    <div className="team-chat-threads" role="group" aria-label="Chat thread"><button type="button" className="team-chat-thread" data-selected={activeThread === "team" ? "true" : "false"} aria-pressed={activeThread === "team"} onClick={() => setThread("team")}>Team</button>{participants.filter((person) => !person.isCurrentUser).map((person) => <button key={person.id} type="button" className="team-chat-thread" data-selected={activeThread === person.id ? "true" : "false"} aria-pressed={activeThread === person.id} onClick={() => setThread(person.id)}><Avatar userId={person.id} initials={person.initials} tone={person.tone} /><PersonName name={person.name} /></button>)}</div>
     <div className="team-chat-list" ref={listRef}>{visible.length === 0 ? <p className="owner-detail-empty">No messages in this conversation.</p> : visible.map((message) => (
       <ChatMessageItem
         key={message.id}

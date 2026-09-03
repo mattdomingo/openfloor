@@ -234,9 +234,8 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await owner.locator(".queue-group-bar", { hasText: "Answered" }).click();
   await expect(answeredItem.getByText("answered", { exact: true })).toBeVisible();
   await expect(answeredItem).toHaveAttribute("data-done", "true");
-  // The reply renders as a clamped bubble directly on the tile (no hover
-  // step since e4e7d85 dropped the speech-bubble chrome); clicking it opens
-  // the spotlight with the full text.
+  // The reply sits in the card column above Pause/Stop (no overlay, no hover
+  // step); clicking it opens the spotlight with the full text.
   const replyBubble = agentFloor.locator(".agent-reply-bubble");
   await expect(replyBubble).toBeVisible();
   await expect(replyBubble).toContainText(/auth/i);
@@ -247,6 +246,8 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   const ownershipFooter = (await lumenCard.locator(".agent-foot").boundingBox())!;
   expect(cardControls.x).toBeGreaterThanOrEqual(cardBounds.x);
   expect(cardControls.y + cardControls.height).toBeLessThanOrEqual(cardBounds.y + cardBounds.height);
+  const bubbleBox = (await replyBubble.boundingBox())!;
+  expect(bubbleBox.y + bubbleBox.height).toBeLessThanOrEqual(cardControls.y);
   expect(ownershipFooter.y + ownershipFooter.height).toBeLessThanOrEqual(cardBounds.y + cardBounds.height);
   await replyBubble.click();
   await expect(agentFloor.locator(".spotlight-response")).toContainText(/auth/i);
@@ -375,7 +376,7 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await branchPath.hover();
   await expect(owner.getByRole("tooltip")).toContainText(/Candidate SHA\s+[0-9a-f]{40}/);
   await expect(owner.locator(".review-gate")).toHaveCount(0);
-  await expect(owner.getByText("agent-change.ts", { exact: true })).toBeVisible();
+  await expect(owner.locator(".review-diff .review-pane-head h3")).toHaveText("agent-change.ts");
   await expect(owner.getByText("export const implemented = true;", { exact: true })).toBeVisible();
   await expect(owner.getByRole("link", { name: /Draft pull request 1/ })).toHaveAttribute("href", /\/pull\/1$/);
 

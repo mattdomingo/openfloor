@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, Fragment } from "react";
 import { BASE_PATH } from "@/components/basePath";
 import type { AgentRunRollbackScope, ReviewRollbackImpact } from "@/lib/floor-types";
-import { useDialogDismiss } from "./primitives";
+import { PersonName, useDialogDismiss } from "./primitives";
 
 export type RollbackIntent = { scope: AgentRunRollbackScope; subjectId: string };
 
@@ -41,7 +41,7 @@ export function RollbackImpactDialog({ sessionId, intent, busy, onClose, onConfi
     <div className="rollback-impact-body">
       {loading ? <p className="review-empty">Calculating exact impact…</p> : error ? <p className="review-empty" role="alert">{error}</p> : impact && <>
         <p><strong>{impact.subjectName}</strong> · {impact.targets.length} prompt group{impact.targets.length === 1 ? "" : "s"} · {new Set(impact.targets.flatMap((target) => target.files.map((file) => file.path))).size} file{new Set(impact.targets.flatMap((target) => target.files.map((file) => file.path))).size === 1 ? "" : "s"}</p>
-        <ul className="rollback-impact-list">{impact.targets.map((target) => <li key={target.runId}><strong>{target.agentName}</strong><span>{target.prompts.map((prompt) => `${prompt.authorName}: ${prompt.text}`).join(" · ")}</span><small>{target.files.map((file) => file.path).join(", ")}</small></li>)}</ul>
+        <ul className="rollback-impact-list">{impact.targets.map((target) => <li key={target.runId}><strong>{target.agentName}</strong><span>{target.prompts.map((prompt, index) => <Fragment key={prompt.id ?? index}>{index > 0 ? " · " : ""}<PersonName name={prompt.authorName} />: {prompt.text}</Fragment>)}</span><small>{target.files.map((file) => file.path).join(", ")}</small></li>)}</ul>
         {impact.excluded.length > 0 && <div className="rollback-impact-excluded"><strong>Not removed</strong><p>{impact.excluded.length} merged group{impact.excluded.length === 1 ? " is" : "s are"} shared with another engineer and require explicit group rollback.</p></div>}
       </>}
     </div>

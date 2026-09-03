@@ -1469,26 +1469,18 @@
   overflow-wrap: anywhere;
 }
 
-/* Plain reply text over the tile's own body, not out-of-flow above it —
-   ENG-138 (see AGENTS.md) forbids reply-driven .agent-grid padding, so this
-   stays inside .agent-card's bounds (top: 62px, just under the head row)
-   instead of popping above the card. No bubble chrome (border/shadow/tail):
-   same background as the card itself, so it reads as plain text occluding
-   whatever's beneath rather than a floating chat bubble. Confined to a fixed
-   clamp so a long answer never grows the card; click moves focus to the
-   spotlight, where the same text renders in full inside .spotlight-response. */
+/* Clamped reply in the card's column, under the task/activity and above
+   Pause/Stop. ENG-138 still forbids reply-driven .agent-grid padding; keeping
+   the bubble in normal flow means a long answer cannot cover the controls.
+   Click opens the spotlight, where .spotlight-response shows the full text. */
 .agent-reply-bubble {
   display: -webkit-box;
-  position: absolute;
-  top: 62px;
-  left: var(--space-3);
-  right: var(--space-3);
-  z-index: 3;
+  flex: none;
   max-height: 4.6em;
   margin: 0;
   padding: var(--space-2) var(--space-3);
   border: none;
-  background: var(--surface-raised);
+  background: var(--surface-sunken);
   color: var(--text-primary);
   font: inherit;
   font-size: var(--text-xs);
@@ -1508,9 +1500,8 @@
 }
 
 /* The floor card's own affordance for an open merge conflict on this agent —
-   sits in normal flow (unlike .agent-reply-bubble's overlay) since it
-   replaces the activity line rather than floating over it. Color follows
-   the same [data-status] this agent-card/spotlight already carries: amber
+   sits in normal flow with the reply text rather than replacing it. Color
+   follows the same [data-status] this agent-card/spotlight already carries: amber
    while a person is needed, red while the resolver is still working. */
 .agent-conflict-strip {
   display: flex;
@@ -3356,7 +3347,40 @@
 
 .queue-group-bar:hover {
   color: var(--text-primary);
-  background: var(--surface-panel);
+}
+
+.queue-group-bar[data-status="conflicted"] {
+  color: var(--status-attention);
+  background: var(--status-attention-soft);
+  box-shadow: inset 3px 0 0 var(--status-attention);
+}
+
+.queue-group-bar[data-status="failed"] {
+  color: var(--status-blocked);
+  background: var(--status-blocked-soft);
+  box-shadow: inset 3px 0 0 var(--status-blocked);
+}
+
+.queue-group-bar[data-status="answered"] {
+  color: var(--status-review);
+  background: var(--status-review-soft);
+  box-shadow: inset 3px 0 0 var(--status-review);
+}
+
+.queue-group-bar[data-status="integrated"] {
+  color: var(--status-running);
+  background: var(--status-running-soft);
+  box-shadow: inset 3px 0 0 var(--status-running);
+}
+
+.queue-group-bar[data-status="cancelled"] {
+  color: var(--status-waiting);
+  background: var(--status-waiting-soft);
+  box-shadow: inset 3px 0 0 var(--status-waiting);
+}
+
+.queue-group-bar[data-status]:hover {
+  filter: brightness(0.97);
 }
 
 .queue-group-chevron {
@@ -3964,32 +3988,40 @@
 }
 
 .review-pane-head {
-  flex: none;
-}
-
-.review-file-list {
-  overflow-y: auto;
-}
-
-.review-pane-head {
   display: flex;
   align-items: center;
+  flex: none;
+  flex-wrap: nowrap;
   gap: var(--space-2);
-  padding: var(--space-3) var(--space-4);
+  height: 56px;
+  min-width: 0;
+  padding: 0 var(--space-4);
   border-bottom: 1px solid var(--line-soft);
   background: var(--surface-header);
 }
 
 .review-pane-head h3 {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: var(--text-sm);
   font-weight: 650;
 }
 
-.review-pane-head span {
+.review-pane-head > span {
   margin-left: auto;
+}
+
+.review-pane-head > span:not(.review-attribution):not(.queue-chip) {
   color: var(--text-tertiary);
   font-family: var(--font-mono);
   font-size: var(--text-xs);
+}
+
+.review-file-list {
+  overflow-y: auto;
 }
 
 .review-file-list,
@@ -4020,10 +4052,6 @@
 
 .review-file[data-selected="true"] {
   box-shadow: inset 3px 0 0 var(--accent);
-}
-
-.review-pane-head {
-  flex-wrap: wrap;
 }
 
 .review-tree {
@@ -4074,14 +4102,22 @@
   min-width: 0;
 }
 
-.review-file .review-attribution,
-.review-diff .review-attribution {
+.review-file .review-attribution {
   margin-top: 4px;
   color: var(--text-tertiary);
   font-size: var(--text-xs);
   white-space: normal;
   overflow: visible;
   text-overflow: clip;
+}
+
+.review-pane-head .review-attribution {
+  margin-top: 0;
+  margin-left: auto;
+  flex: none;
+  max-width: 58%;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
 }
 
 .review-attribution.is-empty {
@@ -4106,11 +4142,11 @@
 }
 
 .review-attribution[data-expanded="true"] {
-  display: grid;
-  gap: 2px;
-  flex-basis: 100%;
-  margin-top: var(--space-2);
-  margin-left: 0;
+  display: flex;
+  flex-wrap: nowrap;
+  gap: var(--space-2);
+  flex-basis: auto;
+  margin-top: 0;
 }
 
 .review-attribution-row {

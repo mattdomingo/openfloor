@@ -7,7 +7,7 @@ import { useRouter } from "next/navigation";
 import { BASE_PATH } from "@/components/basePath";
 import { LocalDateTime } from "@/components/LocalDateTime";
 import { formatDuration } from "@/lib/date-format";
-import { HoverTip, Icon, Spinner, useDialogDismiss, useHoverTip } from "@/components/session/primitives";
+import { HoverTip, Icon, PersonName, Spinner, useDialogDismiss, useHoverTip } from "@/components/session/primitives";
 import { SelectMenu } from "@/components/session/SelectMenu";
 import { lowHoursRemaining, planLabel, type Plan, type PlanStatus } from "@/lib/plans";
 import { mergeVisibleOrder, parseSessionOrder, sortByStoredOrder } from "@/lib/session-order";
@@ -267,7 +267,7 @@ export function HomeScreen({
       <section className="page-body">
         <div className="page-heading">
           <div className="page-heading-title">
-            <h1>{user.displayName.split(" ")[0]}’s sessions</h1>
+            <h1><PersonName name={user.displayName.split(" ")[0]} />’s sessions</h1>
             {removedNotice && (
               <p className="notice" data-tone="attention" role="status">
                 {removedNotice} <button type="button" className="button" data-variant="quiet" data-size="sm" onClick={() => setRemovedNotice(null)}>Dismiss</button>

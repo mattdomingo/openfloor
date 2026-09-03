@@ -5,7 +5,7 @@ import type { FloorAgent, FloorAssignment, FloorMessage, FloorParticipant, Floor
 import { formatSessionFileSize } from "@/lib/session-file-constraints";
 import { BASE_PATH } from "@/components/basePath";
 import type { ChatThread, TeamPanelView } from "./data";
-import { Avatar, Icon, SegmentedControl } from "./primitives";
+import { Avatar, Icon, PersonName, SegmentedControl } from "./primitives";
 import { Panel, type PanelChrome } from "./Rail";
 import { TeamChat } from "./TeamChat";
 
@@ -182,7 +182,7 @@ const OwnerCard = memo(function OwnerCard({ assignment, participant, agents, pro
       <button type="button" className="owner-card-toggle" aria-expanded={expanded} onClick={() => setExpanded((value) => !value)}>
         <Avatar userId={participant?.id} initials={participant?.initials ?? "?"} tone={participant?.tone ?? "member"} online={participant?.online} />
         <span className="owner-head">
-          <strong title={assignment.userName}>{assignment.userName}</strong>
+          <strong><PersonName name={assignment.userName} /></strong>
           <span className="state-tag" data-tone={participant?.online ? "running" : "waiting"}>{participant?.online ? "Online" : "Offline"}</span>
         </span>
         <Icon name="chevronDown" size={12} className="owner-card-chevron" />
