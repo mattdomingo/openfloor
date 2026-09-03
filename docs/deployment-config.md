@@ -35,14 +35,20 @@ Cloudflare Containers requires a Workers Paid account. `PREFLIGHT_ENABLED` is th
 
 `AGENT_RUN_ENABLED` independently gates all agent execution and is **true in production for admitted beta testers** after Sandbox image `v9` deployed successfully. Image `v9` runs token-bearing provider CLIs as `openfloor-provider`, fixed-policy srt setup as credential-free `openfloor-broker`, and model-selected commands as `openfloor-workspace`. The root-owned launcher clears credentials; its guarded bubblewrap seam refuses workspace callers and caller-selected identity, capability, or user-namespace options and creates the fixed filesystem/network/PID sandbox. A root-owned non-setuid handoff then selects the workspace uid/gid and retains only the setup capability required by the validated pinned `apply-seccomp` command; `apply-seccomp` clears it and sets `no_new_privs` before model-selected code. CI builds the real image and adversarially checks inherited environment, `/proc/*/environ`, memory/fds, command lines, process listings, provider-home access, direct bubblewrap refusal, zero final capabilities, and the command's `no_new_privs` state. OpenAI, Claude, Kimi, and Gemini are exposed under the early-access admission, membership, ownership, quota, and provider-credential controls. GLM, Qwen, and DeepSeek remain off behind their independent flags. Rollback is a reviewed config change to `false`, which hides **Run** and makes direct starts return `503` without deleting agents or run history.
 
-Development starts with `AGENT_RUN_ENABLED=false`,
-`STRIPE_CHECKOUT_ENABLED=false`, and `EARLY_ACCESS_GATE_ENABLED=false`. Access
-still authenticates the development hostname through `/auth/complete` and
-`/api/*`; its policy must allow only developers/testers because the separate D1
-admission gate is off. Enabling execution or test-mode
-billing there is a separate reviewed rollout after isolated credentials,
-webhooks, and acceptance exist; development must never use production Stripe
-objects or the production waitlist Sheet destination.
+Development now has `AGENT_RUN_ENABLED=true` after its isolated Access policy,
+GitHub App, stateful bindings, runtime secrets, and first deployment were
+accepted. It has no shared provider fallback secrets by default, so a run still
+requires the agent owner to connect a provider credential. OpenAI, Claude,
+Kimi, and Gemini remain available behind their existing provider gates; GLM,
+Qwen, and DeepSeek remain disabled. Rollback sets only the development global
+gate to `false` and deploys, preserving agents and run history.
+
+Development keeps `STRIPE_CHECKOUT_ENABLED=false` and
+`EARLY_ACCESS_GATE_ENABLED=false`. Access authenticates the development
+hostname through `/auth/complete` and `/api/*`; its policy must allow only
+developers/testers because the separate D1 admission gate is off. Enabling
+test-mode billing is a separate reviewed rollout; development must never use
+production Stripe objects or the production waitlist Sheet destination.
 
 Defense in depth remains mandatory while the gate is open: Codex receives only an explicit safe SDK environment and sends shell commands through the workspace launcher; Gemini/Qwen apply the same safe allowlist and launcher to every supported `node:child_process` API and overload. Claude routes sandboxed Bash through the workspace launcher. The exact built-in MCP command alone receives its explicit context/conflict variables. Any isolation-test regression requires keeping or returning the global gate to `false`.
 

@@ -245,9 +245,11 @@
 				"SANDBOX_TRANSPORT": "rpc",
 				"OPENFLOOR_RUNTIME_ORIGIN": "https://dev.app.opnflr.com",
 				"PREFLIGHT_ENABLED": "false",
-				// Development execution is an explicit second rollout after its
-				// isolated credentials, GitHub App, and runtime acceptance are live.
-				"AGENT_RUN_ENABLED": "false",
+				// Development execution is enabled after the isolated Access policy,
+				// GitHub App, runtime secrets, and first deployment were accepted.
+				// Provider credentials remain user-owned unless separate development
+				// fallback secrets are deliberately configured.
+				"AGENT_RUN_ENABLED": "true",
 				// Never accept production payments from the development deployment.
 				// A later test-mode Stripe rollout may deliberately enable this.
 				"STRIPE_CHECKOUT_ENABLED": "false",
