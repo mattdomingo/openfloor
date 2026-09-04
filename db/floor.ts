@@ -156,7 +156,7 @@ async function readFloorSnapshot(sessionId: string, userId: string, database: D1
        FROM floor_queue_prompts p
        JOIN floor_queue_items q ON q.id = p.queue_item_id
        JOIN users author ON author.id = p.author_user_id
-       WHERE q.session_id = ?
+       WHERE q.session_id = ? AND q.dismissed_at IS NULL
        ORDER BY p.created_at, p.id`,
     ).bind(sessionId).all<PromptRecord>(),
     getRepositoryConnectionForMember(sessionId, userId, database),

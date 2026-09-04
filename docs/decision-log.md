@@ -955,3 +955,19 @@ Agent runtime posture is also tightened: Codex receives only an explicit safe SD
 **Rationale:** A permanently active `publishing` record strands session/global run capacity and gives members neither a terminal failure nor a normal retry path after the Workflow has no retry left. The landing mark's hover-only explanation is likewise unreachable on ordinary touch screens and resembles an indefinite loader at the first product touchpoint.
 
 **Consequences:** Publication failure after the Workflow retry budget is actionable and releases routing capacity; retry/recovery can use the existing failed-queue behavior. Touch visitors see an explicit entry action, while fine-pointer hover/focus behavior is unchanged. The production smoke test must also show both **Continue with GitHub** and **Email me a code** on `/signin`; the latter depends on One-time PIN dashboard state and cannot be restored by a Worker deploy.
+
+### 2026-09-04 — Durable run re-entry preserves completed outcomes
+
+**Decision:** Agent Run Workflow entry and error recovery stop immediately for `integrated`, `conflicted`, `failed`, and `cancelled` runs, plus `ready` reply runs. Task runs retain their existing `ready` publication-resume behavior. Publication-failure persistence uses a compare-and-set transition and changes the queue item and floor revision only when that transition wins.
+
+**Rationale:** A run mutation can commit before a downstream realtime notification fails. Retrying that Workflow must not execute a terminal run again, reinterpret a successfully persisted reply as a failed task publication, or let a stale publication-failure attempt overwrite a concurrently published outcome.
+
+**Consequences:** Durable retries preserve the first committed terminal outcome. Successful replies stay answered, failed/cancelled work cannot rerun, and a lost publication race leaves the winning run, queue, and revision untouched.
+
+### 2026-09-04 — Floor run hydration is set-based
+
+**Decision:** Both the latest-20 floor run list and candidate-wide Review history load their run rows once, then hydrate all selected checks and files in two set-based reads. Dismissed queue prompts are excluded from floor snapshots alongside their dismissed queue items.
+
+**Rationale:** The prior run loader issued two additional D1 queries per visible run, while candidate Review first loaded ids and then issued three reads per historical run. That N+1 path amplified every initial floor load and realtime refetch, and soft-deleted prompts accumulated in an otherwise invisible snapshot query.
+
+**Consequences:** A nonempty run list uses exactly three D1 reads regardless of run count; an empty list remains one read. Review attribution, ordering, the 20-run floor bound, and durable dismissed-run audit history are unchanged.

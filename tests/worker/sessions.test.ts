@@ -1,5 +1,6 @@
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
+import type { D1DatabaseLike } from "@/db";
 import {
   acceptInvite,
   archiveSessionForMember,
@@ -69,6 +70,8 @@ import {
   finishRunPublished,
   finishRunIntegrated,
   getAgentRun,
+  getAgentRuns,
+  getAgentRunsForCandidate,
   getRunArtifactKeysForMember,
   getRunExecutionContext,
   markRunChecking,
@@ -1061,6 +1064,61 @@ describe("D1 session persistence", () => {
       summary: "GitHub refused the run branch",
       completedAt: expect.any(Number),
     }));
+
+    // A stale failure handler must not overwrite a publication that won after
+    // its initial status read but before its compare-and-set batch.
+    floor = await createFloorQueueItem(created.session.id, owner.id, { prompt: "Race publication completion", agentId: floor!.agents[0].id }, env.DB);
+    const publicationRaceItem = floor!.queue.find((item) => item.prompts[0]?.text === "Race publication completion")!;
+    const publicationRace = await createAgentRun(created.session.id, publicationRaceItem.id, owner.id, "task", env.DB);
+    await markRunRunning(publicationRace.id, "process-publication-race", env.DB);
+    await markRunChecking(publicationRace.id, "thread-publication-race", "Implemented", env.DB);
+    await replaceRunFiles(publicationRace.id, [{ path: "src/publication-race.ts", changeKind: "add", additions: 1, deletions: 0, summary: null, diffPreview: "+export const published = true;" }], env.DB);
+    await finishAgentRun(publicationRace.id, "ready", "Ready locally", env.DB);
+    await markRunPublishing(publicationRace.id, { bundleKey: "publication-race.bundle", bundleSizeBytes: 20, localCommitSha: "7".repeat(40) }, env.DB);
+    floor = await getFloorSnapshot(created.session.id, owner.id, env.DB);
+    const revisionBeforeRace = floor!.revision;
+    let injectWinningPublication = true;
+    const racingDatabase: D1DatabaseLike = {
+      prepare: (query) => env.DB.prepare(query),
+      batch: async (statements) => {
+        if (injectWinningPublication) {
+          injectWinningPublication = false;
+          const raceBatch = [
+            env.DB.prepare("UPDATE agent_runs SET status = 'published', run_commit_sha = ?, remote_run_sha = ? WHERE id = ?")
+              .bind("7".repeat(40), "7".repeat(40), publicationRace.id),
+            ...statements,
+          ] as unknown as Parameters<typeof env.DB.batch>[0];
+          const results = await env.DB.batch(raceBatch);
+          return results.slice(1);
+        }
+        return env.DB.batch(statements as unknown as Parameters<typeof env.DB.batch>[0]);
+      },
+    };
+    await expect(recordRunPublicationFailure(publicationRace.id, "Stale publication failure", racingDatabase)).resolves.toBeNull();
+    floor = await getFloorSnapshot(created.session.id, owner.id, env.DB);
+    expect(floor?.revision).toBe(revisionBeforeRace);
+    expect(floor?.queue.find((item) => item.id === publicationRaceItem.id)?.status).toBe("blocked");
+    expect(floor?.runs.find((item) => item.id === publicationRace.id)).toEqual(expect.objectContaining({
+      status: "published",
+      summary: "Ready locally",
+    }));
+
+    let runListReads = 0;
+    const countingDatabase: D1DatabaseLike = {
+      prepare: (query) => {
+        runListReads += 1;
+        return env.DB.prepare(query);
+      },
+      batch: (statements) => env.DB.batch(statements as unknown as Parameters<typeof env.DB.batch>[0]),
+    };
+    const sessionRuns = await getAgentRuns(created.session.id, countingDatabase);
+    expect(sessionRuns.find((item) => item.id === run.id)?.files).toHaveLength(1);
+    expect(runListReads).toBe(3);
+    runListReads = 0;
+    const candidateRuns = await getAgentRunsForCandidate(candidateId, countingDatabase);
+    expect(candidateRuns.map((item) => item.id)).toEqual(expect.arrayContaining([run.id, publicationFailure.id, publicationRace.id]));
+    expect(candidateRuns.find((item) => item.id === run.id)?.files).toHaveLength(1);
+    expect(runListReads).toBe(3);
 
     expect(await markRunDiscarded(created.session.id, run.id, member.id, env.DB)).toBeNull();
     expect(await markRunDiscarded(created.session.id, run.id, owner.id, env.DB)).toBeNull();

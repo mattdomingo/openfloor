@@ -136,7 +136,7 @@ WebSocket events notify clients about presence or changed domains. D1 remains au
 
 See [`docs/implemented-features.md`](docs/implemented-features.md) for the complete bullet-by-bullet list of what is real today (auth, sessions, agents, GitHub integration, providers, conflict resolution, generated agents, and more). Every entry there is authoritative — nothing in that list is fabricated or aspirational; see "Explicitly deferred" below for what is not yet built.
 
-Exhausted run-branch publication retries are terminal: the run and its queue item become `failed`, the router is notified that capacity is free, and conflict-resolution attempts advance through their normal retry/attention state. A run must never remain indefinitely in `publishing` after its durable Workflow has exhausted retries.
+Exhausted run-branch publication retries are terminal: the run and its queue item become `failed`, the router is notified that capacity is free, and conflict-resolution attempts advance through their normal retry/attention state. A run must never remain indefinitely in `publishing` after its durable Workflow has exhausted retries. Durable Workflow re-entry must treat `integrated`, `conflicted`, `failed`, and `cancelled` runs as finished; `ready` is also finished for a reply run but remains an intermediate publication state for a task run.
 
 Known production follow-up: the owner discard action still reports failure in the disposable acceptance repository after its Git authentication correction. Preserve the expected-SHA lease and error separation; diagnose this independently rather than weakening deletion safety or folding it into Phase 6.
 
@@ -285,6 +285,8 @@ See [`docs/schema-invariants.md`](docs/schema-invariants.md) for the full per-ta
 - `review`
 
 `FloorSnapshot` includes `autoDispatch`, `autoProvisionAgents`, configured/effective generated-agent provider state, `autoResolveConflicts`, nullable `repository`, `activeCandidate`, bounded `latestPreflight`, active agents, and the latest 20 caller-visible runs. Every queue item independently derives its caller-specific integrated-run rollback descriptor, so Queue rollback state is complete even when the run is older than that 20-run window. Runs derive `purpose` (`task` or `conflict_resolution`), nullable `conflictCaseId`, and their latest bounded rollback state. Large logs and artifacts are fetched separately. `review` is null until real repository/run data exists, then includes typed conflict cases/questions and candidate-wide attribution from dedicated queries rather than the latest-run window; never populate it from UI fixtures.
+
+Run summaries, checks, and files are hydrated with one bounded run read plus at most one set-based checks read and one set-based files read. Never restore per-run query fan-out: the latest-20 floor list and unbounded candidate-wide Review history sit on the realtime refetch path. Dismissed queue items and their prompts are excluded from that snapshot path while their run audit history remains durable.
 
 ### Mutation pattern
 
