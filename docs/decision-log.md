@@ -979,3 +979,11 @@ Agent runtime posture is also tightened: Codex receives only an explicit safe SD
 **Rationale:** Installation permissions alone cannot widen a member's repository grants. Refreshing the existing proof avoids disconnecting and recreating associations. Provider choices should agree with executable capabilities across setup surfaces.
 
 **Consequences:** Adding repositories on GitHub requires fresh member verification, but never removal of the existing connection. GitHub user tokens remain transient. Existing installations linked through other GitHub identities are preserved. No authentication replacement, installation-wide scope grant, or new persisted credential is introduced.
+
+### 2026-09-04 — Authenticate lazy Git fetches and identify originating prompts
+
+**Decision:** Every Git invocation in the isolated trusted publisher receives transient GitHub Basic transport authentication. Its partial clone can therefore fetch a missing delta base during bundle import or later object reads. Credentials never enter repository config; token and Basic encoding are removed from retained Git errors. Published and integration commits use the bounded, sanitized opening prompt plus the full `Openfloor-Run` trailer. Credential-bearing openings fall back to a neutral title; later lines, quoted values, URLs, opaque strings, and control characters never enter the title. Publisher and executor image generations advance to v3/v10.
+
+**Rationale:** An authenticated local Git HTTP reproduction confirmed the interview's promisor/index-pack failure: clone authenticated, but bundle import's lazy fetch did not. Generic run-only commit subjects also obscured the work's originating request.
+
+**Consequences:** The parent lease, bundle validation, deterministic publication date, and non-force branch publication remain intact. Commit identity remains deterministic for retry. Git descriptions intentionally sacrifice detail where the opening request may contain sensitive values. No raw session brief or complete prompt is copied to Git metadata.

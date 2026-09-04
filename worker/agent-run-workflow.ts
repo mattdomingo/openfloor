@@ -1,3 +1,4 @@
+import { runCommitMessage } from "../lib/run-commit-message";
 import { getSandbox, type Sandbox } from "@cloudflare/sandbox";
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
 import { NonRetryableError } from "cloudflare:workflows";
@@ -155,14 +156,14 @@ for (const path of paths) {
 }
 process.stdout.write(JSON.stringify({ files }));
 `;
-const PUBLISHER_SANDBOX_IMAGE_VERSION = "v2";
+const PUBLISHER_SANDBOX_IMAGE_VERSION = "v3";
 // Pooled run sandboxes are keyed only by repository (see db/sandbox-pool.ts),
 // so a container built from a stale image would otherwise stay claimable for
 // up to POOL_IDLE_TTL_MS after a deploy that changed Dockerfile.sandbox.
 // Namespacing the pool key by image version makes old-image entries
 // unreachable immediately; the existing idle sweep reclaims them.
 // Bump this whenever Dockerfile.sandbox's run-sandbox contents change.
-const RUN_SANDBOX_IMAGE_VERSION = "v9";
+const RUN_SANDBOX_IMAGE_VERSION = "v10";
 // Every provider gets a fresh 0700 HOME owned by openfloor-provider. Model-
 // selected commands run as openfloor-workspace with a separate 0700 HOME.
 // Both live under scratch that prepare/release removes, so pooled sandboxes
@@ -1121,7 +1122,7 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
         try {
           const merged = await mergeRepositoryBranch(
             config, context.installationId, repository, context.candidateBranch, context.runCommitSha,
-            `Integrate openfloor run ${runId.slice(0, 8)}`,
+            runCommitMessage((await getRunExecutionContext(runId, this.env.DB))?.prompts[0]?.text, runId),
           );
           const reconciled = await getRepositoryRefSha(config, context.installationId, repository, context.candidateBranch);
           if (reconciled !== merged.sha) throw new Error("Candidate branch did not reconcile after integration");
@@ -1242,6 +1243,7 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
           OPENFLOOR_RESULT_PATH: resultPath,
           OPENFLOOR_COMMIT_DATE: new Date(context.createdAt).toISOString(),
           OPENFLOOR_RUN_ID: runId,
+          OPENFLOOR_COMMIT_MESSAGE: runCommitMessage(context.prompts[0]?.text, runId),
         } },
       );
       if (!download.success) throw new Error(`Trusted bundle publication failed: ${download.stderr.slice(-1_000)}`);
