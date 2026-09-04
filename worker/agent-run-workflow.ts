@@ -859,9 +859,14 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
     } catch (error) {
       const current = await getRunExecutionContext(runId, this.env.DB);
       if (current && ["ready", "publishing"].includes(current.status)) {
-        const failure = await recordRunPublicationFailure(runId, error instanceof Error ? error.message : "Run publication failed.", this.env.DB);
-        if (failure) await notifyFloorChanged(failure.sessionId, failure.revision, ["queue", "runs", "review"]);
-        return { status: current.status === "publishing" ? "publishing" : "failed" };
+        const reason = error instanceof Error ? error.message : "Run publication failed.";
+        const failure = await recordRunPublicationFailure(runId, reason, this.env.DB);
+        if (failure) {
+          await advanceConflictAfterFailure(runId, reason, this.env.DB, true);
+          await notifyFloorChanged(failure.sessionId, failure.revision, ["queue", "runs", "review"]);
+          await pokeSessionRouter(failure.sessionId, "run_completed");
+        }
+        return { status: "failed" };
       }
       finalStatus = await isRunCancellationRequested(runId, this.env.DB) ? "cancelled" : "failed";
       summary = finalStatus === "cancelled" ? "Agent run cancelled. No repository changes were published." : error instanceof Error ? error.message : "Agent run failed.";

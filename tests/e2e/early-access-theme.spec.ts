@@ -72,3 +72,17 @@ test("early-access colors stay consistent with every theme on mobile and desktop
     await context.close();
   }
 });
+
+test("the landing entry explains itself on a touch device", async ({ browser }) => {
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true });
+  const page = await context.newPage();
+
+  await page.goto("/");
+  const entry = page.getByRole("link", { name: "Sign in" });
+  await expect(entry).toBeVisible();
+  await expect(entry.locator(".entry-signin-gap")).toHaveCSS("width", "176px");
+  await expect(entry.locator(".entry-signin-dots")).toHaveCSS("opacity", "0");
+  await expect(entry.locator(".entry-signin-text")).toHaveCSS("opacity", "1");
+
+  await context.close();
+});

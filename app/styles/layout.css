@@ -188,6 +188,15 @@
   opacity: 1;
 }
 
+/* A touch-only visitor cannot trigger the hover reveal that explains this
+   mark. Hold the label open at rest on hoverless/coarse-pointer devices so
+   the entry control cannot be mistaken for an indefinite loading indicator. */
+@media (hover: none), (pointer: coarse) {
+  .entry-signin-gap { width: 176px; }
+  .entry-signin-dots { opacity: 0; }
+  .entry-signin-text { opacity: 1; }
+}
+
 @keyframes entry-dot-in {
   from { opacity: 0; transform: scale(.2); }
   to { opacity: 1; transform: scale(1); }
