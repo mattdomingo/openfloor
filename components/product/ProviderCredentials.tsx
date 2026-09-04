@@ -37,14 +37,16 @@ export function ProviderCredentials({
   onCredentialsChange?: (credentials: ProviderCredentialSummary[]) => void;
 }) {
   const [credentials, setCredentials] = useState(initialCredentials);
+  const visibleProviders = [...new Set([...providers, ...credentials.map((credential) => credential.provider)])];
 
   return (
     <ul className="settings-category-list provider-credential-list">
-      {providers.flatMap((provider) =>
-        credentialKindsForProvider(provider).map((kind) => (
+      {visibleProviders.flatMap((provider) =>
+        credentialKindsForProvider(provider).filter((kind) => providers.includes(provider) || credentials.some((credential) => credential.provider === provider && credential.kind === kind)).map((kind) => (
           <ProviderCredentialRow
             key={`${provider}:${kind}`}
             provider={provider}
+            available={providers.includes(provider)}
             kind={kind}
             credential={credentials.find((credential) => credential.provider === provider && credential.kind === kind) ?? null}
             showAgentDefaults={showAgentDefaults}
@@ -81,7 +83,8 @@ function formatUsd(microUsd: number): string {
   return `$${(microUsd / 1_000_000).toFixed(2)}`;
 }
 
-function ProviderCredentialRow({ provider, kind, credential, showAgentDefaults, onChanged }: {
+function ProviderCredentialRow({ provider, kind, credential, available, showAgentDefaults, onChanged }: {
+  available: boolean;
   provider: CredentialProvider;
   kind: CredentialKind;
   credential: ProviderCredentialSummary | null;
@@ -111,7 +114,7 @@ function ProviderCredentialRow({ provider, kind, credential, showAgentDefaults, 
   const oauthNoun = setupCommand ? "Setup token" : "API key";
 
   async function connect() {
-    if (!secret.trim() || busy) return;
+    if (!available || !secret.trim() || busy) return;
     setBusy(true);
     setError(null);
     const response = await fetch(`${BASE_PATH}/api/account/credentials/${provider}`, {
@@ -177,11 +180,12 @@ function ProviderCredentialRow({ provider, kind, credential, showAgentDefaults, 
           {showAgentDefaults && kind === "api_key" && <small>{AGENT_PROVIDER_LABELS[provider]} · {DEFAULT_PROVIDER_MODELS[provider]}</small>}
         </span>
         <span className="provider-credential-status" data-connected={Boolean(credential)}>
-          {credential ? (kind === "api_key" || credential.validatedAt ? "Connected" : "Connected — not yet verified") : "Not connected"}
+          {!available ? "Unavailable in this environment" : credential ? (kind === "api_key" || credential.validatedAt ? "Connected" : "Connected — not yet verified") : "Not connected"}
         </span>
       </button>
       {expanded && (
         <div id={panelId} className="provider-credential-body">
+          {!available && <p className="notice" data-tone="attention">This provider is disabled in this environment. Your saved credential remains removable, but cannot run agents.</p>}
           {credential ? (
             <>
               {/* .settings-category-row .button (globals.css) grid-places the
@@ -204,7 +208,7 @@ function ProviderCredentialRow({ provider, kind, credential, showAgentDefaults, 
                 {busy ? <><Spinner />Disconnecting…</> : "Disconnect"}
               </button>
             </>
-          ) : (
+          ) : available ? (
             // A plain div, not a <form>: this row can render inside the
             // create-session dialog's own <form>, and nested forms are
             // invalid HTML — a submit button there silently native-submits
@@ -282,7 +286,7 @@ function ProviderCredentialRow({ provider, kind, credential, showAgentDefaults, 
                 </button>
               </div>
             </div>
-          )}
+          ) : null}
           {error && <p className="form-error" role="alert">{error}</p>}
         </div>
       )}

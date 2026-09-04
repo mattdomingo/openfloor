@@ -671,3 +671,9 @@ Before handing off a change, verify the applicable items:
 - New durable decisions are appended to [`docs/decision-log.md`](docs/decision-log.md).
 - No secrets, local environment files, build output, or test artifacts are included.
 - Deployment and production mutation occur only with explicit authorization. Merging to `main` is that authorization: it triggers the automatic production deploy. Agents still never run manual deploys or mutate production state directly without being asked.
+
+### Josh beta integration corrections (2026-09-04)
+
+Settings offers **Refresh repository access** through the existing transient GitHub device proof. GitHub Configure callbacks without signed state are navigation-only and return to verification; they never grant access from a supplied installation ID. Verified installation scopes refresh atomically, including empty scopes, while associations for other linked GitHub accounts and existing session connections remain intact. Incomplete GitHub pagination or scope failures preserve existing grants and report a retryable error. Live installation repository lists remain intersected with the member's verified scope.
+
+Onboarding and Settings use the same provider rollout gates as agent creation. Saved credentials for disabled providers remain visible as unavailable and removable; new connections to disabled providers are refused server-side.

@@ -971,3 +971,11 @@ Agent runtime posture is also tightened: Codex receives only an explicit safe SD
 **Rationale:** The prior run loader issued two additional D1 queries per visible run, while candidate Review first loaded ids and then issued three reads per historical run. That N+1 path amplified every initial floor load and realtime refetch, and soft-deleted prompts accumulated in an otherwise invisible snapshot query.
 
 **Consequences:** A nonempty run list uses exactly three D1 reads regardless of run count; an empty list remains one read. Review attribution, ordering, the 20-run floor bound, and durable dismissed-run audit history are unchanged.
+
+### 2026-09-04 — Refresh verified GitHub scopes and align provider availability
+
+**Decision:** Settings exposes repository-access refresh using the existing one-use GitHub device authorization. The complete verified installation result refreshes its member-scoped grants in one D1 batch, preserving opaque association IDs, other linked GitHub accounts, and existing session repository connections. Empty verified scopes remove selection access. Failed or bounded-out enumeration writes nothing. An unsigned GitHub Configure callback only navigates to Settings verification; it cannot exchange a code or link the supplied installation. Onboarding and Settings receive the server's rollout-enabled provider list; disabled saved credentials remain removable, and credential PUT refuses disabled providers.
+
+**Rationale:** Installation permissions alone cannot widen a member's repository grants. Refreshing the existing proof avoids disconnecting and recreating associations. Provider choices should agree with executable capabilities across setup surfaces.
+
+**Consequences:** Adding repositories on GitHub requires fresh member verification, but never removal of the existing connection. GitHub user tokens remain transient. Existing installations linked through other GitHub identities are preserved. No authentication replacement, installation-wide scope grant, or new persisted credential is introduced.
