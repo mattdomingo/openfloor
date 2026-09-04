@@ -186,13 +186,21 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   const agentFloor = owner.getByRole("region", { name: "Agent floor" });
   await agentFloor.getByRole("button", { name: "New agent" }).click();
   await owner.getByLabel("Name").fill("Lumen");
-  await owner.getByLabel("Role").fill("Researcher");
+  await expect(owner.getByLabel("Role", { exact: true })).toHaveCount(0);
   await owner.getByLabel("Task").fill("Map the persistent agent API");
   await owner.getByRole("dialog").getByRole("button", { name: "Create agent" }).click();
   await expect(owner.getByRole("dialog")).toBeHidden();
   await expect(agentFloor.getByRole("tab", { name: "Lumen" })).toBeVisible();
   await expect(member.getByRole("region", { name: "Agent floor" }).getByRole("tab", { name: "Lumen" })).toBeVisible();
   await expect(agentFloor.getByText(/server\/|app\/|tests\//)).toHaveCount(0);
+  await expect(agentFloor.getByRole("button", { name: "Pause", exact: true })).toBeDisabled();
+  await expect(agentFloor.getByRole("button", { name: "Stop", exact: true })).toBeDisabled();
+  await expect(agentFloor.getByText("Idle", { exact: true })).toBeVisible();
+  await owner.getByLabel("Prompt to add to the queue").fill("@");
+  await expect(owner.getByRole("option", { name: /Lumen/ })).toBeVisible();
+  await owner.getByLabel("Prompt to add to the queue").press("Escape");
+  await owner.getByLabel("Prompt to add to the queue").fill("");
+
 
   await owner.getByRole("button", { name: "Queue settings" }).click();
   await owner.getByRole("group", { name: "Queue settings" }).getByRole("button", { name: /^On openfloor assigns/ }).click();
@@ -221,6 +229,14 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await persistentHold.getByRole("button", { name: "Cancel", exact: true }).click();
   await generatedHold.getByRole("button", { name: "Cancel", exact: true }).click();
   await expect(agentFloor.getByRole("tab", { name: "Auto Worker, auto-generated" })).toHaveCount(0);
+  await agentFloor.getByRole("button", { name: "Run history", exact: true }).click();
+  const history = owner.getByRole("dialog", { name: "Run history" });
+  await expect(history.getByRole("button", { name: /Auto Worker.*Generated worker/ }).first()).toBeVisible();
+  await history.getByRole("button", { name: /Auto Worker.*Generated worker/ }).first().click();
+  await expect(history.getByRole("button", { name: "Open raw log" })).toBeVisible();
+  await expect(history.getByText(/session brief/i)).toHaveCount(0);
+  await history.getByRole("button", { name: "Close", exact: true }).click();
+
   await expect(agentFloor.getByRole("tab", { name: "Lumen" })).toBeVisible();
   await agentFloor.getByRole("button", { name: "Auto agents off" }).click();
   await agentFloor.getByRole("button", { name: "All agents" }).click();
@@ -610,7 +626,7 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   // Failed prompts fold into their collapsed section; open the bar first.
   await owner.locator(".queue-group-bar", { hasText: "Failed" }).click();
   await expect(owner.getByText("failed", { exact: true }).first()).toBeVisible();
-  await expect(failingItem.getByRole("button", { name: "Resume", exact: true })).toBeVisible();
+  await expect(failingItem.getByRole("button", { name: "Retry", exact: true })).toBeVisible();
 
   // A failed card is clickable — it expands in place to the agent's saved
   // failure message instead of just saying "failed". Check commands are

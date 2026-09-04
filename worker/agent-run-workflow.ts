@@ -9,6 +9,7 @@ import {
   beginRunIntegration,
   cancelRunIntegration,
   finishAgentReply,
+  finishAgentRunWithoutChanges,
   finishAgentRun,
   finishRunPublished,
   finishRunIntegrated,
@@ -773,7 +774,7 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
           return { path, additions: Number(additions) || 0, deletions: Number(deletions) || 0 };
         });
         const paths = numstats.map((entry) => entry.path);
-        if (paths.length === 0) throw new Error("The agent completed without changing any files");
+        if (paths.length === 0) return [];
         if (paths.length > MAX_FILES) throw new Error(`The agent changed more than ${MAX_FILES} files`);
         if (paths.some((path) => path === ".github/workflows" || path.startsWith(".github/workflows/"))) {
           throw new Error("Workflow-file changes are not allowed in this release");
@@ -821,6 +822,20 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
         return await this.complete(runId, finalStatus, summary);
       }
       finalStatus = "ready";
+      if (files.length === 0) {
+        if (context.conflictCaseId) throw new Error("The conflict resolver produced no changes to integrate.");
+        const completion = await finishAgentRunWithoutChanges(runId, this.env.DB);
+        if (!completion) {
+          if (await isRunCancellationRequested(runId, this.env.DB)) return await this.complete(runId, "cancelled", "Agent run cancelled.");
+          const latest = await getRunExecutionContext(runId, this.env.DB);
+          if (latest && isAgentRunWorkflowTerminal(latest)) return { status: latest.status };
+          throw new Error("Run state changed before no-change completion.");
+        }
+        await notifyFloorChanged(completion.sessionId, completion.revision, ["queue", "runs"]);
+        await pokeSessionRouter(completion.sessionId, "run_completed");
+        return { status: "ready" };
+      }
+
       summary = `The agent changed ${files.length} file${files.length === 1 ? "" : "s"}. Preparing the verified run branch.`;
       await this.complete(runId, finalStatus, summary);
 

@@ -1,5 +1,7 @@
 "use client";
 
+import { RunHistoryDialog } from "./RunHistoryDialog";
+
 import { memo, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { AGENT_PROVIDER_LABELS, connectedProviders, type CredentialProvider, type ProviderCredentialSummary } from "@/lib/provider-credentials";
 import type { AgentRun, CreateFloorAgentInput, FloorAgent, FloorAgentSettingsPatch, FloorQueueItem } from "@/lib/floor-types";
@@ -86,6 +88,7 @@ export const AgentFloor = memo(function AgentFloor({ chrome, sessionId, agents, 
   onAutoAgentProvider: (provider: CredentialProvider | null) => Promise<boolean>;
 }) {
   const [creating, setCreating] = useState(false);
+  const [runHistoryOpen, setRunHistoryOpen] = useState(false);
   const [historyAgentId, setHistoryAgentId] = useState<string | null>(null);
   const createButtonRef = useRef<HTMLButtonElement>(null);
   const historyAgent = agents.find((agent) => agent.id === historyAgentId) ?? null;
@@ -147,6 +150,7 @@ export const AgentFloor = memo(function AgentFloor({ chrome, sessionId, agents, 
 
   const headerActions = (
     <>
+      <button type="button" className="button" data-size="sm" onClick={() => setRunHistoryOpen(true)}>Run history</button>
       {agents.length > 0 && (
         <div className="agent-header-rail" role="tablist" aria-label="Agents">
           {agents.map((agent, index) => (
@@ -187,6 +191,7 @@ export const AgentFloor = memo(function AgentFloor({ chrome, sessionId, agents, 
         <AgentSpotlight agent={selected} tone={agentTone(selected.id, agents.findIndex((agent) => agent.id === selected.id))} sessionId={sessionId} latestRun={selectedLatestRun} activity={activity} owner={owner} agentOwner={selected.ownerUserId === currentUserId} conflict={conflictsByAgentId?.get(selected.id) ?? null} onHistory={() => setHistoryAgentId(selected.id)} onOpenConflict={onOpenConflict} onUpdateSettings={onUpdateSettings} onPause={onPauseAgent} onStop={onStopAgent} onDelete={onDeleteAgent} />
       ) : null}
     </Panel>
+    {runHistoryOpen && <RunHistoryDialog sessionId={sessionId} activity={activity} onClose={() => setRunHistoryOpen(false)} />}
     {creating && <CreateAgentDialog sessionId={sessionId} currentUserId={currentUserId} enabledProviders={enabledProviders} providerCredentials={providerCredentials} onClose={() => { setCreating(false); createButtonRef.current?.focus(); }} onCreate={onCreateAgent} />}
     {historyAgent && <AgentChatHistory agent={historyAgent} queue={queue} onClose={() => setHistoryAgentId(null)} />}
   </>;

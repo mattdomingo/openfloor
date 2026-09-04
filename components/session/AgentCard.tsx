@@ -5,11 +5,11 @@ import type { AgentRun, FloorAgent, FloorAgentSettingsPatch } from "@/lib/floor-
 import { AGENT_PROVIDER_LABELS, credentialKindLabel, credentialKindsForProvider, MODEL_CONTEXT_TOKENS, parseCredentialKind, PROVIDER_MODELS } from "@/lib/provider-credentials";
 import { BASE_PATH } from "@/components/basePath";
 import { LocalDateTime } from "@/components/LocalDateTime";
-import { Icon, PersonName } from "./primitives";
+import { Icon, PersonName, Spinner } from "./primitives";
 import { Markdown } from "./Markdown";
 import { SelectMenu } from "./SelectMenu";
 import { type RunActivitySource, useRunEvents } from "./useRunActivity";
-import { ACTIVE_RUN_STATUSES, agentReplyText, conflictCardStatus, conflictStateLabel, formatAgentCost, isRunLive, runContextUsage, runStatusToken, type AgentConflictInfo } from "./data";
+import { ACTIVE_RUN_STATUSES, agentReplyText, conflictCardStatus, conflictStateLabel, formatAgentCost, isRunLive, runContextUsage, runStatusToken, runHandoffLabel, type AgentConflictInfo } from "./data";
 
 const KIND_GLYPHS: Record<string, string> = {
   reasoning: "✳",
@@ -32,8 +32,9 @@ export const AgentCard = memo(function AgentCard({ agent, tone, latestRun, activ
   const reply = agentReplyText(latestRun);
   const paused = agent.pausedAt !== null;
   const controllable = agent.kind !== "answer";
+  const handoff = runHandoffLabel(latestRun);
   const conflictStatus = conflictCardStatus(conflict);
-  const stateLabel = conflictStatus ? conflictStateLabel(conflictStatus) : paused ? "Paused" : latestRun ? runStatusToken(latestRun).replace("_", " ") : "Created";
+  const stateLabel = conflictStatus ? conflictStateLabel(conflictStatus) : paused ? "Paused" : latestRun ? runStatusToken(latestRun).replace("_", " ") : "Idle";
   const cost = formatAgentCost(agent);
   // A conflicted card's own click goes straight to the exact case in Review
   // instead of focusing the tile — the floor is not where a merge gets
@@ -46,7 +47,7 @@ export const AgentCard = memo(function AgentCard({ agent, tone, latestRun, activ
       <div className="agent-head">
         <span className="agent-glyph" aria-hidden="true">{agent.name.slice(0, 1)}</span>
         <span className="agent-identity"><strong>{agent.name}{agent.kind && <em className="kind-tag" data-kind="auto">Auto-generated</em>}</strong><span>{agent.role}</span></span>
-        <span className="agent-head-trailing"><span className="agent-state">{stateLabel}</span><button type="button" className="button agent-chat-button" data-size="sm" onClick={(event) => { event.stopPropagation(); onHistory(); }}><Icon name="message" size={12} /><span className="agent-chat-label">Prompts</span></button></span>
+        <span className="agent-head-trailing"><span className="agent-state">{handoff && <Spinner />}{handoff ?? stateLabel}</span><button type="button" className="button agent-chat-button" data-size="sm" onClick={(event) => { event.stopPropagation(); onHistory(); }}><Icon name="message" size={12} /><span className="agent-chat-label">Prompts</span></button></span>
       </div>
       <div className="agent-task"><strong title={agent.task}>{agent.task}</strong></div>
       {conflictStatus !== "needs-input" && latestEvent && (
@@ -66,8 +67,8 @@ export const AgentCard = memo(function AgentCard({ agent, tone, latestRun, activ
           )}
           {controllable && (
             <>
-              <button type="button" className="button" data-size="sm" disabled={paused && !agentOwner} title={paused && !agentOwner ? "Only this agent's owner can resume it" : paused ? "Resume; shared routing may run it and spend the owner's credential" : "Pause"} aria-label={paused ? `Resume ${agent.name}` : `Pause ${agent.name}`} onClick={() => onPause(agent.id, !paused)}><Icon name={paused ? "play" : "pause"} size={12} /></button>
-              <button type="button" className="button" data-size="sm" title={owner ? "Stop: pause future work and cancel the current run" : "Stop: pause future work; the current run will finish"} aria-label={`Stop ${agent.name}`} onClick={() => onStop(agent.id)}><Icon name="stop" size={12} /></button>
+              <button type="button" className="button" data-size="sm" disabled={paused ? !agentOwner : !isRunLive(latestRun) && !handoff} title={paused && !agentOwner ? "Only this agent's owner can resume it" : paused ? "Resume; shared routing may run it and spend the owner's credential" : "Pause"} aria-label={paused ? `Resume ${agent.name}` : `Pause ${agent.name}`} onClick={() => onPause(agent.id, !paused)}><Icon name={paused ? "play" : "pause"} size={12} /></button>
+              <button type="button" className="button" data-size="sm" title={owner ? "Stop: pause future work and cancel the current run" : "Stop: pause future work; the current run will finish"} aria-label={`Stop ${agent.name}`} disabled={!isRunLive(latestRun) && !handoff} onClick={() => onStop(agent.id)}><Icon name="stop" size={12} /></button>
               {!agent.kind && <button type="button" className="button danger-button" data-size="sm" title="Delete" aria-label={`Delete ${agent.name}`} onClick={() => onDelete(agent.id)}><Icon name="trash" size={12} /></button>}
             </>
           )}
@@ -95,15 +96,16 @@ export const AgentSpotlight = memo(function AgentSpotlight({ agent, tone, sessio
   const isReply = latestRun?.kind === "reply";
   const paused = agent.pausedAt !== null;
   const controllable = agent.kind !== "answer";
+  const handoff = runHandoffLabel(latestRun);
   const conflictStatus = conflictCardStatus(conflict);
-  const stateLabel = conflictStatus ? conflictStateLabel(conflictStatus) : paused ? "Paused" : latestRun ? runStatusToken(latestRun).replace("_", " ") : "Created";
+  const stateLabel = conflictStatus ? conflictStateLabel(conflictStatus) : paused ? "Paused" : latestRun ? runStatusToken(latestRun).replace("_", " ") : "Idle";
   const context = latestRun ? runContextUsage(latestRun, MODEL_CONTEXT_TOKENS[latestRun.model] ?? null) : null;
   return (
     <article className="spotlight" data-status={conflictStatus ?? (paused ? "paused" : latestRun ? runStatusToken(latestRun) : "idle")} data-tone={tone}>
       <div className="spotlight-head">
         <span className="agent-glyph" data-size="lg" aria-hidden="true">{agent.name.slice(0, 1)}</span>
         <div className="agent-identity"><h3>{agent.name}{agent.kind && <em className="kind-tag" data-kind="auto">Auto-generated</em>}</h3><span>{agent.role} · {AGENT_PROVIDER_LABELS[agent.provider]}{agent.model ? ` · ${agent.model}` : ""}{agent.credentialKind ? ` · ${credentialKindLabel(agent.provider, agent.credentialKind)}` : ""} · owned by <PersonName name={agent.ownerName} /></span></div>
-        <span className="agent-state">{stateLabel}</span>
+        <span className="agent-state">{handoff && <Spinner />}{handoff ?? stateLabel}</span>
       </div>
       {(controllable || (conflict && conflictStatus && onOpenConflict)) && (
         <div className="agent-controls">
@@ -117,14 +119,15 @@ export const AgentSpotlight = memo(function AgentSpotlight({ agent, tone, sessio
           )}
           {controllable && (
             <>
-              <button type="button" className="button" data-size="sm" disabled={paused && !agentOwner} title={paused ? agentOwner ? "Shared routing may run this agent and spend your credential" : "Only this agent's owner can resume it" : undefined} onClick={() => onPause(agent.id, !paused)}><Icon name={paused ? "play" : "pause"} size={12} />{paused ? "Resume" : "Pause"}</button>
-              <button type="button" className="button" data-size="sm" title={owner ? "Pause future work and cancel the current run" : "Pause future work; the current run will finish"} onClick={() => onStop(agent.id)}><Icon name="stop" size={12} />Stop</button>
+              <button type="button" className="button" data-size="sm" disabled={paused ? !agentOwner : !isRunLive(latestRun) && !handoff} title={paused ? agentOwner ? "Shared routing may run this agent and spend your credential" : "Only this agent's owner can resume it" : undefined} onClick={() => onPause(agent.id, !paused)}><Icon name={paused ? "play" : "pause"} size={12} />{paused ? "Resume" : "Pause"}</button>
+              <button type="button" className="button" data-size="sm" title={owner ? "Pause future work and cancel the current run" : "Pause future work; the current run will finish"} disabled={!isRunLive(latestRun) && !handoff} onClick={() => onStop(agent.id)}><Icon name="stop" size={12} />Stop</button>
               {!agent.kind && <button type="button" className="button danger-button" data-size="sm" onClick={() => onDelete(agent.id)}><Icon name="trash" size={12} />Delete</button>}
             </>
           )}
         </div>
       )}
       <div className="spotlight-row"><span className="label">Task</span>{agent.kind ? <p className="agent-detail-line">{agent.task}</p> : <AgentTaskEditor key={`${agent.id}-${agent.updatedAt}`} agent={agent} onSave={(agentId, task) => onUpdateSettings(agentId, { task })} />}</div>
+      {!agent.kind && <p className="form-note">Task, model, and billing edits apply to subsequent runs. Provider and ownership cannot change here.</p>}
       {latestRun?.resumedFromAttempt != null && (
         <div className="spotlight-row"><span className="label">Thread</span><p className="agent-detail-line">{latestRun.providerThreadResumed === 0 ? `Could not resume attempt ${latestRun.resumedFromAttempt}; started a fresh thread` : `Resumed from attempt ${latestRun.resumedFromAttempt}`}</p></div>
       )}
@@ -186,17 +189,17 @@ export const AgentSpotlight = memo(function AgentSpotlight({ agent, tone, sessio
         </div>
       )}
       {!isReply && (
-        <div className="spotlight-row"><span className="label">Execution</span>{latestRun ? <div className="spotlight-execution"><ActivityTimeline run={latestRun} activity={activity} /><p className="review-empty">{latestRun.files.length} changed file{latestRun.files.length === 1 ? "" : "s"}</p>{latestRun.runBranch && <p className="review-empty"><code>{latestRun.runBranch}</code>{latestRun.discardedAt ? " · discarded" : ""}{latestRun.rollbackStatus === "completed" ? " · rolled back" : ""}</p>}{latestRun.rollbackFailureReason && <p className="review-empty">{latestRun.rollbackFailureReason}</p>}<ArtifactToggle sessionId={sessionId} run={latestRun} label="Open raw log" closeLabel="Hide raw log" emptyText="The raw log becomes available when the run finishes." /><ArtifactToggle sessionId={sessionId} run={latestRun} kind="prompt" label="Session brief sent to this agent" closeLabel="Hide session brief" emptyText="The session brief becomes available once the run starts." /></div> : <p className="review-empty">No agent run has started.</p>}</div>
+        <div className="spotlight-row"><span className="label">Execution</span>{latestRun ? <div className="spotlight-execution"><ActivityTimeline run={latestRun} activity={activity} /><p className="review-empty">{latestRun.files.length} changed file{latestRun.files.length === 1 ? "" : "s"}</p>{latestRun.runBranch && <p className="review-empty"><code>{latestRun.runBranch}</code>{latestRun.discardedAt ? " · discarded" : ""}{latestRun.rollbackStatus === "completed" ? " · rolled back" : ""}</p>}{latestRun.rollbackFailureReason && <p className="review-empty">{latestRun.rollbackFailureReason}</p>}<ArtifactToggle sessionId={sessionId} run={latestRun} label="Open raw log" closeLabel="Hide raw log" emptyText="The raw log becomes available when the run finishes." /></div> : <p className="review-empty">No agent run has started.</p>}</div>
       )}
       {isReply && latestRun && (
-        <div className="spotlight-row"><span className="label">Activity</span><div className="spotlight-execution"><ActivityTimeline run={latestRun} activity={activity} /><ArtifactToggle sessionId={sessionId} run={latestRun} kind="prompt" label="Session brief sent to this agent" closeLabel="Hide session brief" emptyText="The session brief becomes available once the run starts." /></div></div>
+        <div className="spotlight-row"><span className="label">Activity</span><div className="spotlight-execution"><ActivityTimeline run={latestRun} activity={activity} /></div></div>
       )}
       <div className="spotlight-foot"><span><LocalDateTime timestamp={agent.createdAt} /></span><button type="button" className="button agent-chat-button" data-size="sm" onClick={onHistory}><Icon name="message" size={12} /><span className="agent-chat-label">Prompt history</span></button></div>
     </article>
   );
 });
 
-const ActivityTimeline = memo(function ActivityTimeline({ run, activity }: { run: AgentRun; activity: RunActivitySource }) {
+export const ActivityTimeline = memo(function ActivityTimeline({ run, activity }: { run: AgentRun; activity: RunActivitySource }) {
   const events = useRunEvents(activity, run.id);
   const listRef = useRef<HTMLOListElement>(null);
   const pinnedRef = useRef(true);
@@ -233,7 +236,7 @@ const ActivityTimeline = memo(function ActivityTimeline({ run, activity }: { run
 });
 
 /** Fetch-on-expand artifact viewer. Omit `kind` for the default (unfiltered) codex_log + diff view. */
-function ArtifactToggle({ sessionId, run, kind, label, closeLabel, emptyText }: {
+export function ArtifactToggle({ sessionId, run, kind, label, closeLabel, emptyText }: {
   sessionId: string; run: AgentRun; kind?: string; label: string; closeLabel: string; emptyText: string;
 }) {
   const [open, setOpen] = useState(false);

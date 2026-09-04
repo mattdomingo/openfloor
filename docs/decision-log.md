@@ -987,3 +987,19 @@ Agent runtime posture is also tightened: Codex receives only an explicit safe SD
 **Rationale:** An authenticated local Git HTTP reproduction confirmed the interview's promisor/index-pack failure: clone authenticated, but bundle import's lazy fetch did not. Generic run-only commit subjects also obscured the work's originating request.
 
 **Consequences:** The parent lease, bundle validation, deterministic publication date, and non-force branch publication remain intact. Commit identity remains deterministic for retry. Git descriptions intentionally sacrifice detail where the opening request may contain sensitive values. No raw session brief or complete prompt is copied to Git metadata.
+
+### 2026-09-04 — Preserve no-change success and expose retained run history
+
+**Decision:** Add nullable `agent_runs.completion` through a plain ALTER TABLE migration. A checking task with no file changes completes once as `ready/no_changes`, retaining its output and writable task identity while completing its queue item and releasing capacity. It never publishes a branch. Conflict resolvers still require a change. A member-only, no-store history endpoint pages retained runs by session-bound `(created_at, id)` cursor, 20 at a time, with the existing set-based child hydration. The read-only Run history dialog includes inactive agents and preserves output, summaries, file diffs, activity and raw logs. Internal session briefs remain injected and persisted but disappear from ordinary UI.
+
+**Rationale:** A successful analysis or already-satisfied task should not fail because no commit is needed. Retiring a generated agent must not hide its audit trail or send an old queue action to an unrelated active agent.
+
+**Consequences:** Deploy migration 0046 before the dependent Worker; rollback code may ignore the additive column, but must not republish completed no-change tasks. Successful changed tasks retain the existing publication lifecycle. The latest-20 floor bound stays unchanged. History never grants live controls to removed agents, and stale agent IDs never resolve by fallback.
+
+### 2026-09-04 — Match tasks before preferring persistent agents
+
+**Decision:** Automatic task routing filters eligible agents for keyword overlap or legacy explicit Generalist role before preferring persistent agents. Without a suitable agent it provisions a worker under the existing policy or holds the prompt for manual assignment. Review/inspect/analyze imperatives classify as questions unless a modifying verb takes precedence. Agent creation exposes Name and Task with a compatibility-only Engineer role; existing edit ownership rules remain. Idle controls, real publication indicators, Retry labels, and immediate bare-@ suggestions clarify the existing lifecycle.
+
+**Rationale:** Idle availability and an internally defaulted Engineer role are not evidence of task suitability. The previous fallback could send design work to a testing specialist.
+
+**Consequences:** The deterministic keyword router remains explicit and conservative; it does not claim semantic intelligence. Manual targeting still takes precedence. No model-discovery, reasoning-effort, conflict-policy, or archived-session change is introduced.

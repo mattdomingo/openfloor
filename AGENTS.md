@@ -136,17 +136,17 @@ WebSocket events notify clients about presence or changed domains. D1 remains au
 
 See [`docs/implemented-features.md`](docs/implemented-features.md) for the complete bullet-by-bullet list of what is real today (auth, sessions, agents, GitHub integration, providers, conflict resolution, generated agents, and more). Every entry there is authoritative — nothing in that list is fabricated or aspirational; see "Explicitly deferred" below for what is not yet built.
 
-Exhausted run-branch publication retries are terminal: the run and its queue item become `failed`, the router is notified that capacity is free, and conflict-resolution attempts advance through their normal retry/attention state. A run must never remain indefinitely in `publishing` after its durable Workflow has exhausted retries. Durable Workflow re-entry must treat `integrated`, `conflicted`, `failed`, and `cancelled` runs as finished; `ready` is also finished for a reply run but remains an intermediate publication state for a task run.
+Exhausted run-branch publication retries are terminal: the run and its queue item become `failed`, the router is notified that capacity is free, and conflict-resolution attempts advance through their normal retry/attention state. A run must never remain indefinitely in `publishing` after its durable Workflow has exhausted retries. Durable Workflow re-entry must treat `integrated`, `conflicted`, `failed`, and `cancelled` runs as finished; `ready` is also finished for a reply or `completion = no_changes` run; other task runs still need publication.
 
 Known production follow-up: the owner discard action still reports failure in the disposable acceptance repository after its Git authentication correction. Preserve the expected-SHA lease and error separation; diagnose this independently rather than weakening deletion safety or folding it into Phase 6.
 
 ### Explicitly deferred
 
 - Per-agent reasoning effort (`output_config.effort`). Model selection shipped (creation dialog, closed `PROVIDER_MODELS` allowlist — see the implemented list above); effort is the natural follow-on but a second axis the runners do not thread today.
-- Agent-authored chat messages and generic artifact download UI beyond the per-run raw-log and session-brief expanders. (Live run activity streaming and the read-only `openfloor_session_context` mid-run re-read are real — see `docs/agent-backend-gaps.md`.)
+- Agent-authored chat messages and generic artifact download UI beyond the per-run raw-log expander. (Live run activity streaming and the read-only `openfloor_session_context` mid-run re-read are real — see `docs/agent-backend-gaps.md`.)
 - Deployment automation after repository merge.
 - Agent ownership transfer (a post-hoc provider switch is delete-and-recreate, not an edit). Task/model/billing edits, and persistent-agent/generated-worker Pause/Stop/Delete, are implemented (`updateFloorAgentSettings`, `db/floor.ts`); generated-agent activation/retirement stays router-controlled and Concierge has no manual lifecycle controls.
-- Queue completion, removal, consumption, or retry workflows.
+- Automatic queue consumption or retry; explicit completion, soft removal, and user-triggered retry are implemented.
 - Ownership transfer. Owners cannot leave until transfer exists.
 - Persistent draft history. Live prompt drafts are intentionally ephemeral.
 
@@ -679,3 +679,11 @@ Settings offers **Refresh repository access** through the existing transient Git
 Onboarding and Settings use the same provider rollout gates as agent creation. Saved credentials for disabled providers remain visible as unavailable and removable; new connections to disabled providers are refused server-side.
 
 Trusted publisher Git commands all carry transient HTTPS authentication because a partial clone may fetch promised blobs during bundle import or tree reads. Credentials are never persisted in Git configuration and retained errors redact both token and Basic encoding. Publication and integration commit descriptions use the sanitized opening user request plus an `Openfloor-Run` trailer; prompt bodies and credential-bearing openings are excluded. Publisher image generation is `v3`, executor pool generation `v10` for this image change.
+
+### Josh beta run lifecycle and history (2026-09-04)
+
+Migration `0046` adds nullable `agent_runs.completion` without recreating the table. Successful writable tasks with no changed files finish as `ready` plus `no_changes`, retain their output and task kind, complete the queue item, and release capacity without a branch or publication. Compare-and-set completion preserves cancellation and terminal outcomes. Conflict resolvers still require changes. Other successful tasks continue through publication and integration.
+
+`GET /api/sessions/[id]/runs?before=<runId>` is member-only, no-store run history in pages of 20 ordered by `(created_at, id)` descending; cursors are session-bound. It includes retained inactive/deleted-agent runs, with checks/files hydrated in two set-based reads. The floor snapshot still contains only the latest 20 runs. Run history is read-only and retains final responses, summaries, diffs, activity and raw logs. Internal session briefs remain injected and stored but have no normal agent-card/history expander.
+
+Persistent agent creation asks for Name and Task, using `Engineer` only for legacy API compatibility. That default role does not make a specialist a routing generalist: automatic tasks require keyword suitability or a legacy explicit Generalist role before persistent preference is applied. Otherwise the router provisions an eligible worker or holds the prompt for manual assignment. Existing model/billing/ownership permissions remain intact. Idle agents show Idle with inactive Pause/Stop controls; failed queue attempts say Retry. Publishing/integration indicators reflect real run status. Queue history only offers Open agent for an active exact agent ID; stale selection never falls back to another agent.
