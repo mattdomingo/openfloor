@@ -1,5 +1,6 @@
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
+import type { D1DatabaseLike } from "@/db";
 import {
   acceptInvite,
   archiveSessionForMember,
@@ -69,6 +70,8 @@ import {
   finishRunPublished,
   finishRunIntegrated,
   getAgentRun,
+  getAgentRuns,
+  getAgentRunsForCandidate,
   getRunArtifactKeysForMember,
   getRunExecutionContext,
   markRunChecking,
@@ -78,6 +81,7 @@ import {
   markRunIntegrationConflicted,
   prepareConflictedRunRetry,
   recordRunArtifact,
+  recordRunPublicationFailure,
   replaceRunFiles,
   requestAgentRunCancellation,
   setRunProviderThreadId,
@@ -1040,12 +1044,88 @@ describe("D1 session persistence", () => {
     expect(floor?.runs[0]).toEqual(expect.objectContaining({ status: "integrated", runCommitSha: publishedSha, integratedCandidateSha: integratedSha }));
     expect(floor?.queue[0].status).toBe("completed");
     expect(floor?.review).toEqual(expect.objectContaining({ commitSha: integratedSha, branch, pullRequest: expect.objectContaining({ number: 7, draft: true }) }));
+
+    // Publication already gets three Workflow retries. If they all fail, the
+    // durable state must become actionable instead of parking forever in the
+    // active "publishing" status (ENG-187).
+    floor = await createFloorQueueItem(created.session.id, owner.id, { prompt: "Exercise a failed publication", agentId: floor!.agents[0].id }, env.DB);
+    const publicationItem = floor!.queue.find((item) => item.prompts[0]?.text === "Exercise a failed publication")!;
+    const publicationFailure = await createAgentRun(created.session.id, publicationItem.id, owner.id, "task", env.DB);
+    await markRunRunning(publicationFailure.id, "process-publication-failure", env.DB);
+    await markRunChecking(publicationFailure.id, "thread-publication-failure", "Implemented", env.DB);
+    await replaceRunFiles(publicationFailure.id, [{ path: "src/publication-failure.ts", changeKind: "add", additions: 1, deletions: 0, summary: null, diffPreview: "+export const ready = true;" }], env.DB);
+    await finishAgentRun(publicationFailure.id, "ready", "Ready locally", env.DB);
+    await markRunPublishing(publicationFailure.id, { bundleKey: "publication-failure.bundle", bundleSizeBytes: 20, localCommitSha: "6".repeat(40) }, env.DB);
+    await recordRunPublicationFailure(publicationFailure.id, "GitHub refused the run branch", env.DB);
+    floor = await getFloorSnapshot(created.session.id, owner.id, env.DB);
+    expect(floor?.queue.find((item) => item.id === publicationItem.id)?.status).toBe("failed");
+    expect(floor?.runs.find((item) => item.id === publicationFailure.id)).toEqual(expect.objectContaining({
+      status: "failed",
+      summary: "GitHub refused the run branch",
+      completedAt: expect.any(Number),
+    }));
+
+    // A stale failure handler must not overwrite a publication that won after
+    // its initial status read but before its compare-and-set batch.
+    floor = await createFloorQueueItem(created.session.id, owner.id, { prompt: "Race publication completion", agentId: floor!.agents[0].id }, env.DB);
+    const publicationRaceItem = floor!.queue.find((item) => item.prompts[0]?.text === "Race publication completion")!;
+    const publicationRace = await createAgentRun(created.session.id, publicationRaceItem.id, owner.id, "task", env.DB);
+    await markRunRunning(publicationRace.id, "process-publication-race", env.DB);
+    await markRunChecking(publicationRace.id, "thread-publication-race", "Implemented", env.DB);
+    await replaceRunFiles(publicationRace.id, [{ path: "src/publication-race.ts", changeKind: "add", additions: 1, deletions: 0, summary: null, diffPreview: "+export const published = true;" }], env.DB);
+    await finishAgentRun(publicationRace.id, "ready", "Ready locally", env.DB);
+    await markRunPublishing(publicationRace.id, { bundleKey: "publication-race.bundle", bundleSizeBytes: 20, localCommitSha: "7".repeat(40) }, env.DB);
+    floor = await getFloorSnapshot(created.session.id, owner.id, env.DB);
+    const revisionBeforeRace = floor!.revision;
+    let injectWinningPublication = true;
+    const racingDatabase: D1DatabaseLike = {
+      prepare: (query) => env.DB.prepare(query),
+      batch: async (statements) => {
+        if (injectWinningPublication) {
+          injectWinningPublication = false;
+          const raceBatch = [
+            env.DB.prepare("UPDATE agent_runs SET status = 'published', run_commit_sha = ?, remote_run_sha = ? WHERE id = ?")
+              .bind("7".repeat(40), "7".repeat(40), publicationRace.id),
+            ...statements,
+          ] as unknown as Parameters<typeof env.DB.batch>[0];
+          const results = await env.DB.batch(raceBatch);
+          return results.slice(1);
+        }
+        return env.DB.batch(statements as unknown as Parameters<typeof env.DB.batch>[0]);
+      },
+    };
+    await expect(recordRunPublicationFailure(publicationRace.id, "Stale publication failure", racingDatabase)).resolves.toBeNull();
+    floor = await getFloorSnapshot(created.session.id, owner.id, env.DB);
+    expect(floor?.revision).toBe(revisionBeforeRace);
+    expect(floor?.queue.find((item) => item.id === publicationRaceItem.id)?.status).toBe("blocked");
+    expect(floor?.runs.find((item) => item.id === publicationRace.id)).toEqual(expect.objectContaining({
+      status: "published",
+      summary: "Ready locally",
+    }));
+
+    let runListReads = 0;
+    const countingDatabase: D1DatabaseLike = {
+      prepare: (query) => {
+        runListReads += 1;
+        return env.DB.prepare(query);
+      },
+      batch: (statements) => env.DB.batch(statements as unknown as Parameters<typeof env.DB.batch>[0]),
+    };
+    const sessionRuns = await getAgentRuns(created.session.id, countingDatabase);
+    expect(sessionRuns.find((item) => item.id === run.id)?.files).toHaveLength(1);
+    expect(runListReads).toBe(3);
+    runListReads = 0;
+    const candidateRuns = await getAgentRunsForCandidate(candidateId, countingDatabase);
+    expect(candidateRuns.map((item) => item.id)).toEqual(expect.arrayContaining([run.id, publicationFailure.id, publicationRace.id]));
+    expect(candidateRuns.find((item) => item.id === run.id)?.files).toHaveLength(1);
+    expect(runListReads).toBe(3);
+
     expect(await markRunDiscarded(created.session.id, run.id, member.id, env.DB)).toBeNull();
     expect(await markRunDiscarded(created.session.id, run.id, owner.id, env.DB)).toBeNull();
     await finishAgentRun(run.id, "failed", "Late duplicate completion", env.DB);
     floor = await getFloorSnapshot(created.session.id, owner.id, env.DB);
     expect(floor?.queue[0].status).toBe("completed");
-    expect(floor?.runs[0].status).toBe("integrated");
+    expect(floor?.runs.find((item) => item.id === run.id)?.status).toBe("integrated");
 
     await env.DB.prepare("UPDATE floor_queue_items SET status = 'queued' WHERE id = ?").bind(queueItemId).run();
     const conflict = await createAgentRun(created.session.id, queueItemId, owner.id, "task", env.DB);

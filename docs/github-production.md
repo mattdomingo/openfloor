@@ -93,7 +93,7 @@ Create and store the credential-encryption secret for user-connected provider AP
 openssl rand -hex 32 | npx wrangler secret put CREDENTIAL_ENCRYPTION_KEY
 ```
 
-Rotating this value invalidates every stored user credential — users must reconnect their keys in `/settings`.
+Rotating this value invalidates every stored user credential — users must reconnect their keys in `/home/settings`.
 
 Optional server-side fallback keys, one per provider; without one, that provider's runs require the agent owner's connected key. Keep each provider's rollout flag (`CLAUDE_RUN_ENABLED`, `KIMI_RUN_ENABLED`, `GEMINI_RUN_ENABLED`) set to `false` until its code (and any bumped sandbox image) deploys and a credential resolves — while false, that provider's runs refuse as disabled and other providers are unaffected.
 

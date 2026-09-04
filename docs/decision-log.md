@@ -965,3 +965,27 @@ Preview v1 supports only one JavaScript app at the repository root with exactly 
 **Rationale:** The stale preview prototype had no durable lease, cleanup recovery, current authorization checks, or compatibility with the hardened runtime and current Review UI. Reusing the existing Sandbox identity boundary and making D1 own generation, capacity, host, and expiry closes stale-Workflow and leaked-container failure modes without inventing another state authority. A narrow root-only contract is testable and avoids pretending arbitrary repositories can be inferred safely.
 
 **Consequences:** Migration `0046_brief_nick_fury.sql` additively creates `repository_previews` and `sandbox_cleanup_intents`. `FloorSnapshot` gains nullable `preview`, and `floor.changed` gains the `preview` domain. New routes are `POST`/`DELETE /api/sessions/:id/repository/preview` and `GET /runtime/preview/source`. Production binds `REPOSITORY_PREVIEW` with `OPENFLOOR_PREVIEW_HOSTNAME=preview.opnflr.com`; development uses an isolated Workflow and `preview.dev.opnflr.com`. `REPOSITORY_PREVIEW_ENABLED` remains `false` in both environments, so this change performs no live DNS, TLS, Access, migration, or Cloudflare rollout. Future development enablement requires wildcard DNS/TLS, one development preview Access application, its audience appended to development `CF_ACCESS_AUD`, migration deployment, and the documented acceptance runbook; production requires equivalent isolated prerequisites afterward. Monorepos, multiple services, custom commands, secrets, runtime environment configuration, outbound runtime APIs, and non-JavaScript applications remain unsupported.
+
+### 2026-09-03 — Publication exhaustion is terminal and touch entry is explicit
+
+**Decision:** When the durable Agent Run Workflow exhausts its trusted run-branch publication retries, transition both the run and queue item from `ready`/`publishing` to terminal `failed`, record completion and the existing `publication_failed` event, advance any associated conflict attempt, notify floor clients, and wake the router. On hoverless or coarse-pointer devices, keep the landing entry's **open the floor** label visible at rest instead of requiring hover to replace the three-dot mark.
+
+**Rationale:** A permanently active `publishing` record strands session/global run capacity and gives members neither a terminal failure nor a normal retry path after the Workflow has no retry left. The landing mark's hover-only explanation is likewise unreachable on ordinary touch screens and resembles an indefinite loader at the first product touchpoint.
+
+**Consequences:** Publication failure after the Workflow retry budget is actionable and releases routing capacity; retry/recovery can use the existing failed-queue behavior. Touch visitors see an explicit entry action, while fine-pointer hover/focus behavior is unchanged. The production smoke test must also show both **Continue with GitHub** and **Email me a code** on `/signin`; the latter depends on One-time PIN dashboard state and cannot be restored by a Worker deploy.
+
+### 2026-09-04 — Durable run re-entry preserves completed outcomes
+
+**Decision:** Agent Run Workflow entry and error recovery stop immediately for `integrated`, `conflicted`, `failed`, and `cancelled` runs, plus `ready` reply runs. Task runs retain their existing `ready` publication-resume behavior. Publication-failure persistence uses a compare-and-set transition and changes the queue item and floor revision only when that transition wins.
+
+**Rationale:** A run mutation can commit before a downstream realtime notification fails. Retrying that Workflow must not execute a terminal run again, reinterpret a successfully persisted reply as a failed task publication, or let a stale publication-failure attempt overwrite a concurrently published outcome.
+
+**Consequences:** Durable retries preserve the first committed terminal outcome. Successful replies stay answered, failed/cancelled work cannot rerun, and a lost publication race leaves the winning run, queue, and revision untouched.
+
+### 2026-09-04 — Floor run hydration is set-based
+
+**Decision:** Both the latest-20 floor run list and candidate-wide Review history load their run rows once, then hydrate all selected checks and files in two set-based reads. Dismissed queue prompts are excluded from floor snapshots alongside their dismissed queue items.
+
+**Rationale:** The prior run loader issued two additional D1 queries per visible run, while candidate Review first loaded ids and then issued three reads per historical run. That N+1 path amplified every initial floor load and realtime refetch, and soft-deleted prompts accumulated in an otherwise invisible snapshot query.
+
+**Consequences:** A nonempty run list uses exactly three D1 reads regardless of run count; an empty list remains one read. Review attribution, ordering, the 20-run floor bound, and durable dismissed-run audit history are unchanged.

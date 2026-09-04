@@ -140,6 +140,8 @@ Repository app preview is implemented but intentionally unavailable while `REPOS
 
 Preview v1 supports only one JavaScript app at the repository root with exactly one npm, pnpm, Yarn, or Bun lockfile and a nonempty `dev` or `start` script (`dev` wins). Installation suppresses lifecycle scripts. The runtime has a writable repository and private home but no credentials or outbound network; exactly one HTTP listener is detected and exposed through a Unix socket owned by the Workflow relay. Monorepos, multiple services, custom commands, secrets, runtime environment configuration, outbound APIs, and non-JavaScript applications remain unsupported.
 
+Exhausted run-branch publication retries are terminal: the run and its queue item become `failed`, the router is notified that capacity is free, and conflict-resolution attempts advance through their normal retry/attention state. A run must never remain indefinitely in `publishing` after its durable Workflow has exhausted retries. Durable Workflow re-entry must treat `integrated`, `conflicted`, `failed`, and `cancelled` runs as finished; `ready` is also finished for a reply run but remains an intermediate publication state for a task run.
+
 Known production follow-up: the owner discard action still reports failure in the disposable acceptance repository after its Git authentication correction. Preserve the expected-SHA lease and error separation; diagnose this independently rather than weakening deletion safety or folding it into Phase 6.
 
 ### Explicitly deferred
@@ -156,7 +158,7 @@ See `docs/agent-backend-gaps.md` for the focused backend-gap summary. When any d
 
 ## User experience and route map
 
-Production is mounted under `/app` on `opnflr.com`. Local `npm run dev` is mounted at the root.
+Production owns `app.opnflr.com` at the root, development owns `dev.app.opnflr.com` at the root, and local `npm run dev` is also mounted at the root. `BASE_PATH` is `""` in every environment.
 
 See [`docs/routes.md`](docs/routes.md) for the full production/local route table (path, access level, purpose).
 
@@ -290,6 +292,8 @@ See [`docs/schema-invariants.md`](docs/schema-invariants.md) for the full per-ta
 
 `FloorSnapshot` includes `autoDispatch`, `autoProvisionAgents`, configured/effective generated-agent provider state, `autoResolveConflicts`, nullable `repository`, `activeCandidate`, bounded `latestPreflight`, nullable `preview`, active agents, and the latest 20 caller-visible runs. Preview is `null` while stopped or while `REPOSITORY_PREVIEW_ENABLED=false`; enabled snapshots expose provisioning, ready, failed, or derived expired state. Every queue item independently derives its caller-specific integrated-run rollback descriptor, so Queue rollback state is complete even when the run is older than that 20-run window. Runs derive `purpose` (`task` or `conflict_resolution`), nullable `conflictCaseId`, and their latest bounded rollback state. Large logs and artifacts are fetched separately. `review` is null until real repository/run data exists, then includes typed conflict cases/questions and candidate-wide attribution from dedicated queries rather than the latest-run window; never populate it from UI fixtures.
 
+Run summaries, checks, and files are hydrated with one bounded run read plus at most one set-based checks read and one set-based files read. Never restore per-run query fan-out: the latest-20 floor list and unbounded candidate-wide Review history sit on the realtime refetch path. Dismissed queue items and their prompts are excluded from that snapshot path while their run audit history remains durable.
+
 ### Mutation pattern
 
 Persisted floor mutations follow this sequence:
@@ -365,7 +369,7 @@ Hidden is a local visibility preference. It does **not** disable sharing the cur
 
 ## API contracts
 
-All paths below are shown without the production `/app` prefix.
+All paths below are root-relative in production and development; there is no production `/app` prefix.
 
 See [`docs/api-contracts.md`](docs/api-contracts.md) for the full method/path/authorization/behavior table.
 
@@ -403,7 +407,7 @@ See [`docs/plan-limits-metering.md`](docs/plan-limits-metering.md) for the full 
 
 ### Stripe billing lifecycle
 
-Stripe is authoritative for external subscription state; D1 is the authoritative product entitlement projection. `/settings`'s Plan & usage tab (`components/product/SettingsScreen.tsx`) is the single plan-management surface. Normal Portal cancellation is immediate; account deletion performs immediate Stripe cancellation with no refund before scrubbing D1. `STRIPE_CHECKOUT_ENABLED` stays false until all Stripe configuration, secrets, migrations, webhook delivery, and acceptance checks are ready. See [`docs/plan-limits-metering.md`](docs/plan-limits-metering.md#stripe-billing-lifecycle) for the full lifecycle detail, and `docs/stripe-billing.md` for the Portal configuration contract.
+Stripe is authoritative for external subscription state; D1 is the authoritative product entitlement projection. `/home/settings`'s Plan & usage tab (`components/product/SettingsScreen.tsx`) is the single plan-management surface. Normal Portal cancellation is immediate; account deletion performs immediate Stripe cancellation with no refund before scrubbing D1. `STRIPE_CHECKOUT_ENABLED` stays false until all Stripe configuration, secrets, migrations, webhook delivery, and acceptance checks are ready. See [`docs/plan-limits-metering.md`](docs/plan-limits-metering.md#stripe-billing-lifecycle) for the full lifecycle detail, and `docs/stripe-billing.md` for the Portal configuration contract.
 
 ## Frontend architecture
 
@@ -475,7 +479,7 @@ npx wrangler d1 migrations apply openfloor-production --local
 npm run dev
 ```
 
-Open the printed URL, normally `http://localhost:3000`, then use `/home`. Do not add `/app` in development.
+Open the printed URL, normally `http://localhost:3000`, then use `/home`. Do not add `/app` in any environment.
 
 ### Testing multiple local users manually
 
@@ -566,7 +570,7 @@ Pull requests run the audit and the complete `npm test`-equivalent pipeline as s
 Run the relevant flow first against development after every `release` deployment and repeat it against production after promotion.
 
 1. Open public `https://app.opnflr.com` without an Access session.
-2. Sign in through a protected path and verify return to `/home`.
+2. Open `/signin` and verify both **Continue with GitHub** and **Email me a code** are visible; the missing email action means One-time PIN is not enabled on the target Access application and must be fixed before inviting testers. Complete one sign-in flow and verify return to `/home`.
 3. Create a session and confirm it starts empty.
 4. Open a second authenticated browser identity and accept an invite explicitly.
 5. Verify lobby and floor presence.

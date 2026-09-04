@@ -61,7 +61,7 @@ developers/testers or a dedicated development Access group.
 Leave Cookie Path Attribute off and leave Zero Trust's Require Access Protection
 setting off. Hide the development application from the App Launcher unless its
 launcher target is explicitly set to a real page. Do not add `/`, `/home*`,
-`/settings*`, `/onboarding*`, `/session/*`, `/join/*`, `/signin*`, `/signout`,
+`/home/settings*`, `/onboarding*`, `/session/*`, `/join/*`, `/signin*`, `/signout`,
 `/early-access*`, static assets, `/webhooks/*`, or `/runtime/*`. Real pages live
 outside Access and authenticate from the signed `CF_Authorization` cookie minted
 through `/auth/complete`; `/api/*` receives Access's assertion header directly.

@@ -40,6 +40,7 @@ import { buildGeminiSrtSettings, buildGeminiSystemSettings } from "../lib/gemini
 import { refreshRepositoryPreview } from "../lib/repository-preview-lifecycle";
 import { buildQwenSystemSettings } from "../lib/qwen-settings";
 import { resumableProvider, usesClaudeRunner, usesQwenRunner, type CredentialProvider } from "../lib/provider-credentials";
+import { isAgentRunWorkflowTerminal } from "../lib/run-lifecycle";
 import { buildClaudeSandboxSettings } from "../lib/claude-sandbox-settings";
 import { notifyFloorChanged } from "../lib/presence-server";
 import { pokeSessionRouter } from "../lib/router-server";
@@ -211,7 +212,7 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
     let summary = "Agent run failed before the agent completed.";
     try {
       if (context.status === "published") return await this.integrate(runId, step);
-      if (["integrated", "conflicted"].includes(context.status)) return { status: context.status };
+      if (isAgentRunWorkflowTerminal(context)) return { status: context.status };
       if (context.status === "publishing") {
         if (!context.bundleKey || !context.localCommitSha || context.files.length === 0) {
           throw new Error("Stored publication metadata is incomplete");
@@ -859,10 +860,20 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
       return await this.integrate(runId, step);
     } catch (error) {
       const current = await getRunExecutionContext(runId, this.env.DB);
+      // A state mutation may have committed before a downstream realtime
+      // notification failed. Durable re-entry must preserve that completed
+      // outcome instead of executing the agent again. In particular, `ready`
+      // is a completed reply but only an intermediate task state.
+      if (current && isAgentRunWorkflowTerminal(current)) return { status: current.status };
       if (current && ["ready", "publishing"].includes(current.status)) {
-        const failure = await recordRunPublicationFailure(runId, error instanceof Error ? error.message : "Run publication failed.", this.env.DB);
-        if (failure) await notifyFloorChanged(failure.sessionId, failure.revision, ["queue", "runs", "review"]);
-        return { status: current.status === "publishing" ? "publishing" : "failed" };
+        const reason = error instanceof Error ? error.message : "Run publication failed.";
+        const failure = await recordRunPublicationFailure(runId, reason, this.env.DB);
+        if (failure) {
+          await advanceConflictAfterFailure(runId, reason, this.env.DB, true);
+          await notifyFloorChanged(failure.sessionId, failure.revision, ["queue", "runs", "review"]);
+          await pokeSessionRouter(failure.sessionId, "run_completed");
+        }
+        return { status: "failed" };
       }
       finalStatus = await isRunCancellationRequested(runId, this.env.DB) ? "cancelled" : "failed";
       summary = finalStatus === "cancelled" ? "Agent run cancelled. No repository changes were published." : error instanceof Error ? error.message : "Agent run failed.";

@@ -58,7 +58,7 @@ Users connect their own Anthropic credentials; openfloor uses them for that user
 
 - New table keyed by `(user_id, provider)`, where `provider` is an open enum starting with `anthropic` and `openai`. Store a `kind` discriminator (`api_key` today) so another credential shape can be added later without changing row identity.
 - Encrypt values at rest. There is no KMS binding today — add one, or derive an AES-GCM key from a Worker secret. Pick one and record the choice in `AGENTS.md`'s decision log.
-- Stored values are write-only from the client's perspective: no endpoint returns one. `/settings` shows connection state, a last-four fingerprint, and a disconnect action.
+- Stored values are write-only from the client's perspective: no endpoint returns one. `/home/settings` shows connection state, a last-four fingerprint, and a disconnect action.
 - Validate on connect with `GET /v1/models` (free, no tokens) and store the result. A key that later stops working surfaces as a run failure with a clear message — never a silent fallback to the server key.
 - Resolution order per run: the **session owner's** credential for the run's provider, else the server-configured key, else refuse the run. Owner rather than run initiator, because the owner is who the plan quota already bills.
 

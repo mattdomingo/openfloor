@@ -10,6 +10,42 @@ export class AgentRunIntegrationBusyError extends Error {}
 
 type RunRecord = Omit<AgentRun, "checks" | "files">;
 type CheckRecord = Omit<AgentRunCheck, "hasLog"> & { logKey: string | null };
+type ScopedCheckRecord = CheckRecord & { runId: string };
+type ScopedFileRecord = AgentRunFile & { runId: string };
+
+const AGENT_RUN_SELECT = `SELECT r.id, r.queue_item_id AS queueItemId, r.agent_id AS agentId, a.name AS agentName,
+        r.candidate_id AS candidateId, r.candidate_sha AS candidateSha, r.attempt, r.status, r.kind,
+        r.run_branch AS runBranch, r.local_commit_sha AS localCommitSha,
+        r.run_commit_sha AS runCommitSha, r.remote_run_sha AS remoteRunSha,
+        r.model, r.summary, r.final_response AS finalResponse,
+        r.input_tokens AS inputTokens, r.output_tokens AS outputTokens,
+        r.cache_read_tokens AS cacheReadTokens, r.cache_write_tokens AS cacheWriteTokens,
+        r.resumed_from_run_id AS resumedFromRunId, prior.attempt AS resumedFromAttempt,
+        r.provider_thread_resumed AS providerThreadResumed,
+        r.created_by AS createdBy,
+        r.created_at AS createdAt, r.started_at AS startedAt, r.completed_at AS completedAt,
+        r.published_at AS publishedAt, r.discarded_at AS discardedAt, r.branch_deleted_at AS branchDeletedAt,
+        r.integration_base_sha AS integrationBaseSha, r.integrated_candidate_sha AS integratedCandidateSha,
+        r.conflict_reason AS conflictReason, r.integration_started_at AS integrationStartedAt,
+        r.integrated_at AS integratedAt,
+        r.cancel_requested_at AS cancelRequestedAt, r.updated_at AS updatedAt,
+        CASE WHEN mca.run_id IS NULL THEN 'task' ELSE 'conflict_resolution' END AS purpose,
+        COALESCE(mca.case_id, source_case.id) AS conflictCaseId,
+        rb.id AS rollbackId, rb.status AS rollbackStatus,
+        rb.expected_candidate_sha AS rollbackExpectedCandidateSha,
+        rb.rollback_commit_sha AS rollbackCommitSha,
+        rb.failure_reason AS rollbackFailureReason, rb.created_by AS rollbackBy,
+        rb.created_at AS rollbackRequestedAt, rb.completed_at AS rollbackCompletedAt
+ FROM agent_runs r JOIN floor_agents a ON a.id = r.agent_id
+ LEFT JOIN agent_runs prior ON prior.id = r.resumed_from_run_id
+ LEFT JOIN merge_conflict_attempts mca ON mca.run_id = r.id
+ LEFT JOIN merge_conflict_cases source_case ON source_case.source_run_id = r.id
+ LEFT JOIN agent_run_rollbacks rb ON rb.id = (
+   SELECT latest.id FROM agent_run_rollbacks latest
+   WHERE latest.run_id = r.id ORDER BY latest.created_at DESC, latest.id DESC LIMIT 1
+ )`;
+
+type RunListScope = { column: "session_id" | "candidate_id"; value: string; limit: number | null };
 
 export async function getAgentRunsForMember(sessionId: string, userId: string, database = getDb()): Promise<AgentRun[] | null> {
   if (!(await getMembershipRole(sessionId, userId, database))) return null;
@@ -17,58 +53,65 @@ export async function getAgentRunsForMember(sessionId: string, userId: string, d
 }
 
 export async function getAgentRuns(sessionId: string, database = getDb()): Promise<AgentRun[]> {
-  const rows = await database.prepare(
-    `SELECT r.id, r.queue_item_id AS queueItemId, r.agent_id AS agentId, a.name AS agentName,
-            r.candidate_id AS candidateId, r.candidate_sha AS candidateSha, r.attempt, r.status, r.kind,
-            r.run_branch AS runBranch, r.local_commit_sha AS localCommitSha,
-            r.run_commit_sha AS runCommitSha, r.remote_run_sha AS remoteRunSha,
-            r.model, r.summary, r.final_response AS finalResponse,
-            r.input_tokens AS inputTokens, r.output_tokens AS outputTokens,
-            r.cache_read_tokens AS cacheReadTokens, r.cache_write_tokens AS cacheWriteTokens,
-            r.resumed_from_run_id AS resumedFromRunId, prior.attempt AS resumedFromAttempt,
-            r.provider_thread_resumed AS providerThreadResumed,
-            r.created_by AS createdBy,
-            r.created_at AS createdAt, r.started_at AS startedAt, r.completed_at AS completedAt,
-            r.published_at AS publishedAt, r.discarded_at AS discardedAt, r.branch_deleted_at AS branchDeletedAt,
-            r.integration_base_sha AS integrationBaseSha, r.integrated_candidate_sha AS integratedCandidateSha,
-            r.conflict_reason AS conflictReason, r.integration_started_at AS integrationStartedAt,
-            r.integrated_at AS integratedAt,
-            r.cancel_requested_at AS cancelRequestedAt, r.updated_at AS updatedAt,
-            CASE WHEN mca.run_id IS NULL THEN 'task' ELSE 'conflict_resolution' END AS purpose,
-            COALESCE(mca.case_id, source_case.id) AS conflictCaseId,
-            rb.id AS rollbackId, rb.status AS rollbackStatus,
-            rb.expected_candidate_sha AS rollbackExpectedCandidateSha,
-            rb.rollback_commit_sha AS rollbackCommitSha,
-            rb.failure_reason AS rollbackFailureReason, rb.created_by AS rollbackBy,
-            rb.created_at AS rollbackRequestedAt, rb.completed_at AS rollbackCompletedAt
-     FROM agent_runs r JOIN floor_agents a ON a.id = r.agent_id
-     LEFT JOIN agent_runs prior ON prior.id = r.resumed_from_run_id
-     LEFT JOIN merge_conflict_attempts mca ON mca.run_id = r.id
-     LEFT JOIN merge_conflict_cases source_case ON source_case.source_run_id = r.id
-     LEFT JOIN agent_run_rollbacks rb ON rb.id = (
-       SELECT latest.id FROM agent_run_rollbacks latest
-       WHERE latest.run_id = r.id ORDER BY latest.created_at DESC, latest.id DESC LIMIT 1
-     )
-     WHERE r.session_id = ? ORDER BY r.created_at DESC, r.id DESC LIMIT 20`,
-  ).bind(sessionId).all<RunRecord>();
-  return Promise.all(rows.results.map(async (run) => ({
-    ...run,
-    attempt: Number(run.attempt),
-    checks: await getRunChecks(run.id, database),
-    files: await getRunFiles(run.id, database),
-  })));
+  return getAgentRunsByScope({ column: "session_id", value: sessionId, limit: 20 }, database);
 }
 
 // Review attribution must cover the whole candidate, not the latest 20
-// session runs used by agent cards/activity. Load candidate ids first, then
-// reuse the authoritative single-run reader so rollback/check/file joins stay
-// identical in both contracts.
+// session runs used by agent cards/activity.
 export async function getAgentRunsForCandidate(candidateId: string, database = getDb()): Promise<AgentRun[]> {
+  return getAgentRunsByScope({ column: "candidate_id", value: candidateId, limit: null }, database);
+}
+
+async function getAgentRunsByScope(scope: RunListScope, database: D1DatabaseLike): Promise<AgentRun[]> {
+  const limit = scope.limit === null ? "" : ` LIMIT ${scope.limit}`;
   const rows = await database.prepare(
-    "SELECT id FROM agent_runs WHERE candidate_id = ? ORDER BY created_at DESC, id DESC",
-  ).bind(candidateId).all<{ id: string }>();
-  const runs = await Promise.all(rows.results.map((row) => getAgentRun(row.id, database)));
-  return runs.filter((run): run is AgentRun => run !== null);
+    `${AGENT_RUN_SELECT} WHERE r.${scope.column} = ? ORDER BY r.created_at DESC, r.id DESC${limit}`,
+  ).bind(scope.value).all<RunRecord>();
+  if (rows.results.length === 0) return [];
+
+  // Hydrate every selected run in two set-based reads. The previous per-run
+  // fan-out made a 20-run floor snapshot issue 40 additional D1 queries, and
+  // candidate-wide Review issued three reads for every historical run.
+  const selectedRuns = `SELECT id FROM agent_runs WHERE ${scope.column} = ?${
+    scope.limit === null ? "" : ` ORDER BY created_at DESC, id DESC LIMIT ${scope.limit}`
+  }`;
+  const [checks, files] = await Promise.all([
+    database.prepare(
+      `SELECT checks.run_id AS runId, checks.id, checks.position, checks.command, checks.status,
+              checks.exit_code AS exitCode, checks.duration_ms AS durationMs,
+              checks.output_excerpt AS outputExcerpt, checks.log_key AS logKey,
+              checks.started_at AS startedAt, checks.completed_at AS completedAt
+       FROM agent_run_checks checks
+       JOIN (${selectedRuns}) selected ON selected.id = checks.run_id
+       ORDER BY checks.run_id, checks.position`,
+    ).bind(scope.value).all<ScopedCheckRecord>(),
+    database.prepare(
+      `SELECT files.run_id AS runId, files.id, files.path, files.change_kind AS changeKind,
+              files.additions, files.deletions, files.summary, files.diff_preview AS diffPreview
+       FROM agent_run_files files
+       JOIN (${selectedRuns}) selected ON selected.id = files.run_id
+       ORDER BY files.run_id, files.path`,
+    ).bind(scope.value).all<ScopedFileRecord>(),
+  ]);
+
+  const checksByRun = new Map<string, AgentRunCheck[]>();
+  for (const { runId, logKey, ...check } of checks.results) {
+    const values = checksByRun.get(runId) ?? [];
+    values.push({ ...check, position: Number(check.position), hasLog: Boolean(logKey) });
+    checksByRun.set(runId, values);
+  }
+  const filesByRun = new Map<string, AgentRunFile[]>();
+  for (const { runId, ...file } of files.results) {
+    const values = filesByRun.get(runId) ?? [];
+    values.push({ ...file, additions: Number(file.additions), deletions: Number(file.deletions) });
+    filesByRun.set(runId, values);
+  }
+  return rows.results.map((run) => ({
+    ...run,
+    attempt: Number(run.attempt),
+    checks: checksByRun.get(run.id) ?? [],
+    files: filesByRun.get(run.id) ?? [],
+  }));
 }
 
 // The provider a run for this queue item would use, for the rollout gate in
@@ -177,38 +220,7 @@ export async function createAgentRun(sessionId: string, queueItemId: string, use
 
 export async function getAgentRun(runId: string, database = getDb()): Promise<AgentRun | null> {
   const row = await database.prepare(
-    `SELECT r.id, r.queue_item_id AS queueItemId, r.agent_id AS agentId, a.name AS agentName,
-            r.candidate_id AS candidateId, r.candidate_sha AS candidateSha, r.attempt, r.status, r.kind,
-            r.run_branch AS runBranch, r.local_commit_sha AS localCommitSha,
-            r.run_commit_sha AS runCommitSha, r.remote_run_sha AS remoteRunSha,
-            r.model, r.summary, r.final_response AS finalResponse,
-            r.input_tokens AS inputTokens, r.output_tokens AS outputTokens,
-            r.cache_read_tokens AS cacheReadTokens, r.cache_write_tokens AS cacheWriteTokens,
-            r.resumed_from_run_id AS resumedFromRunId, prior.attempt AS resumedFromAttempt,
-            r.provider_thread_resumed AS providerThreadResumed,
-            r.created_by AS createdBy,
-            r.created_at AS createdAt, r.started_at AS startedAt, r.completed_at AS completedAt,
-            r.published_at AS publishedAt, r.discarded_at AS discardedAt, r.branch_deleted_at AS branchDeletedAt,
-            r.integration_base_sha AS integrationBaseSha, r.integrated_candidate_sha AS integratedCandidateSha,
-            r.conflict_reason AS conflictReason, r.integration_started_at AS integrationStartedAt,
-            r.integrated_at AS integratedAt,
-            r.cancel_requested_at AS cancelRequestedAt, r.updated_at AS updatedAt,
-            CASE WHEN mca.run_id IS NULL THEN 'task' ELSE 'conflict_resolution' END AS purpose,
-            COALESCE(mca.case_id, source_case.id) AS conflictCaseId,
-            rb.id AS rollbackId, rb.status AS rollbackStatus,
-            rb.expected_candidate_sha AS rollbackExpectedCandidateSha,
-            rb.rollback_commit_sha AS rollbackCommitSha,
-            rb.failure_reason AS rollbackFailureReason, rb.created_by AS rollbackBy,
-            rb.created_at AS rollbackRequestedAt, rb.completed_at AS rollbackCompletedAt
-     FROM agent_runs r JOIN floor_agents a ON a.id = r.agent_id
-     LEFT JOIN agent_runs prior ON prior.id = r.resumed_from_run_id
-     LEFT JOIN merge_conflict_attempts mca ON mca.run_id = r.id
-     LEFT JOIN merge_conflict_cases source_case ON source_case.source_run_id = r.id
-     LEFT JOIN agent_run_rollbacks rb ON rb.id = (
-       SELECT latest.id FROM agent_run_rollbacks latest
-       WHERE latest.run_id = r.id ORDER BY latest.created_at DESC, latest.id DESC LIMIT 1
-     )
-     WHERE r.id = ?`,
+    `${AGENT_RUN_SELECT} WHERE r.id = ?`,
   ).bind(runId).first<RunRecord>();
   if (!row) return null;
   return { ...row, attempt: Number(row.attempt), checks: await getRunChecks(runId, database), files: await getRunFiles(runId, database) };
@@ -589,14 +601,18 @@ export async function recordRunPublicationFailure(runId: string, summary: string
     .bind(runId).first<{ sessionId: string; queueItemId: string; status: AgentRunStatus }>();
   if (!run || !["ready", "publishing"].includes(run.status)) return null;
   const now = Date.now();
-  const nextStatus = run.status === "ready" ? "failed" : "publishing";
-  const statements = [
-    database.prepare("UPDATE agent_runs SET status = ?, summary = ?, updated_at = ? WHERE id = ? AND status = ?")
-      .bind(nextStatus, summary.slice(0, 1_000), now, runId, run.status),
-    database.prepare("UPDATE sessions SET floor_revision = floor_revision + 1, updated_at = ? WHERE id = ?").bind(now, run.sessionId),
-  ];
-  if (run.status === "ready") statements.push(database.prepare("UPDATE floor_queue_items SET status = 'failed', updated_at = ? WHERE id = ?").bind(now, run.queueItemId));
-  await database.batch(statements);
+  const results = await database.batch([
+    database.prepare("UPDATE agent_runs SET status = 'failed', summary = ?, completed_at = ?, updated_at = ? WHERE id = ? AND status IN ('ready', 'publishing')")
+      .bind(summary.slice(0, 1_000), now, now, runId),
+    database.prepare("UPDATE floor_queue_items SET status = 'failed', updated_at = ? WHERE id = ? AND changes() = 1")
+      .bind(now, run.queueItemId),
+    database.prepare("UPDATE sessions SET floor_revision = floor_revision + 1, updated_at = ? WHERE id = ? AND changes() = 1")
+      .bind(now, run.sessionId),
+  ]);
+  // Another workflow attempt may have published the run after our read. Do
+  // not corrupt its queue item or advertise a revision for a transition this
+  // attempt lost.
+  if (Number(results[0]?.meta?.changes ?? 0) === 0) return null;
   await appendRunEvent(runId, "publication_failed", summary, database);
   const revision = await database.prepare("SELECT floor_revision AS revision FROM sessions WHERE id = ?").bind(run.sessionId).first<{ revision: number }>();
   return { sessionId: run.sessionId, revision: Number(revision?.revision ?? 0) };
