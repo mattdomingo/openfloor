@@ -135,13 +135,16 @@ JSON
 cat >/workspace/repository/server.mjs <<'JS'
 import http from "node:http";
 import net from "node:net";
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 http.get("http://1.1.1.1", () => writeFileSync("/workspace/repository/outbound", "unexpected"))
   .on("error", () => writeFileSync("/workspace/repository/outbound", "blocked"));
 net.connect("/workspace/preview-relay/preview.sock")
   .on("connect", () => writeFileSync("/workspace/repository/unix-socket", "unexpected"))
   .on("error", () => writeFileSync("/workspace/repository/unix-socket", "blocked"));
-http.createServer((_request, response) => response.end(`uid=${process.getuid()}`)).listen(3456, "0.0.0.0");
+const effectiveCapabilities = readFileSync("/proc/self/status", "utf8").match(/^CapEff:\s+(\S+)$/m)?.[1];
+http.createServer((_request, response) => response.end(
+  `uid=${process.getuid()} capeff=${effectiveCapabilities} marker=${process.env.OPENFLOOR_TRUSTED_PREVIEW_HANDOFF ?? ""}`,
+)).listen(3456, "0.0.0.0");
 JS
 chown -R openfloor-workspace:openfloor-shared /workspace
 chmod 0700 /tmp/openfloor/workspace-home
@@ -166,7 +169,7 @@ chown root:root /workspace/preview-relay
 chmod 0555 /workspace/preview-relay
 chown root:openfloor-shared /workspace/preview-relay/preview.sock
 chmod 0660 /workspace/preview-relay/preview.sock
-[ "$(curl --silent --unix-socket /workspace/preview-relay/preview.sock http://localhost/)" = 'uid=10002' ]
+[ "$(curl --silent --unix-socket /workspace/preview-relay/preview.sock http://localhost/)" = 'uid=10002 capeff=0000000000000000 marker=' ]
 ! curl --silent --max-time 1 http://127.0.0.1:3456/ >/dev/null 2>&1
 attempt=0
 while [ ! -s /workspace/repository/outbound ] || [ ! -s /workspace/repository/unix-socket ]; do

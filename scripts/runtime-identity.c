@@ -23,6 +23,7 @@
 #define REAL_SHELL "/bin/bash"
 #define NODE_BINARY "/usr/local/bin/node"
 #define PREVIEW_RUNTIME "/opt/openfloor/preview-runtime.mjs"
+#define PREVIEW_HANDOFF_ENV "OPENFLOOR_TRUSTED_PREVIEW_HANDOFF"
 #define APPLY_SECCOMP_X64_SUFFIX "/@anthropic-ai/sandbox-runtime/vendor/seccomp/x64/apply-seccomp"
 #define APPLY_SECCOMP_ARM64_SUFFIX "/@anthropic-ai/sandbox-runtime/vendor/seccomp/arm64/apply-seccomp"
 
@@ -67,6 +68,9 @@ static void prepare_bwrap_root(void) {
 
 static void handoff_to_workspace(uid_t uid, gid_t gid) {
   if (getuid() != 0 || geteuid() != 0) fail_message("workspace handoff called without root identity");
+  const char *preview_marker = getenv(PREVIEW_HANDOFF_ENV);
+  int trusted_preview = preview_marker != NULL && strcmp(preview_marker, "1") == 0;
+  if (unsetenv(PREVIEW_HANDOFF_ENV) != 0) fail("could not clear preview handoff marker");
   if (setgroups(0, NULL) != 0) fail("could not clear handoff groups");
   if (prctl(PR_SET_KEEPCAPS, 1, 0, 0, 0) != 0) fail("could not retain sandbox capability");
   if (setresgid(gid, gid, gid) != 0) fail("could not set handoff group");
@@ -77,9 +81,17 @@ static void handoff_to_workspace(uid_t uid, gid_t gid) {
   data[CAP_SYS_ADMIN / 32].effective = 1U << (CAP_SYS_ADMIN % 32);
   data[CAP_SYS_ADMIN / 32].permitted = 1U << (CAP_SYS_ADMIN % 32);
   data[CAP_SYS_ADMIN / 32].inheritable = 1U << (CAP_SYS_ADMIN % 32);
+  if (trusted_preview) {
+    data[CAP_NET_ADMIN / 32].effective |= 1U << (CAP_NET_ADMIN % 32);
+    data[CAP_NET_ADMIN / 32].permitted |= 1U << (CAP_NET_ADMIN % 32);
+    data[CAP_NET_ADMIN / 32].inheritable |= 1U << (CAP_NET_ADMIN % 32);
+  }
   if (syscall(SYS_capset, &header, data) != 0) fail("could not narrow sandbox capability");
   if (prctl(PR_CAP_AMBIENT, PR_CAP_AMBIENT_RAISE, CAP_SYS_ADMIN, 0, 0) != 0) {
     fail("could not pass sandbox capability");
+  }
+  if (trusted_preview && prctl(PR_CAP_AMBIENT, PR_CAP_AMBIENT_RAISE, CAP_NET_ADMIN, 0, 0) != 0) {
+    fail("could not pass preview network capability");
   }
   if (prctl(PR_SET_KEEPCAPS, 0, 0, 0, 0) != 0) fail("could not lock sandbox capability");
   if (prctl(PR_SET_DUMPABLE, 0, 0, 0, 0) != 0) fail("could not disable handoff inspection");
@@ -275,6 +287,16 @@ static void run_workspace_bwrap(int argc, char **argv, int trusted_preview) {
   arguments[out++] = "CAP_SETUID";
   arguments[out++] = "--cap-add";
   arguments[out++] = "CAP_SETGID";
+  if (trusted_preview) {
+    // Bubblewrap creates a fresh network namespace with loopback down. Only
+    // the fixed trusted preview parent receives CAP_NET_ADMIN so it can bring
+    // loopback up before launching repository code through apply-seccomp.
+    arguments[out++] = "--cap-add";
+    arguments[out++] = "CAP_NET_ADMIN";
+    arguments[out++] = "--setenv";
+    arguments[out++] = PREVIEW_HANDOFF_ENV;
+    arguments[out++] = "1";
+  }
   arguments[out++] = "--";
   arguments[out++] = "/opt/openfloor/openfloor-workspace-handoff";
   for (int index = separator + 1; index < argc; index++) arguments[out++] = argv[index];
