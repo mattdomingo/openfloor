@@ -157,6 +157,14 @@ Deliberately left alone: `usage_months` rows survive (see that table's own no-FK
 - D1 owns bounded status, timing, exit code, excerpt, and R2 log-key metadata. Full bounded logs stay in private R2 and never enter snapshots.
 - Statuses are `provisioning`, `running`, `passed`, `failed`, `cancelled`, or `timed_out`; check statuses are `pending`, `running`, `passed`, `failed`, or `timed_out`.
 
+#### `repository_previews` and `sandbox_cleanup_intents`
+
+- Migration `0046_brief_nick_fury.sql` adds both tables without rewriting existing data. `repository_previews.session_id` is unique, so a session owns at most one durable preview record. D1, not Sandbox process state, is authoritative for its candidate, generation, host, status, and 60-minute lease.
+- Status is `provisioning`, `ready`, `failed`, or `stopped`; `expired` is a derived snapshot state when the lease time has passed. Stopped is exposed as `FloorSnapshot.preview = null`. Generation compare-and-set writes prevent stale Workflows, failures, and stop requests from mutating a replacement generation.
+- `target_candidate_sha` is the requested exact candidate. `active_candidate_sha`, `active_sandbox_id`, `active_url`, and `active_host` may retain the prior ready generation while a replacement provisions or fails. Proxy authorization still requires a live session, current membership and admission, ready repository, synchronized active candidate, unexpired exact host lease, and an active Sandbox ID.
+- Capacity counts at most three provisioning or actually active previews per environment. A failed initial build with no retained active Sandbox does not consume capacity; a failed rebuild with a stale but usable active Sandbox does.
+- Preview stop, expiry, terminal session/candidate/repository transitions, generation replacement, activation replacement, and build failure enqueue every obsolete Sandbox ID in `sandbox_cleanup_intents`. This table deliberately has no session foreign key, so deletion cannot erase the only cleanup record. Immediate destruction removes the intent only after success; the 10-minute cron retries failures with bounded error text and delay.
+
 #### `agent_runs`, `agent_run_events`, `agent_run_checks`, `agent_run_files`, and `agent_run_artifacts`
 
 - One active run may exist per queue item. Runs pin the agent, candidate, exact SHA, attempt, model, prompt inputs, timestamps, and terminal summary.

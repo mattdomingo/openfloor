@@ -13,6 +13,7 @@ import {
 import type { AgentRunRollbackScope } from "./floor-types";
 import { AgentRunConflictError, AgentRunNotReadyError } from "@/db/runs";
 import { getInstallationRepository, updateTestRepositoryBranchIfMatches } from "./github";
+import { refreshRepositoryPreview } from "./repository-preview-lifecycle";
 
 type WorkflowBinding = {
   create(options: { id: string; params:
@@ -116,7 +117,8 @@ async function runTestAgentRollback(rollbackId: string): Promise<void> {
     rollbackCommitSha,
   );
   if (!updated) throw new AgentRunConflictError("The candidate changed before rollback could be published");
-  await finishAgentRunRollback(rollbackId, rollbackCommitSha, getDb());
+  const finished = await finishAgentRunRollback(rollbackId, rollbackCommitSha, getDb());
+  if (finished) await refreshRepositoryPreview(finished.sessionId);
 }
 
 async function runTestAgentRollbackGroup(groupId: string): Promise<void> {
@@ -137,5 +139,6 @@ async function runTestAgentRollbackGroup(groupId: string): Promise<void> {
     rollbackCommitSha,
   );
   if (!updated) throw new AgentRunConflictError("The candidate changed before rollback could be published");
-  await finishAgentRunRollbackGroup(groupId, rollbackCommitSha, getDb());
+  const finished = await finishAgentRunRollbackGroup(groupId, rollbackCommitSha, getDb());
+  if (finished) await refreshRepositoryPreview(finished.sessionId);
 }

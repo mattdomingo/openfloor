@@ -19,6 +19,9 @@
 | `/app/session/[id]/floor` | `/session/[id]/floor` | Protected/member-only | Main collaborative Agent Floor. |
 | `/app/api/...` | `/api/...` | Protected | Authenticated application interfaces. |
 | `/app/api/sessions/[id]/presence` | `/api/sessions/[id]/presence` | Protected/member-only | WebSocket upgrade. |
+| `/app/api/sessions/[id]/repository/preview` | `/api/sessions/[id]/repository/preview` | Protected/owner-only | Start, rebuild, or stop the session's shared exact-candidate app preview while the rollout gate is enabled. |
+| `/app/runtime/preview/source` | `/runtime/preview/source` | Public/signed | Serve the exact candidate archive to one current preview generation through a short-lived operation token. |
+| `https://*.preview.opnflr.com/*` | `https://*.preview.dev.opnflr.com/*` | Protected/member-only | Proxy one active preview host after Access identity, current membership/admission, repository/candidate, and lease checks. Both environment gates are currently off. |
 | `/app/webhooks/github` | `/webhooks/github` | Public/signed | GitHub delivery boundary; verifies payload size and HMAC before acknowledging. |
 | `/app/webhooks/stripe` | `/webhooks/stripe` | Public/signed | Stripe delivery boundary; caps the raw body, verifies Stripe's signature, and reconciles subscription entitlement. |
 
@@ -47,5 +50,6 @@ the signed `CF_Authorization` cookie after sign-in anchors on `/auth/complete`.
 - An owner receives a conflict response if they try to leave.
 - An owner can end the session instead. Ending is final in v1 (no un-end), idempotent, revokes the active invite in the same batch, and leaves all data readable. Collaboration, repository, preflight, run, and review mutations on an ended session return `409` with "This session has ended." — never `404`, which clients treat as "kicked from the session". Run cancellation remains available so already-running work can be stopped. Presence sockets stay open on ended sessions by design.
 - Repository details are visible to session members, but only the owner can select, configure, disconnect, or reconnect from their account-authorized repositories.
+- Repository preview controls and snapshot data are absent while `REPOSITORY_PREVIEW_ENABLED=false`. When enabled, only the owner may start, rebuild, or stop; every member HTTP or WebSocket proxy request is reauthorized and unauthorized/nonexistent hosts receive the same `404`. Candidate responses may be framed only by that environment's application origin, and the iframe receives no top-navigation permission.
 - The GitHub installation callback is protected by Access, signed, expires after 30 minutes, is bound to the initiating user and purpose (`onboarding` or `settings`), and can be consumed once. Returned installation metadata is verified through the configured GitHub App before it is stored.
 - The GitHub and Stripe webhook paths must remain outside Cloudflare Access so their providers can deliver events; raw-body signature verification is each route's authentication boundary.

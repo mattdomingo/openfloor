@@ -4,7 +4,7 @@ import type { RepositoryCandidate, RepositoryConnection, RepositoryPreflight } f
 
 export type { ConflictChoice, ConflictHunk };
 
-export type FloorDomain = "agents" | "assignments" | "messages" | "queue" | "repository" | "runs" | "review";
+export type FloorDomain = "agents" | "assignments" | "messages" | "queue" | "repository" | "runs" | "review" | "preview";
 
 export type FloorParticipant = {
   id: string;
@@ -440,8 +440,22 @@ export type FloorSnapshot = {
   repository: RepositoryConnection | null;
   activeCandidate: RepositoryCandidate | null;
   latestPreflight: RepositoryPreflight | null;
+  preview: RepositoryPreviewSnapshot | null;
   runs: AgentRun[];
   review: FloorReviewSnapshot | null;
+};
+
+export type RepositoryPreviewSnapshot = {
+  status: "provisioning" | "ready" | "failed" | "expired";
+  targetCandidateSha: string;
+  activeCandidateSha: string | null;
+  url: string | null;
+  packageManager: "npm" | "pnpm" | "yarn" | "bun" | null;
+  script: "dev" | "start" | null;
+  failureReason: string | null;
+  expiresAt: number;
+  createdAt: number;
+  updatedAt: number;
 };
 
 export type CreateFloorAgentInput = {

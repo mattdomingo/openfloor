@@ -322,6 +322,7 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
 
   await owner.getByRole("button", { name: /Review/ }).first().click();
   await expect(owner.getByRole("heading", { name: "No review available" })).toBeVisible();
+  await expect(owner.getByRole("button", { name: "Preview", exact: true })).toHaveCount(0);
   await expect(owner.getByRole("button", { name: "Approve candidate" })).toHaveCount(0);
   await expect(owner.getByText(/server\/session\/reducer|AgentCard\.tsx/)).toHaveCount(0);
   await expect(owner.getByText(/typing/i)).toHaveCount(0);

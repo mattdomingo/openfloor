@@ -18,6 +18,7 @@ import { provisionReservedRepositoryCandidate } from "@/lib/repository-provision
 import { openFloorBranchName } from "@/lib/repository-refs";
 import { isApiError, requireApiUser } from "@/lib/server-auth";
 import { parseRepositoryCandidateInput } from "@/lib/validation";
+import { stopRepositoryPreviewRuntime } from "@/lib/repository-preview-lifecycle";
 
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const user = await requireApiUser();
@@ -81,6 +82,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     if (error instanceof GitHubApiError) {
       if (error.status === 403 || error.status === 404) {
         const revision = await setRepositoryAvailability(sessionId, "inaccessible");
+        await stopRepositoryPreviewRuntime(sessionId);
         await notifyFloorChanged(sessionId, revision, ["repository", "review"]);
       }
       return Response.json({ error: "GitHub repository access is unavailable" }, { status: error.status === 404 ? 404 : 502 });

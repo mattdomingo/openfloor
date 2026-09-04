@@ -208,6 +208,8 @@ export function usePersistentFloorData(sessionId: string, initialFloor: FloorSna
   const deleteReviewBranch = useCallback(() => request("/review/branch", "DELETE"), [request]);
   const abandonCandidate = useCallback((deleteBranch: boolean) =>
     request("/repository/candidate", "DELETE", { deleteBranch }), [request]);
+  const startRepositoryPreview = useCallback(() => request("/repository/preview", "POST"), [request]);
+  const stopRepositoryPreview = useCallback(() => request("/repository/preview", "DELETE"), [request]);
 
   return useMemo(() => ({
     kind: "persistent" as const,
@@ -256,6 +258,8 @@ export function usePersistentFloorData(sessionId: string, initialFloor: FloorSna
     setReviewMergeLocked,
     deleteReviewBranch,
     abandonCandidate,
+    startRepositoryPreview,
+    stopRepositoryPreview,
   }), [
     floor,
     busy,
@@ -301,6 +305,8 @@ export function usePersistentFloorData(sessionId: string, initialFloor: FloorSna
     setReviewMergeLocked,
     deleteReviewBranch,
     abandonCandidate,
+    startRepositoryPreview,
+    stopRepositoryPreview,
   ]);
 }
 

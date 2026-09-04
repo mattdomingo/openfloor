@@ -43,6 +43,53 @@ export async function verifyPreflightGatewayToken(token: string, secret: string)
   }
 }
 
+export type PreviewGatewayClaims = {
+  previewId: string;
+  generation: number;
+  sessionId: string;
+  repositoryId: string;
+  candidateSha: string;
+  operation: "source";
+};
+
+export async function signPreviewGatewayToken(claims: PreviewGatewayClaims, secret: string): Promise<string> {
+  const now = Math.floor(Date.now() / 1000);
+  return new SignJWT(claims)
+    .setProtectedHeader({ alg: "HS256" })
+    .setIssuer("openfloor")
+    .setAudience("openfloor-runtime-gateway")
+    .setIssuedAt(now)
+    .setExpirationTime(now + 10 * 60)
+    .sign(new TextEncoder().encode(secret));
+}
+
+export async function verifyPreviewGatewayToken(token: string, secret: string): Promise<PreviewGatewayClaims | null> {
+  try {
+    const { payload } = await jwtVerify(token, new TextEncoder().encode(secret), {
+      issuer: "openfloor",
+      audience: "openfloor-runtime-gateway",
+      algorithms: ["HS256"],
+    });
+    if (
+      typeof payload.previewId !== "string" || typeof payload.generation !== "number"
+      || !Number.isSafeInteger(payload.generation) || payload.generation < 1
+      || typeof payload.sessionId !== "string" || typeof payload.repositoryId !== "string"
+      || typeof payload.candidateSha !== "string" || !/^[0-9a-f]{40}$/.test(payload.candidateSha)
+      || payload.operation !== "source"
+    ) return null;
+    return {
+      previewId: payload.previewId,
+      generation: payload.generation,
+      sessionId: payload.sessionId,
+      repositoryId: payload.repositoryId,
+      candidateSha: payload.candidateSha,
+      operation: "source",
+    };
+  } catch {
+    return null;
+  }
+}
+
 export type RunGatewayClaims = {
   runId: string;
   sessionId: string;

@@ -26,6 +26,8 @@ import { getMergeConflictCases } from "./conflicts";
 import { getActiveMembershipRole, getMembershipRole } from "./sessions";
 import { resolveAutoAgentProvider } from "./provider-credentials";
 import { disabledRunProviders } from "@/lib/provider-rollout";
+import { env } from "cloudflare:workers";
+import { getRepositoryPreview } from "./previews";
 
 type AgentRecord = FloorAgent;
 type AssignmentRecord = FloorAssignment;
@@ -56,7 +58,7 @@ export async function getFloorSnapshot(
 }
 
 async function readFloorSnapshot(sessionId: string, userId: string, database: D1DatabaseLike): Promise<FloorSnapshot> {
-  const [session, providerResolution, agents, assignments, messages, files, queue, prompts, repository, activeCandidate, reviewCandidate, latestPreflight, runs, conflicts] = await Promise.all([
+  const [session, providerResolution, agents, assignments, messages, files, queue, prompts, repository, activeCandidate, reviewCandidate, latestPreflight, preview, runs, conflicts] = await Promise.all([
     database.prepare(
       `SELECT s.floor_revision AS revision, s.auto_dispatch AS autoDispatch,
               s.auto_provision_agents AS autoProvisionAgents, s.auto_resolve_conflicts AS autoResolveConflicts,
@@ -163,6 +165,9 @@ async function readFloorSnapshot(sessionId: string, userId: string, database: D1
     getActiveRepositoryCandidate(sessionId, database),
     getLatestRepositoryReviewCandidate(sessionId, database),
     getLatestRepositoryPreflight(sessionId, database),
+    (env as unknown as { REPOSITORY_PREVIEW_ENABLED?: string }).REPOSITORY_PREVIEW_ENABLED === "true"
+      ? getRepositoryPreview(sessionId, database)
+      : Promise.resolve(null),
     getAgentRuns(sessionId, database),
     getMergeConflictCases(sessionId, database),
   ]);
@@ -227,6 +232,7 @@ async function readFloorSnapshot(sessionId: string, userId: string, database: D1
     repository,
     activeCandidate,
     latestPreflight,
+    preview,
     runs,
     review: buildRunReview(candidateRuns, reviewCandidate, candidateReview, promptsByItem, assignments.results, conflicts),
   };

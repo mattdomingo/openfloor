@@ -94,7 +94,7 @@ export class SessionPresence extends DurableObject<PresenceEnv> {
     }
     if (url.pathname === "/floor-changed" && request.method === "POST") {
       const body = (await request.json()) as { revision?: unknown; domains?: unknown };
-      const allowed = new Set<FloorDomain>(["agents", "assignments", "messages", "queue", "repository", "runs", "review"]);
+      const allowed = new Set<FloorDomain>(["agents", "assignments", "messages", "queue", "repository", "runs", "review", "preview"]);
       if (typeof body.revision !== "number" || !Array.isArray(body.domains) || body.domains.some((domain) => typeof domain !== "string" || !allowed.has(domain as FloorDomain))) {
         return new Response("Invalid floor change", { status: 400 });
       }

@@ -13,6 +13,7 @@ import { deleteVerifiedBranches, type CleanupTarget } from "@/lib/repository-cle
 import { isApiError, requireApiUser } from "@/lib/server-auth";
 import type { GitHubRepositoryOption } from "@/lib/session-types";
 import { activeOwnerErrorResponse, mutationErrorResponse } from "@/lib/floor-api";
+import { stopRepositoryPreviewRuntime } from "@/lib/repository-preview-lifecycle";
 
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const user = await requireApiUser();
@@ -90,6 +91,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     if ("blocked" in ended) {
       return Response.json({ error: "The candidate is still being updated", runId: ended.runId }, { status: 409 });
     }
+    await stopRepositoryPreviewRuntime(sessionId);
     await notifySessionEnded(sessionId, ended.endedAt, ended.reason);
     const floor = await getFloorSnapshot(sessionId, user.id);
     if (!floor) return Response.json({ error: "Session not found" }, { status: 404 });

@@ -84,25 +84,31 @@ export type GeminiSrtSettingsInput = {
   // (which bypasses the named-tool exclusion in buildGeminiSystemSettings
   // above) is denied at the OS level, not just the CLI's own tool list.
   readOnly?: boolean;
+  allowUnixSockets?: string[];
+  allowAllUnixSockets?: boolean;
+  allowedDomains?: string[];
+  bwrapPath?: string;
+  additionalWritePaths?: string[];
 };
 
 export function buildGeminiSrtSettings(input: GeminiSrtSettingsInput): string {
   return `${JSON.stringify(
     {
       network: {
-        allowedDomains: [],
+        allowedDomains: input.allowedDomains ?? [],
         deniedDomains: [],
-        allowUnixSockets: [],
+        allowUnixSockets: input.allowUnixSockets ?? [],
+        allowAllUnixSockets: input.allowAllUnixSockets ?? false,
       },
       filesystem: {
         denyRead: [],
         // The workspace and the per-run scratch tree (result.json, prompt,
         // the agent HOME with its settings and CLI state) — except the
         // workspace itself is excluded for a read-only reply run.
-        allowWrite: input.readOnly ? ["/tmp"] : [input.workspace, "/tmp"],
+        allowWrite: input.readOnly ? ["/tmp"] : [input.workspace, ...(input.additionalWritePaths ?? []), "/tmp"],
         denyWrite: [],
       },
-      bwrapPath: "/opt/openfloor/openfloor-workspace-bwrap",
+      bwrapPath: input.bwrapPath ?? "/opt/openfloor/openfloor-workspace-bwrap",
     },
     null,
     2,

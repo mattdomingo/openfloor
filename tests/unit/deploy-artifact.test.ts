@@ -20,10 +20,13 @@ const productionConfig = {
   workflows: [
     { binding: "REPOSITORY_PREFLIGHT", name: "openfloor-repository-preflight" },
     { binding: "AGENT_RUN_WORKFLOW", name: "openfloor-agent-run" },
+    { binding: "REPOSITORY_PREVIEW", name: "openfloor-repository-preview" },
   ],
   vars: {
     OPENFLOOR_RUNTIME_ORIGIN: "https://app.opnflr.com",
     AGENT_RUN_ENABLED: "true",
+    OPENFLOOR_PREVIEW_HOSTNAME: "preview.opnflr.com",
+    REPOSITORY_PREVIEW_ENABLED: "false",
   },
 };
 const developmentConfig = {
@@ -41,10 +44,13 @@ const developmentConfig = {
   workflows: [
     { binding: "REPOSITORY_PREFLIGHT", name: "openfloor-development-repository-preflight" },
     { binding: "AGENT_RUN_WORKFLOW", name: "openfloor-development-agent-run" },
+    { binding: "REPOSITORY_PREVIEW", name: "openfloor-development-repository-preview" },
   ],
   vars: {
     OPENFLOOR_RUNTIME_ORIGIN: "https://dev.app.opnflr.com",
     AGENT_RUN_ENABLED: "true",
+    OPENFLOOR_PREVIEW_HOSTNAME: "preview.dev.opnflr.com",
+    REPOSITORY_PREVIEW_ENABLED: "false",
     STRIPE_CHECKOUT_ENABLED: "false",
     EARLY_ACCESS_GATE_ENABLED: "false",
   },

@@ -9,7 +9,7 @@
 The top-level `wrangler.jsonc` target is production; the named
 `env.development` target is the permanent `release`-branch deployment. Both
 provide `DB`, `SESSION_PRESENCE`, `ASSETS`, `IMAGES`,
-`REPOSITORY_PREFLIGHT`, `AGENT_RUN_WORKFLOW`, `SANDBOX`, `PREFLIGHT_LOGS`,
+`REPOSITORY_PREFLIGHT`, `AGENT_RUN_WORKFLOW`, `REPOSITORY_PREVIEW`, `SANDBOX`, `PREFLIGHT_LOGS`,
 and `USER_AVATARS`.
 
 Stateful authority is isolated:
@@ -22,6 +22,8 @@ Stateful authority is isolated:
 | `USER_AVATARS` | `openfloor-user-avatars` | `openfloor-development-user-avatars` |
 | `REPOSITORY_PREFLIGHT` | `openfloor-repository-preflight` | `openfloor-development-repository-preflight` |
 | `AGENT_RUN_WORKFLOW` | `openfloor-agent-run` | `openfloor-development-agent-run` |
+| `REPOSITORY_PREVIEW` | `openfloor-repository-preview` | `openfloor-development-repository-preview` |
+| Preview hostname | `preview.opnflr.com` | `preview.dev.opnflr.com` |
 
 Each named Worker owns distinct Durable Object namespaces and container state.
 Runtime secrets, Access audiences, GitHub Apps, webhook signing, encryption keys,
@@ -30,6 +32,8 @@ development resource to production state. See `docs/release-process.md` for the
 one-time external setup and ongoing promotion/hotfix workflow.
 
 Cloudflare Containers requires a Workers Paid account. `PREFLIGHT_ENABLED` is the production rollout gate: production is enabled only after the container image, `SANDBOX`, and `REPOSITORY_PREFLIGHT` bindings deploy successfully. While disabled, the UI omits **Verify runner** and the start endpoint returns `503`; repository connection and candidate reconciliation remain available. Tests explicitly enable the deterministic test adapter.
+
+`REPOSITORY_PREVIEW_ENABLED` is `false` in both environments. While false, the Review UI omits Preview, preview mutations and source access return concealed `404` responses, and the preview hostname proxy is dark. The Workflow bindings and environment-specific `OPENFLOOR_PREVIEW_HOSTNAME` values are deployed code configuration, not rollout authorization. Enabling development later requires wildcard DNS and TLS for `*.preview.dev.opnflr.com`, one development preview Access application covering that wildcard, and the preview application's audience appended to the development `CF_ACCESS_AUD` value. Production requires the equivalent isolated `*.preview.opnflr.com` DNS/TLS, preview Access application, and production audience. Never share preview Access applications or audiences across environments. Complete the development acceptance runbook before any production enablement.
 
 `EARLY_ACCESS_GATE_ENABLED` controls enforcement only. The disabled-mode production rollout, D1 waitlist writes, signed Sheet delivery, secrets, and the combined WAF rule have been accepted; production is now set to `true`, gating protected pages, APIs, desktop bootstrap, invitations/onboarding, and presence. Rollback is `false`; grants, revocations, and waitlist rows remain intact. See `docs/early-access.md`.
 
@@ -62,7 +66,7 @@ entitlement reads and signed webhook reconciliation do not depend on this gate.
 
 Durable Object migration `v1` registers `SessionPresence`; `v2` registers `Sandbox`. Keep migration syntax compatible with the pinned Wrangler version.
 
-The Sandbox image is `cloudflare/sandbox:0.12.7` pinned to digest `sha256:6d741713aef266e8ae0831a5709c6f2d7b77b4952ac79b549f4f4e380af86fbe`; `@cloudflare/sandbox` stays pinned to `0.12.7`, and the pool key is `RUN_SANDBOX_IMAGE_VERSION = "v9"`. The image installs `undici@7.29.0`, the provider, broker, and workspace runtime identities, and the hardened identity launcher compiled from `scripts/runtime-identity.c`. Any image-content change must bump the pool version. A 10-minute cron and the daily retention cron both sweep durable R2 cleanup intents; the cleaner needs both R2 bindings above.
+The Sandbox image is `cloudflare/sandbox:0.12.7` pinned to digest `sha256:6d741713aef266e8ae0831a5709c6f2d7b77b4952ac79b549f4f4e380af86fbe`; `@cloudflare/sandbox` stays pinned to `0.12.7`, and the pool key is `RUN_SANDBOX_IMAGE_VERSION = "v11"`. The image installs `undici@7.29.0`, pinned pnpm/Yarn/Bun tooling, `iproute2`, the preview scripts, the provider, broker, and workspace runtime identities, and the hardened identity launcher compiled from `scripts/runtime-identity.c`. Any image-content change must bump the pool version. A 10-minute cron and the daily retention cron sweep durable R2 cleanup intents; the 10-minute cron also expires preview leases and retries durable Sandbox cleanup intents.
 
 ### Required secrets
 

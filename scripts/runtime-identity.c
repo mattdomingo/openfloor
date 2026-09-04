@@ -21,6 +21,9 @@
 #define SRT_BINARY "/opt/openfloor/node_modules/.bin/srt"
 #define REAL_BWRAP "/usr/bin/bwrap"
 #define REAL_SHELL "/bin/bash"
+#define NODE_BINARY "/usr/local/bin/node"
+#define PREVIEW_RUNTIME "/opt/openfloor/preview-runtime.mjs"
+#define PREVIEW_HANDOFF_ENV "OPENFLOOR_TRUSTED_PREVIEW_HANDOFF"
 #define APPLY_SECCOMP_X64_SUFFIX "/@anthropic-ai/sandbox-runtime/vendor/seccomp/x64/apply-seccomp"
 #define APPLY_SECCOMP_ARM64_SUFFIX "/@anthropic-ai/sandbox-runtime/vendor/seccomp/arm64/apply-seccomp"
 
@@ -65,6 +68,9 @@ static void prepare_bwrap_root(void) {
 
 static void handoff_to_workspace(uid_t uid, gid_t gid) {
   if (getuid() != 0 || geteuid() != 0) fail_message("workspace handoff called without root identity");
+  const char *preview_marker = getenv(PREVIEW_HANDOFF_ENV);
+  int trusted_preview = preview_marker != NULL && strcmp(preview_marker, "1") == 0;
+  if (unsetenv(PREVIEW_HANDOFF_ENV) != 0) fail("could not clear preview handoff marker");
   if (setgroups(0, NULL) != 0) fail("could not clear handoff groups");
   if (prctl(PR_SET_KEEPCAPS, 1, 0, 0, 0) != 0) fail("could not retain sandbox capability");
   if (setresgid(gid, gid, gid) != 0) fail("could not set handoff group");
@@ -75,9 +81,17 @@ static void handoff_to_workspace(uid_t uid, gid_t gid) {
   data[CAP_SYS_ADMIN / 32].effective = 1U << (CAP_SYS_ADMIN % 32);
   data[CAP_SYS_ADMIN / 32].permitted = 1U << (CAP_SYS_ADMIN % 32);
   data[CAP_SYS_ADMIN / 32].inheritable = 1U << (CAP_SYS_ADMIN % 32);
+  if (trusted_preview) {
+    data[CAP_NET_ADMIN / 32].effective |= 1U << (CAP_NET_ADMIN % 32);
+    data[CAP_NET_ADMIN / 32].permitted |= 1U << (CAP_NET_ADMIN % 32);
+    data[CAP_NET_ADMIN / 32].inheritable |= 1U << (CAP_NET_ADMIN % 32);
+  }
   if (syscall(SYS_capset, &header, data) != 0) fail("could not narrow sandbox capability");
   if (prctl(PR_CAP_AMBIENT, PR_CAP_AMBIENT_RAISE, CAP_SYS_ADMIN, 0, 0) != 0) {
     fail("could not pass sandbox capability");
+  }
+  if (trusted_preview && prctl(PR_CAP_AMBIENT, PR_CAP_AMBIENT_RAISE, CAP_NET_ADMIN, 0, 0) != 0) {
+    fail("could not pass preview network capability");
   }
   if (prctl(PR_SET_KEEPCAPS, 0, 0, 0, 0) != 0) fail("could not lock sandbox capability");
   if (prctl(PR_SET_DUMPABLE, 0, 0, 0, 0) != 0) fail("could not disable handoff inspection");
@@ -208,7 +222,15 @@ static int has_trusted_seccomp_command(int argc, char **argv, int separator) {
   return 0;
 }
 
-static void run_workspace_bwrap(int argc, char **argv) {
+static int has_trusted_preview_command(int argc, char **argv, int separator) {
+  if (argc != separator + 4 || strcmp(argv[separator + 2], "-c") != 0) return 0;
+  const char *shell = strrchr(argv[separator + 1], '/');
+  shell = shell == NULL ? argv[separator + 1] : shell + 1;
+  if (strcmp(shell, "bash") != 0) return 0;
+  return strstr(argv[separator + 3], PREVIEW_RUNTIME) != NULL;
+}
+
+static void run_workspace_bwrap(int argc, char **argv, int trusted_preview) {
   int separator = -1;
   int has_user_namespace = 0;
   int drops_all_capabilities = 0;
@@ -236,7 +258,8 @@ static void run_workspace_bwrap(int argc, char **argv) {
       !has_pid_namespace || !has_private_proc) {
     fail_message("bubblewrap identity policy is incomplete");
   }
-  if (!has_trusted_seccomp_command(argc, argv, separator)) {
+  if (trusted_preview ? !has_trusted_preview_command(argc, argv, separator)
+                      : !has_trusted_seccomp_command(argc, argv, separator)) {
     fail_message("bubblewrap command is not guarded by apply-seccomp");
   }
 
@@ -264,6 +287,16 @@ static void run_workspace_bwrap(int argc, char **argv) {
   arguments[out++] = "CAP_SETUID";
   arguments[out++] = "--cap-add";
   arguments[out++] = "CAP_SETGID";
+  if (trusted_preview) {
+    // Bubblewrap creates a fresh network namespace with loopback down. Only
+    // the fixed trusted preview parent receives CAP_NET_ADMIN so it can bring
+    // loopback up before launching repository code through apply-seccomp.
+    arguments[out++] = "--cap-add";
+    arguments[out++] = "CAP_NET_ADMIN";
+    arguments[out++] = "--setenv";
+    arguments[out++] = PREVIEW_HANDOFF_ENV;
+    arguments[out++] = "1";
+  }
   arguments[out++] = "--";
   arguments[out++] = "/opt/openfloor/openfloor-workspace-handoff";
   for (int index = separator + 1; index < argc; index++) arguments[out++] = argv[index];
@@ -302,17 +335,32 @@ int main(int argc, char **argv) {
     fail("could not start provider process");
   }
 
+  if (strcmp(program, "openfloor-preview-exec") == 0) {
+    if (caller != 0) fail_message("preview launcher called by unexpected user");
+    if (argc != 3 ||
+        (strcmp(argv[1], "npm") != 0 && strcmp(argv[1], "pnpm") != 0 &&
+         strcmp(argv[1], "yarn") != 0 && strcmp(argv[1], "bun") != 0) ||
+        (strcmp(argv[2], "dev") != 0 && strcmp(argv[2], "start") != 0)) {
+      fail_message("invalid preview runtime selection");
+    }
+    char *const preview_arguments[] = { NODE_BINARY, PREVIEW_RUNTIME, argv[1], argv[2], NULL };
+    install_workspace_environment();
+    run_workspace_command(preview_arguments, broker_uid, broker_gid);
+  }
+
   if (caller != 0 && caller != provider_uid && caller != broker_uid && caller != workspace_uid) {
     fail_message("workspace launcher called by unexpected user");
   }
 
-  if (strcmp(program, "openfloor-workspace-bwrap") == 0) {
+  if (strcmp(program, "openfloor-workspace-bwrap") == 0 || strcmp(program, "openfloor-preview-bwrap") == 0) {
     // Model-selected commands already run as openfloor-workspace. They may
     // re-enter only the fixed-policy srt launcher, never choose privileged
     // bwrap mount or namespace arguments directly.
-    if (caller == workspace_uid) fail_message("bubblewrap launcher called by workspace user");
+    if (caller == workspace_uid || (strcmp(program, "openfloor-preview-bwrap") == 0 && caller != broker_uid)) {
+      fail_message("bubblewrap launcher called by unexpected user");
+    }
     install_workspace_environment();
-    run_workspace_bwrap(argc, argv);
+    run_workspace_bwrap(argc, argv, strcmp(program, "openfloor-preview-bwrap") == 0);
   }
 
   install_workspace_environment();

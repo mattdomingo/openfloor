@@ -46,6 +46,7 @@ import { renderConflictResolverPrompt } from "@/lib/conflict-resolver-prompt";
 import { providerLabel } from "@/lib/provider-credentials";
 import { checkProviderBudget, getAgentBudgetContext } from "@/db/provider-credentials";
 import { disabledRunProviders } from "@/lib/provider-rollout";
+import { refreshRepositoryPreview } from "./repository-preview-lifecycle";
 import { openFloorBranchName } from "@/lib/repository-refs";
 import { notifyFloorChanged, notifyRunActivity } from "@/lib/presence-server";
 import { env } from "cloudflare:workers";
@@ -378,7 +379,8 @@ async function publishTestRun(runId: string, encoded: string) {
       title: integration.candidateName, body: integration.candidateDescription,
       head: integration.candidateBranch, base: integration.baseBranch,
     });
-    await finishRunIntegrated(runId, merged.sha, pullRequest);
+    const integrated = await finishRunIntegrated(runId, merged.sha, pullRequest);
+    if (integrated) await refreshRepositoryPreview(integrated.sessionId);
     if (context.conflictCaseId) await markConflictResolved(runId, merged.sha);
     await holdTestRunStage(runId, data);
   } catch (error) {

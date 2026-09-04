@@ -21,10 +21,13 @@ const TARGETS = {
     workflows: {
       REPOSITORY_PREFLIGHT: "openfloor-repository-preflight",
       AGENT_RUN_WORKFLOW: "openfloor-agent-run",
+      REPOSITORY_PREVIEW: "openfloor-repository-preview",
     },
     vars: {
       OPENFLOOR_RUNTIME_ORIGIN: "https://app.opnflr.com",
       AGENT_RUN_ENABLED: "true",
+      OPENFLOOR_PREVIEW_HOSTNAME: "preview.opnflr.com",
+      REPOSITORY_PREVIEW_ENABLED: "false",
     },
   },
   development: {
@@ -40,10 +43,13 @@ const TARGETS = {
     workflows: {
       REPOSITORY_PREFLIGHT: "openfloor-development-repository-preflight",
       AGENT_RUN_WORKFLOW: "openfloor-development-agent-run",
+      REPOSITORY_PREVIEW: "openfloor-development-repository-preview",
     },
     vars: {
       OPENFLOOR_RUNTIME_ORIGIN: "https://dev.app.opnflr.com",
       AGENT_RUN_ENABLED: "true",
+      OPENFLOOR_PREVIEW_HOSTNAME: "preview.dev.opnflr.com",
+      REPOSITORY_PREVIEW_ENABLED: "false",
       STRIPE_CHECKOUT_ENABLED: "false",
       EARLY_ACCESS_GATE_ENABLED: "false",
     },
