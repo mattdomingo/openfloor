@@ -589,12 +589,18 @@ export async function recordRunPublicationFailure(runId: string, summary: string
     .bind(runId).first<{ sessionId: string; queueItemId: string; status: AgentRunStatus }>();
   if (!run || !["ready", "publishing"].includes(run.status)) return null;
   const now = Date.now();
-  await database.batch([
-    database.prepare("UPDATE agent_runs SET status = 'failed', summary = ?, completed_at = ?, updated_at = ? WHERE id = ? AND status = ?")
-      .bind(summary.slice(0, 1_000), now, now, runId, run.status),
-    database.prepare("UPDATE floor_queue_items SET status = 'failed', updated_at = ? WHERE id = ?").bind(now, run.queueItemId),
-    database.prepare("UPDATE sessions SET floor_revision = floor_revision + 1, updated_at = ? WHERE id = ?").bind(now, run.sessionId),
+  const results = await database.batch([
+    database.prepare("UPDATE agent_runs SET status = 'failed', summary = ?, completed_at = ?, updated_at = ? WHERE id = ? AND status IN ('ready', 'publishing')")
+      .bind(summary.slice(0, 1_000), now, now, runId),
+    database.prepare("UPDATE floor_queue_items SET status = 'failed', updated_at = ? WHERE id = ? AND changes() = 1")
+      .bind(now, run.queueItemId),
+    database.prepare("UPDATE sessions SET floor_revision = floor_revision + 1, updated_at = ? WHERE id = ? AND changes() = 1")
+      .bind(now, run.sessionId),
   ]);
+  // Another workflow attempt may have published the run after our read. Do
+  // not corrupt its queue item or advertise a revision for a transition this
+  // attempt lost.
+  if (Number(results[0]?.meta?.changes ?? 0) === 0) return null;
   await appendRunEvent(runId, "publication_failed", summary, database);
   const revision = await database.prepare("SELECT floor_revision AS revision FROM sessions WHERE id = ?").bind(run.sessionId).first<{ revision: number }>();
   return { sessionId: run.sessionId, revision: Number(revision?.revision ?? 0) };

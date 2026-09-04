@@ -136,7 +136,7 @@ WebSocket events notify clients about presence or changed domains. D1 remains au
 
 See [`docs/implemented-features.md`](docs/implemented-features.md) for the complete bullet-by-bullet list of what is real today (auth, sessions, agents, GitHub integration, providers, conflict resolution, generated agents, and more). Every entry there is authoritative — nothing in that list is fabricated or aspirational; see "Explicitly deferred" below for what is not yet built.
 
-Exhausted run-branch publication retries are terminal: the run and its queue item become `failed`, the router is notified that capacity is free, and conflict-resolution attempts advance through their normal retry/attention state. A run must never remain indefinitely in `publishing` after its durable Workflow has exhausted retries.
+Exhausted run-branch publication retries are terminal: the run and its queue item become `failed`, the router is notified that capacity is free, and conflict-resolution attempts advance through their normal retry/attention state. A run must never remain indefinitely in `publishing` after its durable Workflow has exhausted retries. Durable Workflow re-entry must treat `integrated`, `conflicted`, `failed`, and `cancelled` runs as finished; `ready` is also finished for a reply run but remains an intermediate publication state for a task run.
 
 Known production follow-up: the owner discard action still reports failure in the disposable acceptance repository after its Git authentication correction. Preserve the expected-SHA lease and error separation; diagnose this independently rather than weakening deletion safety or folding it into Phase 6.
 
