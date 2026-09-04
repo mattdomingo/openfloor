@@ -286,6 +286,8 @@ See [`docs/schema-invariants.md`](docs/schema-invariants.md) for the full per-ta
 
 `FloorSnapshot` includes `autoDispatch`, `autoProvisionAgents`, configured/effective generated-agent provider state, `autoResolveConflicts`, nullable `repository`, `activeCandidate`, bounded `latestPreflight`, active agents, and the latest 20 caller-visible runs. Every queue item independently derives its caller-specific integrated-run rollback descriptor, so Queue rollback state is complete even when the run is older than that 20-run window. Runs derive `purpose` (`task` or `conflict_resolution`), nullable `conflictCaseId`, and their latest bounded rollback state. Large logs and artifacts are fetched separately. `review` is null until real repository/run data exists, then includes typed conflict cases/questions and candidate-wide attribution from dedicated queries rather than the latest-run window; never populate it from UI fixtures.
 
+Run summaries, checks, and files are hydrated with one bounded run read plus at most one set-based checks read and one set-based files read. Never restore per-run query fan-out: the latest-20 floor list and unbounded candidate-wide Review history sit on the realtime refetch path. Dismissed queue items and their prompts are excluded from that snapshot path while their run audit history remains durable.
+
 ### Mutation pattern
 
 Persisted floor mutations follow this sequence:

@@ -963,3 +963,11 @@ Agent runtime posture is also tightened: Codex receives only an explicit safe SD
 **Rationale:** A run mutation can commit before a downstream realtime notification fails. Retrying that Workflow must not execute a terminal run again, reinterpret a successfully persisted reply as a failed task publication, or let a stale publication-failure attempt overwrite a concurrently published outcome.
 
 **Consequences:** Durable retries preserve the first committed terminal outcome. Successful replies stay answered, failed/cancelled work cannot rerun, and a lost publication race leaves the winning run, queue, and revision untouched.
+
+### 2026-09-04 — Floor run hydration is set-based
+
+**Decision:** Both the latest-20 floor run list and candidate-wide Review history load their run rows once, then hydrate all selected checks and files in two set-based reads. Dismissed queue prompts are excluded from floor snapshots alongside their dismissed queue items.
+
+**Rationale:** The prior run loader issued two additional D1 queries per visible run, while candidate Review first loaded ids and then issued three reads per historical run. That N+1 path amplified every initial floor load and realtime refetch, and soft-deleted prompts accumulated in an otherwise invisible snapshot query.
+
+**Consequences:** A nonempty run list uses exactly three D1 reads regardless of run count; an empty list remains one read. Review attribution, ordering, the 20-run floor bound, and durable dismissed-run audit history are unchanged.

@@ -70,6 +70,8 @@ import {
   finishRunPublished,
   finishRunIntegrated,
   getAgentRun,
+  getAgentRuns,
+  getAgentRunsForCandidate,
   getRunArtifactKeysForMember,
   getRunExecutionContext,
   markRunChecking,
@@ -1100,6 +1102,23 @@ describe("D1 session persistence", () => {
       status: "published",
       summary: "Ready locally",
     }));
+
+    let runListReads = 0;
+    const countingDatabase: D1DatabaseLike = {
+      prepare: (query) => {
+        runListReads += 1;
+        return env.DB.prepare(query);
+      },
+      batch: (statements) => env.DB.batch(statements as unknown as Parameters<typeof env.DB.batch>[0]),
+    };
+    const sessionRuns = await getAgentRuns(created.session.id, countingDatabase);
+    expect(sessionRuns.find((item) => item.id === run.id)?.files).toHaveLength(1);
+    expect(runListReads).toBe(3);
+    runListReads = 0;
+    const candidateRuns = await getAgentRunsForCandidate(candidateId, countingDatabase);
+    expect(candidateRuns.map((item) => item.id)).toEqual(expect.arrayContaining([run.id, publicationFailure.id, publicationRace.id]));
+    expect(candidateRuns.find((item) => item.id === run.id)?.files).toHaveLength(1);
+    expect(runListReads).toBe(3);
 
     expect(await markRunDiscarded(created.session.id, run.id, member.id, env.DB)).toBeNull();
     expect(await markRunDiscarded(created.session.id, run.id, owner.id, env.DB)).toBeNull();
