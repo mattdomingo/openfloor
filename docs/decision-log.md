@@ -1003,3 +1003,11 @@ Agent runtime posture is also tightened: Codex receives only an explicit safe SD
 **Rationale:** Idle availability and an internally defaulted Engineer role are not evidence of task suitability. The previous fallback could send design work to a testing specialist.
 
 **Consequences:** The deterministic keyword router remains explicit and conservative; it does not claim semantic intelligence. Manual targeting still takes precedence. No model-discovery, reasoning-effort, conflict-policy, or archived-session change is introduced.
+
+### 2026-09-04 — Surface session quota refusal before setup
+
+**Decision:** An exhausted server-loaded session-hour allowance opens an explicit quota notice with Plan & usage navigation instead of the creation form. Submission errors that race an earlier usable allowance remain inside the form, focused and scrolled into view, with entered data preserved.
+
+**Rationale:** An off-screen refusal looked like a broken Create button and wasted setup effort.
+
+**Consequences:** This is advisory UI; server quota enforcement and billing limits remain authoritative and unchanged.
