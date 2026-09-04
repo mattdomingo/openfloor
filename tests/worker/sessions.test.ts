@@ -78,6 +78,7 @@ import {
   markRunIntegrationConflicted,
   prepareConflictedRunRetry,
   recordRunArtifact,
+  recordRunPublicationFailure,
   replaceRunFiles,
   requestAgentRunCancellation,
   setRunProviderThreadId,
@@ -1040,12 +1041,33 @@ describe("D1 session persistence", () => {
     expect(floor?.runs[0]).toEqual(expect.objectContaining({ status: "integrated", runCommitSha: publishedSha, integratedCandidateSha: integratedSha }));
     expect(floor?.queue[0].status).toBe("completed");
     expect(floor?.review).toEqual(expect.objectContaining({ commitSha: integratedSha, branch, pullRequest: expect.objectContaining({ number: 7, draft: true }) }));
+
+    // Publication already gets three Workflow retries. If they all fail, the
+    // durable state must become actionable instead of parking forever in the
+    // active "publishing" status (ENG-187).
+    floor = await createFloorQueueItem(created.session.id, owner.id, { prompt: "Exercise a failed publication", agentId: floor!.agents[0].id }, env.DB);
+    const publicationItem = floor!.queue.find((item) => item.prompts[0]?.text === "Exercise a failed publication")!;
+    const publicationFailure = await createAgentRun(created.session.id, publicationItem.id, owner.id, "task", env.DB);
+    await markRunRunning(publicationFailure.id, "process-publication-failure", env.DB);
+    await markRunChecking(publicationFailure.id, "thread-publication-failure", "Implemented", env.DB);
+    await replaceRunFiles(publicationFailure.id, [{ path: "src/publication-failure.ts", changeKind: "add", additions: 1, deletions: 0, summary: null, diffPreview: "+export const ready = true;" }], env.DB);
+    await finishAgentRun(publicationFailure.id, "ready", "Ready locally", env.DB);
+    await markRunPublishing(publicationFailure.id, { bundleKey: "publication-failure.bundle", bundleSizeBytes: 20, localCommitSha: "6".repeat(40) }, env.DB);
+    await recordRunPublicationFailure(publicationFailure.id, "GitHub refused the run branch", env.DB);
+    floor = await getFloorSnapshot(created.session.id, owner.id, env.DB);
+    expect(floor?.queue.find((item) => item.id === publicationItem.id)?.status).toBe("failed");
+    expect(floor?.runs.find((item) => item.id === publicationFailure.id)).toEqual(expect.objectContaining({
+      status: "failed",
+      summary: "GitHub refused the run branch",
+      completedAt: expect.any(Number),
+    }));
+
     expect(await markRunDiscarded(created.session.id, run.id, member.id, env.DB)).toBeNull();
     expect(await markRunDiscarded(created.session.id, run.id, owner.id, env.DB)).toBeNull();
     await finishAgentRun(run.id, "failed", "Late duplicate completion", env.DB);
     floor = await getFloorSnapshot(created.session.id, owner.id, env.DB);
     expect(floor?.queue[0].status).toBe("completed");
-    expect(floor?.runs[0].status).toBe("integrated");
+    expect(floor?.runs.find((item) => item.id === run.id)?.status).toBe("integrated");
 
     await env.DB.prepare("UPDATE floor_queue_items SET status = 'queued' WHERE id = ?").bind(queueItemId).run();
     const conflict = await createAgentRun(created.session.id, queueItemId, owner.id, "task", env.DB);

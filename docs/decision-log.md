@@ -947,3 +947,11 @@ Agent runtime posture is also tightened: Codex receives only an explicit safe SD
 
 **Consequences:** New person-name surfaces use `PersonName`, not a native `title`. Future reply chrome stays inside the card column. A new queue group needs a `data-status` color map next to the existing bars.
 **Consequences:** GitHub Checks show `audit` and `test` independently; either failure blocks development and production mutation. Manual emergency deploys keep the documented `npm audit --omit=dev` then `npm test` order — both must pass before a remote migration. E2E locators that previously leaned on unbounded `.click()` waits must `expect` the element first, or they fail at 15s.
+
+### 2026-09-03 — Publication exhaustion is terminal and touch entry is explicit
+
+**Decision:** When the durable Agent Run Workflow exhausts its trusted run-branch publication retries, transition both the run and queue item from `ready`/`publishing` to terminal `failed`, record completion and the existing `publication_failed` event, advance any associated conflict attempt, notify floor clients, and wake the router. On hoverless or coarse-pointer devices, keep the landing entry's **open the floor** label visible at rest instead of requiring hover to replace the three-dot mark.
+
+**Rationale:** A permanently active `publishing` record strands session/global run capacity and gives members neither a terminal failure nor a normal retry path after the Workflow has no retry left. The landing mark's hover-only explanation is likewise unreachable on ordinary touch screens and resembles an indefinite loader at the first product touchpoint.
+
+**Consequences:** Publication failure after the Workflow retry budget is actionable and releases routing capacity; retry/recovery can use the existing failed-queue behavior. Touch visitors see an explicit entry action, while fine-pointer hover/focus behavior is unchanged. The production smoke test must also show both **Continue with GitHub** and **Email me a code** on `/signin`; the latter depends on One-time PIN dashboard state and cannot be restored by a Worker deploy.

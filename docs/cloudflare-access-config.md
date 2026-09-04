@@ -17,7 +17,7 @@ policy, not product admission: GitHub and One-time PIN are the enabled identity
 providers, while D1 early-access grants and session membership decide what an
 authenticated account may use.
 
-Every real page (`/home`, `/settings`, `/onboarding`, `/session/*`, `/join/*`)
+Every real page (`/home`, `/home/settings`, `/onboarding`, `/session/*`, `/join/*`)
 is deliberately outside Access. A signed-out page request therefore reaches the
 Worker and is routed through openfloor's own landing/sign-in UI. All sign-in
 flows anchor on `/auth/complete`; Access sets `CF_Authorization` there and the
@@ -76,3 +76,9 @@ only Cloudflare's form action, validates it against `CF_ACCESS_TEAM_DOMAIN`, and
 degrades to the hosted Access screen if Cloudflare's markup changes. GitHub OAuth
 stays a direct browser navigation because its callback requires the team-domain
 session cookie.
+
+Treat the two visible `/signin` actions as a deployment check. If **Email me a
+code** is absent while **Continue with GitHub** remains, the target Access
+application is not exposing One-time PIN; enable that identity provider in Zero
+Trust before admitting users who need the fallback. This is dashboard state and
+cannot be repaired by deploying the Worker.

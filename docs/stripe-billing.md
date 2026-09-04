@@ -64,7 +64,7 @@ Use Stripe test mode first:
 
 1. Sign in as a new direct user, complete the profile, select Free, and confirm `/home` opens with Free limits.
 2. Sign in as another new user, select Pro and 4 seats, complete Checkout, and confirm return from Stripe reaches `/home` only after the account becomes active.
-3. Confirm `/settings?section=plan` shows Pro, 4 seats per session, and the current billing period.
+3. Confirm `/home/settings?section=plan` shows Pro, 4 seats per session, and the current billing period.
 4. Create a session and verify its fourth member can join while a fifth additional member is refused.
 5. Change to Max with 6 seats. Confirm Stripe shows an immediate prorated change and openfloor updates to Max/6 after the webhook.
 6. Cancel through Portal. Confirm cancellation is immediate and openfloor falls back to Free limits.

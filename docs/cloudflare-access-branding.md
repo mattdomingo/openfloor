@@ -37,7 +37,7 @@ and identity-provider names control the provider button labels.
 10. Keep GitHub and One-time PIN as the intended production identity providers.
 11. Verify in a private window: opening `/home` should reach openfloor's owned
     sign-in flow, authentication should pass through `/auth/complete`, subsequent
-    navigation between `/home`, `/settings`, and a session should not re-prompt,
+    navigation between `/home`, `/home/settings`, and a session should not re-prompt,
     and an unauthenticated `/api/*` request should receive an Access challenge.
 
 ## Caveats

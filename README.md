@@ -2,9 +2,9 @@
 
 openfloor is a persistent multiplayer session shell for teams coordinating agent work. Cloudflare D1 stores users, early-access admission and waitlist state, sessions, memberships, reusable signed invites, agents, assignments, prompts, queue ordering, and team/direct messages. A per-session Durable Object provides live WebSocket presence and floor-change notifications.
 
-Members enter a session at `/app/session/[id]`, then continue to the authenticated workspace at `/app/session/[id]/floor`. A new floor starts empty. Everything shown comes from the session, persisted member actions, or a connected backend; openfloor does not seed sample agents, prompts, files, checks, or review candidates.
+Members enter a session at `/session/[id]`, then continue to the authenticated workspace at `/session/[id]/floor`. A new floor starts empty. Everything shown comes from the session, persisted member actions, or a connected backend; openfloor does not seed sample agents, prompts, files, checks, or review candidates.
 
-Every new account completes Profile, GitHub App installation, then Plan onboarding. GitHub access is account-level, may include multiple personal or organization installations, and stores no GitHub user token. Session creation requires choosing an authorized repository, verifies its default branch and head, reserves the session/repository/candidate in D1, creates the server-owned candidate branch, then opens the normal ready lobby. Existing users may keep using old sessions but cannot create a new one until Account Settings has active GitHub access. Provider keys remain per-user and are managed separately in Settings.
+Every new account completes profile and GitHub App installation, then may connect an AI provider; enrollment is Free while the paid-plan step remains hidden. GitHub access is account-level, may include multiple personal or organization installations, and stores no GitHub user token. Session creation requires choosing an authorized repository, verifies its default branch and head, reserves the session/repository/candidate in D1, creates the server-owned candidate branch, then opens the normal ready lobby. Existing users may keep using old sessions but cannot create a new one until Account Settings has active GitHub access. Provider keys remain per-user and are managed separately in Settings.
 
 The Agent Floor keeps persistent user-created agents and **New agent** unchanged. A new persistent agent is always owned by its creator: teammates can edit its task and use Pause/Stop as safety controls, but only its recorded owner can change model/billing or Resume it. When the owner enables both auto-dispatch and **Auto agents**, routing assigns idle persistent agents first, then activates durable generated workers for additional tasks. Generated workers and Concierge carry an **Auto-generated** badge, retire when idle, and are reused without losing queue/run attribution. Multiple simultaneous questions receive separate Concierge agents within the existing run limits; each Concierge retires after its reply. Concierge handles only read-only reply runs and can never publish code changes. Stop also pauses and only a session-owner click cancels the current run. Generated workers remain read-only and non-deletable. Automated scheduling is capped at 15 active runs per session and 30 globally.
 
@@ -35,7 +35,7 @@ npx wrangler d1 migrations apply openfloor-production --local
 npm run dev
 ```
 
-Open the URL printed by the server, normally [http://localhost:3000](http://localhost:3000). Local development serves the application at the root, so use `/home` rather than `/app/home`; the `/app` prefix is added by production builds. You are automatically signed in with the identity from `.dev.vars`.
+Open the URL printed by the server, normally [http://localhost:3000](http://localhost:3000). Local development and both deployed application hosts serve routes from the root, so use `/home`. You are automatically signed in locally with the identity from `.dev.vars`.
 
 To exercise the product manually:
 
