@@ -1,0 +1,21 @@
+name: Preview runtime validation
+
+on:
+  push:
+    branches: [codex/review-app-preview-release]
+
+permissions:
+  contents: read
+
+jobs:
+  runtime-isolation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Build and test preview runtime isolation
+        run: |
+          docker build --file Dockerfile.sandbox --tag openfloor-runtime-isolation:test .
+          docker run --rm --privileged --entrypoint /opt/openfloor/runtime-isolation-test.sh openfloor-runtime-isolation:test
