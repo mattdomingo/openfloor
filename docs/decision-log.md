@@ -971,3 +971,11 @@ Agent runtime posture is also tightened: Codex receives only an explicit safe SD
 **Rationale:** The prior run loader issued two additional D1 queries per visible run, while candidate Review first loaded ids and then issued three reads per historical run. That N+1 path amplified every initial floor load and realtime refetch, and soft-deleted prompts accumulated in an otherwise invisible snapshot query.
 
 **Consequences:** A nonempty run list uses exactly three D1 reads regardless of run count; an empty list remains one read. Review attribution, ordering, the 20-run floor bound, and durable dismissed-run audit history are unchanged.
+
+### 2026-09-04 — Record SEC-01 gaps before changing runtime architecture
+
+**Decision:** Keep the Josh beta security work separate from application fixes and deliver a boundary review and migration plan before changing execution architecture. The existing shell uid isolation and separate publisher remain required but are not proof of complete containment. `docs/josh-beta-runtime-isolation-plan.md` records the current flow, a synthetic hostile-Git-filter reproduction, native file-tool proof gaps, and proposed migration/acceptance steps.
+
+**Rationale:** The interview's single-container description predates some existing controls. Replacing the publisher again would miss trusted post-run Git over agent-writable metadata and provider-native file operations. The brief explicitly requires a plan-first stop when a safe incremental implementation is not established.
+
+**Consequences:** SEC-01 remains open; this documentation does not change runtime behavior, rollout flags, network/package policy, or production state. Future work must prove the complete provider/tool and artifact boundary and preserve cancellation, exact-SHA publication, history, and rollback safety. This qualifies the scope of the 2026-08-31 shell-isolation decision without superseding its required controls.

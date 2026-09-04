@@ -615,6 +615,8 @@ Run the relevant flow first against development after every `release` deployment
 
 ### Security and privacy
 
+- The Josh beta SEC-01 review found that shell uid isolation and the separate publisher do not establish complete runtime isolation: trusted post-run Git still reads agent-writable Git configuration, and native provider file-tool containment needs separate proof. See [`docs/josh-beta-runtime-isolation-plan.md`](docs/josh-beta-runtime-isolation-plan.md) for the synthetic reproduction and proposed migration. Do not treat that plan as an implemented boundary or weaken existing controls while addressing it.
+
 - Never trust forwarded identity headers directly from the public request.
 - Never expose invite signing secrets or Access tokens to the client.
 - Never log live prompt drafts or store them in analytics by default.
