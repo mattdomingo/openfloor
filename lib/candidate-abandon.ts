@@ -2,6 +2,7 @@ import { getDb, getGitHubAppConfig, type D1DatabaseLike } from "@/db";
 import { finishCandidateCleanup, getCandidateBranchDeleteContext, getRepositoryFloorRevision, markCandidateAbandoned } from "@/db/repositories";
 import { deleteVerifiedBranches, type CleanupTarget } from "@/lib/repository-cleanup";
 import type { GitHubRepositoryOption } from "@/lib/session-types";
+import { stopRepositoryPreviewRuntime } from "@/lib/repository-preview-lifecycle";
 
 export type AbandonCandidateResult =
   // No live candidate to abandon: no repository_candidates row exists at
@@ -77,5 +78,6 @@ export async function abandonSessionCandidate(
   if (cleanup) {
     revision = await finishCandidateCleanup(sessionId, context.candidateId, cleanup.deletedRunIds, cleanup.candidateDeleted, cleanup.complete, database);
   }
+  await stopRepositoryPreviewRuntime(sessionId, database);
   return { outcome: "abandoned", branch: context.candidateBranch, branchDeleted, revision };
 }

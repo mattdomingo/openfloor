@@ -6,6 +6,9 @@ import { verifyPreviewGatewayToken } from "@/lib/runtime-token";
 import type { GitHubRepositoryOption } from "@/lib/session-types";
 
 export async function GET(request: Request) {
+  if ((env as unknown as { REPOSITORY_PREVIEW_ENABLED?: string }).REPOSITORY_PREVIEW_ENABLED !== "true") {
+    return new Response("Not found", { status: 404 });
+  }
   const token = request.headers.get("authorization")?.match(/^Bearer (.+)$/)?.[1];
   const secret = (env as unknown as { RUNTIME_GATEWAY_SECRET?: string }).RUNTIME_GATEWAY_SECRET;
   if (!token || !secret) return new Response("Not found", { status: 404 });

@@ -18,6 +18,7 @@
     { "tag": "v2", "new_sqlite_classes": ["SessionRouter"] }
   ],
   "r2_buckets": [{ "binding": "PREFLIGHT_LOGS", "bucket_name": "openfloor-e2e-artifacts" }],
+  "vars": { "REPOSITORY_PREVIEW_ENABLED": "false" },
   "d1_databases": [{
     "binding": "DB",
     "database_name": "openfloor-e2e",

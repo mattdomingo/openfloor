@@ -8,21 +8,32 @@ import {
   requestWithTrustedIdentity,
   type IdentityEnvironment,
 } from "../lib/identity";
-import { getSandbox, type Sandbox } from "@cloudflare/sandbox";
+import { getSandbox, proxyToSandbox, type Sandbox } from "@cloudflare/sandbox";
 import { purgeExpiredSessions } from "../db/sessions";
+import {
+  finishSandboxCleanup,
+  getPreviewMemberUserId,
+  getPreviewProxyContext,
+  retrySandboxCleanup,
+  takeDueSandboxCleanup,
+  takeExpiredRepositoryPreviews,
+} from "../db/previews";
 import { retirePoolSandbox, takeEvictablePoolSandboxes } from "../db/sandbox-pool";
-import { notifyMembersChanged } from "../lib/presence-server";
+import { notifyFloorChanged, notifyMembersChanged } from "../lib/presence-server";
 import { violatesBrowserMutationPolicy, withSecurityHeaders } from "../lib/http-security";
 import { handlePresenceRequest, SessionPresence } from "./presence";
 import { SessionRouter } from "./session-router";
 import { RepositoryPreflightWorkflow } from "./preflight-workflow";
 import { AgentRunWorkflow } from "./agent-run-workflow";
+import { RepositoryPreviewWorkflow } from "./preview-workflow";
 import { sweepStorageCleanup } from "./storage-cleanup";
 import { purgeExpiredWaitlist, sweepWaitlistSheetSync } from "../db/early-access";
 import type { EarlyAccessBindings } from "../lib/early-access";
+import { earlyAccessGateEnabled } from "../lib/early-access";
+import { isPreviewHostname, previewFrameAncestor, rewritePreviewResponse, stripAccessCredentials } from "../lib/preview-proxy";
 export { Sandbox, ContainerProxy } from "@cloudflare/sandbox";
 
-export { AgentRunWorkflow, RepositoryPreflightWorkflow, SessionPresence, SessionRouter };
+export { AgentRunWorkflow, RepositoryPreflightWorkflow, RepositoryPreviewWorkflow, SessionPresence, SessionRouter };
 
 type DurableObjectStubLike = { fetch(request: Request): Promise<Response> };
 type DurableObjectNamespaceLike = {
@@ -42,6 +53,9 @@ interface Env extends IdentityEnvironment, EarlyAccessBindings {
     delete(keys: string | string[]): Promise<void>;
   };
   SANDBOX: DurableObjectNamespace<Sandbox>;
+  REPOSITORY_PREVIEW_ENABLED?: string;
+  OPENFLOOR_PREVIEW_HOSTNAME?: string;
+  OPENFLOOR_RUNTIME_ORIGIN?: string;
   SESSION_PRESENCE: DurableObjectNamespaceLike;
   IMAGES: {
     input(stream: ReadableStream): {
@@ -82,6 +96,9 @@ function isApiDocumentNavigation(request: Request, url: URL): boolean {
 const worker = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
+    if (isPreviewHostname(url.hostname, env.OPENFLOOR_PREVIEW_HOSTNAME)) {
+      return handlePreviewProxy(request, env);
+    }
     if (violatesBrowserMutationPolicy(request, url)) {
       return withSecurityHeaders(Response.json({ error: "Cross-site mutation rejected" }, { status: 403 }), url);
     }
@@ -121,6 +138,7 @@ const worker = {
       if (cron === POOL_SWEEP_CRON) {
         await Promise.all([
           sweepSandboxPool(env),
+          sweepRepositoryPreviews(env),
           sweepStorageCleanup(env),
           sweepWaitlistSheetSync(env.DB, env),
         ]);
@@ -151,6 +169,41 @@ async function sweepSandboxPool(env: Env): Promise<void> {
       // Row stays draining; the next sweep retries the destroy.
     }
   }
+}
+
+async function sweepRepositoryPreviews(env: Env): Promise<void> {
+  const expired = await takeExpiredRepositoryPreviews(env.DB);
+  await Promise.all(expired.map((preview) => notifyFloorChanged(preview.sessionId, preview.revision, ["preview"])));
+  const sandboxIds = await takeDueSandboxCleanup(env.DB);
+  for (const sandboxId of sandboxIds) {
+    try {
+      await getSandbox(env.SANDBOX, sandboxId, { enableDefaultSession: false, normalizeId: true }).destroy();
+      await finishSandboxCleanup(sandboxId, env.DB);
+    } catch (error) {
+      await retrySandboxCleanup(sandboxId, error instanceof Error ? error.message : "Sandbox destruction failed", env.DB);
+    }
+  }
+}
+
+async function handlePreviewProxy(request: Request, env: Env): Promise<Response> {
+  if (env.REPOSITORY_PREVIEW_ENABLED !== "true") return new Response("Not found", { status: 404 });
+  const frameAncestor = previewFrameAncestor(env.OPENFLOOR_RUNTIME_ORIGIN);
+  if (!frameAncestor) return new Response("Not found", { status: 404 });
+  const headers = new Headers(request.headers);
+  if (!headers.has("host")) headers.set("host", new URL(request.url).host);
+  const identity = localDevelopmentIdentity(headers, env) ?? await cloudflareAccessIdentity(headers, env);
+  if (!identity) return new Response("Not found", { status: 404 });
+  const userId = await getPreviewMemberUserId(identity.providerUserId, identity.email, env.DB);
+  if (!userId) return new Response("Not found", { status: 404 });
+  const host = new URL(request.url).host.toLowerCase();
+  const context = await getPreviewProxyContext(host, userId, earlyAccessGateEnabled(env), env.DB);
+  if (!context) return new Response("Not found", { status: 404 });
+  const proxied = await proxyToSandbox(
+    new Request(request, { headers: stripAccessCredentials(headers) }),
+    { Sandbox: env.SANDBOX },
+  );
+  if (!proxied) return new Response("Not found", { status: 404 });
+  return rewritePreviewResponse(proxied, frameAncestor);
 }
 
 export default worker;

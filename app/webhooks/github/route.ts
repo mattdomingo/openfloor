@@ -15,6 +15,7 @@ import { applyCandidatePullRequestFeedback } from "@/lib/candidate-feedback";
 import { verifyGitHubWebhookSignature } from "@/lib/github-state";
 import { notifyFloorChanged, notifySessionEnded } from "@/lib/presence-server";
 import { pokeSessionRouter } from "@/lib/router-server";
+import { stopRepositoryPreviewRuntime } from "@/lib/repository-preview-lifecycle";
 
 const MAX_WEBHOOK_BYTES = 1_000_000;
 
@@ -74,6 +75,7 @@ async function applyGitHubWebhook(
     let domains: Parameters<typeof notifyFloorChanged>[2] = ["repository", "runs", "review"];
     if (event === "installation" && ["deleted", "suspend"].includes(body.action ?? "")) {
       revision = await setRepositoryAvailability(target.sessionId, "revoked");
+      await stopRepositoryPreviewRuntime(target.sessionId);
     } else if (event === "installation" && ["created", "unsuspend", "new_permissions_accepted"].includes(body.action ?? "")) {
       revision = await setRepositoryAvailability(target.sessionId, "connected");
     } else if (event === "installation_repositories") {
@@ -81,8 +83,10 @@ async function applyGitHubWebhook(
       const added = body.repositories_added?.some((repository) => String(repository.id) === target.repositoryId);
       if (!removed && !added) continue;
       revision = await setRepositoryAvailability(target.sessionId, removed ? "inaccessible" : "connected");
+      if (removed) await stopRepositoryPreviewRuntime(target.sessionId);
     } else if (event === "repository" && body.action === "deleted") {
       revision = await setRepositoryAvailability(target.sessionId, "inaccessible");
+      await stopRepositoryPreviewRuntime(target.sessionId);
     } else if (event === "repository" && body.repository) {
       revision = await updateRepositoryIdentity(target.sessionId, {
         owner: body.repository.owner?.login ?? body.repository.full_name?.split("/")[0] ?? "",
@@ -93,6 +97,9 @@ async function applyGitHubWebhook(
       revision = await updateRepositoryPushState(
         target.sessionId, body.ref, body.after, target.baseBranch, target.candidateBranch, target.candidateSha, target.integrationRunId,
       );
+      if (body.ref === `refs/heads/${target.candidateBranch}` && body.after !== target.candidateSha && !target.integrationRunId) {
+        await stopRepositoryPreviewRuntime(target.sessionId);
+      }
     } else if (event === "pull_request" && body.pull_request?.head?.ref && body.pull_request.number && body.pull_request.node_id && body.pull_request.html_url) {
       const headRef = body.pull_request.head.ref;
       const merged = body.pull_request.merged === true;
@@ -112,7 +119,10 @@ async function applyGitHubWebhook(
       // cleanup_status 'pending' as updateRepositoryPullRequestState set it.
       if (merged && headRef === target.candidateBranch) {
         const ended = await endMergedSession(target.sessionId);
-        if (ended) await notifySessionEnded(target.sessionId, ended.endedAt, "merged");
+        if (ended) {
+          await stopRepositoryPreviewRuntime(target.sessionId);
+          await notifySessionEnded(target.sessionId, ended.endedAt, "merged");
+        }
       }
     } else if (FEEDBACK_EVENTS[event]?.(body.action ?? null) && concernsCandidatePullRequest(event, body, target)) {
       // Facts are re-fetched from GitHub rather than read off the payload:

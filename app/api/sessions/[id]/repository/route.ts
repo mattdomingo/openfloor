@@ -22,6 +22,7 @@ import { openFloorBranchName } from "@/lib/repository-refs";
 import type { GitHubRepositoryOption } from "@/lib/session-types";
 import { isApiError, requireApiUser } from "@/lib/server-auth";
 import { parseRepositoryConnectionInput } from "@/lib/validation";
+import { stopRepositoryPreviewRuntime } from "@/lib/repository-preview-lifecycle";
 
 export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
   const user = await requireApiUser();
@@ -104,7 +105,10 @@ export async function DELETE(_request: Request, { params }: { params: Promise<{ 
   } catch (error) {
     return mutationErrorResponse(error);
   }
-  if (repository) await notifyFloorChanged(sessionId, await getRepositoryFloorRevision(sessionId), ["repository", "review"]);
+  if (repository) {
+    await stopRepositoryPreviewRuntime(sessionId);
+    await notifyFloorChanged(sessionId, await getRepositoryFloorRevision(sessionId), ["repository", "review", "preview"]);
+  }
   return repository ? Response.json({ repository }) : Response.json({ error: "Session not found" }, { status: 404 });
 }
 

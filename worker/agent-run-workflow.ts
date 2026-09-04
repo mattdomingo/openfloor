@@ -37,6 +37,7 @@ import { getEnabledMcpServersForRun } from "../db/mcp-servers";
 import { getSessionSkillsForRun } from "../db/skills";
 import { serializeMcpServersForClaude } from "../lib/mcp-config";
 import { buildGeminiSrtSettings, buildGeminiSystemSettings } from "../lib/gemini-settings";
+import { refreshRepositoryPreview } from "../lib/repository-preview-lifecycle";
 import { buildQwenSystemSettings } from "../lib/qwen-settings";
 import { resumableProvider, usesClaudeRunner, usesQwenRunner, type CredentialProvider } from "../lib/provider-credentials";
 import { buildClaudeSandboxSettings } from "../lib/claude-sandbox-settings";
@@ -161,7 +162,7 @@ const PUBLISHER_SANDBOX_IMAGE_VERSION = "v2";
 // Namespacing the pool key by image version makes old-image entries
 // unreachable immediately; the existing idle sweep reclaims them.
 // Bump this whenever Dockerfile.sandbox's run-sandbox contents change.
-const RUN_SANDBOX_IMAGE_VERSION = "v9";
+const RUN_SANDBOX_IMAGE_VERSION = "v11";
 // Every provider gets a fresh 0700 HOME owned by openfloor-provider. Model-
 // selected commands run as openfloor-workspace with a separate 0700 HOME.
 // Both live under scratch that prepare/release removes, so pooled sandboxes
@@ -1057,7 +1058,10 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
         grouped
           ? finishAgentRunRollbackGroup(rollbackId, pushedSha!, this.env.DB)
           : finishAgentRunRollback(rollbackId, pushedSha!, this.env.DB));
-      if (update) await notifyFloorChanged(update.sessionId, update.revision, ["repository", "queue", "runs", "review"]);
+      if (update) {
+        await notifyFloorChanged(update.sessionId, update.revision, ["repository", "queue", "runs", "review"]);
+        await refreshRepositoryPreview(update.sessionId);
+      }
       return { status: "rolled_back" };
     } catch (error) {
       // Once GitHub advanced, retaining the D1 lease is safer than recording a
@@ -1178,6 +1182,7 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
         }
         await notifyFloorChanged(update.sessionId, latestRevision, ["queue", "repository", "runs", "review"]);
         await pokeSessionRouter(update.sessionId, "run_completed");
+        await refreshRepositoryPreview(update.sessionId);
       }
       return { status: "integrated" };
     } catch (error) {

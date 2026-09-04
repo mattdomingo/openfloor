@@ -60,9 +60,10 @@
 			// standard-2 (1 vCPU, 6 GiB): tar extraction, git passes, npm ci, and
 			// user checks were CPU-starved at lite's 1/16 vCPU, and 256 MiB OOMs
 			// real builds. Each run needs two containers (run + publisher), so the
-			// cap covers 2 × GLOBAL_RUN_BUDGET plus cleanup-lag headroom.
+			// cap covers 2 × GLOBAL_RUN_BUDGET, three preview leases, and
+			// cleanup-lag headroom.
 			"instance_type": "standard-2",
-			"max_instances": 12
+			"max_instances": 15
 		}
 	],
 	"workflows": [
@@ -75,6 +76,11 @@
 			"name": "openfloor-agent-run",
 			"binding": "AGENT_RUN_WORKFLOW",
 			"class_name": "AgentRunWorkflow"
+		},
+		{
+			"name": "openfloor-repository-preview",
+			"binding": "REPOSITORY_PREVIEW",
+			"class_name": "RepositoryPreviewWorkflow"
 		}
 	],
 	"vars": {
@@ -83,6 +89,8 @@
 		// HTTP/WebSocket transports don't support writeFileStream.
 		"SANDBOX_TRANSPORT": "rpc",
 		"OPENFLOOR_RUNTIME_ORIGIN": "https://app.opnflr.com",
+		"OPENFLOOR_PREVIEW_HOSTNAME": "preview.opnflr.com",
+		"REPOSITORY_PREVIEW_ENABLED": "false",
 		"PREFLIGHT_ENABLED": "false",
 		// Global beta execution is enabled after Sandbox image v9 deployed with
 		// the adversarially tested provider/workspace uid boundary. Provider-level
@@ -226,7 +234,7 @@
 					"class_name": "Sandbox",
 					"image": "./Dockerfile.sandbox",
 					"instance_type": "standard-2",
-					"max_instances": 12
+					"max_instances": 15
 				}
 			],
 			"workflows": [
@@ -239,11 +247,18 @@
 					"name": "openfloor-development-agent-run",
 					"binding": "AGENT_RUN_WORKFLOW",
 					"class_name": "AgentRunWorkflow"
+				},
+				{
+					"name": "openfloor-development-repository-preview",
+					"binding": "REPOSITORY_PREVIEW",
+					"class_name": "RepositoryPreviewWorkflow"
 				}
 			],
 			"vars": {
 				"SANDBOX_TRANSPORT": "rpc",
 				"OPENFLOOR_RUNTIME_ORIGIN": "https://dev.app.opnflr.com",
+				"OPENFLOOR_PREVIEW_HOSTNAME": "preview.dev.opnflr.com",
+				"REPOSITORY_PREVIEW_ENABLED": "false",
 				"PREFLIGHT_ENABLED": "false",
 				// Development execution is enabled after the isolated Access policy,
 				// GitHub App, runtime secrets, and first deployment were accepted.

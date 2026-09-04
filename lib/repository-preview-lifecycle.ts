@@ -2,9 +2,12 @@ import { env } from "cloudflare:workers";
 import { getSandbox, type Sandbox } from "@cloudflare/sandbox";
 import {
   failRepositoryPreview,
+  finishSandboxCleanup,
   reserveAutomaticRepositoryPreview,
+  retrySandboxCleanup,
   stopRepositoryPreview,
 } from "@/db/previews";
+import { getDb, type D1DatabaseLike } from "@/db";
 import { notifyFloorChanged } from "./presence-server";
 
 type PreviewWorkflowBinding = {
@@ -12,49 +15,73 @@ type PreviewWorkflowBinding = {
 };
 
 type PreviewBindings = {
+  DB?: unknown;
+  REPOSITORY_PREVIEW_ENABLED?: string;
   REPOSITORY_PREVIEW?: PreviewWorkflowBinding;
   SANDBOX?: DurableObjectNamespace<Sandbox>;
   OPENFLOOR_PREVIEW_HOSTNAME?: string;
 };
 
-// Best-effort by design: repository integration/rollback remains authoritative
-// even when preview capacity or Workflow launch is unavailable.
-export async function refreshRepositoryPreview(sessionId: string): Promise<void> {
+export function repositoryPreviewEnabled(bindings: PreviewBindings): boolean {
+  return bindings.REPOSITORY_PREVIEW_ENABLED === "true";
+}
+
+// Best-effort: integration/rollback remains authoritative if preview rebuild
+// cannot launch. Existing active preview survives a failed replacement.
+export async function refreshRepositoryPreview(
+  sessionId: string,
+  database: D1DatabaseLike = getDb(),
+): Promise<void> {
   let preview: Awaited<ReturnType<typeof reserveAutomaticRepositoryPreview>> = null;
   try {
     const bindings = env as unknown as PreviewBindings;
-    if (!bindings.REPOSITORY_PREVIEW || !bindings.OPENFLOOR_PREVIEW_HOSTNAME) return;
-    preview = await reserveAutomaticRepositoryPreview(sessionId);
+    if (!repositoryPreviewEnabled(bindings) || !bindings.REPOSITORY_PREVIEW || !bindings.OPENFLOOR_PREVIEW_HOSTNAME) return;
+    preview = await reserveAutomaticRepositoryPreview(sessionId, database);
     if (!preview?.workflowInstanceId) return;
     await bindings.REPOSITORY_PREVIEW.create({
       id: preview.workflowInstanceId,
       params: { previewId: preview.id, generation: preview.generation },
     });
-    await notifyFloorChanged(sessionId, await currentRevision(sessionId), ["preview"]);
+    await notifyFloorChanged(sessionId, await currentRevision(sessionId, database), ["preview"]);
   } catch {
-    // Preview refresh never changes authoritative integration/rollback outcome.
     try {
       if (!preview) return;
-      const failed = await failRepositoryPreview(preview.id, preview.generation, "Automatic preview rebuild could not be started.");
+      const failed = await failRepositoryPreview(preview.id, preview.generation, "Automatic preview rebuild could not be started.", database);
       if (failed) await notifyFloorChanged(failed.sessionId, failed.revision, ["preview"]);
-    } catch { /* refresh remains best-effort */ }
+    } catch {
+      // Preview refresh never changes authoritative integration/rollback.
+    }
   }
 }
 
-export async function stopRepositoryPreviewRuntime(sessionId: string): Promise<void> {
-  const stopped = await stopRepositoryPreview(sessionId);
+export async function stopRepositoryPreviewRuntime(
+  sessionId: string,
+  database: D1DatabaseLike = getDb(),
+): Promise<void> {
+  const stopped = await stopRepositoryPreview(sessionId, database);
   if (!stopped) return;
   await notifyFloorChanged(sessionId, stopped.revision, ["preview"]);
-  const namespace = (env as unknown as PreviewBindings).SANDBOX;
-  if (!namespace) return;
-  await Promise.all(stopped.sandboxIds.map(async (sandboxId) => {
-    try { await getSandbox(namespace, sandboxId, { enableDefaultSession: false, normalizeId: true }).destroy(); } catch { /* D1 lease is already revoked */ }
+  await destroyPreviewSandboxes(stopped.sandboxIds, database);
+}
+
+export async function destroyPreviewSandboxes(
+  sandboxIds: string[],
+  database: D1DatabaseLike = getDb(),
+): Promise<void> {
+  const bindings = env as unknown as PreviewBindings;
+  if (!bindings.SANDBOX) return;
+  await Promise.all(sandboxIds.map(async (sandboxId) => {
+    try {
+      await getSandbox(bindings.SANDBOX!, sandboxId, { enableDefaultSession: false, normalizeId: true }).destroy();
+      await finishSandboxCleanup(sandboxId, database);
+    } catch (error) {
+      await retrySandboxCleanup(sandboxId, error instanceof Error ? error.message : "Sandbox destruction failed", database);
+    }
   }));
 }
 
-async function currentRevision(sessionId: string): Promise<number> {
-  const { getDb } = await import("@/db");
-  const row = await getDb().prepare("SELECT floor_revision AS revision FROM sessions WHERE id = ?")
+async function currentRevision(sessionId: string, database: D1DatabaseLike): Promise<number> {
+  const row = await database.prepare("SELECT floor_revision AS revision FROM sessions WHERE id = ?")
     .bind(sessionId).first<{ revision: number }>();
   return Number(row?.revision ?? 0);
 }

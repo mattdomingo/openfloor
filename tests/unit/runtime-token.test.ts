@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { signPreflightGatewayToken, signRunGatewayToken, verifyPreflightGatewayToken, verifyRunGatewayToken } from "@/lib/runtime-token";
+import { signPreflightGatewayToken, signPreviewGatewayToken, signRunGatewayToken, verifyPreflightGatewayToken, verifyPreviewGatewayToken, verifyRunGatewayToken } from "@/lib/runtime-token";
 
 describe("preflight gateway tokens", () => {
   it("binds a short-lived source operation to the preflight and repository", async () => {
@@ -7,6 +7,17 @@ describe("preflight gateway tokens", () => {
     const token = await signPreflightGatewayToken(claims, "runtime-secret");
     await expect(verifyPreflightGatewayToken(token, "runtime-secret")).resolves.toEqual(claims);
     await expect(verifyPreflightGatewayToken(token, "other-secret")).resolves.toBeNull();
+  });
+});
+
+describe("preview gateway tokens", () => {
+  it("binds source to one generation and exact candidate", async () => {
+    const claims = { previewId: "preview-1", generation: 2, sessionId: "session-1", repositoryId: "repo-1", candidateSha: "e".repeat(40), operation: "source" as const };
+    const token = await signPreviewGatewayToken(claims, "runtime-secret");
+    await expect(verifyPreviewGatewayToken(token, "runtime-secret")).resolves.toEqual(claims);
+    await expect(verifyPreviewGatewayToken(token, "wrong-secret")).resolves.toBeNull();
+    const invalid = await signPreviewGatewayToken({ ...claims, generation: 0 }, "runtime-secret");
+    await expect(verifyPreviewGatewayToken(invalid, "runtime-secret")).resolves.toBeNull();
   });
 });
 

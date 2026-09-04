@@ -21,6 +21,7 @@ export function AgentFloorScreen({
   initialMembers,
   initialFloor,
   agentRunEnabled,
+  repositoryPreviewEnabled,
   enabledProviders,
   providerCredentials,
   lowHoursRemaining,
@@ -30,6 +31,7 @@ export function AgentFloorScreen({
   initialMembers: SessionMember[];
   initialFloor: FloorSnapshot;
   agentRunEnabled: boolean;
+  repositoryPreviewEnabled: boolean;
   enabledProviders: CredentialProvider[];
   providerCredentials: ProviderCredentialSummary[];
   lowHoursRemaining: number | null;
@@ -167,5 +169,5 @@ export function AgentFloorScreen({
     send(update);
   }, [send]);
 
-  return <Workspace user={user} session={session} members={visibleMembers} floorData={floorData} activity={activity} repositoryTree={repositoryTree} typingDrafts={typingDrafts} onTypingUpdate={sendTypingUpdate} onSaveObjective={saveObjective} agentRunEnabled={agentRunEnabled} enabledProviders={enabledProviders} providerCredentials={providerCredentials} presenceConnected={presenceConnected} quotaExhausted={quotaExhausted} lowHoursRemaining={lowHoursRemaining} />;
+  return <Workspace user={user} session={session} members={visibleMembers} floorData={floorData} activity={activity} repositoryTree={repositoryTree} typingDrafts={typingDrafts} onTypingUpdate={sendTypingUpdate} onSaveObjective={saveObjective} agentRunEnabled={agentRunEnabled} repositoryPreviewEnabled={repositoryPreviewEnabled} enabledProviders={enabledProviders} providerCredentials={providerCredentials} presenceConnected={presenceConnected} quotaExhausted={quotaExhausted} lowHoursRemaining={lowHoursRemaining} />;
 }

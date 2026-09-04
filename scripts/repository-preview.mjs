@@ -5,10 +5,10 @@ import process from "node:process";
 export const MAX_PACKAGE_JSON_BYTES = 1_048_576;
 
 const MANAGERS = {
-  npm: { locks: ["package-lock.json", "npm-shrinkwrap.json"], install: ["npm", "ci"], run: (script) => ["npm", "run", script] },
-  pnpm: { locks: ["pnpm-lock.yaml"], install: ["pnpm", "install", "--frozen-lockfile"], run: (script) => ["pnpm", "run", script] },
-  yarn: { locks: ["yarn.lock"], install: ["yarn", "install", "--immutable"], run: (script) => ["yarn", "run", script] },
-  bun: { locks: ["bun.lock", "bun.lockb"], install: ["bun", "install", "--frozen-lockfile"], run: (script) => ["bun", "run", script] },
+  npm: { locks: ["package-lock.json", "npm-shrinkwrap.json"], install: ["npm", "ci", "--ignore-scripts"], run: (script) => ["npm", "run", script] },
+  pnpm: { locks: ["pnpm-lock.yaml"], install: ["pnpm", "install", "--frozen-lockfile", "--ignore-scripts"], run: (script) => ["pnpm", "run", script] },
+  yarn: { locks: ["yarn.lock"], install: ["yarn", "install", "--immutable", "--mode=skip-build"], run: (script) => ["yarn", "run", script] },
+  bun: { locks: ["bun.lock", "bun.lockb"], install: ["bun", "install", "--frozen-lockfile", "--ignore-scripts"], run: (script) => ["bun", "run", script] },
 };
 
 export function detectRepositoryPreview(manifest, rootFiles) {
@@ -85,6 +85,12 @@ async function main() {
       cwd: root,
       stdio: "inherit",
       shell: false,
+      env: {
+        ...process.env,
+        NPM_CONFIG_REGISTRY: "https://registry.npmjs.org",
+        YARN_NPM_REGISTRY_SERVER: "https://registry.npmjs.org",
+        YARN_IGNORE_PATH: "1",
+      },
     });
     if (result.error) throw result.error;
     if (result.status !== 0) throw new Error(`Dependency installation failed with exit code ${result.status ?? "unknown"}.`);

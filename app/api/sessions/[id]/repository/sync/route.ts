@@ -9,6 +9,7 @@ import { activeOwnerErrorResponse, quotaExhaustedErrorResponse } from "@/lib/flo
 import { getInstallationRepository, getRepositoryRefSha, GitHubApiError } from "@/lib/github";
 import { notifyFloorChanged } from "@/lib/presence-server";
 import { isApiError, requireApiUser } from "@/lib/server-auth";
+import { stopRepositoryPreviewRuntime } from "@/lib/repository-preview-lifecycle";
 
 export async function POST(_request: Request, { params }: { params: Promise<{ id: string }> }) {
   const user = await requireApiUser();
@@ -32,6 +33,7 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
     ]);
     const status = remoteCandidateSha === candidate.candidateSha ? "ready" : "externally_modified";
     const revision = await reconcileRepositoryCandidate(sessionId, repository, remoteBaseSha, remoteCandidateSha, status);
+    if (status !== "ready") await stopRepositoryPreviewRuntime(sessionId);
     await notifyFloorChanged(sessionId, revision, ["repository", "review"]);
     return Response.json({
       repository: await getRepositoryConnectionForMember(sessionId, user.id),
@@ -40,6 +42,7 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
   } catch (error) {
     if (error instanceof GitHubApiError && (error.status === 403 || error.status === 404)) {
       const revision = await setRepositoryAvailability(sessionId, "inaccessible");
+      await stopRepositoryPreviewRuntime(sessionId);
       await notifyFloorChanged(sessionId, revision, ["repository", "review"]);
       return Response.json({ error: "GitHub repository access is unavailable" }, { status: 404 });
     }

@@ -700,6 +700,56 @@ export const repositoryPreflightChecks = sqliteTable(
   ],
 );
 
+// One shared app preview per session. D1 owns generation/host leases; Sandbox
+// owns processes and files. Active fields survive a failed rebuild so the
+// previous exact candidate remains available until stop or expiry.
+export const repositoryPreviews = sqliteTable(
+  "repository_previews",
+  {
+    id: text("id").primaryKey(),
+    sessionId: text("session_id").notNull().references(() => sessions.id, { onDelete: "cascade" }),
+    candidateId: text("candidate_id").notNull().references(() => repositoryCandidates.id, { onDelete: "cascade" }),
+    generation: integer("generation").notNull().default(1),
+    status: text("status", { enum: ["stopped", "provisioning", "ready", "failed"] }).notNull(),
+    targetCandidateSha: text("target_candidate_sha").notNull(),
+    activeCandidateSha: text("active_candidate_sha"),
+    workflowInstanceId: text("workflow_instance_id"),
+    pendingSandboxId: text("pending_sandbox_id"),
+    activeSandboxId: text("active_sandbox_id"),
+    activeUrl: text("active_url"),
+    activeHost: text("active_host"),
+    detectedPackageManager: text("detected_package_manager", { enum: ["npm", "pnpm", "yarn", "bun"] }),
+    detectedScript: text("detected_script", { enum: ["dev", "start"] }),
+    failureReason: text("failure_reason"),
+    startedBy: text("started_by").notNull().references(() => users.id),
+    expiresAt: integer("expires_at"),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("idx_repository_previews_session").on(table.sessionId),
+    uniqueIndex("idx_repository_previews_active_host").on(table.activeHost),
+    index("idx_repository_previews_capacity").on(table.status, table.expiresAt),
+    check("repository_previews_status_check", sql`${table.status} in ('stopped', 'provisioning', 'ready', 'failed')`),
+  ],
+);
+
+// Sandbox deletion is retried until confirmed. No session FK: session/account
+// deletion must not erase the only record of a still-billable container.
+export const sandboxCleanupIntents = sqliteTable(
+  "sandbox_cleanup_intents",
+  {
+    sandboxId: text("sandbox_id").primaryKey(),
+    kind: text("kind", { enum: ["repository_preview"] }).notNull(),
+    attempts: integer("attempts").notNull().default(0),
+    notBefore: integer("not_before").notNull(),
+    lastError: text("last_error"),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [index("idx_sandbox_cleanup_due").on(table.notBefore)],
+);
+
 export const agentRuns = sqliteTable(
   "agent_runs",
   {

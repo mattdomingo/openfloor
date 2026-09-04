@@ -19,10 +19,11 @@ Use for pure behavior:
 - Conflict validation, state/prompt rendering, notification event selection/deduplication, and real multi-file three-way workspace construction.
 - Production deploy-artifact identity: exact D1 database ID, reviewed `AGENT_RUN_ENABLED=true` beta posture, and rejection of test-only variables.
 - Runner environment construction: exact built-in MCP exemption, child-process overload preservation, credential scrubbing, and Codex/Claude/Gemini workspace-launcher seams.
+- Preview package-manager detection and frozen install commands for npm, pnpm, Yarn, and Bun; lifecycle-script suppression flags; single-port selection; runtime-token validation; hostname parsing; Access credential stripping; host-only cookie preservation; and CSP framing replacement.
 
 ### Sandbox image tests
 
-Pull-request and `main` CI build `Dockerfile.sandbox` and run `/opt/openfloor/runtime-isolation-test.sh` inside that exact image before application tests. The adversarial test verifies the setuid helper's root ownership and mode, provider/workspace uid separation, empty workspace credential environment, inaccessible provider `/proc` environment/memory/file descriptors and home, absence of tokens from readable process environments and command lines, and the Codex shell and Claude bubblewrap identity transitions. This Linux container test is mandatory because macOS unit tests cannot prove kernel uid or `/proc` behavior.
+Pull-request and `main` CI build `Dockerfile.sandbox` and run `/opt/openfloor/runtime-isolation-test.sh` inside that exact image before application tests. The adversarial test verifies the setuid helper's root ownership and mode, provider/workspace uid separation, empty workspace credential environment, inaccessible provider `/proc` environment/memory/file descriptors and home, absence of tokens from readable process environments and command lines, and the Codex shell and Claude bubblewrap identity transitions. Image `v11` also installs minimal npm, pnpm, Yarn, and Bun fixtures, proves malicious lifecycle scripts do not run, starts the candidate runtime as `openfloor-workspace` under nested seccomp, proves outbound traffic and candidate Unix sockets fail, and reaches its HTTP response only through the trusted Unix socket. This Linux container test is mandatory because macOS unit tests cannot prove kernel uid, network namespace, seccomp, or `/proc` behavior.
 
 ### D1 integration tests
 
@@ -44,6 +45,7 @@ Use the Cloudflare Vitest worker pool and local migrations to test:
 - Conflict default-on migration preservation, idempotent detection, priority/capacity routing, retry budgets, provider/quota handling, owner/member authorization, cross-session concealment, exact-question answer races, runtime-token binding, and ended-session refusal.
 - Model gateways accept run-scoped spend authority only while a run is exactly `running`; `cancel_requested` rejects OpenAI, Anthropic-compatible, Gemini, and OpenAI-chat-compatible traffic before credential lookup or upstream fetch.
 - Integrated-run rollback authorization for session owners, agent owners, and every-prompt authors; owner-only engineer/agent groups; mixed-author exclusion; exact preview SHA/run-set rejection; pagination beyond 20 runs; newest-first atomic child completion/failure; failed-attempt retry; legacy-row preservation; candidate lease release; audit preservation; Queue status; and active/History Review behavior.
+- Repository preview owner authorization, outsider concealment, early-access revocation, exact candidate and generation races, three-preview concurrent capacity, stale fallback, expiry, host revocation, and retryable Sandbox cleanup intents.
 
 ### Durable Object tests
 
@@ -84,6 +86,7 @@ The Playwright test uses two authenticated browser contexts and verifies the rea
 - Live teammate draft text appears in realtime.
 - Typing, Everyone, and Hidden draft modes behave correctly.
 - Review stays empty without fabricated repository data.
+- Preview UI stays absent while its rollout gate is off; component coverage pins owner/member controls, provisioning, ready iframe, stale failure fallback, expiry, responsive browser chrome, and absence of iframe top-navigation permission.
 - Signed GitHub webhook rejection/acceptance and the owner/member repository connection, candidate synchronization, passing/failing preflights, real-output viewing, retry, and reload recovery through deterministic test-only GitHub/Workflow/Sandbox adapters.
 - Default conflict automation, automatic and manual resolver states, owner/original-author answers, unrelated-member waiting UI and concealed rejection, stale-answer rejection, reload durability, browser-permission handling, one hidden-tab notification, and exact Review click-through.
 - Reload persistence, disconnect/reconnect, leave, and roster updates work.

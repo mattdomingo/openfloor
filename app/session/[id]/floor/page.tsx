@@ -34,7 +34,8 @@ export default async function AgentFloorPage({ params }: { params: Promise<{ id:
     redirect(`/session/${encodeURIComponent(id)}?repo=required`);
   }
   const agentRunEnabled = (env as unknown as { AGENT_RUN_ENABLED?: string }).AGENT_RUN_ENABLED === "true";
+  const repositoryPreviewEnabled = (env as unknown as { REPOSITORY_PREVIEW_ENABLED?: string }).REPOSITORY_PREVIEW_ENABLED === "true";
   const disabled = disabledRunProviders();
   const enabledProviders = CREDENTIAL_PROVIDERS.filter((provider) => !disabled.has(provider));
-  return <AgentFloorScreen user={user} session={session} initialMembers={members} initialFloor={floor} agentRunEnabled={agentRunEnabled} enabledProviders={enabledProviders} providerCredentials={credentials} lowHoursRemaining={quota ? lowHoursRemaining(quota.seconds, PLAN_LIMITS[quota.plan].hours) : null} />;
+  return <AgentFloorScreen user={user} session={session} initialMembers={members} initialFloor={floor} agentRunEnabled={agentRunEnabled} repositoryPreviewEnabled={repositoryPreviewEnabled} enabledProviders={enabledProviders} providerCredentials={credentials} lowHoursRemaining={quota ? lowHoursRemaining(quota.seconds, PLAN_LIMITS[quota.plan].hours) : null} />;
 }

@@ -21,6 +21,8 @@
 #define SRT_BINARY "/opt/openfloor/node_modules/.bin/srt"
 #define REAL_BWRAP "/usr/bin/bwrap"
 #define REAL_SHELL "/bin/bash"
+#define NODE_BINARY "/usr/local/bin/node"
+#define PREVIEW_RUNTIME "/opt/openfloor/preview-runtime.mjs"
 #define APPLY_SECCOMP_X64_SUFFIX "/@anthropic-ai/sandbox-runtime/vendor/seccomp/x64/apply-seccomp"
 #define APPLY_SECCOMP_ARM64_SUFFIX "/@anthropic-ai/sandbox-runtime/vendor/seccomp/arm64/apply-seccomp"
 
@@ -208,7 +210,15 @@ static int has_trusted_seccomp_command(int argc, char **argv, int separator) {
   return 0;
 }
 
-static void run_workspace_bwrap(int argc, char **argv) {
+static int has_trusted_preview_command(int argc, char **argv, int separator) {
+  if (argc != separator + 4 || strcmp(argv[separator + 2], "-c") != 0) return 0;
+  const char *shell = strrchr(argv[separator + 1], '/');
+  shell = shell == NULL ? argv[separator + 1] : shell + 1;
+  if (strcmp(shell, "bash") != 0) return 0;
+  return strstr(argv[separator + 3], PREVIEW_RUNTIME) != NULL;
+}
+
+static void run_workspace_bwrap(int argc, char **argv, int trusted_preview) {
   int separator = -1;
   int has_user_namespace = 0;
   int drops_all_capabilities = 0;
@@ -236,7 +246,8 @@ static void run_workspace_bwrap(int argc, char **argv) {
       !has_pid_namespace || !has_private_proc) {
     fail_message("bubblewrap identity policy is incomplete");
   }
-  if (!has_trusted_seccomp_command(argc, argv, separator)) {
+  if (trusted_preview ? !has_trusted_preview_command(argc, argv, separator)
+                      : !has_trusted_seccomp_command(argc, argv, separator)) {
     fail_message("bubblewrap command is not guarded by apply-seccomp");
   }
 
@@ -302,17 +313,32 @@ int main(int argc, char **argv) {
     fail("could not start provider process");
   }
 
+  if (strcmp(program, "openfloor-preview-exec") == 0) {
+    if (caller != 0) fail_message("preview launcher called by unexpected user");
+    if (argc != 3 ||
+        (strcmp(argv[1], "npm") != 0 && strcmp(argv[1], "pnpm") != 0 &&
+         strcmp(argv[1], "yarn") != 0 && strcmp(argv[1], "bun") != 0) ||
+        (strcmp(argv[2], "dev") != 0 && strcmp(argv[2], "start") != 0)) {
+      fail_message("invalid preview runtime selection");
+    }
+    char *const preview_arguments[] = { NODE_BINARY, PREVIEW_RUNTIME, argv[1], argv[2], NULL };
+    install_workspace_environment();
+    run_workspace_command(preview_arguments, broker_uid, broker_gid);
+  }
+
   if (caller != 0 && caller != provider_uid && caller != broker_uid && caller != workspace_uid) {
     fail_message("workspace launcher called by unexpected user");
   }
 
-  if (strcmp(program, "openfloor-workspace-bwrap") == 0) {
+  if (strcmp(program, "openfloor-workspace-bwrap") == 0 || strcmp(program, "openfloor-preview-bwrap") == 0) {
     // Model-selected commands already run as openfloor-workspace. They may
     // re-enter only the fixed-policy srt launcher, never choose privileged
     // bwrap mount or namespace arguments directly.
-    if (caller == workspace_uid) fail_message("bubblewrap launcher called by workspace user");
+    if (caller == workspace_uid || (strcmp(program, "openfloor-preview-bwrap") == 0 && caller != broker_uid)) {
+      fail_message("bubblewrap launcher called by unexpected user");
+    }
     install_workspace_environment();
-    run_workspace_bwrap(argc, argv);
+    run_workspace_bwrap(argc, argv, strcmp(program, "openfloor-preview-bwrap") == 0);
   }
 
   install_workspace_environment();

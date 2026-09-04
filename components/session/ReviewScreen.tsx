@@ -2,7 +2,7 @@
 
 import { memo, useEffect, useMemo, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, Fragment } from "react";
 import { LocalDateTime } from "@/components/LocalDateTime";
-import type { FloorMessage, FloorParticipant, FloorReviewSnapshot, ReviewContribution, ReviewContributor, ReviewContributorFacet, SessionFile } from "@/lib/floor-types";
+import type { FloorMessage, FloorParticipant, FloorReviewSnapshot, RepositoryPreviewSnapshot, ReviewContribution, ReviewContributor, ReviewContributorFacet, SessionFile } from "@/lib/floor-types";
 import type { RepositoryTreeEntry } from "@/lib/github";
 import type { RepositoryConnection } from "@/lib/session-types";
 import { agentTone } from "./data";
@@ -17,7 +17,7 @@ import type { ConflictChoice } from "@/lib/floor-types";
 
 type PendingAction = { type: "merge"; deleteCandidateBranch: boolean } | { type: "deleteBranch" } | { type: "abandon"; deleteBranch: boolean };
 type Selection = { kind: "changed"; id: string } | { kind: "repo"; path: string };
-type Browse = "changed" | "all" | "prompts";
+type Browse = "changed" | "all" | "prompts" | "preview";
 type InspectorTab = "status" | "chat" | "contributors";
 type MergeReadiness = "ready" | "waiting" | "blocked" | "locked";
 const DISCONNECTED_STATUSES = new Set(["disconnected", "revoked", "inaccessible"]);
@@ -47,10 +47,12 @@ function mergeReadiness(review: FloorReviewSnapshot, blockers: string[]): MergeR
   return "blocked";
 }
 
-export const ReviewScreen = memo(function ReviewScreen({ sessionId, revision, review, repository, repositoryTree, selectedConflictCaseId, promptRequest, owner, busy, blockingRunId, onRequestRollback, onSync, onReady, onUnready, onMerge, onMergeLock, onDeleteBranch, onAbandon, onCancelRun, onResolveConflict, onAnswerConflict, onSubmitConflictSelections, teamChat, onSendTeamMessage, participants, currentUserId, sessionFiles }: {
+export const ReviewScreen = memo(function ReviewScreen({ sessionId, revision, review, preview, previewEnabled, repository, repositoryTree, selectedConflictCaseId, promptRequest, owner, busy, blockingRunId, onStartPreview, onStopPreview, onRequestRollback, onSync, onReady, onUnready, onMerge, onMergeLock, onDeleteBranch, onAbandon, onCancelRun, onResolveConflict, onAnswerConflict, onSubmitConflictSelections, teamChat, onSendTeamMessage, participants, currentUserId, sessionFiles }: {
   sessionId: string;
   revision: number;
   review: FloorReviewSnapshot | null;
+  preview: RepositoryPreviewSnapshot | null;
+  previewEnabled: boolean;
   repository: RepositoryConnection | null;
   repositoryTree: RepositorySource;
   selectedConflictCaseId: string | null;
@@ -58,6 +60,8 @@ export const ReviewScreen = memo(function ReviewScreen({ sessionId, revision, re
   owner: boolean;
   busy: boolean;
   blockingRunId: string | null;
+  onStartPreview: () => Promise<boolean>;
+  onStopPreview: () => Promise<boolean>;
   onRequestRollback: (intent: RollbackIntent) => void;
   onSync: (options?: { silent?: boolean }) => Promise<boolean>;
   onReady: () => Promise<void>;
@@ -178,7 +182,7 @@ export const ReviewScreen = memo(function ReviewScreen({ sessionId, revision, re
   // (via this override, or the "View prompt changes" shortcut below) — it's
   // never a default, same as the old `mode` state.
   const browse: Browse = browseOverride ?? (hasChangedFiles ? "changed" : "all");
-  const activeTab: "changed" | "all" = browse === "prompts" ? (hasChangedFiles ? "changed" : "all") : browse;
+  const activeTab: "changed" | "all" = browse === "prompts" || browse === "preview" ? (hasChangedFiles ? "changed" : "all") : browse;
   // The Contributors tab only exists while browsing Prompts; if it's active
   // and Browse switches away, this falls back to Status on its own — no
   // effect needed, same self-healing idiom as `selected` below.
@@ -190,8 +194,8 @@ export const ReviewScreen = memo(function ReviewScreen({ sessionId, revision, re
   // reset it gets on a "repository" floor-domain push) make repeated calls a
   // no-op, so this doesn't need a tighter dependency list.
   useEffect(() => {
-    if (repositoryBrowsable && repositoryTree.treeState === "idle") repositoryTree.load();
-  }, [repositoryBrowsable, repositoryTree]);
+    if (browse !== "preview" && repositoryBrowsable && repositoryTree.treeState === "idle") repositoryTree.load();
+  }, [browse, repositoryBrowsable, repositoryTree]);
 
   // Self-heals like the pre-tree version did: falls back to the first changed
   // file whenever the current selection stops existing (a new run, a merge),
@@ -210,7 +214,7 @@ export const ReviewScreen = memo(function ReviewScreen({ sessionId, revision, re
   const fileContributions = useReviewContributions(sessionId, revision, {
     status: "active",
     path: selectedChangedFile?.path,
-    enabled: browse !== "prompts" && Boolean(selectedChangedFile),
+    enabled: browse !== "prompts" && browse !== "preview" && Boolean(selectedChangedFile),
   });
   const promptContributions = useReviewContributions(sessionId, revision, {
     status: contributionStatus,
@@ -306,8 +310,9 @@ export const ReviewScreen = memo(function ReviewScreen({ sessionId, revision, re
         </div>
   );
 
+  const previewOption = previewEnabled ? [{ value: "preview" as const, label: "Preview" }] : [];
   const filesPane = <aside className="review-pane" aria-label="Repository files">
-    {review ? <div className="review-pane-head"><SegmentedControl label="Files view" value={activeTab} onChange={setBrowseOverride} options={[{ value: "changed", label: `Changed (${review.files.length})` }, { value: "all", label: "All files" }]} /></div> : <div className="review-pane-head"><h3>All files</h3></div>}
+    {review ? <div className="review-pane-head"><SegmentedControl label="Files view" value={activeTab} onChange={setBrowseOverride} options={[{ value: "changed", label: `Changed (${review.files.length})` }, { value: "all", label: "All files" }]} /></div> : previewEnabled ? <div className="review-pane-head"><SegmentedControl label="Browse" value={browse === "preview" ? "preview" : "all"} onChange={setBrowseOverride} options={[{ value: "all", label: "All files" }, ...previewOption]} /></div> : <div className="review-pane-head"><h3>All files</h3></div>}
     {fileBrowseBody}
   </aside>;
 
@@ -324,6 +329,16 @@ export const ReviewScreen = memo(function ReviewScreen({ sessionId, revision, re
   ) : (
     <section className="review-pane review-diff" aria-label="Diff preview"><div className="review-empty-state"><Icon name="branch" size={22} /><h2>No review available</h2><p>Files, checks, warnings, and approval controls will appear only after a connected agent backend creates a real review candidate.</p></div></section>
   );
+
+  if (previewEnabled && browse === "preview" && !review) {
+    return <section className="review-screen" aria-label="Review preview">
+      <div className="review-grid" style={reviewGridStyle}>
+        <aside className="review-pane review-preview-lifecycle"><div className="review-pane-head"><SegmentedControl label="Browse" value="preview" onChange={setBrowseOverride} options={[{ value: "all", label: "All files" }, ...previewOption]} /></div><PreviewLifecycle preview={preview} owner={owner} busy={busy} onStart={onStartPreview} onStop={onStopPreview} /></aside>
+        <PreviewBrowser preview={preview} />
+        <aside className="review-side">{teamChatPane}</aside>
+      </div>
+    </section>;
+  }
 
   if (!review) {
     if (!repositoryBrowsable) {
@@ -353,9 +368,9 @@ export const ReviewScreen = memo(function ReviewScreen({ sessionId, revision, re
   // Contributors while browsing prompts) stays mounted either way — the bug
   // this fixes is that switching to Prompts used to replace the whole grid,
   // taking conflicts/checks/chat with it.
-  const leftPane = <aside className="review-pane" aria-label={browse === "prompts" ? "Prompt groups" : "Repository files"}>
-    <div className="review-pane-head"><SegmentedControl label="Browse" value={browse} onChange={setBrowseOverride} options={[{ value: "changed", label: `Changed (${review.files.length})` }, { value: "all", label: "All files" }, { value: "prompts", label: "Prompts" }]} /></div>
-    {browse === "prompts" ? <>
+  const leftPane = <aside className="review-pane" aria-label={browse === "prompts" ? "Prompt groups" : browse === "preview" ? "App preview status" : "Repository files"}>
+    <div className="review-pane-head"><SegmentedControl label="Browse" value={browse} onChange={setBrowseOverride} options={[{ value: "changed", label: `Changed (${review.files.length})` }, { value: "all", label: "All files" }, { value: "prompts", label: "Prompts" }, ...previewOption]} /></div>
+    {browse === "preview" ? <PreviewLifecycle preview={preview} owner={owner} busy={busy} onStart={onStartPreview} onStop={onStopPreview} /> : browse === "prompts" ? <>
       <div className="review-pane-head"><SegmentedControl label="Prompt status" value={contributionStatus} onChange={setContributionStatus} options={[{ value: "active", label: "Active" }, { value: "rolled_back", label: "History" }]} /></div>
       {(engineerFilter || agentFilter) && <div className="review-filter-summary"><span>Filtered contributions</span><button type="button" className="button" data-size="sm" onClick={() => { setEngineerFilter(null); setAgentFilter(null); }}>Clear</button></div>}
       {promptContributions.loading && promptContributions.items.length === 0 ? <p className="review-empty">Loading prompts…</p>
@@ -366,7 +381,7 @@ export const ReviewScreen = memo(function ReviewScreen({ sessionId, revision, re
     </> : fileBrowseBody}
   </aside>;
 
-  const mainCenterPane = browse === "prompts"
+  const mainCenterPane = browse === "preview" ? <PreviewBrowser preview={preview} /> : browse === "prompts"
     ? <PromptContributionDetail detail={promptDetail} status={contributionStatus} onRollback={onRequestRollback} />
     : centerPane;
 
@@ -447,6 +462,52 @@ export const ReviewScreen = memo(function ReviewScreen({ sessionId, revision, re
     {conflictCenter && <ConflictCenterDialog sessionId={sessionId} conflicts={review.conflicts} initialCaseId={conflictCenter.caseId} owner={owner} currentUserId={currentUserId} busy={busy} onClose={() => setConflictCenter(null)} onResolve={onResolveConflict} onAnswer={onAnswerConflict} onSubmitSelections={onSubmitConflictSelections} />}
   </section>;
 });
+
+export function PreviewLifecycle({ preview, owner, busy, onStart, onStop }: {
+  preview: RepositoryPreviewSnapshot | null;
+  owner: boolean;
+  busy: boolean;
+  onStart: () => Promise<boolean>;
+  onStop: () => Promise<boolean>;
+}) {
+  const stale = Boolean(preview?.activeCandidateSha && preview.activeCandidateSha !== preview.targetCandidateSha);
+  const running = preview?.status === "provisioning";
+  return <div className="review-preview-lifecycle-body">
+    <div className="review-pane-head"><h3>App preview</h3><span>{preview?.status ?? "stopped"}</span></div>
+    {!preview ? <p className="review-empty">No shared preview is running. Root JavaScript apps with one frozen lockfile and a dev or start script are supported.</p> : <dl className="review-preview-facts">
+      <div><dt>Status</dt><dd>{running && preview.url ? "rebuilding" : preview.status}</dd></div>
+      {preview.packageManager && <div><dt>Runtime</dt><dd>{preview.packageManager} · {preview.script}</dd></div>}
+      <div><dt>Candidate</dt><dd title={preview.targetCandidateSha}>{preview.targetCandidateSha.slice(0, 8)}</dd></div>
+      {preview.activeCandidateSha && <div><dt>Visible</dt><dd title={preview.activeCandidateSha}>{preview.activeCandidateSha.slice(0, 8)}{stale ? " · stale" : " · current"}</dd></div>}
+      <div><dt>Expires</dt><dd><LocalDateTime timestamp={preview.expiresAt} /></dd></div>
+    </dl>}
+    {preview?.failureReason && <p className="review-preview-failure" role="alert">{preview.failureReason}</p>}
+    {owner && <div className="review-actions">
+      <button type="button" className="button primary-button" disabled={busy || running} onClick={() => void onStart()}>{preview?.url ? "Rebuild preview" : "Start preview"}</button>
+      {preview && <button type="button" className="button danger-button" disabled={busy} onClick={() => void onStop()}>Stop preview</button>}
+    </div>}
+    {!owner && !preview && <p className="review-empty">Session owner can start preview.</p>}
+  </div>;
+}
+
+export function PreviewBrowser({ preview }: { preview: RepositoryPreviewSnapshot | null }) {
+  const [reload, setReload] = useState(0);
+  const url = preview?.url;
+  if (!url) return <section className="review-pane review-preview-browser" aria-label="App preview">
+    <div className="review-empty-state"><Icon name="external" size={22} /><h2>{preview?.status === "provisioning" ? "Building preview" : preview?.status === "failed" ? "Preview build failed" : preview?.status === "expired" ? "Preview expired" : "No app preview"}</h2><p>{preview?.status === "provisioning" ? "Installing dependencies and detecting one HTTP listener." : "Start a preview to interact with the candidate app here."}</p></div>
+  </section>;
+  return <section className="review-pane review-preview-browser" aria-label="Interactive app preview">
+    <div className="review-preview-chrome">
+      <span className="review-preview-dots" aria-hidden="true"><i /><i /><i /></span>
+      <input aria-label="Preview URL" value={url} readOnly />
+      <button type="button" className="button" data-size="sm" onClick={() => setReload((value) => value + 1)}>Reload</button>
+      <a className="button" data-size="sm" href={url} target="_blank" rel="noreferrer">Open in new tab</a>
+    </div>
+    {preview.status === "provisioning" && <p className="review-preview-notice" role="status">Rebuilding latest candidate. Prior preview remains interactive.</p>}
+    {preview.activeCandidateSha !== preview.targetCandidateSha && <p className="review-preview-notice" role="status">Showing prior candidate while latest build is unavailable.</p>}
+    <iframe key={`${url}-${reload}`} title="Interactive candidate app preview" src={url} sandbox="allow-downloads allow-forms allow-modals allow-pointer-lock allow-popups allow-same-origin allow-scripts" />
+  </section>;
+}
 
 type ContributionSource = ReturnType<typeof useReviewContributions>;
 type ContributionDetailSource = ReturnType<typeof useReviewContributionDetail>;

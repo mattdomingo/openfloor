@@ -7,7 +7,7 @@ const ready: RepositoryPreviewSnapshot = {
   status: "ready",
   targetCandidateSha: "a".repeat(40),
   activeCandidateSha: "a".repeat(40),
-  url: "https://8080-preview-v5-id-token.preview.opnflr.com",
+  url: "https://8080-preview-v11-id-token.preview.opnflr.com",
   packageManager: "npm",
   script: "dev",
   failureReason: null,
