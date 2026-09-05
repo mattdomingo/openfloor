@@ -749,6 +749,8 @@ export const agentRuns = sqliteTable(
     // null (idx_agent_runs_branch is unaffected; SQLite treats NULLs as
     // distinct) and finalResponse is the whole point.
     kind: text("kind", { enum: ["reply"] }),
+    // Additive terminal outcome; a task remains a task even when no files change.
+    completion: text("completion", { enum: ["no_changes"] }),
     createdBy: text("created_by").notNull().references(() => users.id),
     createdAt: integer("created_at").notNull(),
     startedAt: integer("started_at"),

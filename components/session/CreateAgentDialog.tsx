@@ -37,7 +37,6 @@ export function CreateAgentDialog({
   const { dismiss, dialogProps } = useDialogDismiss(onClose);
   const nameRef = useRef<HTMLInputElement>(null);
   const [name, setName] = useState("");
-  const [role, setRole] = useState("");
   const [task, setTask] = useState("");
   // Only the current user's own connected keys — an agent's owner pays for
   // its runs, but the create dialog only ever creates agents billed against
@@ -55,7 +54,7 @@ export function CreateAgentDialog({
   // Billing above, so a model id can never be posted to another provider.
   const [model, setModel] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const ready = name.trim().length > 0 && role.trim().length > 0 && task.trim().length > 0 && provider !== null;
+  const ready = name.trim().length > 0 && task.trim().length > 0 && provider !== null;
 
   useEffect(() => { nameRef.current?.focus(); }, []);
 
@@ -63,7 +62,7 @@ export function CreateAgentDialog({
     event.preventDefault();
     if (!ready || submitting || !provider) return;
     setSubmitting(true);
-    const created = await onCreate({ name, role, task, ownerUserId: currentUserId, provider, credentialKind, model });
+    const created = await onCreate({ name, role: "Engineer", task, ownerUserId: currentUserId, provider, credentialKind, model });
     setSubmitting(false);
     if (created) dismiss();
   }
@@ -74,13 +73,12 @@ export function CreateAgentDialog({
         <div className="dialog-head">
           <div className="dialog-title">
             <h2 id={titleId}>New agent</h2>
-            <p>Name the agent, its role, and its task. It starts working once an agent runtime is connected.</p>
+            <p>Name your agent and describe its responsibilities. Work starts when a prompt is assigned.</p>
           </div>
           <button type="button" className="dialog-close" onClick={dismiss} aria-label="Close"><Icon name="close" /></button>
         </div>
         <div className="dialog-body">
           <label className="field"><span className="label">Name</span><input ref={nameRef} value={name} onChange={(event) => setName(event.target.value)} required maxLength={24} /></label>
-          <label className="field"><span className="label">Role</span><input value={role} onChange={(event) => setRole(event.target.value)} required maxLength={80} /></label>
           <label className="field"><span className="label">Task</span><textarea value={task} onChange={(event) => setTask(event.target.value)} required maxLength={1000} rows={4} /></label>
           <p className="form-note">You own this agent. Shared routing may run it and spend your connected provider credential.</p>
           {available.length === 0 ? (

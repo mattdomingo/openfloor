@@ -1,3 +1,5 @@
+import { disabledRunProviders } from "@/lib/provider-rollout";
+import { CREDENTIAL_PROVIDERS } from "@/lib/provider-credentials";
 import { env } from "cloudflare:workers";
 import { redirect } from "next/navigation";
 import { safeAppReturnPath } from "@/app/access-auth";
@@ -37,6 +39,7 @@ export default async function OnboardingPage({
     returnTo={returnTo}
     githubInstallations={githubInstallations}
     initialCredentials={credentials}
+    enabledProviders={CREDENTIAL_PROVIDERS.filter((provider) => !disabledRunProviders().has(provider))}
     initialStep={parseOnboardingStep(step)}
     teamLogoutUrl={teamLogoutUrl}
   />;

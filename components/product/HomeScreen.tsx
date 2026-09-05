@@ -182,6 +182,7 @@ export function HomeScreen({
   }
   const [tab, setTab] = useState<SessionTab>("active");
   const [creating, setCreating] = useState(false);
+  const [quotaNotice, setQuotaNotice] = useState(false);
   const [repositories, setRepositories] = useState<AccountGitHubRepositoryOption[]>([]);
   const [repositoriesLoading, setRepositoriesLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -201,6 +202,10 @@ export function HomeScreen({
   const orderedSessions = useMemo(() => sortByStoredOrder(sessions, parseSessionOrder(storedOrder)), [sessions, storedOrder]);
 
   async function beginCreate() {
+    if (quotaExhausted) {
+      setQuotaNotice(true);
+      return;
+    }
     setCreating(true);
     setRepositoriesLoading(true);
     setLoadError(null);
@@ -263,6 +268,7 @@ export function HomeScreen({
   return (
     <main className="product-shell shop-shell">
       <WaveField varName="--wave" className="shop-wave" />
+      {quotaNotice && <SessionQuotaDialog onClose={() => setQuotaNotice(false)} />}
       <AppHeader user={user} />
       <section className="page-body">
         <div className="page-heading">
@@ -766,6 +772,15 @@ function SessionActionsMenu({
 // branch, and an optional AI connection, all on one page — then straight
 // to the agent floor. A failed candidate provision lands on the lobby with the
 // repository gate open instead, same as the webapp's old inline card did.
+function SessionQuotaDialog({ onClose }: { onClose: () => void }) {
+  const { dismiss, dialogProps } = useDialogDismiss(onClose);
+  return <dialog className="dialog" {...dialogProps} aria-labelledby="quota-create-title">
+    <div className="dialog-head"><h2 id="quota-create-title">No session hours remaining</h2></div>
+    <div className="dialog-body"><p>Your session-hour allowance is exhausted. Review your plan and usage before creating another session.</p></div>
+    <div className="dialog-foot"><button type="button" className="button" onClick={dismiss}>Close</button><Link className="button" href="/home/settings?section=plan">Plan &amp; usage</Link></div>
+  </dialog>;
+}
+
 // One <form> spans the whole dialog (display: contents, so it adds no box of
 // its own and .dialog's flex-column layout of head/body/foot is unaffected)
 // so Enter in a text field submits.
@@ -793,6 +808,9 @@ function CreateSessionDialog({ repositories, repositoriesLoading, loadError, ini
   const [credentials, setCredentials] = useState(initialCredentials);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const errorRef = useRef<HTMLParagraphElement>(null);
+  useEffect(() => { if (error) { errorRef.current?.focus(); errorRef.current?.scrollIntoView({ block: "nearest" }); } }, [error]);
 
   const trimmedTitle = title.trim();
   const canCreate = trimmedTitle.length > 0 && Boolean(repositoryId) && effectiveCandidateName.trim().length > 0;
@@ -890,7 +908,7 @@ function CreateSessionDialog({ repositories, repositoriesLoading, loadError, ini
             </p>
             <ProviderCredentials initialCredentials={credentials} providers={enabledProviders} showAgentDefaults onCredentialsChange={setCredentials} />
           </section>
-          {error && <p className="form-error" role="alert">{error}</p>}
+          {error && <p ref={errorRef} tabIndex={-1} className="form-error" role="alert">{error}</p>}
         </div>
         <div className="dialog-foot setup-dialog-foot">
           <button type="button" className="button" data-variant="quiet" onClick={dismiss} disabled={submitting}>Cancel</button>
