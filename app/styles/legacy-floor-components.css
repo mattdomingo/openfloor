@@ -3105,6 +3105,9 @@
   margin: 0;
 }
 
+.label-with-help { display: inline-flex; align-items: center; justify-self: start; gap: 5px; cursor: help; }
+.field-help-mark { display: inline-grid; place-items: center; width: 15px; height: 15px; border: 1px solid var(--line-strong); border-radius: 50%; color: var(--text-secondary); font-size: 10px; line-height: 1; }
+
 .field-grid {
   display: grid;
   align-items: start;

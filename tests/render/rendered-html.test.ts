@@ -90,7 +90,7 @@ describe("server rendering", () => {
     expect(response.status).toBe(200);
     const html = await response.text();
     expect(html).toContain("No agents yet");
-    expect(html).toContain('class="chip auto-agent-toggle" data-selected="true" aria-pressed="true"');
+    expect(html).toContain('class="chip auto-agent-toggle" data-selected="true" aria-pressed="true" aria-label="Auto"');
     expect(html).toContain("New agent");
     expect(html).toContain("No prompts waiting");
     expect(html).toContain("Teammate drafts");
@@ -515,6 +515,26 @@ describe("plan-selection onboarding", () => {
     expect(html).not.toContain("Choose your plan");
     expect(html).not.toContain("/seat/month");
     expect(html).not.toContain("Contact sales");
+  });
+
+  it("keeps the profile name empty when Access supplies only an email", async () => {
+    const email = "no-access-name@example.com";
+    const response = await SELF.fetch("http://localhost/onboarding?return_to=%2Fhome", {
+      headers: {
+        accept: "text/html",
+        host: "localhost",
+        "x-openfloor-dev-user-id": "no-access-name",
+        "x-openfloor-dev-user-email": email,
+      },
+    });
+
+    expect(response.status).toBe(200);
+    const html = await response.text();
+    const firstNameInput = html.match(/<input[^>]*id="onboarding-first-name"[^>]*>/)?.[0];
+    expect(firstNameInput).toContain('name="firstName"');
+    expect(firstNameInput).toMatch(/autocomplete="given-name"/i);
+    expect(firstNameInput).not.toMatch(/value="[^"]+"/);
+    expect(firstNameInput).not.toContain(email);
   });
 
   it("rejects a direct signup until a plan is explicitly selected", async () => {

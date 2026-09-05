@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import { env } from "cloudflare:workers";
-import { getAccessUser, requireAccessUser } from "@/app/access-auth";
+import { getAccessUser, requireAccessUser, type AccessUser } from "@/app/access-auth";
 import { earlyAccessPath } from "@/lib/access-paths";
 import { BASE_PATH } from "@/components/basePath";
 import { upsertUser } from "@/db/sessions";
@@ -12,11 +12,15 @@ export async function getCurrentAppUser(): Promise<AppUser | null> {
   return identity ? upsertUser(identity) : null;
 }
 
-export async function requireEarlyAccessUser(returnTo: string): Promise<AppUser> {
+export async function requireEarlyAccessContext(returnTo: string): Promise<{ identity: AccessUser; user: AppUser }> {
   const identity = await requireAccessUser(returnTo);
   const user = await upsertUser(identity);
   if (earlyAccessGateEnabled(env as unknown as Record<string, string | undefined>) && !hasEarlyAccess(user)) redirect(earlyAccessPath(returnTo));
-  return user;
+  return { identity, user };
+}
+
+export async function requireEarlyAccessUser(returnTo: string): Promise<AppUser> {
+  return (await requireEarlyAccessContext(returnTo)).user;
 }
 
 // Gates a page behind completed onboarding. Only used for page loads

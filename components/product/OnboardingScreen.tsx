@@ -252,8 +252,8 @@ export function OnboardingScreen({
               {cropSource && <AvatarCropper file={cropSource} onCancel={() => setCropSource(null)} onCropped={applyCrop} />}
 
               <div className="field-grid">
-                <label className="field"><span className="label">First name</span><input value={firstName} onChange={(event) => { setFirstName(event.target.value); setProfileError(null); }} maxLength={50} required autoComplete="given-name" /></label>
-                <label className="field"><span className="label">Last name</span><input value={lastName} onChange={(event) => { setLastName(event.target.value); setProfileError(null); }} maxLength={50} required autoComplete="family-name" /></label>
+                <label className="field" htmlFor="onboarding-first-name"><span className="label">First name</span><input id="onboarding-first-name" name="firstName" type="text" value={firstName} onChange={(event) => { setFirstName(event.target.value); setProfileError(null); }} maxLength={50} required autoComplete="given-name" /></label>
+                <label className="field" htmlFor="onboarding-last-name"><span className="label">Last name</span><input id="onboarding-last-name" name="lastName" type="text" value={lastName} onChange={(event) => { setLastName(event.target.value); setProfileError(null); }} maxLength={50} required autoComplete="family-name" /></label>
               </div>
 
               <div className="field">
