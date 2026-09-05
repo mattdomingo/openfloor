@@ -3,6 +3,9 @@ import type { AgentRunKind, AgentRunStatus } from "@/lib/floor-types";
 import { isAgentRunWorkflowTerminal } from "@/lib/run-lifecycle";
 
 describe("agent run workflow lifecycle", () => {
+  it("keeps no-change task completion terminal", () => {
+    expect(isAgentRunWorkflowTerminal({ status: "ready", kind: null, completion: "no_changes" })).toBe(true);
+  });
   it.each([
     ["integrated", null],
     ["conflicted", null],

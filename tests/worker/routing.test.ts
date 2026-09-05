@@ -2,7 +2,7 @@ import { env } from "cloudflare:workers";
 import { afterEach, describe, expect, it } from "vitest";
 import { createFloorAgent, createFloorQueueItem, GENERATED_AGENT_LINGER_MS, getFloorSnapshot } from "@/db/floor";
 import { classifyPrompt, runRoutingTick, SESSION_RUN_CAP, type RoutingDeps } from "@/db/routing";
-import { finishAgentReply } from "@/db/runs";
+import { finishAgentReply, finishAgentRunWithoutChanges, getAgentRunHistoryForMember, recordRunPublicationFailure } from "@/db/runs";
 import { acceptInvite, createSession, setSessionAutoDispatch, setSessionRoutingSettings, upsertUser } from "@/db/sessions";
 import type { StartRunResult } from "@/lib/agent-run-start";
 import type { PromptIntent } from "@/lib/floor-types";
@@ -165,6 +165,27 @@ describe("agent router tick", () => {
     const second = await runRoutingTick(room.sessionId, "alarm", secondStub.deps, env.DB);
     expect(second.acted).toBe(false);
     expect(secondStub.calls).toHaveLength(0);
+  });
+
+  it("holds unmatched design work instead of dispatching an idle test specialist", async () => {
+    const room = await routingRoom("specialist-mismatch", true, false);
+    await addAgent(room.sessionId, room.owner.id, "Tester", "Engineer", "Write regression tests and coverage");
+    const floor = await createFloorQueueItem(room.sessionId, room.owner.id, { prompt: "Implement a responsive navigation layout", agentId: null }, env.DB);
+    const stub = startRunStub();
+    await runRoutingTick(room.sessionId, "enqueue", stub.deps, env.DB);
+    expect((await queueItem(floor!.queue[0].id))?.agentId).toBeNull();
+    expect(stub.calls).toHaveLength(0);
+    expect((await decisions(room.sessionId)).some((decision) => decision.reason.includes("No matching agent"))).toBe(true);
+  });
+
+  it("routes test work to a matching test specialist", async () => {
+    const room = await routingRoom("specialist-match", true, false);
+    const tester = await addAgent(room.sessionId, room.owner.id, "Tester", "Engineer", "Write regression tests and coverage");
+    await addAgent(room.sessionId, room.owner.id, "Designer", "Design", "Create responsive navigation layout");
+    const floor = await createFloorQueueItem(room.sessionId, room.owner.id, { prompt: "Write regression tests for checkout", agentId: null }, env.DB);
+    const stub = startRunStub();
+    await runRoutingTick(room.sessionId, "enqueue", stub.deps, env.DB);
+    expect((await queueItem(floor!.queue[0].id))?.agentId).toBe(tester);
   });
 
   it("falls back to least-recently-used round-robin when no keywords match", async () => {
@@ -407,8 +428,8 @@ describe("agent router tick", () => {
 
   it("uses idle persistent agents first, then activates and reuses only the workers it can dispatch", async () => {
     const room = await routingRoom("elastic-workers");
-    const firstPersistent = await addAgent(room.sessionId, room.owner.id, "Persistent One", "Engineer", "general work");
-    const secondPersistent = await addAgent(room.sessionId, room.owner.id, "Persistent Two", "Engineer", "general work");
+    const firstPersistent = await addAgent(room.sessionId, room.owner.id, "Persistent One", "Generalist", "general work");
+    const secondPersistent = await addAgent(room.sessionId, room.owner.id, "Persistent Two", "Generalist", "general work");
     for (const prompt of ["Implement alpha", "Implement beta", "Implement gamma"]) {
       await createFloorQueueItem(room.sessionId, room.owner.id, { prompt, agentId: null }, env.DB);
     }
@@ -616,6 +637,55 @@ describe("agent router tick", () => {
     expect(Number(answerAgents?.count)).toBe(0);
   });
 
+  it("completes no-change tasks once, preserves output, and releases routing capacity", async () => {
+    const room = await routingRoom("no-change", true, false);
+    const agentId = await addAgent(room.sessionId, room.owner.id, "Engineer", "Engineer", "Build features");
+    const runId = await insertRunRow(room.sessionId, agentId, room.owner.id, "checking", Date.now());
+    await env.DB.prepare("UPDATE agent_runs SET final_response = 'Already correct.', run_branch = 'unpublished' WHERE id = ?").bind(runId).run();
+    const before = await getFloorSnapshot(room.sessionId, room.owner.id, env.DB);
+    expect(await finishAgentRunWithoutChanges(runId, env.DB)).not.toBeNull();
+    const after = await getFloorSnapshot(room.sessionId, room.owner.id, env.DB);
+    expect(after!.revision).toBe(before!.revision + 1);
+    expect(after!.runs[0]).toMatchObject({ status: "ready", completion: "no_changes", kind: null, finalResponse: "Already correct.", runBranch: null, files: [] });
+    expect(after!.queue[0].status).toBe("completed");
+    expect(await finishAgentRunWithoutChanges(runId, env.DB)).toBeNull();
+    expect(await recordRunPublicationFailure(runId, "must not fail", env.DB)).toBeNull();
+    expect((await getFloorSnapshot(room.sessionId, room.owner.id, env.DB))!.revision).toBe(after!.revision);
+    await createFloorQueueItem(room.sessionId, room.owner.id, { prompt: "Add a feature", agentId }, env.DB);
+    const stub = startRunStub();
+    await runRoutingTick(room.sessionId, "run_completed", stub.deps, env.DB);
+    expect(stub.calls).toHaveLength(1);
+  });
+
+  it("does not complete a cancelled or failed no-change run", async () => {
+    const room = await routingRoom("no-change-race");
+    const agentId = await addAgent(room.sessionId, room.owner.id, "Engineer", "Engineer", "Build features");
+    for (const status of ["cancel_requested", "cancelled", "failed"]) {
+      const id = await insertRunRow(room.sessionId, agentId, room.owner.id, status, Date.now());
+      expect(await finishAgentRunWithoutChanges(id, env.DB)).toBeNull();
+      expect(await env.DB.prepare("SELECT status, completion FROM agent_runs WHERE id = ?").bind(id).first()).toEqual({ status, completion: null });
+    }
+  });
+
+  it("paginates retained runs after agent retirement with session-bound cursors", async () => {
+    const room = await routingRoom("run-history");
+    const agentId = await addAgent(room.sessionId, room.owner.id, "Retired", "Engineer", "Build features");
+    const ids: string[] = [];
+    for (let index = 0; index < 25; index++) ids.push(await insertRunRow(room.sessionId, agentId, room.owner.id, "integrated", 1000 + index));
+    await env.DB.prepare("UPDATE floor_agents SET kind = 'worker', deprovisioned_at = ? WHERE id = ?").bind(Date.now(), agentId).run();
+    await env.DB.prepare("INSERT INTO agent_run_files (id, run_id, path, change_kind, additions, deletions, diff_preview, created_at) VALUES ('history-file', ?, 'src/old.ts', 'update', 2, 1, '', 1000)").bind(ids[0]).run();
+    const first = await getAgentRunHistoryForMember(room.sessionId, room.member.id, null, env.DB);
+    expect(first!.runs.map((run) => run.id)).toEqual(ids.slice(5).reverse());
+    expect(first!.runs[0]).toMatchObject({ agentName: "Retired", agentKind: "worker" });
+    const second = await getAgentRunHistoryForMember(room.sessionId, room.member.id, first!.nextCursor, env.DB);
+    expect(second!.runs.map((run) => run.id)).toEqual(ids.slice(0, 5).reverse());
+    expect(second!.runs[4].files[0]).toMatchObject({ path: "src/old.ts", additions: 2 });
+    expect(second!.nextCursor).toBeNull();
+    const foreign = await routingRoom("foreign-history");
+    expect(await getAgentRunHistoryForMember(room.sessionId, foreign.owner.id, null, env.DB)).toBeNull();
+    expect(await getAgentRunHistoryForMember(foreign.sessionId, foreign.owner.id, first!.nextCursor, env.DB)).toEqual({ runs: [], nextCursor: null });
+  });
+
   it("a finished reply completes its queue item outright, not blocked", async () => {
     const room = await routingRoom("reply-complete");
     const floor = await createFloorQueueItem(room.sessionId, room.member.id, { prompt: "hello", agentId: null }, env.DB);
@@ -664,6 +734,8 @@ describe("classifyPrompt", () => {
     ["explain the auth flow", "question"],
     ["summarize the README", "question"],
     ["summarise this diff", "question"],
+    ["Review the current architecture", "question"],
+    ["Review and fix the checkout regression", "task"],
     ["yo describe this screenshot", "question"],
     // ...but a real actionable verb anywhere in the string still wins.
     ["describe the feature and add it", "task"],

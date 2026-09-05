@@ -32,3 +32,9 @@ The guided tour's seen-it flags follow the same convention: localStorage `openfl
 - The `legacy-floor-*` filenames describe their origin in the preserved demo UI, not permission to restore demo behavior.
 - Reuse genuine visual primitives, but do not reintroduce fixture imports, fake terminals, or simulation logic with old CSS.
 - The responsive floor stacks panels and draft lanes on smaller screens.
+
+### Run history and lifecycle clarity
+
+`RunHistoryDialog.tsx`, opened from Agent Floor even when the active roster is empty, pages retained member-visible runs independently of the latest-20 snapshot. It reuses `ActivityTimeline` and `ArtifactToggle` for activity and raw logs. It does not create live-agent controls or show internal session briefs. Queue detail retains both final output and terminal summary; Open agent requires an exact active roster ID.
+
+Persistent-agent creation has Name and Task fields alongside provider/model/billing controls; the legacy role is internally `Engineer`. Idle agents show Idle and disabled Pause/Stop controls. Real publication phases use `runHandoffLabel` plus Spinner; no-change task completion is a separate Completed queue group, including after its run ages out. Failed prompt retry is labeled Retry. Bare `@` opens the existing keyboard-accessible mention suggestions immediately.

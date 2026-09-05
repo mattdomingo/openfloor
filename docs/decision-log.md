@@ -974,6 +974,46 @@ Agent runtime posture is also tightened: Codex receives only an explicit safe SD
 
 **Consequences:** A nonempty run list uses exactly three D1 reads regardless of run count; an empty list remains one read. Review attribution, ordering, the 20-run floor bound, and durable dismissed-run audit history are unchanged.
 
+### 2026-09-04 — Refresh verified GitHub scopes and align provider availability
+
+**Decision:** Settings exposes repository-access refresh using the existing one-use GitHub device authorization. The complete verified installation result refreshes its member-scoped grants in one D1 batch, preserving opaque association IDs, other linked GitHub accounts, and existing session repository connections. Empty verified scopes remove selection access. Failed or bounded-out enumeration writes nothing. An unsigned GitHub Configure callback only navigates to Settings verification; it cannot exchange a code or link the supplied installation. Onboarding and Settings receive the server's rollout-enabled provider list; disabled saved credentials remain removable, and credential PUT refuses disabled providers.
+
+**Rationale:** Installation permissions alone cannot widen a member's repository grants. Refreshing the existing proof avoids disconnecting and recreating associations. Provider choices should agree with executable capabilities across setup surfaces.
+
+**Consequences:** Adding repositories on GitHub requires fresh member verification, but never removal of the existing connection. GitHub user tokens remain transient. Existing installations linked through other GitHub identities are preserved. No authentication replacement, installation-wide scope grant, or new persisted credential is introduced.
+
+### 2026-09-04 — Authenticate lazy Git fetches and identify originating prompts
+
+**Decision:** Every Git invocation in the isolated trusted publisher receives transient GitHub Basic transport authentication. Its partial clone can therefore fetch a missing delta base during bundle import or later object reads. Credentials never enter repository config; token and Basic encoding are removed from retained Git errors. Published and integration commits use the bounded, sanitized opening prompt plus the full `Openfloor-Run` trailer. Credential-bearing openings fall back to a neutral title; later lines, quoted values, URLs, opaque strings, and control characters never enter the title. Publisher and executor image generations advance to v3/v10.
+
+**Rationale:** An authenticated local Git HTTP reproduction confirmed the interview's promisor/index-pack failure: clone authenticated, but bundle import's lazy fetch did not. Generic run-only commit subjects also obscured the work's originating request.
+
+**Consequences:** The parent lease, bundle validation, deterministic publication date, and non-force branch publication remain intact. Commit identity remains deterministic for retry. Git descriptions intentionally sacrifice detail where the opening request may contain sensitive values. No raw session brief or complete prompt is copied to Git metadata.
+
+### 2026-09-04 — Preserve no-change success and expose retained run history
+
+**Decision:** Add nullable `agent_runs.completion` through a plain ALTER TABLE migration. A checking task with no file changes completes once as `ready/no_changes`, retaining its output and writable task identity while completing its queue item and releasing capacity. It never publishes a branch. Conflict resolvers still require a change. A member-only, no-store history endpoint pages retained runs by session-bound `(created_at, id)` cursor, 20 at a time, with the existing set-based child hydration. The read-only Run history dialog includes inactive agents and preserves output, summaries, file diffs, activity and raw logs. Internal session briefs remain injected and persisted but disappear from ordinary UI.
+
+**Rationale:** A successful analysis or already-satisfied task should not fail because no commit is needed. Retiring a generated agent must not hide its audit trail or send an old queue action to an unrelated active agent.
+
+**Consequences:** Deploy migration 0046 before the dependent Worker; rollback code may ignore the additive column, but must not republish completed no-change tasks. Successful changed tasks retain the existing publication lifecycle. The latest-20 floor bound stays unchanged. History never grants live controls to removed agents, and stale agent IDs never resolve by fallback.
+
+### 2026-09-04 — Match tasks before preferring persistent agents
+
+**Decision:** Automatic task routing filters eligible agents for keyword overlap or legacy explicit Generalist role before preferring persistent agents. Without a suitable agent it provisions a worker under the existing policy or holds the prompt for manual assignment. Review/inspect/analyze imperatives classify as questions unless a modifying verb takes precedence. Agent creation exposes Name and Task with a compatibility-only Engineer role; existing edit ownership rules remain. Idle controls, real publication indicators, Retry labels, and immediate bare-@ suggestions clarify the existing lifecycle.
+
+**Rationale:** Idle availability and an internally defaulted Engineer role are not evidence of task suitability. The previous fallback could send design work to a testing specialist.
+
+**Consequences:** The deterministic keyword router remains explicit and conservative; it does not claim semantic intelligence. Manual targeting still takes precedence. No model-discovery, reasoning-effort, conflict-policy, or archived-session change is introduced.
+
+### 2026-09-04 — Surface session quota refusal before setup
+
+**Decision:** An exhausted server-loaded session-hour allowance opens an explicit quota notice with Plan & usage navigation instead of the creation form. Submission errors that race an earlier usable allowance remain inside the form, focused and scrolled into view, with entered data preserved.
+
+**Rationale:** An off-screen refusal looked like a broken Create button and wasted setup effort.
+
+**Consequences:** This is advisory UI; server quota enforcement and billing limits remain authoritative and unchanged.
+
 ### 2026-09-04 — Record SEC-01 gaps before changing runtime architecture
 
 **Status:** The plan-only delivery state is superseded by "Isolate complete provider execution and artifact transfer" (2026-09-05). The original findings remain historical evidence.

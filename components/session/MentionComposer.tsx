@@ -36,9 +36,9 @@ function useRotatingPlaceholder(empty: boolean) {
   return FLOOR_PLACEHOLDERS[index];
 }
 
-function findMentionQuery(value: string, caret: number): { start: number; query: string } | null {
+export function findMentionQuery(value: string, caret: number): { start: number; query: string } | null {
   const before = value.slice(0, caret);
-  const match = /@([A-Za-z][\w-]*)$/.exec(before);
+  const match = /@((?:[A-Za-z][\w-]*)?)$/.exec(before);
   if (!match) return null;
   if (match.index > 0 && !/\s/.test(before[match.index - 1])) return null;
   return { start: match.index, query: match[1] };

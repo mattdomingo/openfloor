@@ -1,3 +1,4 @@
+import { runCommitMessage } from "../lib/run-commit-message";
 import { getSandbox, type Sandbox } from "@cloudflare/sandbox";
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
 import { NonRetryableError } from "cloudflare:workflows";
@@ -8,6 +9,7 @@ import {
   beginRunIntegration,
   cancelRunIntegration,
   finishAgentReply,
+  finishAgentRunWithoutChanges,
   finishAgentRun,
   finishRunPublished,
   finishRunIntegrated,
@@ -746,7 +748,7 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
           return { path, additions: Number(additions) || 0, deletions: Number(deletions) || 0 };
         });
         const paths = numstats.map((entry) => entry.path);
-        if (paths.length === 0) throw new Error("The agent completed without changing any files");
+        if (paths.length === 0) return [];
         if (paths.length > MAX_FILES) throw new Error(`The agent changed more than ${MAX_FILES} files`);
         if (paths.some((path) => path === ".github/workflows" || path.startsWith(".github/workflows/"))) {
           throw new Error("Workflow-file changes are not allowed in this release");
@@ -794,6 +796,20 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
         return await this.complete(runId, finalStatus, summary);
       }
       finalStatus = "ready";
+      if (files.length === 0) {
+        if (context.conflictCaseId) throw new Error("The conflict resolver produced no changes to integrate.");
+        const completion = await finishAgentRunWithoutChanges(runId, this.env.DB);
+        if (!completion) {
+          if (await isRunCancellationRequested(runId, this.env.DB)) return await this.complete(runId, "cancelled", "Agent run cancelled.");
+          const latest = await getRunExecutionContext(runId, this.env.DB);
+          if (latest && isAgentRunWorkflowTerminal(latest)) return { status: latest.status };
+          throw new Error("Run state changed before no-change completion.");
+        }
+        await notifyFloorChanged(completion.sessionId, completion.revision, ["queue", "runs"]);
+        await pokeSessionRouter(completion.sessionId, "run_completed");
+        return { status: "ready" };
+      }
+
       summary = `The agent changed ${files.length} file${files.length === 1 ? "" : "s"}. Preparing the verified run branch.`;
       await this.complete(runId, finalStatus, summary);
 
@@ -1102,7 +1118,7 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
         try {
           const merged = await mergeRepositoryBranch(
             config, context.installationId, repository, context.candidateBranch, context.runCommitSha,
-            `Integrate openfloor run ${runId.slice(0, 8)}`,
+            runCommitMessage((await getRunExecutionContext(runId, this.env.DB))?.prompts[0]?.text, runId),
           );
           const reconciled = await getRepositoryRefSha(config, context.installationId, repository, context.candidateBranch);
           if (reconciled !== merged.sha) throw new Error("Candidate branch did not reconcile after integration");
@@ -1223,6 +1239,7 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
           OPENFLOOR_RESULT_PATH: resultPath,
           OPENFLOOR_COMMIT_DATE: new Date(context.createdAt).toISOString(),
           OPENFLOOR_RUN_ID: runId,
+          OPENFLOOR_COMMIT_MESSAGE: runCommitMessage(context.prompts[0]?.text, runId),
         } },
       );
       if (!download.success) throw new Error(`Trusted bundle publication failed: ${download.stderr.slice(-1_000)}`);

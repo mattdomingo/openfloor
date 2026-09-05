@@ -8,7 +8,7 @@ import { AvatarCropper, AvatarFileButton } from "@/components/product/AvatarCrop
 import { Avatar, Spinner } from "@/components/session/primitives";
 import { ACCEPTED_AVATAR_TYPES, MAX_AVATAR_BYTES } from "@/lib/avatar-constraints";
 import { initialsFromParts, repoCountLabel } from "@/lib/display-name";
-import { CREDENTIAL_PROVIDERS, type ProviderCredentialSummary } from "@/lib/provider-credentials";
+import { type CredentialProvider, type ProviderCredentialSummary } from "@/lib/provider-credentials";
 import type { OnboardingStep } from "@/lib/onboarding-plan";
 import { Brand } from "./Brand";
 import { ProviderCredentials } from "./ProviderCredentials";
@@ -28,7 +28,7 @@ function splitName(fullName: string | null): { firstName: string; lastName: stri
 // posts plan=free; lib/onboarding-plan.ts carries the same note).
 export function OnboardingScreen({
   fullName, firstName: savedFirstName, lastName: savedLastName, githubHandle: savedGithubHandle, returnTo,
-  githubInstallations: initialGithubInstallations, initialCredentials, initialStep, teamLogoutUrl,
+  githubInstallations: initialGithubInstallations, initialCredentials, enabledProviders, initialStep, teamLogoutUrl,
 }: {
   fullName: string | null;
   firstName: string | null;
@@ -37,6 +37,7 @@ export function OnboardingScreen({
   returnTo: string;
   githubInstallations: UserGitHubInstallationSummary[];
   initialCredentials: ProviderCredentialSummary[];
+  enabledProviders: CredentialProvider[];
   initialStep: OnboardingStep | null;
   teamLogoutUrl: string | null;
 }) {
@@ -284,7 +285,7 @@ export function OnboardingScreen({
                 <h2 id="connections-step-title" ref={connectionsHeadingRef} tabIndex={-1}>Connect AI providers</h2>
                 <p>Optional. Connect the model provider keys you want to run agents with. You can add or change these anytime in Settings.</p>
               </div>
-              <ProviderCredentials initialCredentials={initialCredentials} providers={[...CREDENTIAL_PROVIDERS]} />
+              <ProviderCredentials initialCredentials={initialCredentials} providers={enabledProviders} />
               {submitError && <p className="form-error" role="alert">{submitError}</p>}
               <div className="form-actions onboarding-plan-actions">
                 <button type="button" className="button" data-variant="quiet" disabled={submitting} onClick={() => changeStep(1)}>Back</button>

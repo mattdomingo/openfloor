@@ -1,3 +1,4 @@
+import { disabledRunProviders } from "@/lib/provider-rollout";
 import { getCredentialEncryptionSecret, getTestProviderKeys } from "@/db/index";
 import { deleteProviderCredential, setProviderCredentialLimit, upsertProviderCredential } from "@/db/provider-credentials";
 import { encryptCredential } from "@/lib/credential-crypto";
@@ -22,6 +23,7 @@ export async function PUT(request: Request, { params }: { params: Promise<{ prov
   if (isApiError(user)) return user;
   const provider = parseCredentialProvider((await params).provider);
   if (!provider) return Response.json({ error: "Unknown provider" }, { status: 404 });
+  if (disabledRunProviders().has(provider)) return Response.json({ error: `${providerLabel(provider)} is unavailable in this environment.` }, { status: 409 });
   const body = await request.json().catch(() => null);
   const input = parseCredentialConnectInput(body);
   if (!input) {

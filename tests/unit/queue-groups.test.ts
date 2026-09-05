@@ -147,7 +147,8 @@ describe("queueItemGroup", () => {
     expect(queueItemGroup(rolledBack, makeRun({ status: "integrated", rollbackStatus: "completed" }))).toBe("integrated");
     const agedOut = makeItem({ status: "completed", rollback: { runId: "run-old", status: null, failureReason: null, canStart: true } });
     expect(queueItemGroup(agedOut, undefined)).toBe("integrated");
-    expect(queueItemGroup(makeItem({ status: "completed" }), undefined)).toBe("integrated");
+    expect(queueItemGroup(makeItem({ status: "completed" }), undefined)).toBe("completed");
+    expect(queueItemGroup(makeItem({ status: "completed" }), makeRun({ status: "ready", completion: "no_changes" }))).toBe("completed");
   });
 
   it("puts cancelled runs and items in cancelled", () => {
