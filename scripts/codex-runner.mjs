@@ -144,10 +144,8 @@ const safeCliEnvironment = Object.fromEntries([
   "TMP", "TMPDIR", "TZ", "USER", "XDG_CACHE_HOME", "XDG_CONFIG_HOME",
   "XDG_DATA_HOME", "XDG_RUNTIME_DIR", "XDG_STATE_HOME",
 ].flatMap((name) => process.env[name] === undefined ? [] : [[name, process.env[name]]]));
-// Codex resolves model-selected shell execution through SHELL. This root-owned
-// launcher clears credentials, changes to openfloor-workspace, and applies the
-// same srt policy used by the Node-based provider CLIs.
-safeCliEnvironment.SHELL = "/opt/openfloor/workspace-shell/bash";
+// The complete CLI already runs inside the mandatory execution namespace.
+safeCliEnvironment.SHELL = "/bin/bash";
 const codex = new Codex({
   baseUrl: gatewayUrl,
   apiKey: gatewayToken,
@@ -165,10 +163,8 @@ const codex = new Codex({
 const threadOptions = {
   model,
   workingDirectory: workspace,
-  // Codex's in-process Landlock sandbox sets no_new_privs before launching
-  // SHELL, which would suppress the setuid identity transition. The external
-  // workspace launcher now owns command sandboxing (uid, no network, bounded
-  // writes), so the CLI must not apply a second inner sandbox first.
+  // The outer namespace owns tool containment. A nested CLI sandbox must
+  // not hide the local broker that supplies model and context traffic.
   sandboxMode: "danger-full-access",
   approvalPolicy: "never",
   networkAccessEnabled: false,

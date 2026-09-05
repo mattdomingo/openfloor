@@ -21,7 +21,7 @@
 // - permissions.deny web_fetch/web_search: the CLI-process network tools that
 //   would bypass the gateway (the canonical form; tools.exclude is legacy and
 //   auto-migrated into it). A reply run also denies the file-editing tools —
-//   belt-and-braces over srt's allowWrite, since run_shell_command can write
+//   in addition to the read-only repository mount, since run_shell_command can write
 //   without them.
 // - tools.toolSearch.enabled false: Qwen defers MCP tools behind its own
 //   tool_search tool by default, so the openfloor context tool never reached
@@ -30,7 +30,7 @@
 //   other name is refused and a redefinition of "openfloor" loses the merge.
 // - disableAllHooks: workspace .qwen/settings.json hooks (which run shell
 //   commands) never fire.
-import { buildGeminiSrtSettings, type GeminiSystemSettingsInput } from "./gemini-settings";
+import { type GeminiSystemSettingsInput } from "./gemini-settings";
 
 export type QwenSystemSettingsInput = GeminiSystemSettingsInput;
 
@@ -68,8 +68,3 @@ export function buildQwenSystemSettings(input: QwenSystemSettingsInput): string 
     2,
   )}\n`;
 }
-
-// The srt posture is provider-agnostic (gateway host as the only egress,
-// workspace-only writes, read-only for reply runs) — the Gemini builder is
-// reused as-is rather than copied.
-export { buildGeminiSrtSettings as buildQwenSrtSettings };

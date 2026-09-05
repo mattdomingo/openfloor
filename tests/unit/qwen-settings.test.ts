@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildGeminiSrtSettings } from "@/lib/gemini-settings";
-import { buildQwenSrtSettings, buildQwenSystemSettings } from "@/lib/qwen-settings";
+import { buildQwenSystemSettings } from "@/lib/qwen-settings";
 
 const SYSTEM_INPUT = {
   contextUrl: "https://opnflr.com/app/runtime/run/context",
@@ -69,13 +68,5 @@ describe("qwen system settings", () => {
     const body = buildQwenSystemSettings(SYSTEM_INPUT);
     expect(body.endsWith("\n")).toBe(true);
     expect(body).toContain('"security"');
-  });
-});
-
-describe("qwen srt settings", () => {
-  it("is the Gemini srt posture, reused rather than copied", () => {
-    const input = { gatewayHost: "opnflr.com", workspace: "/workspace/repository" };
-    expect(buildQwenSrtSettings(input)).toBe(buildGeminiSrtSettings(input));
-    expect(buildQwenSrtSettings({ ...input, readOnly: true })).toBe(buildGeminiSrtSettings({ ...input, readOnly: true }));
   });
 });
