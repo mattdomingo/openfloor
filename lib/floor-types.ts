@@ -205,6 +205,8 @@ export type AgentRun = {
   attempt: number;
   status: AgentRunStatus;
   kind: AgentRunKind;
+  completion?: "no_changes" | null;
+  agentKind?: FloorAgentKind;
   model: string;
   summary: string | null;
   finalResponse: string | null;

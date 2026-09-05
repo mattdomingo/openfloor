@@ -32,8 +32,10 @@ await rm(root, { recursive: true, force: true });
 await mkdir(root, { recursive: true });
 // blob:none keeps the full commit graph (the ancestry check and tree reads
 // below need it — no --depth) while skipping every historical blob; the bundle
-// fetch supplies all new objects locally, so nothing here lazy-fetches.
-git(["-c", `http.extraHeader=${auth}`, "clone", "--filter=blob:none", "--no-checkout", "--single-branch", "--branch", candidateBranch, process.env.OPENFLOOR_REPOSITORY_URL, repository], root);
+// fetch supplies new objects locally, but thin-pack bases and tree inspection
+// can still fetch promised blobs. Every Git invocation carries transient
+// transport credentials so those child fetches authenticate too.
+git(["clone", "--filter=blob:none", "--no-checkout", "--single-branch", "--branch", candidateBranch, process.env.OPENFLOOR_REPOSITORY_URL, repository], root);
 const observedCandidate = git(["rev-parse", `refs/remotes/origin/${candidateBranch}`], repository).trim();
 try {
   git(["merge-base", "--is-ancestor", candidateSha, observedCandidate], repository);
@@ -82,12 +84,12 @@ const publishedCommit = git(["commit-tree", resultTree, "-p", candidateSha], rep
   ...fixedIdentity,
   GIT_AUTHOR_DATE: process.env.OPENFLOOR_COMMIT_DATE,
   GIT_COMMITTER_DATE: process.env.OPENFLOOR_COMMIT_DATE,
-}, `openfloor run ${process.env.OPENFLOOR_RUN_ID.slice(0, 8)}\n`).trim();
-const remote = git(["-c", `http.extraHeader=${auth}`, "ls-remote", "--heads", "origin", expectedRef], repository).trim();
+}, process.env.OPENFLOOR_COMMIT_MESSAGE || `openfloor run ${process.env.OPENFLOOR_RUN_ID.slice(0, 8)}\n`).trim();
+const remote = git(["ls-remote", "--heads", "origin", expectedRef], repository).trim();
 if (remote) {
   if (remote.split(/\s+/, 1)[0] !== publishedCommit) throw new Error("Run branch already exists at an unexpected commit");
 } else {
-  git(["-c", `http.extraHeader=${auth}`, "push", "origin", `${publishedCommit}:${expectedRef}`], repository);
+  git(["push", "origin", `${publishedCommit}:${expectedRef}`], repository);
 }
 await writeFile(resultPath, JSON.stringify({ localCommit, publishedCommit, paths: observedPaths }), "utf8");
 
@@ -100,13 +102,20 @@ function gitBuffer(args, cwd) {
 }
 
 function gitResult(args, cwd, extraEnv = {}, input) {
-  const result = spawnSync("git", ["-c", "core.hooksPath=/dev/null", "-c", "credential.helper=", ...args], {
+  const result = spawnSync("git", ["-c", "core.hooksPath=/dev/null", "-c", "credential.helper=", "-c", `http.extraHeader=${auth}`, ...args], {
     cwd,
     env: { ...process.env, ...extraEnv },
     input,
     maxBuffer: 30 * 1024 * 1024,
   });
-  if (result.status !== 0) throw new Error(`Trusted Git operation failed (${args[0]}): ${result.stderr.toString("utf8").slice(-1_000)}`);
+  if (result.status !== 0) {
+    // Remote failures are retained in run history. Never retain either the
+    // installation token or its reversible HTTP Basic representation.
+    const detail = (result.stderr?.toString("utf8") || result.error?.message || `git exited ${result.status}`)
+      .replaceAll(token, "[REDACTED]")
+      .replaceAll(auth.slice("Authorization: Basic ".length), "[REDACTED]");
+    throw new Error(`Trusted Git operation failed (${args[0]}): ${detail.slice(-1_000)}`);
+  }
   return result;
 }
 

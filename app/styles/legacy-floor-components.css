@@ -128,6 +128,23 @@
   min-width: 0;
 }
 
+/* Scroll the entire floor toolbar when controls exceed its panel width.
+   Shrinking only the agent rail can collapse it to zero between buttons,
+   leaving visible tabs covered by their siblings. */
+.panel-head .panel-actions:has(.agent-run-history) {
+  flex: 0 1 auto;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.panel-actions:has(.agent-run-history) > * {
+  flex-shrink: 0;
+}
+
+.panel-actions:has(.agent-run-history) .agent-header-rail {
+  overflow: visible;
+}
+
 .panel-body {
   display: flex;
   flex-direction: column;

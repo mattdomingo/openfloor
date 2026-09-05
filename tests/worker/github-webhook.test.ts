@@ -1,3 +1,4 @@
+import { linkUserGitHubInstallation, listUserGitHubInstallations, refreshUserGitHubInstallations } from "@/db/github-installations";
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import { POST as receiveGitHubWebhook } from "@/app/webhooks/github/route";
@@ -14,6 +15,24 @@ import { setTestPullRequestFeedback } from "@/lib/github";
 import { parseAgentInput } from "@/lib/validation";
 
 describe("GitHub webhook reconciliation", () => {
+  it("refreshes verified scopes without disconnecting or widening another member's access", async () => {
+    const owner = await upsertUser({ providerUserId: "refresh-owner", email: "refresh-owner@example.com", displayName: "Owner", fullName: "Owner" }, env.DB);
+    const member = await upsertUser({ providerUserId: "refresh-member", email: "refresh-member@example.com", displayName: "Member", fullName: "Member" }, env.DB);
+    const account = { login: "team", type: "Organization" };
+    await linkUserGitHubInstallation(owner.id, "refresh-installation", account, ["old"], env.DB);
+    await linkUserGitHubInstallation(member.id, "refresh-installation", account, ["member-only"], env.DB);
+    await linkUserGitHubInstallation(owner.id, "other-account", account, ["other"], env.DB);
+    const before = await listUserGitHubInstallations(owner.id, env.DB);
+    await refreshUserGitHubInstallations(owner.id, [{ id: "refresh-installation", account, repoScope: ["old", "added"] }], env.DB);
+    const readScope = (id: string) => env.DB.prepare("SELECT id, repo_scope AS scope FROM user_github_installations WHERE user_id = ? AND installation_id = 'refresh-installation'").bind(id).first<{ id: string; scope: string }>();
+    expect(JSON.parse((await readScope(owner.id))!.scope)).toEqual(["old", "added"]);
+    expect((await listUserGitHubInstallations(owner.id, env.DB)).map((row) => row.id)).toEqual(before.map((row) => row.id));
+    expect(JSON.parse((await readScope(member.id))!.scope)).toEqual(["member-only"]);
+    await refreshUserGitHubInstallations(owner.id, [{ id: "refresh-installation", account, repoScope: [] }], env.DB);
+    expect(JSON.parse((await readScope(owner.id))!.scope)).toEqual([]);
+    expect(await listUserGitHubInstallations(owner.id, env.DB)).toHaveLength(1);
+  });
+
   it("revokes and restores account installation access with installation webhooks", async () => {
     const owner = await upsertUser({
       providerUserId: "webhook-account-owner", email: "webhook-account@example.com", displayName: "Webhook Account", fullName: "Webhook Account",

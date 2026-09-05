@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { authenticatedContext } from "./fixtures";
+import { authenticatedContext, skipTourIfOpen } from "./fixtures";
 
 // A distinct spec rather than extending persistent-sessions.spec.ts's
 // two-context flow: this exercises a whole-session lifecycle (four
@@ -65,4 +65,24 @@ test("free-tier seat cap refuses a fourth member with the session already full",
   await memberOneContext.close();
   await memberTwoContext.close();
   await memberThreeContext.close();
+});
+
+test("a quota refusal after opening creation stays visible and focused", async ({ browser }) => {
+  const context = await authenticatedContext(browser, "quota-create", "quota-create@example.com", "Quota", "Example");
+  const page = await context.newPage();
+  await page.goto("/home");
+  await skipTourIfOpen(page);
+  await page.getByRole("button", { name: "New session" }).click();
+  await page.getByLabel("Task", { exact: true }).fill("Quota race");
+  await page.route("**/api/sessions", async (route) => {
+    if (route.request().method() !== "POST") return route.continue();
+    await route.fulfill({ status: 403, contentType: "application/json", body: JSON.stringify({ code: "quota_exhausted", error: "No session hours remaining. Review Plan & usage." }) });
+  });
+  await page.getByRole("button", { name: "Create session", exact: true }).click();
+  const refusal = page.getByRole("alert");
+  await expect(refusal).toHaveText("No session hours remaining. Review Plan & usage.");
+  await expect(refusal).toBeFocused();
+  await expect(refusal).toBeInViewport();
+  await expect(page.getByLabel("Task", { exact: true })).toHaveValue("Quota race");
+  await context.close();
 });

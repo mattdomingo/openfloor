@@ -34,11 +34,8 @@ export type GeminiSystemSettingsInput = {
   mcpServerPath: string;
   conflictInputUrl?: string;
   conflictInputToken?: string;
-  // Reply-run only. Excludes the file-editing tools on top of the srt
-  // filesystem restriction in buildGeminiSrtSettings below — belt-and-braces,
-  // same shape as the Claude runner's narrowed tool list. The real
-  // enforcement is srt's allowWrite, since run_shell_command can write files
-  // without going through these named tools at all.
+  // Reply runs exclude editing tools; the outer read-only repository mount
+  // enforces the same restriction for shell and native file operations.
   readOnly?: boolean;
 };
 
@@ -73,10 +70,8 @@ export function buildGeminiSystemSettings(input: GeminiSystemSettingsInput): str
   )}\n`;
 }
 
-// Root-owned srt settings for repository-controlled commands. Provider runner
-// and CLI stay outside srt as openfloor-provider so model traffic works; the
-// child-process preload sends every model-selected command through the
-// openfloor-workspace launcher and this no-network policy.
+// Retained for gated repository preview until that launch path is ported onto
+// the credential-free namespace. Agent runs no longer use srt.
 export type GeminiSrtSettingsInput = {
   gatewayHost: string;
   workspace: string;

@@ -32,6 +32,13 @@ export async function GET(request: Request) {
   const url = new URL(request.url);
   const stateToken = url.searchParams.get("state");
   const installationId = url.searchParams.get("installation_id")?.trim();
+  // GitHub's installation Configure screen returns without our signed state.
+  // Treat that redirect only as navigation: do not trust its installation id,
+  // exchange its code, or mutate repository grants. The existing device flow
+  // captures fresh member-specific proof after the user returns to Settings.
+  if (!stateToken && url.searchParams.get("setup_action") === "update") {
+    return Response.redirect(new URL(`${BASE_PATH}/home/settings?section=connections&github=verify`, request.url), 303);
+  }
   if (!stateToken || !installationId || installationId.length > 100) {
     return Response.json({ error: "GitHub setup could not be verified" }, { status: 400 });
   }

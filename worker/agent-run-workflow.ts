@@ -1,3 +1,4 @@
+import { runCommitMessage } from "../lib/run-commit-message";
 import { getSandbox, type Sandbox } from "@cloudflare/sandbox";
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
 import { NonRetryableError } from "cloudflare:workflows";
@@ -8,6 +9,7 @@ import {
   beginRunIntegration,
   cancelRunIntegration,
   finishAgentReply,
+  finishAgentRunWithoutChanges,
   finishAgentRun,
   finishRunPublished,
   finishRunIntegrated,
@@ -36,7 +38,7 @@ import { renderSessionContext, SESSION_FILE_MOUNT, sessionFilePath } from "../li
 import { getEnabledMcpServersForRun } from "../db/mcp-servers";
 import { getSessionSkillsForRun } from "../db/skills";
 import { serializeMcpServersForClaude } from "../lib/mcp-config";
-import { buildGeminiSrtSettings, buildGeminiSystemSettings } from "../lib/gemini-settings";
+import { buildGeminiSystemSettings } from "../lib/gemini-settings";
 import { refreshRepositoryPreview } from "../lib/repository-preview-lifecycle";
 import { buildQwenSystemSettings } from "../lib/qwen-settings";
 import { resumableProvider, usesClaudeRunner, usesQwenRunner, type CredentialProvider } from "../lib/provider-credentials";
@@ -156,7 +158,12 @@ for (const path of paths) {
 }
 process.stdout.write(JSON.stringify({ files }));
 `;
-const PUBLISHER_SANDBOX_IMAGE_VERSION = "v2";
+function executeWorkspace(sandbox: Sandbox, command: string, options: NonNullable<Parameters<Sandbox["exec"]>[1]> = {}) {
+  const quoted = `'${command.replace(/'/g, "'\\''")}'`;
+  return sandbox.exec(`node /opt/openfloor/runtime-sandbox.mjs /bin/bash -c ${quoted}`, options);
+}
+
+const PUBLISHER_SANDBOX_IMAGE_VERSION = "v4";
 // Pooled run sandboxes are keyed only by repository (see db/sandbox-pool.ts),
 // so a container built from a stale image would otherwise stay claimable for
 // up to POOL_IDLE_TTL_MS after a deploy that changed Dockerfile.sandbox.
@@ -164,13 +171,9 @@ const PUBLISHER_SANDBOX_IMAGE_VERSION = "v2";
 // unreachable immediately; the existing idle sweep reclaims them.
 // Bump this whenever Dockerfile.sandbox's run-sandbox contents change.
 const RUN_SANDBOX_IMAGE_VERSION = "v11";
-// Every provider gets a fresh 0700 HOME owned by openfloor-provider. Model-
-// selected commands run as openfloor-workspace with a separate 0700 HOME.
-// Both live under scratch that prepare/release removes, so pooled sandboxes
-// never carry provider state or repository command state into another run.
+// Provider CLIs and native tools share a credential-free execution namespace.
+// Scratch and transcript state are removed before a pooled sandbox is reused.
 const RUN_PROVIDER_HOME = "/tmp/openfloor/provider-home";
-const RUN_WORKSPACE_HOME = "/tmp/openfloor/workspace-home";
-const WORKSPACE_SRT_SETTINGS = "/tmp/openfloor/workspace-srt-settings.json";
 const RUN_PROMPT_PATH = `${RUN_PROVIDER_HOME}/prompt.txt`;
 const RUN_RESULT_PATH = `${RUN_PROVIDER_HOME}/result.json`;
 // Thread resume: the prior attempt's provider session directory travels
@@ -317,11 +320,12 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
           // Captured on every attempt (automatic or manual) so a manual
           // resolution is available the moment automation fails, without
           // needing a fresh sandbox — see AGENTS.md's Merge Resolver section.
+          await sandbox.exec("chown -R openfloor-workspace:openfloor-shared /workspace/repository /tmp/openfloor", { timeout: 60_000 });
           const snapshotPaths = conflictPaths.slice(0, MAX_SNAPSHOT_FILES);
           if (snapshotPaths.length > 0) {
             await sandbox.writeFile("/tmp/openfloor/conflict-paths.json", JSON.stringify(snapshotPaths));
             await sandbox.writeFile("/tmp/openfloor/snapshot.mjs", CONFLICT_SNAPSHOT_SCRIPT);
-            const captured = await sandbox.exec("node /tmp/openfloor/snapshot.mjs", { cwd: "/workspace/repository", timeout: 2 * 60 * 1000 });
+            const captured = await executeWorkspace(sandbox, "node /tmp/openfloor/snapshot.mjs", { cwd: "/workspace/repository", timeout: 2 * 60 * 1000 });
             if (captured.success) {
               try {
                 const parsed = JSON.parse(captured.stdout) as { files: ConflictSnapshotFileRaw[] };
@@ -370,15 +374,19 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
               }
             }
             if (!mismatch) {
-              for (const [path, content] of resolvedContent) await sandbox.writeFile(`/workspace/repository/${path}`, content);
+              for (const [path, content] of resolvedContent) {
+                await sandbox.writeFile("/tmp/openfloor/manual-file.json", JSON.stringify({ path, content }));
+                const written = await executeWorkspace(sandbox, `node -e 'const fs = require("node:fs"); const file = JSON.parse(fs.readFileSync("/tmp/openfloor/manual-file.json", "utf8")); fs.writeFileSync(file.path, file.content)'`, { timeout: 30_000 });
+                if (!written.success) throw new Error("Could not apply the selected conflict content");
+              }
               for (const [path, choice] of fileLevelChoices) {
                 const quoted = `'${path.replace(/'/g, "'\\''")}'`;
-                await sandbox.exec(
+                await executeWorkspace(sandbox,
                   `git checkout --${choice} -- ${quoted} 2>/dev/null && git add -- ${quoted} || git rm -f -q -- ${quoted}`,
                   { cwd: "/workspace/repository", timeout: 30_000 },
                 );
               }
-              const staged = await sandbox.exec("git -c core.hooksPath=/dev/null add -A", { cwd: "/workspace/repository", timeout: 60_000 });
+              const staged = await executeWorkspace(sandbox, "git -c core.hooksPath=/dev/null add -A", { cwd: "/workspace/repository", timeout: 60_000 });
               if (staged.success) {
                 manualApplied = true;
                 manualApplySummary = `Applied ${record.selections.length} human selection${record.selections.length === 1 ? "" : "s"} across ${conflictPaths.length} file${conflictPaths.length === 1 ? "" : "s"} — no model call was made.`;
@@ -399,7 +407,7 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
             await sandbox.writeFile(SESSION_STORE_PATH, store.body);
             const home = sessionStoreHome();
             const restored = await sandbox.exec(
-              `mkdir -p ${home} && tar -xzf ${SESSION_STORE_PATH} -C ${home} && rm -f ${SESSION_STORE_PATH}`,
+              `mkdir -p ${home} && python3 /opt/openfloor/restore-session-store.py ${SESSION_STORE_PATH} ${home} ${usesClaudeRunner(context.provider) ? ".claude/projects" : usesQwenRunner(context.provider) ? ".qwen/projects" : ".codex/sessions"} && rm -f ${SESSION_STORE_PATH}`,
               { timeout: 60_000 },
             );
             if (restored.success) resumeThreadId = context.resumeThreadId;
@@ -412,7 +420,7 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
           // the repo's .claude/ out of the session — so read it as text into
           // the prompt, bounded like every other brief section.
           const claudeMd = await sandbox.exec(
-            "head -c 8000 /workspace/repository/CLAUDE.md 2>/dev/null || true",
+            "node /opt/openfloor/read-run-artifact.mjs /workspace/repository/CLAUDE.md 8000 prefix 2>/dev/null || true",
             { timeout: 30_000 },
           );
           if (claudeMd.success && claudeMd.stdout.trim()) {
@@ -436,23 +444,10 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
         }
         const materializedSkills: string[] = [];
         const identities = await sandbox.exec(
-          `id -u openfloor-provider >/dev/null 2>&1 && id -u openfloor-workspace >/dev/null 2>&1 &&
-           mkdir -p ${RUN_PROVIDER_HOME} ${RUN_WORKSPACE_HOME} &&
-           chown openfloor-provider:openfloor-shared ${RUN_PROVIDER_HOME} && chmod 0700 ${RUN_PROVIDER_HOME} &&
-           chown openfloor-workspace:openfloor-shared ${RUN_WORKSPACE_HOME} && chmod 0700 ${RUN_WORKSPACE_HOME}`,
+          `id -u openfloor-workspace >/dev/null 2>&1 && mkdir -p ${RUN_PROVIDER_HOME} && chmod 0700 ${RUN_PROVIDER_HOME}`,
           { timeout: 30_000 },
         );
-        if (!identities.success) throw new Error("Agent runtime identities are unavailable");
-        await sandbox.writeFile(
-          WORKSPACE_SRT_SETTINGS,
-          buildGeminiSrtSettings({
-            gatewayHost: new URL(this.env.OPENFLOOR_RUNTIME_ORIGIN).host,
-            workspace: "/workspace/repository",
-            readOnly: context.kind === "reply",
-          }),
-        );
-        const lockedSettings = await sandbox.exec(`chown root:root ${WORKSPACE_SRT_SETTINGS} && chmod 0444 ${WORKSPACE_SRT_SETTINGS}`, { timeout: 30_000 });
-        if (!lockedSettings.success) throw new Error("Agent command sandbox settings could not be locked");
+        if (!identities.success) throw new Error("Agent runtime identity is unavailable");
         await sandbox.writeFile(RUN_PROMPT_PATH, prompt);
         // Persisted so members can see exactly what a run was told — the
         // honest counterpart to injecting context they can't otherwise see.
@@ -478,47 +473,30 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
           }
         }
         if (context.provider === "gemini" || usesQwenRunner(context.provider)) {
-          // The two headless-CLI runners (Gemini; Qwen Code for qwen AND
-          // deepseek — usesQwenRunner). Same provider/workspace identity split
-          // as the other runners, with pinned configuration in a SYSTEM-scope
-          // settings file (beats the target repository's own
-          // .gemini/settings.json or .qwen/settings.json in the CLI's merge
-          // order). Child commands cross the workspace launcher; the settings
-          // directory is the only per-CLI difference here. No skills and no
-          // CLAUDE.md append: skills are a
-          // Claude-runner feature, and each CLI natively reads the
-          // repository's own GEMINI.md / QWEN.md context files. The context
-          // token is signed here so the settings file is complete at write
-          // time; it has the same 60-minute TTL as the start step's tokens.
+          // Headless CLIs use local broker URLs and placeholders only.
+          // System settings preserve tool policy; the outer namespace owns
+          // containment for both native tools and child commands.
           const cli = context.provider === "gemini"
             ? { dir: ".gemini", buildSystemSettings: buildGeminiSystemSettings }
             : { dir: ".qwen", buildSystemSettings: buildQwenSystemSettings };
           await sandbox.exec(`mkdir -p ${RUN_PROVIDER_HOME}/${cli.dir}`, { timeout: 30_000 });
-          const contextToken = await signRunGatewayToken({
-            runId, sessionId: context.sessionId, repositoryId: context.repositoryId,
-            candidateSha: context.candidateSha, operation: "context",
-          }, this.env.RUNTIME_GATEWAY_SECRET);
-          const conflictInputToken = context.conflictCaseId ? await signRunGatewayToken({
-            runId, sessionId: context.sessionId, repositoryId: context.repositoryId,
-            candidateSha: context.candidateSha, operation: "conflict_input",
-          }, this.env.RUNTIME_GATEWAY_SECRET) : null;
           await sandbox.writeFile(
             `${RUN_PROVIDER_HOME}/${cli.dir}/system-settings.json`,
             cli.buildSystemSettings({
-              contextUrl: `${this.env.OPENFLOOR_RUNTIME_ORIGIN}/runtime/run/context`,
-              contextToken,
+              contextUrl: "http://127.0.0.1:45871/context",
+              contextToken: "openfloor-broker-placeholder",
               mcpServerPath: "/opt/openfloor/openfloor-mcp.mjs",
-              ...(conflictInputToken ? {
-                conflictInputUrl: `${this.env.OPENFLOOR_RUNTIME_ORIGIN}/runtime/run/conflict-input`,
-                conflictInputToken,
+              ...(context.conflictCaseId ? {
+                conflictInputUrl: "http://127.0.0.1:45871/conflict-input",
+                conflictInputToken: "openfloor-broker-placeholder",
               } : {}),
               readOnly: context.kind === "reply",
             }),
           );
         }
         const prepared = await sandbox.exec(
-          `chown -R openfloor-provider:openfloor-shared /workspace/repository ${RUN_PROVIDER_HOME} &&
-           chmod -R g+rwX /workspace/repository && chmod 0700 ${RUN_PROVIDER_HOME} ${RUN_WORKSPACE_HOME} &&
+          `chown -R openfloor-workspace:openfloor-shared /workspace/repository /tmp/openfloor &&
+           chmod -R g+rwX /workspace/repository && chmod 0700 ${RUN_PROVIDER_HOME} &&
            git config --global --add safe.directory /workspace/repository`,
           { timeout: 60_000 },
         );
@@ -568,11 +546,8 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
             runId, sessionId: context.sessionId, repositoryId: context.repositoryId,
             candidateSha: context.candidateSha, operation: "conflict_input",
           }, this.env.RUNTIME_GATEWAY_SECRET) : null;
-          // Every token-holding runner starts as openfloor-provider through a
-          // non-dumpable launcher. Codex selects the workspace shell; Claude
-          // selects the workspace bwrap binary; Gemini/Qwen patch every child
-          // process API. Each model-selected operation therefore crosses the
-          // root-owned uid transition before repository code executes.
+          // Only the outside broker receives run-scoped credentials. It
+          // starts every provider and tool inside the mandatory namespace.
           const runner = usesClaudeRunner(context.provider)
             ? "claude"
             : context.provider === "gemini"
@@ -580,7 +555,7 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
               : usesQwenRunner(context.provider)
                 ? "qwen"
                 : "codex";
-          const command = `runuser -p -u openfloor-provider -- /opt/openfloor/openfloor-provider-exec node /opt/openfloor/${runner}-runner.mjs`;
+          const command = `node /opt/openfloor/runtime-broker.mjs ${runner}`;
           const providerEnv = usesClaudeRunner(context.provider)
             ? {
                 OPENFLOOR_ANTHROPIC_BASE_URL: `${this.env.OPENFLOOR_RUNTIME_ORIGIN}/runtime/${context.provider}`,
@@ -662,6 +637,7 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
         for (;;) {
           if (context.conflictCaseId && await isConflictInputRequested(runId, this.env.DB)) {
             await process.kill("SIGTERM");
+            await process.waitForExit(15_000);
             const logs = await process.getLogs().catch(() => ({ stdout: "", stderr: "" }));
             return { awaitingInput: true, cancelled: false, exitCode: 0, ...logs };
           }
@@ -669,7 +645,7 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
             await process.kill("SIGTERM");
             // Give the runner its shutdown window to flush result.json (its
             // thread id) and the provider transcript the next attempt resumes.
-            await process.waitForExit(10_000).catch(() => {});
+            await process.waitForExit(15_000);
             return { awaitingInput: false, cancelled: true, exitCode: 130, stdout: "", stderr: "Agent run cancelled." };
           }
           // Hold an exit-event stream instead of polling: one request per 15s
@@ -698,7 +674,7 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
       // Read result.json before the awaiting-input/cancelled returns below:
       // a killed or failed run still has a thread id worth keeping and a
       // transcript worth persisting, so the next attempt can resume it.
-      const resultFile = await sandbox.exec(`cat ${RUN_RESULT_PATH}`, { timeout: 10_000 });
+      const resultFile = await sandbox.exec(`node /opt/openfloor/read-run-artifact.mjs ${RUN_RESULT_PATH} 1048576`, { timeout: 10_000 });
       codexResult = parseRunResult(resultFile.stdout);
       const resumeAttempted = resumeThreadId !== null;
       await setRunProviderThreadId(runId, codexResult.threadId, resumeAttempted ? codexResult.resumed === true : null, this.env.DB);
@@ -726,7 +702,7 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
       if (processResult.exitCode !== 0 || !codexResult.ok) throw new Error(codexResult.error || `The agent process exited with code ${processResult.exitCode}`);
       }
       if (context.conflictCaseId) {
-        const verified = await sandbox.exec(
+        const verified = await executeWorkspace(sandbox,
           "git -c core.hooksPath=/dev/null add -A && test -z \"$(git ls-files -u)\" && git diff --cached --check && git reset -q refs/heads/openfloor-base",
           { cwd: "/workspace/repository", timeout: 60_000 },
         );
@@ -757,14 +733,14 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
       await this.notify(runId);
 
       const files = await step.do("collect changed files", { retries: { limit: 0, delay: "1 second" }, timeout: "5 minutes" }, async () => {
-        await sandbox.exec("git add -N .", { cwd: "/workspace/repository", timeout: 30_000 });
+        await executeWorkspace(sandbox, "git add -N .", { cwd: "/workspace/repository", timeout: 30_000 });
         // Three repo-wide commands instead of three execs per file: each exec is
         // a Worker→DO→container round trip, so per-file fan-out cost O(N) waves.
         // --no-renames keeps numstat, status, and the diff on one entry per path.
         const [stats, statusResult, diff] = await Promise.all([
-          sandbox.exec("git diff --numstat --no-renames -z HEAD", { cwd: "/workspace/repository", timeout: 60_000 }),
-          sandbox.exec("git status --porcelain --no-renames -z", { cwd: "/workspace/repository", timeout: 60_000 }),
-          sandbox.exec("git diff --no-color --no-renames --unified=3 HEAD", { cwd: "/workspace/repository", timeout: 60_000 }),
+          executeWorkspace(sandbox, "git diff --numstat --no-renames -z HEAD", { cwd: "/workspace/repository", timeout: 60_000 }),
+          executeWorkspace(sandbox, "git status --porcelain --no-renames -z", { cwd: "/workspace/repository", timeout: 60_000 }),
+          executeWorkspace(sandbox, "git diff --no-color --no-renames --unified=3 HEAD", { cwd: "/workspace/repository", timeout: 60_000 }),
         ]);
         if (!stats.success || !statusResult.success) throw new Error("Unable to enumerate the agent's changes");
         // numstat -z entries: "additions\tdeletions\tpath\0" ("-" for binary counts).
@@ -773,7 +749,7 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
           return { path, additions: Number(additions) || 0, deletions: Number(deletions) || 0 };
         });
         const paths = numstats.map((entry) => entry.path);
-        if (paths.length === 0) throw new Error("The agent completed without changing any files");
+        if (paths.length === 0) return [];
         if (paths.length > MAX_FILES) throw new Error(`The agent changed more than ${MAX_FILES} files`);
         if (paths.some((path) => path === ".github/workflows" || path.startsWith(".github/workflows/"))) {
           throw new Error("Workflow-file changes are not allowed in this release");
@@ -806,7 +782,7 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
           };
         });
         await replaceRunFiles(runId, collected, this.env.DB);
-        const completeDiff = await sandbox.exec("git diff --no-color --binary HEAD", { cwd: "/workspace/repository", timeout: 60_000 });
+        const completeDiff = await executeWorkspace(sandbox, "git diff --no-color --binary HEAD", { cwd: "/workspace/repository", timeout: 60_000 });
         const boundedDiff = completeDiff.stdout.slice(0, MAX_DIFF_BYTES);
         const diffKey = `runs/${runId}/changes.diff`;
         await this.env.PREFLIGHT_LOGS.put(diffKey, boundedDiff, { httpMetadata: { contentType: "text/x-diff; charset=utf-8" } });
@@ -821,6 +797,20 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
         return await this.complete(runId, finalStatus, summary);
       }
       finalStatus = "ready";
+      if (files.length === 0) {
+        if (context.conflictCaseId) throw new Error("The conflict resolver produced no changes to integrate.");
+        const completion = await finishAgentRunWithoutChanges(runId, this.env.DB);
+        if (!completion) {
+          if (await isRunCancellationRequested(runId, this.env.DB)) return await this.complete(runId, "cancelled", "Agent run cancelled.");
+          const latest = await getRunExecutionContext(runId, this.env.DB);
+          if (latest && isAgentRunWorkflowTerminal(latest)) return { status: latest.status };
+          throw new Error("Run state changed before no-change completion.");
+        }
+        await notifyFloorChanged(completion.sessionId, completion.revision, ["queue", "runs"]);
+        await pokeSessionRouter(completion.sessionId, "run_completed");
+        return { status: "ready" };
+      }
+
       summary = `The agent changed ${files.length} file${files.length === 1 ? "" : "s"}. Preparing the verified run branch.`;
       await this.complete(runId, finalStatus, summary);
 
@@ -830,21 +820,27 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
           runId, sessionId: context.sessionId, repositoryId: context.repositoryId,
           candidateSha: context.candidateSha, operation: "bundle_upload",
         }, this.env.RUNTIME_GATEWAY_SECRET);
-        const result = await sandbox.exec(
+        const result = await executeWorkspace(sandbox,
           `git -c core.hooksPath=/dev/null add -A &&
            git -c core.hooksPath=/dev/null commit -q -m "openfloor local run $OPENFLOOR_RUN_SHORT" &&
            git update-ref "refs/heads/$OPENFLOOR_RUN_BRANCH" HEAD &&
            git bundle create /tmp/openfloor/result.bundle "refs/heads/$OPENFLOOR_RUN_BRANCH" ^refs/heads/openfloor-base &&
-           curl --fail --silent --show-error --max-time 300 -X POST -H "Authorization: Bearer $OPENFLOOR_BUNDLE_TOKEN" -H "Content-Type: application/x-git-bundle" --data-binary @/tmp/openfloor/result.bundle "$OPENFLOOR_BUNDLE_URL" >/tmp/openfloor/bundle-response.json &&
            printf '%s %s' "$(git rev-parse HEAD)" "$(wc -c </tmp/openfloor/result.bundle)"`,
           { cwd: "/workspace/repository", timeout: 4 * 60 * 1000, env: {
             OPENFLOOR_RUN_BRANCH: context.runBranch,
             OPENFLOOR_RUN_SHORT: runId.slice(0, 8),
-            OPENFLOOR_BUNDLE_TOKEN: uploadToken,
-            OPENFLOOR_BUNDLE_URL: `${this.env.OPENFLOOR_RUNTIME_ORIGIN}/runtime/run/bundle`,
           } },
         );
         if (!result.success) throw new Error("Run bundle export failed");
+        // The exporter namespace and all of its descendants have exited.
+        // Only this bounded regular-file reader receives upload authority.
+        const uploaded = await sandbox.exec("node /opt/openfloor/read-run-artifact.mjs /tmp/openfloor/result.bundle 104857600 upload", {
+          timeout: 5 * 60 * 1000, env: {
+            OPENFLOOR_BUNDLE_TOKEN: uploadToken,
+            OPENFLOOR_BUNDLE_URL: `${this.env.OPENFLOOR_RUNTIME_ORIGIN}/runtime/run/bundle`,
+          },
+        });
+        if (!uploaded.success) throw new Error("Run bundle upload failed");
         const [localCommitSha, sizeValue] = result.stdout.trim().split(/\s+/);
         const bundleSizeBytes = Number(sizeValue);
         if (!/^[0-9a-f]{40}$/.test(localCommitSha) || !Number.isSafeInteger(bundleSizeBytes)) throw new Error("Run bundle export returned invalid metadata");
@@ -897,7 +893,7 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
             // contains both per-run homes), and provider state; only the npm
             // cache survives. Static user homes are belt-and-braces fallbacks.
             const reset = await parked.exec(
-              "rm -rf /workspace/repository /tmp/openfloor && find /home/openfloor-provider /home/openfloor-workspace -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +",
+              "rm -rf /workspace/repository /tmp/openfloor && find /home/openfloor-workspace -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +",
               { timeout: 60_000 },
             );
             if (!reset.success) throw new Error(`Sandbox reset failed with exit code ${reset.exitCode}`);
@@ -939,7 +935,7 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
     try {
       const home = sessionStoreHome();
       const subdir = usesClaudeRunner(provider) ? ".claude/projects" : usesQwenRunner(provider) ? ".qwen/projects" : ".codex/sessions";
-      const packed = await sandbox.exec(
+      const packed = await executeWorkspace(sandbox,
         `cd ${home} && test -d ${subdir} && tar -czf ${SESSION_STORE_PATH} ${subdir} && wc -c < ${SESSION_STORE_PATH}`,
         { timeout: 60_000 },
       );
@@ -952,8 +948,9 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
       }
       // ponytail: base64 through the DO RPC is fine under the 8 MB cap; move
       // to the bundle-upload route pattern if the cap ever needs to grow.
-      const file = await sandbox.readFile(SESSION_STORE_PATH, { encoding: "base64" });
-      const bytes = Uint8Array.from(atob(file.content), (char) => char.charCodeAt(0));
+      const file = await sandbox.exec(`node /opt/openfloor/read-run-artifact.mjs ${SESSION_STORE_PATH} ${MAX_SESSION_STORE_BYTES} base64`, { timeout: 30_000 });
+      if (!file.success) return;
+      const bytes = Uint8Array.from(atob(file.stdout), (char) => char.charCodeAt(0));
       const key = `runs/${runId}/session-store.tgz`;
       await this.env.PREFLIGHT_LOGS.put(key, bytes, { httpMetadata: { contentType: "application/gzip" } });
       await recordRunArtifact(runId, "session_store", key, "application/gzip", size, this.env.DB);
@@ -1125,7 +1122,7 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
         try {
           const merged = await mergeRepositoryBranch(
             config, context.installationId, repository, context.candidateBranch, context.runCommitSha,
-            `Integrate openfloor run ${runId.slice(0, 8)}`,
+            runCommitMessage((await getRunExecutionContext(runId, this.env.DB))?.prompts[0]?.text, runId),
           );
           const reconciled = await getRepositoryRefSha(config, context.installationId, repository, context.candidateBranch);
           if (reconciled !== merged.sha) throw new Error("Candidate branch did not reconcile after integration");
@@ -1247,6 +1244,7 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
           OPENFLOOR_RESULT_PATH: resultPath,
           OPENFLOOR_COMMIT_DATE: new Date(context.createdAt).toISOString(),
           OPENFLOOR_RUN_ID: runId,
+          OPENFLOOR_COMMIT_MESSAGE: runCommitMessage(context.prompts[0]?.text, runId),
         } },
       );
       if (!download.success) throw new Error(`Trusted bundle publication failed: ${download.stderr.slice(-1_000)}`);

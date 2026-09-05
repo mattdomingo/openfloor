@@ -1,3 +1,5 @@
+import { disabledRunProviders } from "@/lib/provider-rollout";
+import { CREDENTIAL_PROVIDERS } from "@/lib/provider-credentials";
 import { requireOnboardedUser } from "@/lib/server-auth";
 import { getUsageForUser } from "@/db/sessions";
 import { getMonthlyModelUsage, listProviderCredentials } from "@/db/provider-credentials";
@@ -26,6 +28,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
       usage={usage}
       billing={billing}
       credentials={credentials}
+      enabledProviders={CREDENTIAL_PROVIDERS.filter((provider) => !disabledRunProviders().has(provider))}
       githubInstallations={githubInstallations}
       modelUsage={modelUsage}
       initialSection={isSettingsSection(query.section) ? query.section : "profile"}

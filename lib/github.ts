@@ -113,7 +113,8 @@ export async function listUserInstallationRepositoryIds(
     if (!body) return null;
     const repositories = body.repositories ?? [];
     ids.push(...repositories.filter((repository) => repository.id != null).map((repository) => String(repository.id)));
-    if (repositories.length < 100 || page >= 10) return ids;
+    if (repositories.length < 100) return ids;
+    if (page >= 10) return null;
     page += 1;
   }
 }

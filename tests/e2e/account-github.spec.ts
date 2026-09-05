@@ -54,6 +54,18 @@ test("Settings removes and restores account GitHub access without changing an ex
     .filter({ has: page.getByRole("button", { name: "Remove", exact: true }) })).toBeVisible();
   expect((await repositories(context)).length).toBeGreaterThan(0);
 
+  const beforeRefresh = await repositories(context);
+  await page.getByRole("button", { name: "Refresh repository access" }).click();
+  await expect(page.getByText("Connected. openfloor can reach:")).toBeVisible();
+  await page.getByRole("button", { name: "Done" }).click();
+  expect(await repositories(context)).toEqual(beforeRefresh);
+  // An untrusted Configure redirect navigates to verification, without linking
+  // the supplied installation or breaking the existing association.
+  await page.goto("/api/github/callback?setup_action=update&installation_id=forged");
+  await expect(page).toHaveURL(/home\/settings\?section=connections/);
+  await expect(page.getByText("Connected. openfloor can reach:")).toBeVisible();
+  expect(await repositories(context)).toEqual(beforeRefresh);
+
   await context.close();
 });
 

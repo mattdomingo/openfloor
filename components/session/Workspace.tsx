@@ -73,7 +73,7 @@ export function Workspace({ user, session, members, floorData, activity, reposit
   const [teamPanelView, setTeamPanelView] = useState<TeamPanelView>("goals");
   const [reviewPromptRequest, setReviewPromptRequest] = useState<{ runId: string; status: "active" | "rolled_back" } | null>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
-  const selectedAgent = agents.find((agent) => agent.id === selectedAgentId) ?? agents[0] ?? null;
+  const selectedAgent = (selectedAgentId ? agents.find((agent) => agent.id === selectedAgentId) : agents[0]) ?? null;
   // FLIP animation for panel swaps: dropPanel captures each slot's rect here
   // right before reordering; the layout effect below then inverts and plays
   // the transform so the swap reads as a smooth slide instead of a jump.
@@ -402,9 +402,10 @@ export function Workspace({ user, session, members, floorData, activity, reposit
   }, [deleteQueueItem, setNotice]);
 
   const handleFocusAgent = useCallback((agentId: string) => {
+    if (!agents.some((agent) => agent.id === agentId)) return;
     setSelectedAgentId(agentId);
     setAgentLayout("focus");
-  }, []);
+  }, [agents]);
 
   const handleOpenReview = useCallback((runId: string, status: "active" | "rolled_back") => {
     setReviewPromptRequest({ runId, status });

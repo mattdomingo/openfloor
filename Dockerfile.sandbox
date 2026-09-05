@@ -1,55 +1,27 @@
-FROM docker.io/cloudflare/sandbox:0.12.7@sha256:6d741713aef266e8ae0831a5709c6f2d7b77b4952ac79b549f4f4e380af86fbe AS runtime-identity-builder
-
-RUN apt-get update -qq && apt-get install -y -qq gcc libc6-dev && rm -rf /var/lib/apt/lists/*
-COPY scripts/runtime-identity.c /tmp/runtime-identity.c
-RUN gcc -O2 -Wall -Wextra -Werror -fPIE -pie -Wl,-z,relro,-z,now -o /tmp/runtime-identity /tmp/runtime-identity.c
-
 FROM docker.io/cloudflare/sandbox:0.12.7@sha256:6d741713aef266e8ae0831a5709c6f2d7b77b4952ac79b549f4f4e380af86fbe
 
 # RUN_SANDBOX_IMAGE_VERSION in worker/agent-run-workflow.ts must be bumped
 # whenever this image's contents change — pooled run sandboxes are keyed by
 # repository only, so a stale pooled container would otherwise be claimed by
 # a live run without the current scripts (see the pool-key comment there).
-RUN npm install --prefix /opt/openfloor --omit=dev @openai/codex-sdk@0.148.0 @modelcontextprotocol/sdk@1.30.0 @anthropic-ai/claude-agent-sdk@0.3.239 @google/gemini-cli@0.56.0 @qwen-code/qwen-code@0.22.3 @anthropic-ai/sandbox-runtime@0.0.73 undici@7.29.0 zod@4.4.3 && \
-    npm install --global pnpm@10.15.0 @yarnpkg/cli-dist@4.9.2 && \
-    npm install --global --force bun@1.2.21 && npm cache clean --force
-# Provider CLIs hold short-lived gateway tokens as openfloor-provider. Every
-# model-selected command crosses the setuid-root launcher below, which clears
-# credentials and invokes srt as a credential-free broker. Its bwrap child
-# creates namespaces, then permanently selects openfloor-workspace. The shared
-# primary group permits normal repository edits; 0700 provider homes keep CLI
-# state and config outside the workspace identity's read boundary.
-RUN apt-get update -qq && apt-get install -y -qq bubblewrap socat ripgrep iproute2 && rm -rf /var/lib/apt/lists/* && \
+RUN npm install --prefix /opt/openfloor --omit=dev @openai/codex-sdk@0.148.0 @modelcontextprotocol/sdk@1.30.0 @anthropic-ai/claude-agent-sdk@0.3.239 @google/gemini-cli@0.56.0 @qwen-code/qwen-code@0.22.3 undici@7.29.0 zod@4.4.3 && npm cache clean --force
+# The root broker holds run-scoped credentials outside a mount/PID/network
+# namespace. The complete provider and every tool run without capabilities as
+# openfloor-workspace. No setuid launcher is installed.
+RUN apt-get update -qq && apt-get install -y -qq bubblewrap ripgrep && rm -rf /var/lib/apt/lists/* && \
     groupadd --gid 10001 openfloor-shared && \
-    groupadd --gid 10003 openfloor-broker && \
-    useradd --create-home --uid 10001 --gid openfloor-shared openfloor-provider && \
     useradd --create-home --uid 10002 --gid openfloor-shared openfloor-workspace && \
-    useradd --no-create-home --uid 10003 --gid openfloor-broker --home-dir /nonexistent --shell /usr/sbin/nologin openfloor-broker && \
-    chmod 0700 /home/openfloor-provider /home/openfloor-workspace
-COPY --from=runtime-identity-builder /tmp/runtime-identity /opt/openfloor/runtime-identity
-RUN chown root:root /opt/openfloor/runtime-identity && chmod 4755 /opt/openfloor/runtime-identity && \
-    cp /opt/openfloor/runtime-identity /opt/openfloor/openfloor-workspace-handoff && \
-    chown root:root /opt/openfloor/openfloor-workspace-handoff && chmod 0555 /opt/openfloor/openfloor-workspace-handoff && \
-    ln -s runtime-identity /opt/openfloor/openfloor-provider-exec && \
-    ln -s runtime-identity /opt/openfloor/openfloor-workspace-exec && \
-    ln -s runtime-identity /opt/openfloor/openfloor-workspace-shell && \
-    ln -s runtime-identity /opt/openfloor/openfloor-workspace-bwrap && \
-    ln -s runtime-identity /opt/openfloor/openfloor-preview-exec && \
-    ln -s runtime-identity /opt/openfloor/openfloor-preview-bwrap && \
-    mkdir -p /opt/openfloor/workspace-shell && \
-    ln -s ../runtime-identity /opt/openfloor/workspace-shell/bash
+    chmod 0700 /home/openfloor-workspace
 COPY --chmod=0444 scripts/codex-runner.mjs /opt/openfloor/codex-runner.mjs
 COPY --chmod=0444 scripts/claude-runner.mjs /opt/openfloor/claude-runner.mjs
 COPY --chmod=0444 scripts/gemini-runner.mjs /opt/openfloor/gemini-runner.mjs
 COPY --chmod=0444 scripts/gemini-proxy-preload.mjs /opt/openfloor/gemini-proxy-preload.mjs
-COPY --chmod=0444 scripts/runner-env-preload.mjs /opt/openfloor/runner-env-preload.mjs
 COPY --chmod=0444 scripts/qwen-runner.mjs /opt/openfloor/qwen-runner.mjs
 COPY --chmod=0444 scripts/openfloor-mcp.mjs /opt/openfloor/openfloor-mcp.mjs
 COPY --chmod=0444 scripts/publish-bundle.mjs /opt/openfloor/publish-bundle.mjs
 COPY --chmod=0444 scripts/github-git-auth.mjs /opt/openfloor/github-git-auth.mjs
 COPY --chmod=0444 scripts/cleanup-branches.mjs /opt/openfloor/cleanup-branches.mjs
-COPY --chmod=0444 scripts/repository-preview.mjs /opt/openfloor/repository-preview.mjs
-COPY --chmod=0444 scripts/preview-runtime.mjs /opt/openfloor/preview-runtime.mjs
+COPY --chmod=0444 scripts/runtime-isolation-test.mjs scripts/runtime-provider-test.mjs /opt/openfloor/
 COPY --chmod=0555 scripts/runtime-isolation-test.sh /opt/openfloor/runtime-isolation-test.sh
 
-EXPOSE 8080
+COPY --chmod=0444 scripts/runtime-sandbox.mjs scripts/runtime-bridge.mjs scripts/runtime-broker.mjs scripts/read-run-artifact.mjs scripts/restore-session-store.py /opt/openfloor/

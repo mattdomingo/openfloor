@@ -64,13 +64,23 @@ export function agentReplyText(run: Pick<AgentRun, "status" | "finalResponse"> |
 // answered its prompt, so the UI reads that as "answered" rather than the
 // raw status, which otherwise misleadingly reused task-pipeline vocabulary
 // for a run that never ran checks or published anything.
-export function runStatusToken(run: (Pick<AgentRun, "status" | "kind"> & Partial<Pick<AgentRun, "rollbackStatus">>) | null | undefined): string {
+export function runStatusToken(run: (Pick<AgentRun, "status" | "kind"> & Partial<Pick<AgentRun, "rollbackStatus" | "completion">>) | null | undefined): string {
   if (!run) return "idle";
   if (run.rollbackStatus === "requested" || run.rollbackStatus === "running") return "rolling_back";
   if (run.rollbackStatus === "completed") return "rolled_back";
   if (run.rollbackStatus === "failed") return "rollback_failed";
+  if (run.completion === "no_changes" && run.status === "ready") return "completed";
   if (run.kind === "reply" && run.status === "ready") return "answered";
   return run.status;
+}
+
+export function runHandoffLabel(run: Pick<AgentRun, "status" | "kind" | "completion"> | null): string | null {
+  if (!run || run.kind === "reply" || run.completion) return null;
+  if (run.status === "ready") return "Preparing publication";
+  if (run.status === "publishing") return "Publishing changes";
+  if (run.status === "published") return "Waiting to integrate";
+  if (run.status === "integrating") return "Integrating changes";
+  return null;
 }
 
 // Lifetime cost chip for the agent tile's foot row. "estimated" gets a "~"
@@ -167,15 +177,16 @@ export function queueItemDestination(item: FloorQueueItem, run: AgentRun | null 
 // newest-first. createdAt is the only stable recency key available in every
 // section: reorderFloorQueue bumps updated_at, and terminal runs age out of
 // getAgentRuns' 20-row window.
-export type QueueGroupId = "live" | "conflicted" | "failed" | "answered" | "integrated" | "cancelled";
+export type QueueGroupId = "live" | "conflicted" | "failed" | "answered" | "completed" | "integrated" | "cancelled";
 
-export const QUEUE_GROUP_ORDER: readonly QueueGroupId[] = ["live", "conflicted", "failed", "answered", "integrated", "cancelled"];
+export const QUEUE_GROUP_ORDER: readonly QueueGroupId[] = ["live", "conflicted", "failed", "answered", "completed", "integrated", "cancelled"];
 
 export const QUEUE_GROUP_LABELS: Record<QueueGroupId, string> = {
   live: "Live",
   conflicted: "Conflicted",
   failed: "Failed",
   answered: "Answered",
+  completed: "Completed",
   integrated: "Integrated",
   cancelled: "Cancelled",
 };
@@ -197,13 +208,14 @@ export function queueItemGroup(item: FloorQueueItem, run: AgentRun | null | unde
     const token = runStatusToken(run);
     if (token === "failed") return "failed";
     if (token === "answered") return "answered";
+    if (token === "completed") return "completed";
     if (token === "integrated" || token === "rolled_back") return "integrated";
     if (token === "cancelled") return "cancelled";
     return "live";
   }
   if (item.answer) return "answered";
   if (item.rollback) return "integrated";
-  if (item.status === "completed") return "integrated";
+  if (item.status === "completed") return "completed";
   if (item.status === "failed") return "failed";
   if (item.status === "cancelled") return "cancelled";
   return "live";

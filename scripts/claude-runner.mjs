@@ -219,7 +219,7 @@ const baseOptions = {
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
       DISABLE_TELEMETRY: "1",
       DISABLE_ERROR_REPORTING: "1",
-      // Strips ANTHROPIC_AUTH_TOKEN (the run-scoped gateway JWT) from every
+      // Strips ANTHROPIC_AUTH_TOKEN (a broker placeholder) from every
       // subprocess the CLI spawns, so repository-controlled commands cannot
       // read it. The CLI's own model traffic keeps the token.
       CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: "1",

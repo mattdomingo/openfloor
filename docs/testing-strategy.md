@@ -18,12 +18,12 @@ Use for pure behavior:
 - Everyone/Typing/Hidden draft selection.
 - Conflict validation, state/prompt rendering, notification event selection/deduplication, and real multi-file three-way workspace construction.
 - Production deploy-artifact identity: exact D1 database ID, reviewed `AGENT_RUN_ENABLED=true` beta posture, and rejection of test-only variables.
-- Runner environment construction: exact built-in MCP exemption, child-process overload preservation, credential scrubbing, and Codex/Claude/Gemini workspace-launcher seams.
+- Broker credential separation, pinned routes/queries, streaming and legacy SSE endpoint rewriting; bounded nofollow artifact reads and prefix reads; transcript archive traversal/link/size/overwrite refusal.
 - Preview package-manager detection and frozen install commands for npm, pnpm, Yarn, and Bun; lifecycle-script suppression flags; single-port selection; runtime-token validation; hostname parsing; Access credential stripping; host-only cookie preservation; and CSP framing replacement.
 
 ### Sandbox image tests
 
-Pull-request and `main` CI build `Dockerfile.sandbox` and run `/opt/openfloor/runtime-isolation-test.sh` inside that exact image before application tests. The adversarial test verifies the setuid helper's root ownership and mode, provider/workspace uid separation, empty workspace credential environment, inaccessible provider `/proc` environment/memory/file descriptors and home, absence of tokens from readable process environments and command lines, and the Codex shell and Claude bubblewrap identity transitions. Image `v11` also installs minimal npm, pnpm, Yarn, and Bun fixtures, proves malicious lifecycle scripts do not run, starts the candidate runtime as `openfloor-workspace` under nested seccomp, proves outbound traffic and candidate Unix sockets fail, and reaches its HTTP response only through the trusted Unix socket. This Linux container test is mandatory because macOS unit tests cannot prove kernel uid, network namespace, seccomp, or `/proc` behavior.
+Pull-request and branch CI build `Dockerfile.sandbox` and run `/opt/openfloor/runtime-isolation-test.sh` inside that exact image. Tests exercise native file access, hidden host files/process state, zero capabilities and `no_new_privs`, forbidden external network access, read-only reply mounts, hostile Git filters, real Unix-socket/loopback broker transport, cancellation flushing, and detached-descendant termination. Pinned Codex, Claude, Gemini, and Qwen executables must also start inside the namespace. These Linux tests are mandatory; macOS unit tests cannot prove namespace containment. Live model/tool/stream/resume acceptance remains distinct from CLI startup and is documented in `docs/josh-beta-runtime-isolation.md`. Preview image-gate coverage lands when that launch path is ported onto this namespace.
 
 ### D1 integration tests
 

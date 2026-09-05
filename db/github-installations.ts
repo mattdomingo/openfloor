@@ -84,8 +84,26 @@ export async function linkUserGitHubInstallation(
   database = getDb(),
 ): Promise<void> {
   if (repoScope.length === 0) return;
+  await installationLinkStatement(userId, installationId, account, repoScope, Date.now(), database).run();
+}
+
+/** Refresh only installations verified by this GitHub identity; other linked
+ * GitHub accounts remain intact. Call only after every scope read succeeds. */
+export async function refreshUserGitHubInstallations(
+  userId: string,
+  installations: Array<{ id: string; account: { login: string; type: string }; repoScope: string[] }>,
+  database = getDb(),
+): Promise<void> {
+  if (installations.length === 0) return;
   const now = Date.now();
-  await database.prepare(
+  await database.batch(installations.map((installation) => installation.repoScope.length > 0
+    ? installationLinkStatement(userId, installation.id, installation.account, installation.repoScope, now, database)
+    : database.prepare("UPDATE user_github_installations SET repo_scope = '[]', updated_at = ? WHERE user_id = ? AND installation_id = ?")
+      .bind(now, userId, installation.id)));
+}
+
+function installationLinkStatement(userId: string, installationId: string, account: { login: string; type: string }, repoScope: string[], now: number, database: D1DatabaseLike) {
+  return database.prepare(
     `INSERT INTO user_github_installations
      (id, user_id, installation_id, account_login, account_type, status, repo_scope, connected_at, updated_at)
      VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?)
@@ -95,7 +113,7 @@ export async function linkUserGitHubInstallation(
        status = 'active',
        repo_scope = excluded.repo_scope,
        updated_at = excluded.updated_at`,
-  ).bind(crypto.randomUUID(), userId, installationId, account.login, account.type, JSON.stringify(repoScope), now, now).run();
+  ).bind(crypto.randomUUID(), userId, installationId, account.login, account.type, JSON.stringify(repoScope), now, now);
 }
 
 /** Fail closed: a missing or malformed scope grants nothing. Every writer
