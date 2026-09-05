@@ -1,6 +1,5 @@
-// The Gemini runner's execution posture: two pure builders (no
-// cloudflare:workers import) so the exact pinned values are unit-testable,
-// mirroring lib/claude-sandbox-settings.ts.
+// The Gemini runner's SYSTEM-scope settings builder (no cloudflare:workers
+// import) so the exact pinned values are unit-testable.
 //
 // buildGeminiSystemSettings writes the CLI's SYSTEM-scope settings file,
 // pointed at by GEMINI_CLI_SYSTEM_SETTINGS_PATH. System scope is deliberate:
@@ -64,46 +63,6 @@ export function buildGeminiSystemSettings(input: GeminiSystemSettingsInput): str
           },
         },
       },
-    },
-    null,
-    2,
-  )}\n`;
-}
-
-// Retained for gated repository preview until that launch path is ported onto
-// the credential-free namespace. Agent runs no longer use srt.
-export type GeminiSrtSettingsInput = {
-  gatewayHost: string;
-  workspace: string;
-  // Reply-run only: drops the workspace from allowWrite so run_shell_command
-  // (which bypasses the named-tool exclusion in buildGeminiSystemSettings
-  // above) is denied at the OS level, not just the CLI's own tool list.
-  readOnly?: boolean;
-  allowUnixSockets?: string[];
-  allowAllUnixSockets?: boolean;
-  allowedDomains?: string[];
-  bwrapPath?: string;
-  additionalWritePaths?: string[];
-};
-
-export function buildGeminiSrtSettings(input: GeminiSrtSettingsInput): string {
-  return `${JSON.stringify(
-    {
-      network: {
-        allowedDomains: input.allowedDomains ?? [],
-        deniedDomains: [],
-        allowUnixSockets: input.allowUnixSockets ?? [],
-        allowAllUnixSockets: input.allowAllUnixSockets ?? false,
-      },
-      filesystem: {
-        denyRead: [],
-        // The workspace and the per-run scratch tree (result.json, prompt,
-        // the agent HOME with its settings and CLI state) — except the
-        // workspace itself is excluded for a read-only reply run.
-        allowWrite: input.readOnly ? ["/tmp"] : [input.workspace, ...(input.additionalWritePaths ?? []), "/tmp"],
-        denyWrite: [],
-      },
-      bwrapPath: input.bwrapPath ?? "/opt/openfloor/openfloor-workspace-bwrap",
     },
     null,
     2,

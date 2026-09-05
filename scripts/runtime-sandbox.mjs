@@ -4,17 +4,34 @@ import { pathToFileURL } from "node:url";
 
 const RUNTIME_FILES = ["codex-runner.mjs", "claude-runner.mjs", "gemini-runner.mjs", "qwen-runner.mjs", "gemini-proxy-preload.mjs", "openfloor-mcp.mjs", "runtime-bridge.mjs"];
 
-/** Mount only execution dependencies. The broker, publisher, credentials,
- * container service and host process tree are outside this namespace. */
-export function sandboxArguments(command, environment = {}, { brokerPath, readOnly = false } = {}) {
+/** @type {string[]} */
+const SETPRIV = ["/usr/bin/setpriv", "--reuid=10002", "--regid=10001", "--clear-groups", "--no-new-privs", "--inh-caps=-all", "--ambient-caps=-all", "--bounding-set=-all", "--"];
+
+/**
+ * Mount only execution dependencies. The broker, publisher, credentials,
+ * container service and host process tree are outside this namespace.
+ * @param {string[]} command
+ * @param {Record<string, string>} [environment]
+ * @param {{
+ *   brokerPath?: string,
+ *   readOnly?: boolean,
+ *   loopback?: boolean,
+ *   extraRoFiles?: string[],
+ *   extraBinds?: string[],
+ * }} [options]
+ */
+export function sandboxArguments(command, environment = {}, {
+  brokerPath, readOnly = false, loopback = false, extraRoFiles = [], extraBinds = [],
+} = {}) {
   const args = ["--die-with-parent", "--unshare-pid", "--unshare-net", "--unshare-ipc", "--unshare-uts", "--new-session", "--clearenv"];
   for (const path of ["/usr", "/bin", "/lib", "/lib64"]) if (existsSync(path)) args.push("--ro-bind", path, path);
   args.push("--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp", "--dir", "/run", "--dir", "/etc", "--dir", "/opt/openfloor", "--dir", "/workspace");
   for (const path of ["/etc/ssl", "/etc/ld.so.cache", "/etc/passwd", "/etc/group"]) if (existsSync(path)) args.push("--ro-bind", path, path);
   args.push("--ro-bind", "/opt/openfloor/node_modules", "/opt/openfloor/node_modules");
-  for (const file of RUNTIME_FILES) args.push("--ro-bind", `/opt/openfloor/${file}`, `/opt/openfloor/${file}`);
+  for (const file of [...RUNTIME_FILES, ...extraRoFiles]) args.push("--ro-bind", `/opt/openfloor/${file}`, `/opt/openfloor/${file}`);
   args.push(readOnly ? "--ro-bind" : "--bind", "/workspace/repository", "/workspace/repository");
   args.push("--bind", "/tmp/openfloor", "/tmp/openfloor");
+  for (const path of extraBinds) args.push("--bind", path, path);
   if (existsSync("/workspace/attachments")) args.push("--ro-bind", "/workspace/attachments", "/workspace/attachments");
   if (brokerPath) args.push("--ro-bind", brokerPath, "/run/openfloor-broker.sock");
   const clean = { PATH: "/usr/local/bin:/usr/bin:/bin", HOME: "/tmp/openfloor/provider-home", LANG: "C.UTF-8", ...environment };
@@ -22,8 +39,16 @@ export function sandboxArguments(command, environment = {}, { brokerPath, readOn
   // bwrap starts as root only to create mounts/namespaces. setpriv permanently
   // drops setup capabilities and selects the workspace identity before any
   // runner, native file tool, repository command, or restored state executes.
-  args.push("--chdir", "/workspace/repository", "--cap-add", "CAP_SETUID", "--cap-add", "CAP_SETGID", "--cap-add", "CAP_SETPCAP", "--",
-    "/usr/bin/setpriv", "--reuid=10002", "--regid=10001", "--clear-groups", "--no-new-privs", "--inh-caps=-all", "--ambient-caps=-all", "--bounding-set=-all", "--", ...command);
+  // Preview runtime needs loopback inside the private netns; only that setup
+  // shell receives CAP_NET_ADMIN, and setpriv clears it before the candidate.
+  args.push("--chdir", "/workspace/repository", "--cap-add", "CAP_SETUID", "--cap-add", "CAP_SETGID", "--cap-add", "CAP_SETPCAP");
+  if (loopback) args.push("--cap-add", "CAP_NET_ADMIN");
+  args.push("--");
+  if (loopback) {
+    args.push("/bin/sh", "-c", "/usr/sbin/ip link set lo up && exec /usr/bin/setpriv --reuid=10002 --regid=10001 --clear-groups --no-new-privs --inh-caps=-all --ambient-caps=-all --bounding-set=-all -- \"$@\"", "openfloor-loopback", ...command);
+  } else {
+    args.push(...SETPRIV, ...command);
+  }
   return args;
 }
 

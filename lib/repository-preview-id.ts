@@ -1,3 +1,3 @@
 export function previewSandboxId(): string {
-  return `preview-v11-${crypto.randomUUID().replaceAll("-", "")}`;
+  return `preview-v12-${crypto.randomUUID().replaceAll("-", "")}`;
 }

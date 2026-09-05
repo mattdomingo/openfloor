@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildGeminiSrtSettings, buildGeminiSystemSettings } from "@/lib/gemini-settings";
+import { buildGeminiSystemSettings } from "@/lib/gemini-settings";
 
 const SYSTEM_INPUT = {
   contextUrl: "https://opnflr.com/app/runtime/run/context",
@@ -50,36 +50,5 @@ describe("gemini system settings", () => {
     const body = buildGeminiSystemSettings(SYSTEM_INPUT);
     expect(body.endsWith("\n")).toBe(true);
     expect(body).toContain('"security"');
-  });
-});
-
-describe("gemini srt settings", () => {
-  it("denies command egress and confines writes", () => {
-    const settings = JSON.parse(buildGeminiSrtSettings({ gatewayHost: "opnflr.com", workspace: "/workspace/repository" })) as {
-      network: { allowedDomains: string[]; deniedDomains: string[]; allowUnixSockets: string[]; allowAllUnixSockets: boolean };
-      filesystem: { denyRead: string[]; allowWrite: string[]; denyWrite: string[] };
-      bwrapPath: string;
-    };
-    expect(settings.network.allowedDomains).toEqual([]);
-    expect(settings.network.deniedDomains).toEqual([]);
-    expect(settings.network.allowUnixSockets).toEqual([]);
-    expect(settings.network.allowAllUnixSockets).toBe(false);
-    expect(settings.filesystem.allowWrite).toEqual(["/workspace/repository", "/tmp"]);
-    expect(settings.filesystem.denyRead).toEqual([]);
-    expect(settings.filesystem.denyWrite).toEqual([]);
-    expect(settings.bwrapPath).toBe("/opt/openfloor/openfloor-workspace-bwrap");
-  });
-
-  it("can select the trusted preview wrapper without weakening default run settings", () => {
-    const settings = JSON.parse(buildGeminiSrtSettings({
-      gatewayHost: "opnflr.com",
-      workspace: "/workspace/repository",
-      additionalWritePaths: ["/workspace/preview-relay"],
-      allowAllUnixSockets: true,
-      bwrapPath: "/opt/openfloor/openfloor-preview-bwrap",
-    }));
-    expect(settings.network.allowAllUnixSockets).toBe(true);
-    expect(settings.filesystem.allowWrite).toEqual(["/workspace/repository", "/workspace/preview-relay", "/tmp"]);
-    expect(settings.bwrapPath).toBe("/opt/openfloor/openfloor-preview-bwrap");
   });
 });
