@@ -150,7 +150,7 @@ export const AgentFloor = memo(function AgentFloor({ chrome, sessionId, agents, 
 
   const headerActions = (
     <>
-      <button type="button" className="button" data-size="sm" onClick={() => setRunHistoryOpen(true)}>Run history</button>
+      <button type="button" className="button agent-run-history" data-size="sm" onClick={() => setRunHistoryOpen(true)}>Run history</button>
       {agents.length > 0 && (
         <div className="agent-header-rail" role="tablist" aria-label="Agents">
           {agents.map((agent, index) => (
