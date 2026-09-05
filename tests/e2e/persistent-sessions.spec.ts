@@ -402,6 +402,29 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await expect(owner.getByText("export const implemented = true;", { exact: true })).toBeVisible();
   await expect(owner.getByRole("link", { name: /Draft pull request 1/ })).toHaveAttribute("href", /\/pull\/1$/);
 
+  // File attribution moved out of the diff header/body and into a contextual
+  // action. Right-click remains primary, while the visible menu trigger gives
+  // keyboard and touch users the same commands.
+  const changedFile = owner.locator(".review-file", { hasText: "agent-change.ts" });
+  await changedFile.click({ button: "right" });
+  const fileMenu = owner.getByRole("menu", { name: "Actions for src/agent-change.ts" });
+  await expect(fileMenu.getByRole("menuitem", { name: "Change info" })).toBeFocused();
+  await expect(fileMenu.getByRole("menuitem", { name: "Copy path" })).toBeVisible();
+  await expect(fileMenu.getByRole("menuitem", { name: "Open on GitHub" })).toBeVisible();
+  await fileMenu.getByRole("menuitem", { name: "Change info" }).click();
+  const fileInfo = owner.getByRole("dialog", { name: "agent-change.ts" });
+  await expect(fileInfo.getByText("Lumen", { exact: true })).toBeVisible();
+  await expect(fileInfo.getByText("Owner E.", { exact: true })).toBeVisible();
+  await expect(fileInfo.getByText("Inspect the real session contract", { exact: true })).toBeVisible();
+  await fileInfo.getByRole("button", { name: "Close", exact: true }).click();
+  await expect(owner.locator(".review-diff .review-contribution-cards")).toHaveCount(0);
+  await expect(owner.locator(".review-diff .review-pane-head .review-attribution")).toHaveCount(0);
+  await changedFile.click({ button: "right" });
+  await fileMenu.getByRole("menuitem", { name: "Remove file changes" }).click();
+  const fileRemoval = owner.getByRole("dialog", { name: "Remove changes from this file?" });
+  await expect(fileRemoval.getByText("Added file will be deleted from candidate.", { exact: false })).toBeVisible();
+  await fileRemoval.getByRole("button", { name: "Cancel" }).click();
+
   // The changed file is still reachable through the repository browser, and
   // selecting it there shows its diff, not the raw candidate-head content.
   await owner.getByRole("button", { name: "All files" }).click();

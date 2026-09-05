@@ -104,6 +104,7 @@ export type IconName =
   | "collapse"
   | "branch"
   | "file"
+  | "info"
   | "clock"
   | "check"
   | "alert"
@@ -159,6 +160,12 @@ const glyphs: Record<IconName, ReactNode> = {
     <>
       <path d="M4 2.5h4.8L12 5.7v7.8H4z" />
       <path d="M8.6 2.6v3.2h3.2" />
+    </>
+  ),
+  info: (
+    <>
+      <circle cx="8" cy="8" r="5.5" />
+      <path d="M8 7v4M8 4.8h.01" />
     </>
   ),
   clock: (

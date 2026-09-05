@@ -173,6 +173,8 @@ export function usePersistentFloorData(sessionId: string, initialFloor: FloorSna
     expectedCandidateSha: string;
     expectedRunIds: string[];
   }) => request("/review/rollbacks", "POST", input), [request]);
+  const removeReviewFileChanges = useCallback((path: string, expectedCandidateSha: string) =>
+    request("/review/files/remove", "POST", { path, expectedCandidateSha }), [request]);
   const retryRun = useCallback((runId: string) =>
     request(`/runs/${encodeURIComponent(runId)}/retry`, "POST"), [request]);
   const readyReview = useCallback(() => request("/review/ready", "POST"), [request]);
@@ -250,6 +252,7 @@ export function usePersistentFloorData(sessionId: string, initialFloor: FloorSna
     discardRun,
     rollbackRun,
     rollbackReviewChanges,
+    removeReviewFileChanges,
     retryRun,
     readyReview,
     unreadyReview,
@@ -297,6 +300,7 @@ export function usePersistentFloorData(sessionId: string, initialFloor: FloorSna
     discardRun,
     rollbackRun,
     rollbackReviewChanges,
+    removeReviewFileChanges,
     retryRun,
     readyReview,
     unreadyReview,
