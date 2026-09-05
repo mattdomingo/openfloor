@@ -137,9 +137,16 @@ Deliberately left alone: `usage_months` rows survive (see that table's own no-FK
 
 #### `repository_candidate_files` and `repository_candidate_checks`
 
-- These tables store a bounded, last-reconciled GitHub PR review snapshot. Files contain path, change kind, counts, and bounded patch preview; checks normalize GitHub check runs and commit statuses to passed/waiting/failed.
+- These tables store a bounded, last-reconciled GitHub PR review snapshot. Files contain current path, nullable GitHub-reported previous path for a rename, change kind, counts, and bounded patch preview; checks normalize GitHub check runs and commit statuses to passed/waiting/failed.
 - GitHub remains authoritative. Ready and merge mutations refresh these tables before deciding, and webhook events invalidate the review revision so clients refetch.
 - Complete logs, bundles, and unbounded diffs remain outside D1.
+
+#### `candidate_file_removals`
+
+- Each row is one durable owner-requested attempt to remove a single current reviewed file from the still-open candidate. It snapshots current path, nullable previous rename path, expected candidate SHA, synchronized base SHA, actor, status (`requested`, `running`, `completed`, or `failed`), bounded failure reason, and resulting commit SHA. Failed and completed attempts remain audit history.
+- The active candidate's `integration_run_id` is the shared external-mutation lease. Creation claims it with the removal UUID only when candidate and remote candidate SHAs match the caller's expected SHA, the remote base is known, the repository is ready, the reviewed path still exists, and the session remains live. Failure clears only that UUID's lease. After GitHub advances, a D1 recording failure retains the lease for operator recovery rather than recording a false failure against the old head.
+- The Workflow fetches the exact expected candidate and base SHAs in two clean Sandboxes. It restores a modified/deleted path from base, deletes a candidate-only addition, and for a rename also restores the previous path. Both Sandboxes must reconstruct the same deterministic commit. Publication uses the existing authenticated force-with-lease publisher and rechecks both candidate and base before pushing.
+- Completion advances the authoritative/observed candidate SHA, clears checks and the removed reviewed-file cache row, and preserves all prompts, runs, branches, historical diffs, and removal audit. Active attribution ignores contributions to that path integrated at or before the completed removal; a later run touching the same path is active normally. Any prompt group with a separately removed file is ineligible for whole-group rollback, preventing a later commit-level revert from acting on a partially restored group.
 
 #### `github_webhook_deliveries`
 
