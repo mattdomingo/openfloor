@@ -94,8 +94,11 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await expect(owner.getByRole("navigation", { name: "Session location" }).getByRole("link", { name: "Release coordination" })).toBeVisible();
   await expect(owner.getByText("Member E.").first()).toBeVisible();
   await expect(owner.getByText("No agents yet")).toBeVisible();
-  await expect(owner.getByRole("region", { name: "Agent floor" }).getByRole("button", { name: "Auto agents on" })).toHaveAttribute("aria-pressed", "true");
-  await expect(member.getByRole("region", { name: "Agent floor" }).getByRole("button", { name: /Auto agents/ })).toHaveCount(0);
+  const autoAgents = owner.getByRole("region", { name: "Agent floor" }).getByRole("button", { name: "Auto", exact: true });
+  await expect(autoAgents).toHaveAttribute("aria-pressed", "true");
+  await autoAgents.hover();
+  await expect(owner.getByRole("tooltip")).toHaveText("Automatically spin up agents");
+  await expect(member.getByRole("region", { name: "Agent floor" }).getByRole("button", { name: "Auto", exact: true })).toHaveCount(0);
   await expect(owner.getByText("No prompts waiting")).toBeVisible();
   await expect(owner.getByText("No review available")).toHaveCount(0);
   await expect(owner.getByText(/Atlas|Nova|Sentry|Proof|OpenMind/)).toHaveCount(0);
@@ -187,7 +190,9 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await agentFloor.getByRole("button", { name: "New agent" }).click();
   await owner.getByLabel("Name").fill("Lumen");
   await expect(owner.getByLabel("Role", { exact: true })).toHaveCount(0);
-  await owner.getByLabel("Task").fill("Map the persistent agent API");
+  await owner.locator("label.label-with-help", { hasText: "Description" }).hover();
+  await expect(owner.getByRole("tooltip")).toHaveText("Standing instructions the agent follows across prompts, like a system prompt.");
+  await owner.getByLabel("Description").fill("Map the persistent agent API");
   await owner.getByRole("dialog").getByRole("button", { name: "Create agent" }).click();
   await expect(owner.getByRole("dialog")).toBeHidden();
   await expect(agentFloor.getByRole("tab", { name: "Lumen" })).toBeVisible();
@@ -224,8 +229,8 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await agentFloor.getByRole("button", { name: "Pause", exact: true }).click();
   await expect(agentFloor.getByRole("button", { name: "Resume", exact: true })).toBeVisible();
   await agentFloor.getByRole("button", { name: "Resume", exact: true }).click();
-  await agentFloor.getByRole("button", { name: "Auto agents on" }).click();
-  await expect(agentFloor.getByRole("button", { name: "Auto agents off" })).toHaveAttribute("aria-pressed", "false");
+  await agentFloor.getByRole("button", { name: "Auto", exact: true }).click();
+  await expect(agentFloor.getByRole("button", { name: "Auto", exact: true })).toHaveAttribute("aria-pressed", "false");
   await persistentHold.getByRole("button", { name: "Cancel", exact: true }).click();
   await generatedHold.getByRole("button", { name: "Cancel", exact: true }).click();
   await expect(agentFloor.getByRole("tab", { name: "Auto Worker, auto-generated" })).toHaveCount(0);
@@ -238,7 +243,7 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await history.getByRole("button", { name: "Close", exact: true }).click();
 
   await expect(agentFloor.getByRole("tab", { name: "Lumen" })).toBeVisible();
-  await agentFloor.getByRole("button", { name: "Auto agents off" }).click();
+  await agentFloor.getByRole("button", { name: "Auto", exact: true }).click();
   await agentFloor.getByRole("button", { name: "All agents" }).click();
   const gridTopBeforeReply = (await agentFloor.locator(".agent-grid").boundingBox())!.y;
   await owner.getByRole("region", { name: "Open floor" }).getByRole("combobox", { name: "Queue target" }).click();
