@@ -960,7 +960,7 @@ Agent runtime posture is also tightened: Codex receives only an explicit safe SD
 
 ### 2026-09-03 — Add a D1-leased, network-isolated repository app preview behind a dark rollout gate
 
-**Status:** Product, D1, Workflow, and proxy contract remain. The setuid/srt launch-path paragraph is superseded by "Sync production isolation hotfixes into release without preview launch port" (2026-09-05); keep the gate off until that port.
+**Status:** Product, D1, Workflow, and proxy contract remain. The setuid/srt launch-path paragraph is superseded by "Port repository preview onto the credential-free namespace" (2026-09-05). The gate stays off until DNS/TLS/Access acceptance.
 
 **Decision:** Add one shared repository preview per session through `RepositoryPreviewWorkflow`, backed by a D1-authoritative 60-minute generation lease and capped at three provisioning or active previews per environment. Only the session owner may start, rebuild, or stop it; current members may view it after fresh Access identity, early-access admission when enabled, live-session, ready-repository, synchronized-candidate, exact-host, and unexpired-lease checks. Replacement generations preserve the prior ready Sandbox until activation and keep it available if the replacement fails. Successful candidate integration and rollback request a rebuild. Session end, merge, abandonment, repository disconnect/unavailability, external candidate modification, manual stop, and expiry revoke the lease. Durable Sandbox cleanup intents survive session deletion and retry from the 10-minute cron.
 
@@ -1054,8 +1054,18 @@ Preview v1 supports only one JavaScript app at the repository root with exactly 
 
 ### 2026-09-05 — Sync production isolation hotfixes into release without preview launch port
 
+**Status:** The merge and dual-0046 journal remain. The stale launch-path holding pattern is superseded by "Port repository preview onto the credential-free namespace" (2026-09-05).
+
 **Decision:** Merge `main` into `release` with a merge commit. Keep both independently numbered 0046 migrations under their original filenames (`0046_brief_nick_fury.sql` then `0046_sad_the_phantom.sql`) so development and production each skip the one they already applied. Take the hotfix executor image (credential-free namespace, outside broker, no setuid helper). Retain preview product/D1/Workflow/proxy code behind `REPOSITORY_PREVIEW_ENABLED=false`. Do not reinstall the deleted setuid/srt preview launchers in this image.
 
 **Rationale:** Leaving the hotfixes only on `main` would let the next `release` → `main` promotion regress them. Preview was built on the old launcher; grafting that launcher back would reopen SEC-01. The preview gate is already off, so a follow-up can port the launch path onto the new namespace without blocking hotfix sync.
 
-**Consequences:** Combined development D1 applies the completion column as a new named migration; combined production D1 applies the preview tables as a new named migration. Preview start would fail if the gate were flipped before the port. `buildGeminiSrtSettings` remains only because gated preview TypeScript still calls it. Image generation stays executor `v11` / publisher `v4` because this sync does not change hotfix image contents; the later preview port must bump the pool key.
+**Consequences:** Combined development D1 applies the completion column as a new named migration; combined production D1 applies the preview tables as a new named migration. This sync left preview start failing if the gate were flipped before the port. `buildGeminiSrtSettings` remained only so gated preview TypeScript still compiled. Image generation stayed executor `v11` / publisher `v4` because this sync did not change hotfix image contents.
+
+### 2026-09-05 — Port repository preview onto the credential-free namespace
+
+**Decision:** Run preview dependency install and the candidate app inside the same bubblewrap mount/PID/network namespace as agent execution. Install may CONNECT only to `registry.npmjs.org:443` through an outside registry proxy and the existing loopback bridge; the ordinary run broker still refuses CONNECT. Runtime has no outbound network. A root setup shell raises private loopback with `CAP_NET_ADMIN`, then setpriv drops every capability before the candidate. The app's one HTTP listener stays on a locked Unix socket; a trusted outer TCP relay on port 8080 is the only bridge the Workflow polls. Remove `buildGeminiSrtSettings` and the old setuid/srt preview launchers. Bump executor generation to `v12`; publisher stays `v4`. Keep `REPOSITORY_PREVIEW_ENABLED=false`.
+
+**Rationale:** Preview on `release` still targeted helpers the isolation hotfix deleted. Restoring setuid/srt would reopen SEC-01. Reusing the existing namespace, broker, and image-gate keeps one execution boundary instead of a second privileged preview identity.
+
+**Consequences:** Agent runs must not receive `CAP_NET_ADMIN` or the loopback setup shell. Exact-image tests cover npm, pnpm, Yarn, and Bun lifecycle suppression plus loopback HTTP with blocked outbound traffic. Enabling the gate still requires wildcard DNS/TLS, a preview Access application, and the documented acceptance runbook. Every later image-content change must bump the pool key again.

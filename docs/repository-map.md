@@ -70,12 +70,17 @@ worker/
 Dockerfile.sandbox           Version-matched Cloudflare Sandbox runtime image
 .github/workflows/deploy.yml Sibling audit + test jobs; push-to-main deploy needs both
 scripts/codex-runner.mjs     Pinned server-side Codex SDK runner inside the Sandbox image
-scripts/claude-runner.mjs    Pinned Claude Agent SDK runner (non-root, kernel-sandboxed) in the same image
-scripts/gemini-runner.mjs    Pinned Gemini CLI runner (non-root, srt-wrapped) in the same image
-scripts/gemini-proxy-preload.mjs  Fetch preload making the Gemini CLI honor srt's proxy env on Node 22
-scripts/qwen-runner.mjs      Pinned Qwen Code CLI runner (non-root, srt-wrapped) serving qwen and deepseek in the same image
+scripts/claude-runner.mjs    Pinned Claude Agent SDK runner in the credential-free namespace
+scripts/gemini-runner.mjs    Pinned Gemini CLI runner in the credential-free namespace
+scripts/gemini-proxy-preload.mjs  Fetch preload making the Gemini CLI honor the loopback broker proxy
+scripts/qwen-runner.mjs      Pinned Qwen Code CLI runner serving qwen and deepseek in the same image
 scripts/openfloor-mcp.mjs    Stdio MCP server exposing read-only session context and run-scoped conflict input
 scripts/publish-bundle.mjs   Fixed trusted bundle/ref/ancestry/file/object validation and non-force publication
+scripts/runtime-sandbox.mjs  Bubblewrap mount/PID/network namespace; optional loopback setup for preview
+scripts/runtime-broker.mjs   Outside-namespace credential broker and npm-registry CONNECT proxy
+scripts/preview-sandbox.mjs  Trusted preview install/run launcher outside the namespace
+scripts/preview-runtime.mjs  In-namespace preview app supervisor and Unix-socket HTTP relay
+scripts/repository-preview.mjs  Root JavaScript app detection and frozen package-manager install
 tests/
   unit/                      Pure functions, validation, identity, signing, reducers
   worker/                    Local D1 and Durable Object integration tests

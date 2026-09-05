@@ -102,10 +102,12 @@ Claude/Kimi, Gemini); disabled providers retain their independent live-key gate.
    resolution, then resume. Confirm context, snapshots, final verification,
    history, and expected-SHA publication remain correct.
 
-The runtime uses executor generation v11 and publisher v4 to exclude stale
-pooled images. No migrations or new secrets/bindings are required. Rollback
-first disables new agent execution; do not silently restore the weaker boundary
-while new runs continue. Rebuild with a fresh image generation for any fix.
+The isolation hotfix introduced executor generation v11 and publisher v4.
+Later image-content changes, including the preview namespace port, bump that
+pool key; the live generation is recorded in `AGENTS.md`. No migrations or new
+secrets/bindings are required. Rollback first disables new agent execution; do
+not silently restore the weaker boundary while new runs continue. Rebuild with
+a fresh image generation for any fix.
 
 ## Local validation record (2026-09-05)
 

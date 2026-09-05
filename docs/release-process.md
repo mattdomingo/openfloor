@@ -76,7 +76,7 @@ Repository preview has a separate deferred Access boundary. Keep `REPOSITORY_PRE
 - Wildcard DNS and TLS route `*.preview.dev.opnflr.com` to the development Worker without claiming the production preview zone.
 - One development self-hosted Access application protects `*.preview.dev.opnflr.com/*` and permits only named developers/testers.
 - That preview application's Audience tag is appended to the development Worker's `CF_ACCESS_AUD` secret alongside the existing development application audience. Do not replace the existing audience and do not copy a production audience.
-- Migration `0046` is applied to development and the `REPOSITORY_PREVIEW` Workflow plus Sandbox image `v11` deploy successfully.
+- Migration `0046` is applied to development and the `REPOSITORY_PREVIEW` Workflow plus Sandbox image `v12` deploy successfully.
 
 After those prerequisites, enable only development and use a disposable root JavaScript repository to accept the feature. Verify npm, pnpm, Yarn, and Bun fixtures; owner start/rebuild/stop; member synchronized access; outsider and revoked-admission 404 concealment; exact candidate updates after integration and rollback; prior-preview fallback during a failed rebuild; expiry; session end; merge; abandonment; repository disconnect/unavailability; redirects, cookies, and WebSockets; responsive iframe layout; blocked outbound runtime traffic; and durable cleanup after a forced Sandbox destruction failure. Confirm the iframe cannot navigate the top-level application. Restore `REPOSITORY_PREVIEW_ENABLED=false` immediately if any boundary fails.
 
