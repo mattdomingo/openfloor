@@ -1,5 +1,6 @@
 import http from "node:http";
 import https from "node:https";
+import net from "node:net";
 import { Transform } from "node:stream";
 import { StringDecoder } from "node:string_decoder";
 import { chmodSync, chownSync, mkdtempSync, rmSync } from "node:fs";
@@ -51,8 +52,35 @@ export function brokerConfiguration(source) {
   return { environment, routes };
 }
 
+export const REGISTRY_PROXY_TARGET = "registry.npmjs.org:443";
+
+/** Preview installs may reach only the npm registry. Regular HTTP is refused;
+ * CONNECT to any other host:port is refused. */
+export function createRegistryProxy() {
+  const server = http.createServer((_request, response) => {
+    response.writeHead(403);
+    response.end();
+  });
+  server.on("connect", (request, clientSocket, head) => {
+    if (request.url !== REGISTRY_PROXY_TARGET) {
+      clientSocket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
+      clientSocket.destroy();
+      return;
+    }
+    const upstream = net.connect(443, "registry.npmjs.org", () => {
+      clientSocket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+      if (head.length) upstream.write(head);
+      clientSocket.pipe(upstream).pipe(clientSocket);
+    });
+    const close = () => { upstream.destroy(); clientSocket.destroy(); };
+    upstream.on("error", close);
+    clientSocket.on("error", close);
+  });
+  return server;
+}
+
 export function createBroker(routes) {
-  return http.createServer({ maxHeaderSize: 16 * 1024 }, (request, response) => {
+  const server = http.createServer({ maxHeaderSize: 16 * 1024 }, (request, response) => {
     let path;
     try {
       path = request.url ?? "";
@@ -109,6 +137,11 @@ export function createBroker(routes) {
     response.on("close", () => upstream.destroy());
     request.pipe(upstream);
   });
+  server.on("connect", (_request, clientSocket) => {
+    clientSocket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
+    clientSocket.destroy();
+  });
+  return server;
 }
 
 // Legacy SSE MCP announces its POST endpoint in an event. Rewrite only that

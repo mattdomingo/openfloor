@@ -170,7 +170,7 @@ const PUBLISHER_SANDBOX_IMAGE_VERSION = "v4";
 // Namespacing the pool key by image version makes old-image entries
 // unreachable immediately; the existing idle sweep reclaims them.
 // Bump this whenever Dockerfile.sandbox's run-sandbox contents change.
-const RUN_SANDBOX_IMAGE_VERSION = "v11";
+const RUN_SANDBOX_IMAGE_VERSION = "v12";
 // Provider CLIs and native tools share a credential-free execution namespace.
 // Scratch and transcript state are removed before a pooled sandbox is reused.
 const RUN_PROVIDER_HOME = "/tmp/openfloor/provider-home";

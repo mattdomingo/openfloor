@@ -9,7 +9,6 @@ import {
   getRepositoryPreviewExecutionContext,
   retrySandboxCleanup,
 } from "../db/previews";
-import { buildGeminiSrtSettings } from "../lib/gemini-settings";
 import { notifyFloorChanged } from "../lib/presence-server";
 import { isPreviewHostname } from "../lib/preview-proxy";
 import { signPreviewGatewayToken } from "../lib/runtime-token";
@@ -24,8 +23,6 @@ export interface PreviewWorkflowEnv {
 
 type Params = { previewId: string; generation: number };
 const RELAY_PORT = 8080;
-const SRT_SETTINGS = "/tmp/openfloor/workspace-srt-settings.json";
-const PREVIEW_SOCKET = "/workspace/preview-relay/preview.sock";
 
 export class RepositoryPreviewWorkflow extends WorkflowEntrypoint<PreviewWorkflowEnv, Params> {
   async run(event: Readonly<WorkflowEvent<Params>>, step: WorkflowStep): Promise<{ status: string }> {
@@ -69,13 +66,8 @@ export class RepositoryPreviewWorkflow extends WorkflowEntrypoint<PreviewWorkflo
       });
 
       const detected = await step.do("detect and install root JavaScript app", { timeout: "15 minutes" }, async () => {
-        await writeLockedSrtSettings(sandbox, buildGeminiSrtSettings({
-          gatewayHost: new URL(this.env.OPENFLOOR_RUNTIME_ORIGIN).host,
-          workspace: "/workspace/repository",
-          allowedDomains: ["registry.npmjs.org"],
-        }));
         const result = await sandbox.exec(
-          "/opt/openfloor/openfloor-workspace-exec node /opt/openfloor/repository-preview.mjs --install /workspace/repository /tmp/openfloor/preview-config.json",
+          "node /opt/openfloor/preview-sandbox.mjs install /workspace/repository /tmp/openfloor/preview-config.json",
           { timeout: 14 * 60 * 1_000 },
         );
         if (!result.success) throw new Error(lastUsefulLine(result.stderr) || "Preview dependency installation failed.");
@@ -89,36 +81,15 @@ export class RepositoryPreviewWorkflow extends WorkflowEntrypoint<PreviewWorkflo
       });
 
       await step.do("start network-isolated app", { timeout: "2 minutes" }, async () => {
-        await writeLockedSrtSettings(sandbox, buildGeminiSrtSettings({
-          gatewayHost: new URL(this.env.OPENFLOOR_RUNTIME_ORIGIN).host,
-          workspace: "/workspace/repository",
-          allowAllUnixSockets: true,
-          bwrapPath: "/opt/openfloor/openfloor-preview-bwrap",
-          additionalWritePaths: ["/workspace/preview-relay"],
-        }));
         await sandbox.startProcess(
-          `/opt/openfloor/openfloor-preview-exec ${detected.packageManager} ${detected.script}`,
+          `node /opt/openfloor/preview-sandbox.mjs run ${detected.packageManager} ${detected.script}`,
           { processId: "preview-app", autoCleanup: false },
         );
-        const socket = await sandbox.exec(
-          `for i in $(seq 1 180); do test -S ${PREVIEW_SOCKET} && exit 0; sleep 0.5; done; exit 1`,
-          { timeout: 95_000 },
-        );
-        if (!socket.success) throw new Error("Preview relay socket was not created.");
-        const locked = await sandbox.exec(
-          `chown root:root /workspace/preview-relay && chmod 0555 /workspace/preview-relay && chown root:openfloor-shared ${PREVIEW_SOCKET} && chmod 0660 ${PREVIEW_SOCKET}`,
-          { timeout: 30_000 },
-        );
-        if (!locked.success) throw new Error("Preview relay socket could not be locked.");
         const ready = await sandbox.exec(
-          `for i in $(seq 1 180); do curl --silent --output /dev/null --max-time 1 --unix-socket ${PREVIEW_SOCKET} http://localhost/ && exit 0; sleep 0.5; done; exit 1`,
+          `for i in $(seq 1 180); do curl --silent --output /dev/null --max-time 1 http://127.0.0.1:${RELAY_PORT}/ && exit 0; sleep 0.5; done; exit 1`,
           { timeout: 95_000 },
         );
         if (!ready.success) throw new Error("Preview app did not expose one HTTP listener.");
-        await sandbox.startProcess(
-          `socat TCP-LISTEN:${RELAY_PORT},fork,reuseaddr UNIX-CONNECT:${PREVIEW_SOCKET}`,
-          { processId: "preview-relay", autoCleanup: false },
-        );
       });
 
       const exposed = await step.do("expose preview relay", async () => sandbox.exposePort(RELAY_PORT, {
@@ -160,12 +131,6 @@ export class RepositoryPreviewWorkflow extends WorkflowEntrypoint<PreviewWorkflo
       return { status: failed ? "failed" : "stale" };
     }
   }
-}
-
-async function writeLockedSrtSettings(sandbox: ReturnType<typeof getSandbox>, contents: string): Promise<void> {
-  await sandbox.writeFile(SRT_SETTINGS, contents);
-  const locked = await sandbox.exec(`chown root:root ${SRT_SETTINGS} && chmod 0444 ${SRT_SETTINGS}`, { timeout: 30_000 });
-  if (!locked.success) throw new Error("Preview sandbox settings could not be locked.");
 }
 
 async function cleanupSandbox(

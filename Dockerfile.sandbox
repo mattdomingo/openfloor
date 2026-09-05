@@ -4,11 +4,14 @@ FROM docker.io/cloudflare/sandbox:0.12.7@sha256:6d741713aef266e8ae0831a5709c6f2d
 # whenever this image's contents change — pooled run sandboxes are keyed by
 # repository only, so a stale pooled container would otherwise be claimed by
 # a live run without the current scripts (see the pool-key comment there).
-RUN npm install --prefix /opt/openfloor --omit=dev @openai/codex-sdk@0.148.0 @modelcontextprotocol/sdk@1.30.0 @anthropic-ai/claude-agent-sdk@0.3.239 @google/gemini-cli@0.56.0 @qwen-code/qwen-code@0.22.3 undici@7.29.0 zod@4.4.3 && npm cache clean --force
+RUN npm install --prefix /opt/openfloor --omit=dev @openai/codex-sdk@0.148.0 @modelcontextprotocol/sdk@1.30.0 @anthropic-ai/claude-agent-sdk@0.3.239 @google/gemini-cli@0.56.0 @qwen-code/qwen-code@0.22.3 undici@7.29.0 zod@4.4.3 && \
+    npm install --global pnpm@10.15.0 @yarnpkg/cli-dist@4.9.2 && \
+    npm install --global --force bun@1.2.21 && npm cache clean --force
 # The root broker holds run-scoped credentials outside a mount/PID/network
 # namespace. The complete provider and every tool run without capabilities as
-# openfloor-workspace. No setuid launcher is installed.
-RUN apt-get update -qq && apt-get install -y -qq bubblewrap ripgrep && rm -rf /var/lib/apt/lists/* && \
+# openfloor-workspace. Preview install/runtime use the same namespace; only a
+# root setup shell may raise loopback, then setpriv drops that capability.
+RUN apt-get update -qq && apt-get install -y -qq bubblewrap ripgrep iproute2 && rm -rf /var/lib/apt/lists/* && \
     groupadd --gid 10001 openfloor-shared && \
     useradd --create-home --uid 10002 --gid openfloor-shared openfloor-workspace && \
     chmod 0700 /home/openfloor-workspace
@@ -21,7 +24,10 @@ COPY --chmod=0444 scripts/openfloor-mcp.mjs /opt/openfloor/openfloor-mcp.mjs
 COPY --chmod=0444 scripts/publish-bundle.mjs /opt/openfloor/publish-bundle.mjs
 COPY --chmod=0444 scripts/github-git-auth.mjs /opt/openfloor/github-git-auth.mjs
 COPY --chmod=0444 scripts/cleanup-branches.mjs /opt/openfloor/cleanup-branches.mjs
-COPY --chmod=0444 scripts/runtime-isolation-test.mjs scripts/runtime-provider-test.mjs /opt/openfloor/
+COPY --chmod=0444 scripts/repository-preview.mjs /opt/openfloor/repository-preview.mjs
+COPY --chmod=0444 scripts/preview-runtime.mjs /opt/openfloor/preview-runtime.mjs
+COPY --chmod=0444 scripts/preview-sandbox.mjs /opt/openfloor/preview-sandbox.mjs
+COPY --chmod=0444 scripts/runtime-isolation-test.mjs scripts/runtime-provider-test.mjs scripts/runtime-preview-test.mjs /opt/openfloor/
 COPY --chmod=0555 scripts/runtime-isolation-test.sh /opt/openfloor/runtime-isolation-test.sh
 
 COPY --chmod=0444 scripts/runtime-sandbox.mjs scripts/runtime-bridge.mjs scripts/runtime-broker.mjs scripts/read-run-artifact.mjs scripts/restore-session-store.py /opt/openfloor/

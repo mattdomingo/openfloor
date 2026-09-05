@@ -1,4 +1,4 @@
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { readFile, stat, unlink } from "node:fs/promises";
 import http from "node:http";
 import net from "node:net";
@@ -18,9 +18,6 @@ const script = process.argv[3];
 if (!(manager in COMMANDS) || !["dev", "start"].includes(script)) {
   throw new Error("Unsupported preview runtime selection.");
 }
-
-const loopback = spawnSync("ip", ["link", "set", "lo", "up"], { stdio: "inherit" });
-if (loopback.status !== 0) throw new Error("Preview loopback interface could not be enabled.");
 
 const reservedPorts = proxyPorts(process.env);
 let targetPort = null;
@@ -80,7 +77,7 @@ process.stdout.write("OPENFLOOR_PREVIEW_SOCKET_BOUND\n");
 await waitForRelayLock();
 
 const [command, args] = COMMANDS[manager](script);
-const app = spawn(seccompLauncher(), [command, ...args], {
+const app = spawn(command, args, {
   cwd: "/workspace/repository",
   stdio: "inherit",
   env: safeRuntimeEnvironment(),
@@ -102,12 +99,6 @@ async function waitForRelayLock() {
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   throw new Error("Preview relay directory was not locked.");
-}
-
-function seccompLauncher() {
-  const architecture = process.arch === "x64" ? "x64" : process.arch === "arm64" ? "arm64" : null;
-  if (!architecture) throw new Error("Preview runtime does not support this architecture.");
-  return `/opt/openfloor/node_modules/@anthropic-ai/sandbox-runtime/vendor/seccomp/${architecture}/apply-seccomp`;
 }
 
 async function discoverSingleHttpPort(child, excludedPorts) {

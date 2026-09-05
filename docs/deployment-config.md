@@ -66,7 +66,7 @@ entitlement reads and signed webhook reconciliation do not depend on this gate.
 
 Durable Object migration `v1` registers `SessionPresence`; `v2` registers `Sandbox`. Keep migration syntax compatible with the pinned Wrangler version.
 
-The Sandbox image is `cloudflare/sandbox:0.12.7` pinned to digest `sha256:6d741713aef266e8ae0831a5709c6f2d7b77b4952ac79b549f4f4e380af86fbe`; `@cloudflare/sandbox` stays pinned to `0.12.7`, and the pool key is `RUN_SANDBOX_IMAGE_VERSION = "v11"`. The image installs `undici@7.29.0` and the credential-free namespace broker/bridge/sandbox scripts; the old setuid launcher is not installed. Preview product code remains behind `REPOSITORY_PREVIEW_ENABLED=false`, but its container launch helpers are not in this image until that path is ported. Any image-content change must bump the pool version. A 10-minute cron and the daily retention cron sweep durable R2 cleanup intents; the 10-minute cron also expires preview leases and retries durable Sandbox cleanup intents.
+The Sandbox image is `cloudflare/sandbox:0.12.7` pinned to digest `sha256:6d741713aef266e8ae0831a5709c6f2d7b77b4952ac79b549f4f4e380af86fbe`; `@cloudflare/sandbox` stays pinned to `0.12.7`, and the pool key is `RUN_SANDBOX_IMAGE_VERSION = "v12"`. The image installs `undici@7.29.0`, pinned pnpm/Yarn/Bun, `iproute2`, the credential-free namespace broker/bridge/sandbox scripts, and the preview launcher. The old setuid launcher is not installed. Any image-content change must bump the pool version. A 10-minute cron and the daily retention cron sweep durable R2 cleanup intents; the 10-minute cron also expires preview leases and retries durable Sandbox cleanup intents.
 
 ### Required secrets
 

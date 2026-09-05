@@ -37,19 +37,23 @@ describe("repository preview autodetection", () => {
 
 describe("repository preview sandbox posture", () => {
   it("uses generation-scoped normalized sandbox IDs", () => {
-    expect(previewSandboxId()).toMatch(/^preview-v11-[0-9a-f]{32}$/);
+    expect(previewSandboxId()).toMatch(/^preview-v12-[0-9a-f]{32}$/);
   });
 
   it("isolates runtime network and relays only through a Unix socket", () => {
     const workflow = readFileSync(new URL("../../worker/preview-workflow.ts", import.meta.url), "utf8");
     const runtime = readFileSync(new URL("../../scripts/preview-runtime.mjs", import.meta.url), "utf8");
-    expect(workflow).toContain("openfloor-preview-exec");
-    expect(workflow).toContain("allowAllUnixSockets");
-    expect(workflow).toContain("openfloor-preview-bwrap");
-    expect(workflow).toContain("UNIX-CONNECT:${PREVIEW_SOCKET}");
-    expect(workflow).toContain("TCP-LISTEN:${RELAY_PORT}");
-    expect(runtime).toContain("apply-seccomp");
+    const launcher = readFileSync(new URL("../../scripts/preview-sandbox.mjs", import.meta.url), "utf8");
+    const sandbox = readFileSync(new URL("../../scripts/runtime-sandbox.mjs", import.meta.url), "utf8");
+    expect(workflow).toContain("preview-sandbox.mjs install");
+    expect(workflow).toContain("preview-sandbox.mjs run");
+    expect(workflow).toContain("http://127.0.0.1:${RELAY_PORT}/");
+    expect(launcher).toContain("createRegistryProxy");
+    expect(launcher).toContain("listen(RELAY_PORT");
+    expect(sandbox).toContain("ip link set lo up");
+    expect(sandbox).toContain("CAP_NET_ADMIN");
     expect(runtime).toContain("proxyPorts(process.env)");
+    expect(runtime).not.toContain("apply-seccomp");
     expect(runtime).not.toContain('process.env[name]');
     expect(runtime).not.toContain("NODE_OPTIONS");
     expect(runtime).toContain('HOME: "/tmp/openfloor/workspace-home"');

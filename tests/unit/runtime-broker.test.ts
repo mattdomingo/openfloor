@@ -1,6 +1,6 @@
 import http from "node:http";
 import { afterEach, describe, expect, it } from "vitest";
-import { brokerConfiguration, createBroker } from "../../scripts/runtime-broker.mjs";
+import { brokerConfiguration, createBroker, createRegistryProxy } from "../../scripts/runtime-broker.mjs";
 
 const servers: http.Server[] = [];
 afterEach(async () => { await Promise.all(servers.splice(0).map((server) => new Promise<void>((resolve) => { server.closeAllConnections(); server.close(() => resolve()); }))); });
@@ -142,5 +142,50 @@ describe("credential broker boundary", () => {
     const config = brokerConfiguration({ OPENFLOOR_MCP_SERVERS: JSON.stringify({ remote: { type: "sse", url: `${upstream}/sse` } }) });
     const broker = await listen(createBroker(config.routes));
     expect(await (await fetch(`${broker}/r/0`)).text()).toBe(frame);
+  });
+});
+
+describe("preview registry proxy", () => {
+  it("refuses ordinary HTTP and CONNECT to any host except the npm registry", async () => {
+    const proxy = await listen(createRegistryProxy());
+    expect((await fetch(proxy)).status).toBe(403);
+    const url = new URL(proxy);
+    const forbidden = await new Promise<number>((resolve) => {
+      const request = http.request({
+        host: url.hostname,
+        port: url.port,
+        method: "CONNECT",
+        path: "1.1.1.1:443",
+      });
+      request.on("connect", (response, socket) => {
+        socket.destroy();
+        resolve(response.statusCode ?? 200);
+      });
+      request.on("error", () => resolve(403));
+      request.on("response", (response) => resolve(response.statusCode ?? 0));
+      request.end();
+    });
+    expect(forbidden).toBeGreaterThanOrEqual(400);
+  });
+
+  it("refuses CONNECT on the ordinary run broker", async () => {
+    const broker = await listen(createBroker([]));
+    const url = new URL(broker);
+    const status = await new Promise<number>((resolve) => {
+      const request = http.request({
+        host: url.hostname,
+        port: url.port,
+        method: "CONNECT",
+        path: "registry.npmjs.org:443",
+      });
+      request.on("connect", (response, socket) => {
+        socket.destroy();
+        resolve(response.statusCode ?? 200);
+      });
+      request.on("error", () => resolve(403));
+      request.on("response", (response) => resolve(response.statusCode ?? 0));
+      request.end();
+    });
+    expect(status).toBeGreaterThanOrEqual(400);
   });
 });
