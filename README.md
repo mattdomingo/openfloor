@@ -143,3 +143,5 @@ Each environment expects `DB`, `SESSION_PRESENCE`, `REPOSITORY_PREFLIGHT`, `AGEN
 ## Project direction
 
 See [`AGENTS.md`](AGENTS.md) for the product vision, system architecture, engineering invariants, key decisions, and roadmap guidance.
+
+Runtime isolation and provider acceptance are documented in [the Josh beta runtime boundary](docs/josh-beta-runtime-isolation.md). The exact Sandbox image gate covers complete provider/tool containment and must pass before handoff.

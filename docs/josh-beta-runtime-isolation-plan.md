@@ -3,7 +3,15 @@
 Reviewed 2026-09-04 against `main` at `af50201`. Source: the user-approved
 `docs/josh-beta-2026-09-04-codex-implementation-brief.md`, not the interview PDF.
 
-## Outcome
+## Implementation follow-up (2026-09-05)
+
+The review below is retained as historical evidence against `af50201`. Its
+plan-only outcome is superseded by the implementation and acceptance contract
+in [`josh-beta-runtime-isolation.md`](josh-beta-runtime-isolation.md). The new
+boundary contains the whole provider and every tool, reuses the separate
+publisher, and separates post-agent Git from credential-bearing artifact upload.
+
+## Original review outcome
 
 SEC-01 is not complete. The repository already separates the final publisher
 from agent execution, but that does not isolate every operation performed after

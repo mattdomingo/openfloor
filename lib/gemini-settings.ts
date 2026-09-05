@@ -34,11 +34,8 @@ export type GeminiSystemSettingsInput = {
   mcpServerPath: string;
   conflictInputUrl?: string;
   conflictInputToken?: string;
-  // Reply-run only. Excludes the file-editing tools on top of the srt
-  // filesystem restriction in buildGeminiSrtSettings below — belt-and-braces,
-  // same shape as the Claude runner's narrowed tool list. The real
-  // enforcement is srt's allowWrite, since run_shell_command can write files
-  // without going through these named tools at all.
+  // Reply runs exclude editing tools; the outer read-only repository mount
+  // enforces the same restriction for shell and native file operations.
   readOnly?: boolean;
 };
 
@@ -67,42 +64,6 @@ export function buildGeminiSystemSettings(input: GeminiSystemSettingsInput): str
           },
         },
       },
-    },
-    null,
-    2,
-  )}\n`;
-}
-
-// Root-owned srt settings for repository-controlled commands. Provider runner
-// and CLI stay outside srt as openfloor-provider so model traffic works; the
-// child-process preload sends every model-selected command through the
-// openfloor-workspace launcher and this no-network policy.
-export type GeminiSrtSettingsInput = {
-  gatewayHost: string;
-  workspace: string;
-  // Reply-run only: drops the workspace from allowWrite so run_shell_command
-  // (which bypasses the named-tool exclusion in buildGeminiSystemSettings
-  // above) is denied at the OS level, not just the CLI's own tool list.
-  readOnly?: boolean;
-};
-
-export function buildGeminiSrtSettings(input: GeminiSrtSettingsInput): string {
-  return `${JSON.stringify(
-    {
-      network: {
-        allowedDomains: [],
-        deniedDomains: [],
-        allowUnixSockets: [],
-      },
-      filesystem: {
-        denyRead: [],
-        // The workspace and the per-run scratch tree (result.json, prompt,
-        // the agent HOME with its settings and CLI state) — except the
-        // workspace itself is excluded for a read-only reply run.
-        allowWrite: input.readOnly ? ["/tmp"] : [input.workspace, "/tmp"],
-        denyWrite: [],
-      },
-      bwrapPath: "/opt/openfloor/openfloor-workspace-bwrap",
     },
     null,
     2,

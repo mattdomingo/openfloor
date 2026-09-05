@@ -5,7 +5,7 @@ import { createInterface } from "node:readline";
 // The Qwen Code runner: serves both the qwen (Alibaba Cloud) and deepseek
 // providers — the pinned CLI speaks OpenAI chat completions, and the only
 // per-provider difference is which gateway OPENFLOOR_QWEN_BASE_URL names.
-// Structurally the Gemini runner (same srt-wrapped, non-root posture), but
+// Structurally the Gemini runner (same outer namespace), but
 // the CLI's stream-json vocabulary is Claude-Code-shaped rather than
 // gemini-cli's, so the normalizer below is its own (Spike Q1, 2026-08-28).
 //
@@ -125,10 +125,8 @@ const prompt = await readFile(promptPath, "utf8");
 // The CLI reads its posture from the SYSTEM-scope settings file the workflow
 // wrote (auth pinning, folder trust off, tool denies, the openfloor MCP
 // bridge, telemetry/usage-stats/memory kill switches) — see
-// lib/qwen-settings.ts. OPENAI_API_KEY carries the run-scoped gateway JWT;
-// OPENAI_BASE_URL points model traffic at the openfloor gateway. The child-
-// process preload routes model-selected commands across the workspace uid/srt
-// boundary.
+// lib/qwen-settings.ts. OPENAI_API_KEY is a placeholder and OPENAI_BASE_URL
+// names the local broker. The complete CLI and tools share one namespace.
 function spawnCli(resumeId) {
   return spawn(
     qwenBin,
@@ -138,7 +136,6 @@ function spawnCli(resumeId) {
       env: {
         PATH: process.env.PATH ?? "",
         HOME: process.env.HOME ?? "",
-        NODE_OPTIONS: "--import file:///opt/openfloor/runner-env-preload.mjs",
         OPENAI_API_KEY: gatewayToken,
         OPENAI_BASE_URL: gatewayUrl,
         QWEN_CODE_SUPPRESS_YOLO_WARNING: "1",

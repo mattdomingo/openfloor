@@ -881,7 +881,9 @@ Agent runtime posture is also tightened: Codex receives only an explicit safe SD
 
 **Consequences:** CI builds the exact Sandbox image and runs `/opt/openfloor/runtime-isolation-test.sh`, which adversarially verifies helper ownership/mode, credential-free workspace environments, inaccessible provider `/proc` environment/memory/file descriptors and home, clean readable process metadata, the Codex-shell and Claude-bubblewrap identity seams, workspace refusal at the raw bubblewrap seam, forged-uid refusal, and `no_new_privs` on the final command. Image-content changes must bump `RUN_SANDBOX_IMAGE_VERSION`. Provider and workspace state are removed between pooled runs. Production `AGENT_RUN_ENABLED` remains false: merging this code, deploying the image, or configuring credentials does not authorize execution. After image deployment, every enabled provider must pass disposable-repository acceptance for model calls, streaming, shell and file tools, built-in MCP, cancellation, required checks, publication/integration, and thread resume; enabling the global gate requires a separate authorized change.
 
-**Partial supersession (2026-09-01):** The image deployed successfully and the separately authorized beta rollout below enables the global gate. The identity boundary and adversarial-test requirements remain current.
+**Partial supersession (2026-09-01):** The image deployed successfully and the separately authorized beta rollout below enables the global gate.
+
+**Partial supersession (2026-09-05):** "Isolate complete provider execution and artifact transfer" replaces this shell-only launcher mechanism. The adversarial-test, scoped-credential, explicit-rollout, and stale-image prevention requirements remain current.
 
 ### 2026-09-01 — Enable production early-access enforcement
 
@@ -974,8 +976,18 @@ Agent runtime posture is also tightened: Codex receives only an explicit safe SD
 
 ### 2026-09-04 — Record SEC-01 gaps before changing runtime architecture
 
+**Status:** The plan-only delivery state is superseded by "Isolate complete provider execution and artifact transfer" (2026-09-05). The original findings remain historical evidence.
+
 **Decision:** Keep the Josh beta security work separate from application fixes and deliver a boundary review and migration plan before changing execution architecture. The existing shell uid isolation and separate publisher remain required but are not proof of complete containment. `docs/josh-beta-runtime-isolation-plan.md` records the current flow, a synthetic hostile-Git-filter reproduction, native file-tool proof gaps, and proposed migration/acceptance steps.
 
 **Rationale:** The interview's single-container description predates some existing controls. Replacing the publisher again would miss trusted post-run Git over agent-writable metadata and provider-native file operations. The brief explicitly requires a plan-first stop when a safe incremental implementation is not established.
 
 **Consequences:** SEC-01 remains open; this documentation does not change runtime behavior, rollout flags, network/package policy, or production state. Future work must prove the complete provider/tool and artifact boundary and preserve cancellation, exact-SHA publication, history, and rollback safety. This qualifies the scope of the 2026-08-31 shell-isolation decision without superseding its required controls.
+
+## 2026-09-05: Isolate complete provider execution and artifact transfer
+
+**Decision:** Replace the shell-only setuid/srt boundary with a mandatory bubblewrap mount/PID/network namespace for the complete provider, native tools, child commands, and post-agent Git. An outside root broker holds scoped gateway/MCP credentials and fixed destinations; the namespace receives local URLs and placeholders. Keep the existing separate trusted publisher. Upload only bounded nofollow regular artifacts after all execution descendants stop, and restore only bounded link-free transcript files. Executor generation becomes `v11`, publisher `v4`.
+
+**Rationale:** Native file tools could read the credential-bearing provider environment, and trusted post-agent Git could execute agent-authored filters. Containing complete execution removes both seams without another publishing service or permissive package/network policy.
+
+**Consequences:** This supersedes the shell-launcher mechanism of the 2026-08-31 isolation decision and the plan-only delivery state of the 2026-09-04 Josh review; their findings and historical rollout facts remain. No rollout flags or external state change here. Exact-image adversarial tests and provider startup are required, followed by the documented live-provider acceptance before rollout. Cancellation allows bounded transcript flush, then destroys remaining namespace descendants. The shared kernel remains a residual boundary; this is not a VM. Reverting must disable new execution before returning to a weaker runtime, and every image-content change must use a new generation.

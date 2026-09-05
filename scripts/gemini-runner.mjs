@@ -110,9 +110,8 @@ const prompt = await readFile(promptPath, "utf8");
 // The CLI reads its posture from the SYSTEM-scope settings file the workflow
 // wrote (auth pinning, folder trust off, tool excludes, the openfloor MCP
 // bridge, telemetry/update kill switches) — see lib/gemini-settings.ts.
-// GEMINI_API_KEY carries the run-scoped gateway JWT; GOOGLE_GEMINI_BASE_URL
-// points model traffic at the openfloor gateway. The child-process preload
-// routes model-selected commands across the workspace uid/srt boundary.
+// GEMINI_API_KEY is a placeholder; the local broker supplies the real token
+// outside the namespace containing this CLI and all of its tools.
 const child = spawn(
   "/opt/openfloor/node_modules/.bin/gemini",
   ["-p", prompt, "--output-format", "stream-json", "--approval-mode", "yolo", "-m", model],
@@ -121,7 +120,6 @@ const child = spawn(
     env: {
       PATH: process.env.PATH ?? "",
       HOME: process.env.HOME ?? "",
-      NODE_OPTIONS: "--import file:///opt/openfloor/gemini-proxy-preload.mjs --import file:///opt/openfloor/runner-env-preload.mjs",
       GEMINI_API_KEY: gatewayToken,
       GOOGLE_GEMINI_BASE_URL: gatewayUrl,
       ...(systemSettingsPath ? { GEMINI_CLI_SYSTEM_SETTINGS_PATH: systemSettingsPath } : {}),
