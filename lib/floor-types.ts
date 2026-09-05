@@ -353,6 +353,8 @@ export type ReviewContributionFile = {
   diff?: Array<{ type: "context" | "add" | "remove"; text: string }>;
 };
 
+export type CandidateFileRemovalStatus = "requested" | "running" | "completed" | "failed";
+
 export type ReviewContribution = {
   runId: string;
   queueItemId: string;
@@ -364,6 +366,7 @@ export type ReviewContribution = {
   integratedAt: number;
   rollbackStatus: AgentRunRollbackStatus | null;
   rollbackFailureReason: string | null;
+  hasRemovedFiles: boolean;
   canRollback: boolean;
 };
 
@@ -399,11 +402,15 @@ export type FloorReviewSnapshot = {
   files: Array<{
     id: string;
     path: string;
+    previousPath: string | null;
+    changeKind: AgentRunFile["changeKind"];
     contributors: ReviewContributor[];
     additions: number;
     deletions: number;
     summary: string | null;
     diff: Array<{ type: "context" | "add" | "remove"; text: string }>;
+    removalStatus: CandidateFileRemovalStatus | null;
+    removalFailureReason: string | null;
   }>;
   checks: Array<{ id: string; name: string; detail: string | null; state: "passed" | "waiting" | "failed" }>;
   warnings: Array<{ id: string; title: string; detail: string; severity: "conflict" | "warning" }>;

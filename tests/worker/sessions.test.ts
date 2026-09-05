@@ -105,6 +105,12 @@ import {
   removeUserGitHubInstallation,
 } from "@/db/github-installations";
 import { getReviewContribution, listReviewContributions, resolveReviewRollbackImpact } from "@/db/review-contributions";
+import {
+  beginCandidateFileRemoval,
+  createCandidateFileRemoval,
+  failCandidateFileRemoval,
+  finishCandidateFileRemoval,
+} from "@/db/file-removals";
 
 function identity(id: string, name: string) {
   return { providerUserId: `chatgpt-${id}`, email: `${id}@example.com`, displayName: name, fullName: name };
@@ -1152,7 +1158,7 @@ describe("D1 session persistence", () => {
       number: 7, nodeId: "PR_7", url: "https://github.com/openfloor-test/run/pull/7", state: "open", draft: false,
       merged: false, mergeable: true, mergeableState: "clean", headRef: branch, headSha: integratedSha,
       baseRef: "main", baseSha: "d".repeat(40), mergeCommitSha: null, checksPassing: true,
-      files: [{ path: "src/change.ts", additions: 1, deletions: 0, changeKind: "add", patchPreview: "+export const changed = true;" }],
+      files: [{ path: "src/change.ts", previousPath: null, additions: 1, deletions: 0, changeKind: "add", patchPreview: "+export const changed = true;" }],
       checks: [{ sourceId: "check:1", name: "CI", detail: "success", state: "passed" }],
     }, env.DB);
     await markCandidateReviewReady(created.session.id, candidateId, owner.id, env.DB);
@@ -1190,6 +1196,150 @@ describe("D1 session persistence", () => {
     const nextCandidateId = crypto.randomUUID();
     await expect(reserveRepositoryCandidate(created.session.id, owner.id, saved!.id, nextCandidateId,
       "Next candidate", "Next objective", `openfloor/${created.session.id.slice(0, 8)}/candidate/${nextCandidateId.slice(0, 8)}`, "main", squashSha, env.DB)).resolves.toBe(true);
+  });
+
+  it("removes one reviewed file under the candidate lease and preserves later attribution", async () => {
+    const owner = await upsertUser(identity("file-removal-owner", "Removal Owner"), env.DB);
+    const engineer = await upsertUser(identity("file-removal-engineer", "Removal Engineer"), env.DB);
+    const outsider = await upsertUser(identity("file-removal-outsider", "Removal Outsider"), env.DB);
+    const created = await createSession(owner.id, { title: "File removal room", objective: "Review files independently" }, env.DB);
+    await acceptInvite(created.inviteId, engineer.id, env.DB);
+    const saved = await saveRepositoryConnection(created.session.id, owner.id, null, "installation-file-removal", {
+      id: "repository-file-removal", nodeId: "R_file_removal", owner: "openfloor-test", name: "file-removal",
+      fullName: "openfloor-test/file-removal", private: true, defaultBranch: "main",
+    }, "main", env.DB);
+    const candidateId = crypto.randomUUID();
+    const baseSha = "a".repeat(40);
+    const integratedSha = "b".repeat(40);
+    const branch = `openfloor/${created.session.id.slice(0, 8)}/candidate/${candidateId.slice(0, 8)}`;
+    await reserveRepositoryCandidate(created.session.id, owner.id, saved!.id, candidateId, "File removal room", "", branch, "main", baseSha, env.DB);
+    await activateRepositoryCandidate(created.session.id, candidateId, baseSha, env.DB);
+    const parsed = parseAgentInput({ name: "Removal Builder", role: "Engineer", task: "Change two files", ownerUserId: owner.id });
+    if (!parsed) throw new Error("Invalid file-removal agent fixture");
+    let floor = await createFloorAgent(created.session.id, owner.id, parsed, env.DB);
+    const agentId = floor!.agents[0].id;
+    floor = await createFloorQueueItem(created.session.id, engineer.id, { prompt: "Rename the reviewed module", agentId }, env.DB);
+    const firstItem = floor!.queue.find((item) => item.prompts[0]?.text === "Rename the reviewed module")!;
+    const firstRun = await createAgentRun(created.session.id, firstItem.id, owner.id, "task", env.DB);
+    const integratedAt = Date.now() - 10_000;
+    await env.DB.batch([
+      env.DB.prepare(
+        `UPDATE agent_runs SET status = 'integrated', integrated_candidate_sha = ?, integrated_at = ?, completed_at = ?, updated_at = ? WHERE id = ?`,
+      ).bind(integratedSha, integratedAt, integratedAt, integratedAt, firstRun.id),
+      env.DB.prepare("UPDATE floor_queue_items SET status = 'completed', updated_at = ? WHERE id = ?")
+        .bind(integratedAt, firstItem.id),
+      env.DB.prepare(
+        `UPDATE repository_candidates SET candidate_sha = ?, remote_candidate_sha = ?, pull_request_number = 17,
+                pull_request_node_id = 'PR_file_removal', pull_request_url = 'https://github.com/openfloor-test/file-removal/pull/17',
+                pull_request_state = 'open', pull_request_draft = 1, updated_at = ? WHERE id = ?`,
+      ).bind(integratedSha, integratedSha, integratedAt, candidateId),
+      env.DB.prepare(
+        `INSERT INTO agent_run_files (id, run_id, path, change_kind, additions, deletions, summary, diff_preview, created_at)
+         VALUES (?, ?, 'src/new-name.ts', 'update', 2, 1, 'Renamed module', '+renamed', ?)`,
+      ).bind(crypto.randomUUID(), firstRun.id, integratedAt),
+      env.DB.prepare(
+        `INSERT INTO agent_run_files (id, run_id, path, change_kind, additions, deletions, summary, diff_preview, created_at)
+         VALUES (?, ?, 'src/other.ts', 'update', 1, 1, 'Other edit', '+other', ?)`,
+      ).bind(crypto.randomUUID(), firstRun.id, integratedAt),
+      env.DB.prepare(
+        `INSERT INTO repository_candidate_files
+         (id, candidate_id, path, previous_path, additions, deletions, change_kind, patch_preview)
+         VALUES (?, ?, 'src/new-name.ts', 'src/old-name.ts', 2, 1, 'update', '+renamed')`,
+      ).bind(crypto.randomUUID(), candidateId),
+      env.DB.prepare(
+        `INSERT INTO repository_candidate_files
+         (id, candidate_id, path, previous_path, additions, deletions, change_kind, patch_preview)
+         VALUES (?, ?, 'src/other.ts', NULL, 1, 1, 'update', '+other')`,
+      ).bind(crypto.randomUUID(), candidateId),
+    ]);
+
+    await expect(createCandidateFileRemoval(created.session.id, engineer.id, {
+      path: "src/new-name.ts", expectedCandidateSha: integratedSha,
+    }, env.DB)).resolves.toBeNull();
+    await expect(createCandidateFileRemoval(created.session.id, outsider.id, {
+      path: "src/new-name.ts", expectedCandidateSha: integratedSha,
+    }, env.DB)).resolves.toBeNull();
+    await expect(createCandidateFileRemoval(created.session.id, owner.id, {
+      path: "src/new-name.ts", expectedCandidateSha: "c".repeat(40),
+    }, env.DB)).rejects.toThrow("Synchronize the unchanged candidate");
+
+    const failed = await createCandidateFileRemoval(created.session.id, owner.id, {
+      path: "src/other.ts", expectedCandidateSha: integratedSha,
+    }, env.DB);
+    expect(failed).not.toBeNull();
+    expect((await getFloorSnapshot(created.session.id, owner.id, env.DB))?.activeCandidate?.integrationRunId).toBe(failed!.removalId);
+    await env.DB.prepare("UPDATE repository_candidates SET remote_base_sha = ? WHERE id = ?")
+      .bind("d".repeat(40), candidateId).run();
+    await expect(beginCandidateFileRemoval(failed!.removalId, env.DB)).rejects.toThrow("no longer available");
+    await failCandidateFileRemoval(failed!.removalId, "Base moved before removal", env.DB);
+    expect((await getFloorSnapshot(created.session.id, owner.id, env.DB))?.activeCandidate?.integrationRunId).toBeNull();
+    await env.DB.prepare("UPDATE repository_candidates SET remote_base_sha = ? WHERE id = ?").bind(baseSha, candidateId).run();
+
+    const createdRemoval = await createCandidateFileRemoval(created.session.id, owner.id, {
+      path: "src/new-name.ts", expectedCandidateSha: integratedSha,
+    }, env.DB);
+    const context = await beginCandidateFileRemoval(createdRemoval!.removalId, env.DB);
+    expect(context).toEqual(expect.objectContaining({
+      path: "src/new-name.ts", previousPath: "src/old-name.ts", baseSha, status: "running",
+    }));
+    const runningFloor = await getFloorSnapshot(created.session.id, owner.id, env.DB);
+    expect(runningFloor?.review?.files.find((file) => file.path === "src/new-name.ts")?.removalStatus).toBe("running");
+    expect(runningFloor?.activeCandidate?.integrationRunId).toBe(createdRemoval!.removalId);
+
+    const removalSha = "e".repeat(40);
+    const completed = await finishCandidateFileRemoval(createdRemoval!.removalId, removalSha, env.DB);
+    const completedFloor = await getFloorSnapshot(created.session.id, owner.id, env.DB);
+    expect(completedFloor?.activeCandidate).toEqual(expect.objectContaining({ candidateSha: removalSha, integrationRunId: null }));
+    expect(completedFloor?.review?.files.map((file) => file.path)).toEqual(["src/other.ts"]);
+    expect(completedFloor?.queue.find((item) => item.id === firstItem.id)?.rollback?.canStart).toBe(false);
+    const active = await listReviewContributions(created.session.id, owner.id, { status: "active" }, env.DB);
+    expect(active?.items).toEqual([expect.objectContaining({ runId: firstRun.id, hasRemovedFiles: true, canRollback: false })]);
+    expect((await listReviewContributions(created.session.id, owner.id, { status: "active", path: "src/new-name.ts" }, env.DB))?.items).toEqual([]);
+    await expect(resolveReviewRollbackImpact(created.session.id, owner.id, "prompt", firstRun.id, env.DB)).resolves.toBeNull();
+    await expect(createAgentRunRollback(created.session.id, firstRun.id, owner.id, env.DB))
+      .rejects.toThrow("file removed separately");
+    expect(await finishCandidateFileRemoval(createdRemoval!.removalId, removalSha, env.DB)).toEqual(completed);
+
+    const attempts = await env.DB.prepare(
+      `SELECT path, previous_path AS previousPath, status, failure_reason AS failureReason, removal_commit_sha AS removalCommitSha
+       FROM candidate_file_removals WHERE candidate_id = ? ORDER BY created_at, id`,
+    ).bind(candidateId).all<{ path: string; previousPath: string | null; status: string; failureReason: string | null; removalCommitSha: string | null }>();
+    expect(attempts.results).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: "src/other.ts", status: "failed", failureReason: "Base moved before removal" }),
+      expect.objectContaining({ path: "src/new-name.ts", previousPath: "src/old-name.ts", status: "completed", removalCommitSha: removalSha }),
+    ]));
+
+    floor = await createFloorQueueItem(created.session.id, owner.id, { prompt: "Change the renamed path again", agentId }, env.DB);
+    const secondItem = floor!.queue.find((item) => item.prompts[0]?.text === "Change the renamed path again")!;
+    const secondRun = await createAgentRun(created.session.id, secondItem.id, owner.id, "task", env.DB);
+    const removalCompletedAt = await env.DB.prepare("SELECT completed_at AS completedAt FROM candidate_file_removals WHERE id = ?")
+      .bind(createdRemoval!.removalId).first<{ completedAt: number }>();
+    const laterAt = Number(removalCompletedAt!.completedAt) + 10;
+    const laterSha = "f".repeat(40);
+    await env.DB.batch([
+      env.DB.prepare(
+        `UPDATE agent_runs SET status = 'integrated', integrated_candidate_sha = ?, integrated_at = ?, completed_at = ?, updated_at = ? WHERE id = ?`,
+      ).bind(laterSha, laterAt, laterAt, laterAt, secondRun.id),
+      env.DB.prepare("UPDATE floor_queue_items SET status = 'completed', updated_at = ? WHERE id = ?").bind(laterAt, secondItem.id),
+      env.DB.prepare("UPDATE repository_candidates SET candidate_sha = ?, remote_candidate_sha = ?, updated_at = ? WHERE id = ?")
+        .bind(laterSha, laterSha, laterAt, candidateId),
+      env.DB.prepare(
+        `INSERT INTO agent_run_files (id, run_id, path, change_kind, additions, deletions, summary, diff_preview, created_at)
+         VALUES (?, ?, 'src/new-name.ts', 'update', 1, 0, 'Later edit', '+later', ?)`,
+      ).bind(crypto.randomUUID(), secondRun.id, laterAt),
+      env.DB.prepare(
+        `INSERT INTO repository_candidate_files
+         (id, candidate_id, path, previous_path, additions, deletions, change_kind, patch_preview)
+         VALUES (?, ?, 'src/new-name.ts', NULL, 1, 0, 'update', '+later')`,
+      ).bind(crypto.randomUUID(), candidateId),
+    ]);
+    const later = await listReviewContributions(created.session.id, owner.id, { status: "active", path: "src/new-name.ts" }, env.DB);
+    expect(later?.items).toEqual([expect.objectContaining({ runId: secondRun.id, hasRemovedFiles: false, canRollback: true })]);
+    const finalFloor = await getFloorSnapshot(created.session.id, owner.id, env.DB);
+    expect(finalFloor?.review?.files.find((file) => file.path === "src/new-name.ts")).toEqual(expect.objectContaining({
+      removalStatus: null,
+      contributors: [expect.objectContaining({ requestedBy: [expect.objectContaining({ userId: owner.id })] })],
+    }));
   });
 
   it("provides review sync context for active members (owner and regular member)", async () => {

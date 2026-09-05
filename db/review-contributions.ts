@@ -24,6 +24,7 @@ type ContributionRow = {
   integratedAt: number;
   rollbackStatus: AgentRunRollbackStatus | null;
   rollbackFailureReason: string | null;
+  hasRemovedFiles: number;
 };
 
 type CandidateContext = {
@@ -112,9 +113,11 @@ async function hydrateContribution(
   return {
     ...row,
     integratedAt: Number(row.integratedAt),
+    hasRemovedFiles: Boolean(row.hasRemovedFiles),
     prompts,
     files,
     canRollback: (row.rollbackStatus == null || row.rollbackStatus === "failed") &&
+      !Boolean(row.hasRemovedFiles) &&
       (owner || row.agentOwnerUserId === userId || authoredEveryPrompt),
   };
 }
@@ -123,7 +126,14 @@ function contributionSelect(where: string): string {
   return `SELECT r.id AS runId, r.queue_item_id AS queueItemId, r.agent_id AS agentId,
                  a.name AS agentName, a.owner_user_id AS agentOwnerUserId,
                  r.integrated_at AS integratedAt,
-                 latest.status AS rollbackStatus, latest.failure_reason AS rollbackFailureReason
+                 latest.status AS rollbackStatus, latest.failure_reason AS rollbackFailureReason,
+                 EXISTS (
+                   SELECT 1 FROM agent_run_files removed_file
+                   JOIN candidate_file_removals removal
+                     ON removal.candidate_id = r.candidate_id AND removal.path = removed_file.path
+                    AND removal.status = 'completed' AND removal.completed_at >= r.integrated_at
+                   WHERE removed_file.run_id = r.id
+                 ) AS hasRemovedFiles
           FROM agent_runs r JOIN floor_agents a ON a.id = r.agent_id
           LEFT JOIN agent_run_rollbacks latest ON latest.id = (
             SELECT attempt.id FROM agent_run_rollbacks attempt
@@ -136,14 +146,28 @@ async function contributionFacets(candidateId: string, database: D1DatabaseLike)
   engineers: ReviewContributorFacet[];
   agents: ReviewContributorFacet[];
 }> {
+  const activeFileForRun = `EXISTS (
+    SELECT 1 FROM agent_run_files active_file WHERE active_file.run_id = r.id
+      AND NOT EXISTS (
+        SELECT 1 FROM candidate_file_removals removal
+        WHERE removal.candidate_id = r.candidate_id AND removal.path = active_file.path
+          AND removal.status = 'completed' AND removal.completed_at >= r.integrated_at
+      )
+  )`;
   const active = `r.candidate_id = ? AND r.status = 'integrated' AND r.kind IS NULL
-    AND NOT EXISTS (SELECT 1 FROM agent_run_rollbacks done WHERE done.run_id = r.id AND done.status = 'completed')`;
+    AND NOT EXISTS (SELECT 1 FROM agent_run_rollbacks done WHERE done.run_id = r.id AND done.status = 'completed')
+    AND ${activeFileForRun}`;
+  const activeFileJoin = `f.run_id = r.id AND NOT EXISTS (
+    SELECT 1 FROM candidate_file_removals removal
+    WHERE removal.candidate_id = r.candidate_id AND removal.path = f.path
+      AND removal.status = 'completed' AND removal.completed_at >= r.integrated_at
+  )`;
   const [engineers, agents] = await Promise.all([
     database.prepare(
       `SELECT p.author_user_id AS id, u.display_name AS name,
               COUNT(DISTINCT r.id) AS activePromptGroups, COUNT(DISTINCT f.path) AS activeFiles
        FROM agent_runs r JOIN floor_queue_prompts p ON p.queue_item_id = r.queue_item_id
-       JOIN users u ON u.id = p.author_user_id LEFT JOIN agent_run_files f ON f.run_id = r.id
+       JOIN users u ON u.id = p.author_user_id LEFT JOIN agent_run_files f ON ${activeFileJoin}
        WHERE ${active} GROUP BY p.author_user_id, u.display_name
        ORDER BY lower(u.display_name), p.author_user_id`,
     ).bind(candidateId).all<ReviewContributorFacet>(),
@@ -151,7 +175,7 @@ async function contributionFacets(candidateId: string, database: D1DatabaseLike)
       `SELECT r.agent_id AS id, a.name,
               COUNT(DISTINCT r.id) AS activePromptGroups, COUNT(DISTINCT f.path) AS activeFiles
        FROM agent_runs r JOIN floor_agents a ON a.id = r.agent_id
-       LEFT JOIN agent_run_files f ON f.run_id = r.id
+       LEFT JOIN agent_run_files f ON ${activeFileJoin}
        WHERE ${active} GROUP BY r.agent_id, a.name ORDER BY lower(a.name), r.agent_id`,
     ).bind(candidateId).all<ReviewContributorFacet>(),
   ]);
@@ -183,9 +207,24 @@ export async function listReviewContributions(
     clauses.push("EXISTS (SELECT 1 FROM agent_run_rollbacks done WHERE done.run_id = r.id AND done.status = 'completed')");
   } else {
     clauses.push("NOT EXISTS (SELECT 1 FROM agent_run_rollbacks done WHERE done.run_id = r.id AND done.status = 'completed')");
+    clauses.push(`EXISTS (
+      SELECT 1 FROM agent_run_files active_file WHERE active_file.run_id = r.id
+        AND NOT EXISTS (
+          SELECT 1 FROM candidate_file_removals removal
+          WHERE removal.candidate_id = r.candidate_id AND removal.path = active_file.path
+            AND removal.status = 'completed' AND removal.completed_at >= r.integrated_at
+        )
+    )`);
   }
   if (filters.path) {
-    clauses.push("EXISTS (SELECT 1 FROM agent_run_files file_filter WHERE file_filter.run_id = r.id AND file_filter.path = ?)");
+    clauses.push(`EXISTS (
+      SELECT 1 FROM agent_run_files file_filter WHERE file_filter.run_id = r.id AND file_filter.path = ?
+        AND NOT EXISTS (
+          SELECT 1 FROM candidate_file_removals removal
+          WHERE removal.candidate_id = r.candidate_id AND removal.path = file_filter.path
+            AND removal.status = 'completed' AND removal.completed_at >= r.integrated_at
+        )
+    )`);
     values.push(filters.path);
   }
   if (filters.engineerId) {
@@ -236,7 +275,15 @@ export async function getReviewContribution(
 async function activeContributionRows(candidateId: string, database: D1DatabaseLike): Promise<ContributionRow[]> {
   const result = await database.prepare(
     `${contributionSelect(`r.candidate_id = ? AND r.status = 'integrated' AND r.kind IS NULL
-       AND NOT EXISTS (SELECT 1 FROM agent_run_rollbacks done WHERE done.run_id = r.id AND done.status = 'completed')`)}
+       AND NOT EXISTS (SELECT 1 FROM agent_run_rollbacks done WHERE done.run_id = r.id AND done.status = 'completed')
+       AND EXISTS (
+         SELECT 1 FROM agent_run_files active_file WHERE active_file.run_id = r.id
+           AND NOT EXISTS (
+             SELECT 1 FROM candidate_file_removals removal
+             WHERE removal.candidate_id = r.candidate_id AND removal.path = active_file.path
+               AND removal.status = 'completed' AND removal.completed_at >= r.integrated_at
+           )
+       )`)}
      ORDER BY r.integrated_at DESC, r.id DESC`,
   ).bind(candidateId).all<ContributionRow>();
   return result.results;
@@ -261,16 +308,20 @@ export async function resolveReviewRollbackImpact(
       ? rows.filter((row) => row.agentId === subjectId)
       : rows;
   const hydrated = await Promise.all(matchingRows.map((row) => hydrateContribution(row, userId, role === "owner", false, database)));
-  let targets: ReviewContribution[] = [];
+  const targets: ReviewContribution[] = [];
   const excluded: ReviewRollbackImpact["excluded"] = [];
   if (scope === "engineer") {
     for (const contribution of hydrated) {
       if (!contribution.prompts.some((prompt) => prompt.authorUserId === subjectId)) continue;
-      if (contribution.prompts.every((prompt) => prompt.authorUserId === subjectId)) targets.push(contribution);
+      if (contribution.hasRemovedFiles) excluded.push({ ...contribution, exclusionReason: "Contains a file removed separately" });
+      else if (contribution.prompts.every((prompt) => prompt.authorUserId === subjectId)) targets.push(contribution);
       else excluded.push({ ...contribution, exclusionReason: "Merged with prompts from another engineer" });
     }
   } else {
-    targets = hydrated;
+    for (const contribution of hydrated) {
+      if (contribution.hasRemovedFiles) excluded.push({ ...contribution, exclusionReason: "Contains a file removed separately" });
+      else targets.push(contribution);
+    }
   }
   if (scope === "prompt" && (!targets[0] || !targets[0].canRollback)) return null;
   if (targets.length === 0) throw new AgentRunConflictError("No active integrated changes match this rollback");

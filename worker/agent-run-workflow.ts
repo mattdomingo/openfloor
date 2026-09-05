@@ -72,6 +72,12 @@ import {
 import { githubGitAuthorization } from "../lib/github-git-auth";
 import { rollbackSandboxIds } from "../lib/rollback-sandbox";
 import { ROLLBACK_PREPARE_COMMAND, ROLLBACK_PUBLISH_COMMAND, redactRollbackOutput } from "../lib/rollback-git";
+import { FILE_REMOVAL_PREPARE_COMMAND } from "../lib/file-removal-git";
+import {
+  beginCandidateFileRemoval,
+  failCandidateFileRemoval,
+  finishCandidateFileRemoval,
+} from "../db/file-removals";
 
 type R2BucketLike = {
   put(key: string, value: string | Uint8Array, options?: unknown): Promise<unknown>;
@@ -91,7 +97,8 @@ export interface AgentRunWorkflowEnv {
 type Params =
   | { runId: string; action?: "run" }
   | { runId: string; action: "rollback"; rollbackId: string }
-  | { runId: string; action: "rollback_group"; rollbackGroupId: string };
+  | { runId: string; action: "rollback_group"; rollbackGroupId: string }
+  | { action: "file_removal"; removalId: string };
 const MAX_LOG_BYTES = 500_000;
 const MAX_DIFF_BYTES = 2_000_000;
 const MAX_FILES = 100;
@@ -190,6 +197,9 @@ const MAX_SESSION_STORE_BYTES = 8 * 1024 * 1024;
 
 export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Params> {
   async run(event: Readonly<WorkflowEvent<Params>>, step: WorkflowStep): Promise<{ status: string }> {
+    if (event.payload.action === "file_removal") {
+      return this.removeFile(event.payload.removalId, step);
+    }
     const runId = event.payload.runId;
     if (event.payload.action === "rollback") {
       return this.rollback(runId, event.payload.rollbackId, step);
@@ -956,6 +966,151 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
       await recordRunArtifact(runId, "session_store", key, "application/gzip", size, this.env.DB);
     } catch {
       // Best-effort by contract; see the method comment.
+    }
+  }
+
+  private async removeFile(removalId: string, step: WorkflowStep): Promise<{ status: string }> {
+    let sandbox: ReturnType<typeof getSandbox<Sandbox>> | null = null;
+    let publisher: ReturnType<typeof getSandbox<Sandbox>> | null = null;
+    let pushedSha: string | null = null;
+    try {
+      const sandboxIds = rollbackSandboxIds(removalId);
+      const removalSandbox = getSandbox(this.env.SANDBOX, sandboxIds.executor, {
+        keepAlive: true,
+        enableDefaultSession: false,
+        normalizeId: true,
+        labels: { purpose: "candidate-file-removal" },
+      });
+      const removalPublisher = getSandbox(this.env.SANDBOX, sandboxIds.publisher, {
+        keepAlive: true,
+        enableDefaultSession: false,
+        normalizeId: true,
+        labels: { purpose: "trusted-file-removal-publisher" },
+      });
+      sandbox = removalSandbox;
+      publisher = removalPublisher;
+      const context = await step.do("claim candidate file removal", async () =>
+        beginCandidateFileRemoval(removalId, this.env.DB));
+      const config = getGitHubAppConfig();
+      const repository: GitHubRepositoryOption = {
+        id: context.repositoryId,
+        nodeId: "file-removal-not-required",
+        owner: context.repositoryOwner,
+        name: context.repositoryName,
+        fullName: context.repositoryFullName,
+        private: context.repositoryPrivate,
+        defaultBranch: context.defaultBranch,
+      };
+      const prepareRemoval = async (targetSandbox: typeof removalSandbox) => {
+        const [observedCandidate, observedBase] = await Promise.all([
+          getRepositoryRefSha(config, context.installationId, repository, context.candidateBranch),
+          getRepositoryRefSha(config, context.installationId, repository, context.baseBranch),
+        ]);
+        if (observedCandidate !== context.expectedCandidateSha || observedBase !== context.baseSha) {
+          throw new NonRetryableError("The candidate or base changed before file removal preparation");
+        }
+        const token = await createInstallationToken(config, context.installationId, context.repositoryId);
+        const result = await targetSandbox.exec(FILE_REMOVAL_PREPARE_COMMAND, {
+          timeout: 8 * 60 * 1000,
+          env: {
+            OPENFLOOR_REPOSITORY_URL: `https://github.com/${context.repositoryOwner}/${context.repositoryName}.git`,
+            OPENFLOOR_GIT_AUTHORIZATION: githubGitAuthorization(token),
+            OPENFLOOR_EXPECTED_SHA: context.expectedCandidateSha,
+            OPENFLOOR_BASE_SHA: context.baseSha,
+            OPENFLOOR_FILE_PATH: context.path,
+            OPENFLOOR_PREVIOUS_FILE_PATH: context.previousPath ?? "",
+            OPENFLOOR_COMMIT_DATE: new Date(context.createdAt).toISOString(),
+            OPENFLOOR_COMMIT_MESSAGE: `Remove reviewed changes from ${context.path}`,
+          },
+        });
+        if (!result.success) {
+          const output = `${result.stdout}\n${result.stderr}`;
+          throw new NonRetryableError(/selected file no longer differs from base/i.test(output)
+            ? "The selected file no longer differs from the synchronized base"
+            : `The verified candidate could not remove this file's changes: ${redactRollbackOutput(output, token)}`);
+        }
+        const sha = result.stdout.trim().split(/\s+/).at(-1) ?? "";
+        if (!/^[0-9a-f]{40}$/.test(sha)) throw new NonRetryableError("File removal did not produce a valid commit");
+        return sha;
+      };
+      const removalSha = await step.do(
+        "prepare candidate file removal",
+        { retries: { limit: 2, delay: "5 seconds" }, timeout: "10 minutes" },
+        async () => prepareRemoval(removalSandbox),
+      );
+      const publisherSha = await step.do(
+        "reconstruct trusted file removal",
+        { retries: { limit: 2, delay: "5 seconds" }, timeout: "10 minutes" },
+        async () => prepareRemoval(removalPublisher),
+      );
+      if (publisherSha !== removalSha) throw new NonRetryableError("Trusted file-removal reconstruction produced a different commit");
+
+      pushedSha = await step.do(
+        "publish candidate file removal",
+        { retries: { limit: 4, delay: "5 seconds", backoff: "exponential" }, timeout: "5 minutes" },
+        async () => {
+          const [observedCandidate, observedBase] = await Promise.all([
+            getRepositoryRefSha(config, context.installationId, repository, context.candidateBranch),
+            getRepositoryRefSha(config, context.installationId, repository, context.baseBranch),
+          ]);
+          if (observedCandidate === removalSha) return removalSha;
+          if (observedCandidate !== context.expectedCandidateSha || observedBase !== context.baseSha) {
+            throw new NonRetryableError("The candidate or base changed before file removal publication");
+          }
+          const token = await createInstallationToken(config, context.installationId, context.repositoryId);
+          const result = await removalPublisher.exec(ROLLBACK_PUBLISH_COMMAND, {
+            timeout: 2 * 60 * 1000,
+            env: {
+              OPENFLOOR_GIT_AUTHORIZATION: githubGitAuthorization(token),
+              OPENFLOOR_REPOSITORY_URL: `https://github.com/${context.repositoryOwner}/${context.repositoryName}.git`,
+              OPENFLOOR_CANDIDATE_BRANCH: context.candidateBranch,
+              OPENFLOOR_EXPECTED_SHA: context.expectedCandidateSha,
+              OPENFLOOR_ROLLBACK_SHA: removalSha,
+            },
+          });
+          if (!result.success) {
+            const output = `${result.stdout}\n${result.stderr}`;
+            const leaseMismatch = /stale info|fetch first|non-fast-forward/i.test(output);
+            throw new NonRetryableError(leaseMismatch
+              ? "The candidate changed before file removal publication"
+              : `GitHub rejected the authenticated file-removal push: ${redactRollbackOutput(output, token)}`);
+          }
+          const reconciled = await getRepositoryRefSha(config, context.installationId, repository, context.candidateBranch);
+          if (reconciled !== removalSha) throw new Error("Candidate branch did not reconcile after file removal");
+          return removalSha;
+        },
+      );
+
+      const update = await step.do(
+        "record candidate file removal",
+        { retries: { limit: 6, delay: "5 seconds", backoff: "exponential" } },
+        async () => finishCandidateFileRemoval(removalId, pushedSha!, this.env.DB),
+      );
+      if (update) {
+        await notifyFloorChanged(update.sessionId, update.revision, ["repository", "review"]);
+        await refreshRepositoryPreview(update.sessionId);
+      }
+      return { status: "removed" };
+    } catch (error) {
+      if (pushedSha) throw error;
+      const reason = error instanceof Error ? error.message : "Candidate file removal failed";
+      const update = await step.do("record file removal failure", async () =>
+        failCandidateFileRemoval(removalId, reason, this.env.DB));
+      if (update) await notifyFloorChanged(update.sessionId, update.revision, ["repository", "review"]);
+      return { status: "failed" };
+    } finally {
+      try {
+        const claimed = sandbox;
+        if (claimed) await step.do("destroy file-removal sandbox", { retries: { limit: 2, delay: "5 seconds" }, timeout: "2 minutes" }, async () => claimed.destroy());
+      } catch {
+        // One-shot file-removal sandbox contains no reusable credentials.
+      }
+      try {
+        const claimed = publisher;
+        if (claimed) await step.do("destroy file-removal publisher", { retries: { limit: 2, delay: "5 seconds" }, timeout: "2 minutes" }, async () => claimed.destroy());
+      } catch {
+        // Publisher is one-shot and never reused after credentialed Git transport.
+      }
     }
   }
 

@@ -36,6 +36,7 @@ type QueueRecord = Omit<FloorQueueItem, "prompts" | "rollback" | "answer"> & {
   rollbackRunId: string | null;
   rollbackStatus: AgentRun["rollbackStatus"];
   rollbackFailureReason: string | null;
+  rollbackHasRemovedFiles: number;
   agentOwnerUserId: string | null;
   answerRunId: string | null;
   answerAgentId: string | null;
@@ -129,6 +130,13 @@ async function readFloorSnapshot(sessionId: string, userId: string, database: D1
               q.created_at AS createdAt, q.updated_at AS updatedAt,
               rollback_run.id AS rollbackRunId, latest_rollback.status AS rollbackStatus,
               latest_rollback.failure_reason AS rollbackFailureReason,
+              EXISTS (
+                SELECT 1 FROM agent_run_files removed_file
+                JOIN candidate_file_removals removal
+                  ON removal.candidate_id = rollback_run.candidate_id AND removal.path = removed_file.path
+                 AND removal.status = 'completed' AND removal.completed_at >= rollback_run.integrated_at
+                WHERE removed_file.run_id = rollback_run.id
+              ) AS rollbackHasRemovedFiles,
               reply_run.id AS answerRunId, reply_run.agent_id AS answerAgentId,
               reply_agent.name AS answerAgentName, reply_run.final_response AS answerText,
               reply_run.completed_at AS answerCreatedAt
@@ -202,7 +210,7 @@ async function readFloorSnapshot(sessionId: string, userId: string, database: D1
     files: files.results.map((file) => ({ ...file, messageId: file.messageId ?? null })),
     queue: queue.results.map((item) => {
       const prompts = promptsByItem.get(item.id) ?? [];
-      const { rollbackRunId, rollbackStatus, rollbackFailureReason, agentOwnerUserId, answerRunId, answerAgentId, answerAgentName, answerText, answerCreatedAt, ...queueItem } = item;
+      const { rollbackRunId, rollbackStatus, rollbackFailureReason, rollbackHasRemovedFiles, agentOwnerUserId, answerRunId, answerAgentId, answerAgentName, answerText, answerCreatedAt, ...queueItem } = item;
       const authoredEveryPrompt = prompts.length > 0 && prompts.every((prompt) => prompt.authorUserId === userId);
       return {
         ...queueItem,
@@ -213,6 +221,7 @@ async function readFloorSnapshot(sessionId: string, userId: string, database: D1
           status: rollbackStatus ?? null,
           failureReason: rollbackFailureReason ?? null,
           canStart: (rollbackStatus == null || rollbackStatus === "failed") &&
+            !Boolean(rollbackHasRemovedFiles) &&
             (session?.viewerRole === "owner" || agentOwnerUserId === userId || authoredEveryPrompt),
         } : null,
         // Durable answer surface for a question/noise item: sourced from the
@@ -243,6 +252,7 @@ function contributorsByPath(
   reviewRuns: AgentRun[],
   promptsByItem: Map<string, FloorQueuePrompt[]>,
   memberNames: Map<string, string>,
+  removalCutoffs: Map<string, number>,
 ): Map<string, ReviewContributor[]> {
   const byPath = new Map<string, ReviewContributor[]>();
   for (const run of reviewRuns) {
@@ -251,6 +261,7 @@ function contributorsByPath(
       ? [...new Map(prompts.map((prompt) => [prompt.authorUserId, { userId: prompt.authorUserId, userName: prompt.authorName }])).values()]
       : [{ userId: run.createdBy, userName: memberNames.get(run.createdBy) ?? "Unknown" }];
     for (const file of run.files) {
+      if ((run.integratedAt ?? 0) <= (removalCutoffs.get(file.path) ?? -1)) continue;
       const contributors = byPath.get(file.path) ?? [];
       const existing = contributors.find((contributor) => contributor.agentId === run.agentId);
       if (existing) {
@@ -280,23 +291,34 @@ function buildRunReview(
   const reviewRuns = (candidate.pullRequestNumber ? candidateRuns.filter((run) => run.status === "integrated") : candidateRuns)
     .filter((run) => run.rollbackStatus !== "completed");
   const memberNames = new Map(members.map((member) => [member.userId, member.userName]));
-  const contributors = contributorsByPath(reviewRuns, promptsByItem, memberNames);
+  const removalCutoffs = new Map(githubReview?.fileRemovals.map((removal) => [removal.path, removal.completedAt]) ?? []);
+  const contributors = contributorsByPath(reviewRuns, promptsByItem, memberNames, removalCutoffs);
   const files = githubReview?.files.length ? githubReview.files.map((file) => ({
     id: file.id,
     path: file.path,
+    previousPath: file.previousPath,
+    changeKind: file.changeKind,
     contributors: contributors.get(file.path) ?? [],
     additions: Number(file.additions),
     deletions: Number(file.deletions),
     summary: "GitHub pull request diff",
     diff: diffLines(file.patchPreview),
-  })) : [...new Map([...reviewRuns].reverse().flatMap((run) => run.files.map((file) => [file.path, file] as const))).values()].map((file) => ({
+    removalStatus: file.removalStatus,
+    removalFailureReason: file.removalFailureReason,
+  })) : [...new Map([...reviewRuns].reverse().flatMap((run) => run.files
+    .filter((file) => (run.integratedAt ?? 0) > (removalCutoffs.get(file.path) ?? -1))
+    .map((file) => [file.path, file] as const))).values()].map((file) => ({
     id: file.id,
     path: file.path,
+    previousPath: null,
+    changeKind: file.changeKind,
     contributors: contributors.get(file.path) ?? [],
     additions: file.additions,
     deletions: file.deletions,
     summary: file.summary,
     diff: diffLines(file.diffPreview),
+    removalStatus: null,
+    removalFailureReason: null,
   }));
   const checks = githubReview?.checks.map((check) => ({ id: check.id, name: check.name, detail: check.detail, state: check.state })) ?? [];
   const activeConflictSourceIds = new Set(conflicts.filter((item) => !["resolved", "cancelled"].includes(item.status)).map((item) => item.latestSourceRunId));
@@ -306,7 +328,12 @@ function buildRunReview(
   if (candidate.behindBase && candidate.status === "active") warnings.push({ id: `${candidate.id}-behind`, title: "Base branch advanced", detail: "Synchronize and resolve the candidate before merging.", severity: "warning" });
   if (candidate.githubChecksPassing === false) warnings.push({ id: `${candidate.id}-checks`, title: "GitHub checks are not passing", detail: "All reported GitHub checks must pass before squash merge.", severity: "warning" });
   if (candidate.cleanupStatus === "partial") warnings.push({ id: `${candidate.id}-cleanup`, title: "Branch cleanup incomplete", detail: "At least one openfloor branch changed externally and was preserved.", severity: "warning" });
-  if (candidate.integrationRunId) warnings.push({ id: `${candidate.id}-integrating`, title: "Candidate update in progress", detail: "A run is integrating or being rolled back. Merging, ending, and deleting are blocked until the candidate update finishes.", severity: "warning" });
+  for (const file of files) {
+    if (file.removalStatus === "failed" && file.removalFailureReason) {
+      warnings.push({ id: `${file.id}-removal`, title: "File removal failed", detail: `${file.path}: ${file.removalFailureReason}`, severity: "warning" });
+    }
+  }
+  if (candidate.integrationRunId) warnings.push({ id: `${candidate.id}-integrating`, title: "Candidate update in progress", detail: "A run is integrating, changes are being rolled back, or a reviewed file is being restored. Merging, ending, and deleting are blocked until the candidate update finishes.", severity: "warning" });
   return {
     id: candidate.id,
     status: candidate.status === "merged" ? "merged" : candidate.status === "abandoned" ? "abandoned" : candidate.pullRequestDraft === false ? "ready" : "draft",

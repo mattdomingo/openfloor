@@ -337,6 +337,13 @@
       "when": 1788564697676,
       "tag": "0046_sad_the_phantom",
       "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "6",
+      "when": 1788631145687,
+      "tag": "0048_steep_kingpin",
+      "breakpoints": true
     }
   ]
 }
