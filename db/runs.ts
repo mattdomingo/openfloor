@@ -13,8 +13,8 @@ type CheckRecord = Omit<AgentRunCheck, "hasLog"> & { logKey: string | null };
 type ScopedCheckRecord = CheckRecord & { runId: string };
 type ScopedFileRecord = AgentRunFile & { runId: string };
 
-const AGENT_RUN_SELECT = `SELECT r.id, r.queue_item_id AS queueItemId, r.agent_id AS agentId, a.name AS agentName,
-        r.candidate_id AS candidateId, r.candidate_sha AS candidateSha, r.attempt, r.status, r.kind,
+const AGENT_RUN_SELECT = `SELECT r.id, r.queue_item_id AS queueItemId, r.agent_id AS agentId, a.name AS agentName, a.kind AS agentKind,
+        r.candidate_id AS candidateId, r.candidate_sha AS candidateSha, r.attempt, r.status, r.kind, r.completion,
         r.run_branch AS runBranch, r.local_commit_sha AS localCommitSha,
         r.run_commit_sha AS runCommitSha, r.remote_run_sha AS remoteRunSha,
         r.model, r.summary, r.final_response AS finalResponse,
@@ -45,7 +45,7 @@ const AGENT_RUN_SELECT = `SELECT r.id, r.queue_item_id AS queueItemId, r.agent_i
    WHERE latest.run_id = r.id ORDER BY latest.created_at DESC, latest.id DESC LIMIT 1
  )`;
 
-type RunListScope = { column: "session_id" | "candidate_id"; value: string; limit: number | null };
+type RunListScope = { column: "session_id" | "candidate_id"; value: string; limit: number | null; before?: string };
 
 export async function getAgentRunsForMember(sessionId: string, userId: string, database = getDb()): Promise<AgentRun[] | null> {
   if (!(await getMembershipRole(sessionId, userId, database))) return null;
@@ -56,6 +56,13 @@ export async function getAgentRuns(sessionId: string, database = getDb()): Promi
   return getAgentRunsByScope({ column: "session_id", value: sessionId, limit: 20 }, database);
 }
 
+export async function getAgentRunHistoryForMember(sessionId: string, userId: string, before: string | null, database = getDb()) {
+  if (!(await getMembershipRole(sessionId, userId, database))) return null;
+  const runs = await getAgentRunsByScope({ column: "session_id", value: sessionId, limit: 21, before: before ?? undefined }, database);
+  const hasMore = runs.length > 20;
+  return { runs: runs.slice(0, 20), nextCursor: hasMore ? runs[19].id : null };
+}
+
 // Review attribution must cover the whole candidate, not the latest 20
 // session runs used by agent cards/activity.
 export async function getAgentRunsForCandidate(candidateId: string, database = getDb()): Promise<AgentRun[]> {
@@ -64,15 +71,17 @@ export async function getAgentRunsForCandidate(candidateId: string, database = g
 
 async function getAgentRunsByScope(scope: RunListScope, database: D1DatabaseLike): Promise<AgentRun[]> {
   const limit = scope.limit === null ? "" : ` LIMIT ${scope.limit}`;
+  const cursor = scope.before ? " AND (r.created_at, r.id) < (SELECT created_at, id FROM agent_runs WHERE id = ? AND session_id = ?)" : "";
+  const bindings = scope.before ? [scope.value, scope.before, scope.value] : [scope.value];
   const rows = await database.prepare(
-    `${AGENT_RUN_SELECT} WHERE r.${scope.column} = ? ORDER BY r.created_at DESC, r.id DESC${limit}`,
-  ).bind(scope.value).all<RunRecord>();
+    `${AGENT_RUN_SELECT} WHERE r.${scope.column} = ?${cursor} ORDER BY r.created_at DESC, r.id DESC${limit}`,
+  ).bind(...bindings).all<RunRecord>();
   if (rows.results.length === 0) return [];
 
   // Hydrate every selected run in two set-based reads. The previous per-run
   // fan-out made a 20-run floor snapshot issue 40 additional D1 queries, and
   // candidate-wide Review issued three reads for every historical run.
-  const selectedRuns = `SELECT id FROM agent_runs WHERE ${scope.column} = ?${
+  const selectedRuns = `SELECT id FROM agent_runs r WHERE r.${scope.column} = ?${cursor}${
     scope.limit === null ? "" : ` ORDER BY created_at DESC, id DESC LIMIT ${scope.limit}`
   }`;
   const [checks, files] = await Promise.all([
@@ -84,14 +93,14 @@ async function getAgentRunsByScope(scope: RunListScope, database: D1DatabaseLike
        FROM agent_run_checks checks
        JOIN (${selectedRuns}) selected ON selected.id = checks.run_id
        ORDER BY checks.run_id, checks.position`,
-    ).bind(scope.value).all<ScopedCheckRecord>(),
+    ).bind(...bindings).all<ScopedCheckRecord>(),
     database.prepare(
       `SELECT files.run_id AS runId, files.id, files.path, files.change_kind AS changeKind,
               files.additions, files.deletions, files.summary, files.diff_preview AS diffPreview
        FROM agent_run_files files
        JOIN (${selectedRuns}) selected ON selected.id = files.run_id
        ORDER BY files.run_id, files.path`,
-    ).bind(scope.value).all<ScopedFileRecord>(),
+    ).bind(...bindings).all<ScopedFileRecord>(),
   ]);
 
   const checksByRun = new Map<string, AgentRunCheck[]>();
@@ -229,7 +238,7 @@ export async function getAgentRun(runId: string, database = getDb()): Promise<Ag
 export async function getRunExecutionContext(runId: string, database = getDb()) {
   const run = await database.prepare(
     `SELECT r.id, r.session_id AS sessionId, r.queue_item_id AS queueItemId, r.agent_id AS agentId,
-            r.candidate_sha AS candidateSha, r.attempt, r.status, r.kind, r.sandbox_id AS sandboxId,
+            r.candidate_sha AS candidateSha, r.attempt, r.status, r.kind, r.completion, r.sandbox_id AS sandboxId,
             r.run_branch AS runBranch, r.bundle_key AS bundleKey, r.bundle_size_bytes AS bundleSizeBytes,
             r.local_commit_sha AS localCommitSha,
             r.sandbox_process_id AS sandboxProcessId, r.model,
@@ -254,7 +263,7 @@ export async function getRunExecutionContext(runId: string, database = getDb()) 
      WHERE r.id = ?`,
   ).bind(runId).first<{
     id: string; sessionId: string; queueItemId: string; agentId: string; candidateSha: string; attempt: number; status: AgentRunStatus;
-    kind: "reply" | null;
+    kind: "reply" | null; completion: "no_changes" | null;
     runBranch: string | null; bundleKey: string | null; bundleSizeBytes: number | null; localCommitSha: string | null; createdAt: number;
     sandboxId: string; sandboxProcessId: string | null; model: string; sessionTitle: string; objective: string | null;
     agentName: string; agentRole: string; agentTask: string; provider: CredentialProvider; installationId: string; repositoryId: string;
@@ -428,7 +437,7 @@ export async function markRunPublishing(
   const now = Date.now();
   const result = await database.prepare(
     `UPDATE agent_runs SET status = 'publishing', bundle_key = ?, bundle_size_bytes = ?, local_commit_sha = ?, updated_at = ?
-     WHERE id = ? AND status IN ('ready', 'publishing')`,
+     WHERE id = ? AND completion IS NULL AND status IN ('ready', 'publishing')`,
   ).bind(input.bundleKey, input.bundleSizeBytes, input.localCommitSha, now, runId).run();
   if (result.meta?.changes) await appendRunEvent(runId, "publishing", "Validated local changes are being published to the server-generated run branch.", database);
 }
@@ -602,7 +611,7 @@ export async function recordRunPublicationFailure(runId: string, summary: string
   if (!run || !["ready", "publishing"].includes(run.status)) return null;
   const now = Date.now();
   const results = await database.batch([
-    database.prepare("UPDATE agent_runs SET status = 'failed', summary = ?, completed_at = ?, updated_at = ? WHERE id = ? AND status IN ('ready', 'publishing')")
+    database.prepare("UPDATE agent_runs SET status = 'failed', summary = ?, completed_at = ?, updated_at = ? WHERE id = ? AND completion IS NULL AND status IN ('ready', 'publishing')")
       .bind(summary.slice(0, 1_000), now, now, runId),
     database.prepare("UPDATE floor_queue_items SET status = 'failed', updated_at = ? WHERE id = ? AND changes() = 1")
       .bind(now, run.queueItemId),
@@ -672,6 +681,25 @@ export async function finishAgentRun(runId: string, status: "ready" | "failed" |
     database.prepare("UPDATE sessions SET floor_revision = floor_revision + 1, updated_at = ? WHERE id = ?").bind(now, run.sessionId),
   ]);
   await appendRunEvent(runId, status, summary, database);
+  const revision = await database.prepare("SELECT floor_revision AS revision FROM sessions WHERE id = ?").bind(run.sessionId).first<{ revision: number }>();
+  return { sessionId: run.sessionId, revision: Number(revision?.revision ?? 0) };
+}
+
+/** Complete a successful writable task without inventing a commit or changing its execution kind. */
+export async function finishAgentRunWithoutChanges(runId: string, database = getDb()): Promise<{ sessionId: string; revision: number } | null> {
+  const run = await database.prepare("SELECT session_id AS sessionId, queue_item_id AS queueItemId FROM agent_runs WHERE id = ?")
+    .bind(runId).first<{ sessionId: string; queueItemId: string }>();
+  if (!run) return null;
+  const now = Date.now();
+  const summary = "Completed successfully without file changes.";
+  const results = await database.batch([
+    database.prepare("UPDATE agent_runs SET status = 'ready', completion = 'no_changes', run_branch = NULL, summary = ?, completed_at = ?, updated_at = ? WHERE id = ? AND status = 'checking' AND kind IS NULL AND NOT EXISTS (SELECT 1 FROM merge_conflict_attempts WHERE run_id = agent_runs.id)")
+      .bind(summary, now, now, runId),
+    database.prepare("UPDATE floor_queue_items SET status = 'completed', updated_at = ? WHERE id = ? AND changes() = 1").bind(now, run.queueItemId),
+    database.prepare("UPDATE sessions SET floor_revision = floor_revision + 1, updated_at = ? WHERE id = ? AND changes() = 1").bind(now, run.sessionId),
+  ]);
+  if (Number(results[0]?.meta?.changes ?? 0) === 0) return null;
+  await appendRunEvent(runId, "completed", summary, database);
   const revision = await database.prepare("SELECT floor_revision AS revision FROM sessions WHERE id = ?").bind(run.sessionId).first<{ revision: number }>();
   return { sessionId: run.sessionId, revision: Number(revision?.revision ?? 0) };
 }

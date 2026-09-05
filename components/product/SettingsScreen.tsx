@@ -15,7 +15,7 @@ import { LocalDateTime } from "@/components/LocalDateTime";
 import { initialsFromParts, repoCountLabel } from "@/lib/display-name";
 import { lowHoursRemaining, PAID_PLAN_CATALOG, planLabel, planLimitsSummary, type PaidPlan, type Plan, type PlanStatus } from "@/lib/plans";
 import {
-  CREDENTIAL_PROVIDERS,
+  type CredentialProvider,
   monthlyUsageLabel,
   type MonthlyProviderUsage,
   type ProviderCredentialSummary,
@@ -64,11 +64,12 @@ function SettingsRail({ value, onChange }: { value: SettingsSection; onChange: (
   );
 }
 
-export function SettingsScreen({ user: initialUser, usage, billing, credentials, githubInstallations, modelUsage, initialSection, billingNotice, backTo, originPath }: {
+export function SettingsScreen({ user: initialUser, usage, billing, credentials, enabledProviders, githubInstallations, modelUsage, initialSection, billingNotice, backTo, originPath }: {
   user: AppUser;
   usage: Usage;
   billing: Billing;
   credentials: ProviderCredentialSummary[];
+  enabledProviders: CredentialProvider[];
   githubInstallations: UserGitHubInstallationSummary[];
   modelUsage: MonthlyProviderUsage[];
   initialSection: SettingsSection;
@@ -131,7 +132,7 @@ export function SettingsScreen({ user: initialUser, usage, billing, credentials,
           <div className="settings-panel tab-panel" key={section}>
             {section === "profile" && <ProfileSection user={user} onSaved={setUser} />}
             {section === "plan" && <PlanSection usage={usage} billing={billing} modelUsage={modelUsage} billingNotice={billingNotice} originPath={originPath} />}
-            {section === "connections" && <ConnectionsSection initialCredentials={credentials} initialGithubInstallations={githubInstallations} />}
+            {section === "connections" && <ConnectionsSection enabledProviders={enabledProviders} initialCredentials={credentials} initialGithubInstallations={githubInstallations} />}
             {section === "preferences" && <PreferencesSection user={user} />}
             {section === "danger" && <DangerZoneSection />}
           </div>
@@ -407,7 +408,7 @@ function PlanSection({ usage, billing, modelUsage, billingNotice, originPath }: 
   );
 }
 
-function ConnectionsSection({ initialCredentials, initialGithubInstallations }: { initialCredentials: ProviderCredentialSummary[]; initialGithubInstallations: UserGitHubInstallationSummary[] }) {
+function ConnectionsSection({ initialCredentials, initialGithubInstallations, enabledProviders }: { enabledProviders: CredentialProvider[]; initialCredentials: ProviderCredentialSummary[]; initialGithubInstallations: UserGitHubInstallationSummary[] }) {
   const [installations, setInstallations] = useState(initialGithubInstallations);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -452,7 +453,7 @@ function ConnectionsSection({ initialCredentials, initialGithubInstallations }: 
       <ul className="settings-category-list">
         <li className="settings-category-row">
           <span className="settings-category-name">GitHub</span>
-          <span className="settings-category-detail">Connected installations supply repositories when creating sessions. Removing one affects future selection only; existing session connections remain intact.</span>
+          <span className="settings-category-detail">Connected installations supply repositories when creating sessions. After changing repository access on GitHub, refresh to verify your updated permissions. Removing access affects future selection only; existing session connections remain intact.</span>
           {installations.length > 0 && (
             <ul className="settings-github-installations">
               {installations.map((installation) => (
@@ -464,9 +465,12 @@ function ConnectionsSection({ initialCredentials, initialGithubInstallations }: 
               ))}
             </ul>
           )}
+          <div className="settings-github-actions">
+          {installations.length > 0 && <button className="button" disabled={busy != null} onClick={connectGitHub}>Refresh repository access</button>}
           {/* Always offered — a second personal account or organization can
               be connected at any time, not just before the first one. */}
           <button className="button" data-variant={installations.length === 0 ? "primary" : undefined} disabled={busy != null} onClick={() => void connectGitHub()}>Add GitHub access</button>
+          </div>
         </li>
         {error && <li><p className="form-error" role="alert">{error}</p></li>}
       </ul>
@@ -483,7 +487,7 @@ function ConnectionsSection({ initialCredentials, initialGithubInstallations }: 
         if neither is available, the run refuses clearly. Keys are encrypted, shown only by their last four characters,
         and never sent back to the browser. Subscriptions are per-user, never shared, and never used as openfloor&rsquo;s fallback.
       </p>
-      <ProviderCredentials initialCredentials={initialCredentials} providers={[...CREDENTIAL_PROVIDERS]} />
+      <ProviderCredentials initialCredentials={initialCredentials} providers={enabledProviders} />
     </>
   );
 }

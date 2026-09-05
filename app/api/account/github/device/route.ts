@@ -11,7 +11,7 @@
 // install-redirect path. Test mode (OPENFLOOR_TEST_GITHUB_DATA) short-circuits
 // GitHub entirely and links the fake installation on the first poll.
 import { getGitHubAppConfig } from "@/db";
-import { linkUserGitHubInstallation, listUserGitHubInstallations } from "@/db/github-installations";
+import { linkUserGitHubInstallation, listUserGitHubInstallations, refreshUserGitHubInstallations } from "@/db/github-installations";
 import { getInstallationAccount, listUserInstallationRepositoryIds } from "@/lib/github";
 import { isApiError, requireApiUser } from "@/lib/server-auth";
 
@@ -116,30 +116,30 @@ export async function PUT(request: Request) {
     authorization: `Bearer ${token.access_token}`,
     "user-agent": "openfloor",
   };
-  const installationsResponse = await fetch("https://api.github.com/user/installations?per_page=100", { headers: githubHeaders });
-  if (!installationsResponse.ok) {
-    return Response.json({ error: "GitHub installations could not be listed" }, { status: 502 });
+  type Installation = { id: number; account?: { login?: string; type?: string } | null };
+  const found: Installation[] = [];
+  for (let page = 1; ; page++) {
+    const response = await fetch(`https://api.github.com/user/installations?per_page=100&page=${page}`, { headers: githubHeaders });
+    const payload = response.ok ? await response.json().catch(() => null) as { installations?: Installation[] } | null : null;
+    if (!Array.isArray(payload?.installations)) return Response.json({ error: "GitHub installations could not be listed" }, { status: 502 });
+    found.push(...payload.installations);
+    if (payload.installations.length < 100) break;
+    if (page >= 10) return Response.json({ error: "GitHub returned too many installations to refresh safely" }, { status: 502 });
   }
   const profileResponse = await fetch("https://api.github.com/user", { headers: githubHeaders });
   const profile = profileResponse.ok
     ? await profileResponse.json().catch(() => null) as { login?: string; name?: string | null } | null
     : null;
-  const payload = await installationsResponse.json() as {
-    installations?: Array<{ id: number; account?: { login?: string; type?: string } | null }>;
-  };
-  const found = payload.installations ?? [];
+  const verified = [];
   for (const installation of found) {
-    // GitHub lists an installation to anyone who can reach even one of its
-    // repos, but the app token sees them all — so capture which repos THIS
-    // member's token can reach and scope the link to exactly those. A failed
-    // scope read skips the link rather than guessing.
     const repoScope = await listUserInstallationRepositoryIds(token.access_token, String(installation.id));
-    if (!repoScope || repoScope.length === 0) continue;
-    await linkUserGitHubInstallation(user.id, String(installation.id), {
+    if (repoScope === null) return Response.json({ error: "GitHub repository access could not be verified. Existing connections were preserved." }, { status: 502 });
+    verified.push({ id: String(installation.id), account: {
       login: installation.account?.login ?? "unknown",
       type: installation.account?.type ?? "User",
-    }, repoScope);
+    }, repoScope });
   }
+  await refreshUserGitHubInstallations(user.id, verified);
   return Response.json({
     connected: true,
     installed: found.length > 0,

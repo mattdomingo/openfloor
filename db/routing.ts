@@ -11,7 +11,7 @@ export const SESSION_RUN_CAP = 15;
 const ACTIVE_RUN_STATUSES = "('provisioning', 'running', 'checking', 'ready', 'publishing', 'published', 'integrating', 'cancel_requested')";
 // Reply runs finish at `ready` without occupying agent/repository capacity.
 // Task runs at ready still hold their slot until publication/integration.
-const ACTIVE_RUN_CONDITION = `(status IN ${ACTIVE_RUN_STATUSES} AND (status <> 'ready' OR kind IS NULL))`;
+const ACTIVE_RUN_CONDITION = `(status IN ${ACTIVE_RUN_STATUSES} AND (status <> 'ready' OR (kind IS NULL AND completion IS NULL)))`;
 
 export type RoutingTrigger = "enqueue" | "run_completed" | "toggle" | "agent_changed" | "alarm";
 
@@ -110,7 +110,7 @@ const FILLER_OPENERS = new Set([
 // ask for an answer, not an edit. Only meaningful as the first content word —
 // task verbs are matched across the whole string first, so "describe the
 // feature and add it" still classifies as a task.
-const QUESTION_IMPERATIVES = new Set(["describe", "explain", "summarize", "summarise"]);
+const QUESTION_IMPERATIVES = new Set(["describe", "explain", "summarize", "summarise", "review", "inspect", "analyze", "analyse"]);
 
 export function classifyPrompt(text: string): PromptIntent {
   const normalized = text.normalize("NFKC").trim().replace(/\s+/g, " ").toLowerCase();
@@ -364,9 +364,13 @@ export async function runRoutingTick(
           why: matched.length > 0 ? `matched: ${matched.join(", ")}` : busy ? "busy" : providerDisabled ? "provider disabled" : "idle",
         };
       });
-      // Persistent agents are the first elastic tier. Only when every
-      // persistent/generated task agent is occupied do we activate a worker.
-      let pool = candidates.filter((candidate) => candidate.eligible);
+      // Prefer suitable persistent agents. Idle specialists without a task
+      // match must not absorb unrelated work; legacy explicit generalists
+      // retain the least-recently-used fallback.
+      let pool = candidates.filter((candidate) => candidate.eligible && (
+        candidate.overlap > 0 || availableAgents.some((agent) => agent.id === candidate.agentId
+          && /^generalist$/i.test(agent.role.trim()))
+      ));
       const persistentPool = pool.filter((candidate) => availableAgents.find((agent) => agent.id === candidate.agentId)?.kind === null);
       if (persistentPool.length > 0) pool = persistentPool;
       if (pool.length === 0 && canProvision && generatedProvider && claimedThisTick.size < routingCapacity) {
@@ -387,7 +391,9 @@ export async function runRoutingTick(
             ? "Choose a default generated-agent provider"
             : providerDisabled
               ? "The generated-agent provider is not enabled"
-              : "No idle agent or automatic run capacity is available";
+              : candidates.some((candidate) => candidate.eligible)
+                ? "No matching agent; assign an agent manually or enable Auto agents"
+                : "No idle agent or automatic run capacity is available";
         decisions.push({ queueItemId: item.id, agentId: null, runId: null, decision: "held", reason, candidates });
         held = true;
         continue;
