@@ -99,7 +99,11 @@ export function SessionScreen({
   function goToRepositorySetup() {
     setRepoGateOpen(false);
     setSetupOpen(true);
-    document.getElementById("floor-setup-title")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    requestAnimationFrame(() => {
+      const tile = document.querySelector<HTMLElement>("#floor-setup-content button, #floor-setup-content a");
+      tile?.focus();
+      tile?.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
   }
 
   const refreshMembers = useCallback(async () => {

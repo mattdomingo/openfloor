@@ -421,7 +421,7 @@ const HOME_TOUR: TourStep[] = [
     selector: '.create-dialog [aria-label="Session repository"]',
     title: "Pick the repository",
     body: "The GitHub repository agents clone and push to. No repositories listed? Add GitHub access in Account Settings.",
-    isSatisfied: () => Boolean(document.querySelector('.create-dialog [aria-label="Session repository"] span')?.textContent?.trim()),
+    isSatisfied: () => document.querySelector('.create-dialog [data-tour="repository"]')?.getAttribute("data-ready") === "true",
     placement: "side",
   },
   {
@@ -875,7 +875,7 @@ function CreateSessionDialog({ repositories, repositoriesLoading, loadError, ini
           <label><span>Task</span><input data-tour="task" value={title} onChange={(event) => setTitle(event.target.value)} maxLength={100} required autoFocus placeholder="What is this session for?" /></label>
           <label><span>Goal <em>optional</em></span><textarea data-tour="goal" value={objective} onChange={(event) => setObjective(event.target.value)} maxLength={2000} rows={3} placeholder="The shared objective the floor works toward" /></label>
           <label>
-            <span>Repository</span>
+            <span data-tour="repository" data-ready={!repositoriesLoading && repositories.some((repository) => repository.id === repositoryId)}>Repository</span>
             {repositories.length > 0 ? (
               <SelectMenu
                 label="Session repository"
@@ -913,8 +913,7 @@ function CreateSessionDialog({ repositories, repositoriesLoading, loadError, ini
           <section className="setup-credentials" aria-label="AI connection">
             <p>
               Optional: at least one connected provider is required to run agents — you can also add one later in
-              Settings. A run uses the key connected by that agent&rsquo;s owner, then the configured server key. If
-              neither is available, the run refuses clearly. Stored values are encrypted and never returned to the
+              Settings. A run uses the key connected by that agent&rsquo;s owner, with no platform-funded fallback. A missing personal key prevents execution. Stored values are encrypted and never returned to the
               browser.
             </p>
             <ProviderCredentials initialCredentials={credentials} providers={enabledProviders} showAgentDefaults onCredentialsChange={setCredentials} />
