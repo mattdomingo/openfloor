@@ -244,6 +244,27 @@ describe("durable merge conflicts", () => {
     expect((await getMergeConflictCases(room.sessionId, env.DB))[0].automaticAttempts).toBe(0);
   });
 
+  it("does not replenish an exhausted proposal when authors repeat their approval", async () => {
+    const room = await prepared("repeat-approval", true);
+    let view = (await getConflictDecisionView(room.sessionId, room.caseId, room.member.id, env.DB))!.resolution;
+    await proposeConflictResolution({ sessionId: room.sessionId, caseId: room.caseId, userId: room.member.id,
+      revision: view.revision, snapshotId: view.snapshotId!, payload: { kind: "intent", instruction: "Preserve both entry points." } }, env.DB);
+    view = (await getConflictDecisionView(room.sessionId, room.caseId, room.owner.id, env.DB))!.resolution;
+    await voteConflictProposal({ sessionId: room.sessionId, caseId: room.caseId, userId: room.owner.id,
+      revision: view.revision, proposalId: view.proposal!.id, action: "approve" }, env.DB);
+    for (let index = 0; index < 2; index++) {
+      const resolver = (await createConflictResolverRun(room.caseId, "manual", env.DB))!;
+      expect(resolver).not.toBeNull();
+      await env.DB.prepare("UPDATE agent_runs SET status = 'failed' WHERE id = ?").bind(resolver.runId).run();
+      await advanceConflictAfterFailure(resolver.runId, "Required check failed.", env.DB);
+    }
+    view = (await getConflictDecisionView(room.sessionId, room.caseId, room.owner.id, env.DB))!.resolution;
+    await voteConflictProposal({ sessionId: room.sessionId, caseId: room.caseId, userId: room.owner.id,
+      revision: view.revision, proposalId: view.proposal!.id, action: "approve" }, env.DB);
+    expect((await getMergeConflictCases(room.sessionId, env.DB))[0]).toMatchObject({ status: "failed", automaticAttempts: 2 });
+    expect(await createConflictResolverRun(room.caseId, "manual", env.DB)).toBeNull();
+  });
+
   it("does not relaunch a resolver after explicit cancellation", async () => {
     const room = await prepared("cancelled");
     const resolver = await createConflictResolverRun(room.caseId, "automatic", env.DB);

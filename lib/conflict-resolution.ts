@@ -1,5 +1,7 @@
 import type { ConflictChoice } from "./conflict-hunks";
 
+export const MAX_AUTOMATIC_CONFLICT_ATTEMPTS = 2;
+
 export type ConflictMode = "prepare" | "ai" | "manual";
 export type ConflictPrompt = { id: string; authorUserId: string; authorName: string; text: string; runId: string };
 export type ConflictProvenance = { incoming: ConflictPrompt[]; integrated: ConflictPrompt[]; requiresOwner: boolean };

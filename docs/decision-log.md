@@ -1122,3 +1122,12 @@ Preview v1 supports only one JavaScript app at the repository root with exactly 
 **Rationale:** A prepared snapshot must not hide an unresolved prompt under Completed, and a user must be able to inspect, propose, and approve an exact result from every conflict entry point.
 
 **Consequences:** Inline errors preserve drafts; current-version checks disable stale submissions. Two-user browser acceptance covers disagreement, approvals, owner override, candidate movement, manual editing with AI off, and a 390px viewport.
+
+
+### Preserve retry budgets across repeated approvals (2026-09-07)
+
+**Decision:** Derive an approved proposal's consumed AI budget from its immutable attempt history and enforce the limit for every launch kind. Repeated approvals do not replenish attempts.
+
+**Rationale:** A vote changes agreement, not the proposal being implemented; replaying a vote must not bypass the bounded model-spending policy.
+
+**Consequences:** An exhausted proposal remains stopped with an actionable reason. A revised proposal or refreshed snapshot starts a new budget, while exact manual application remains independent of AI attempts.

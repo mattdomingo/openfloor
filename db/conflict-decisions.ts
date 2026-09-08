@@ -1,6 +1,6 @@
 import { getDb } from "./index";
 import { getActiveMembershipRole, getMembershipRole } from "./sessions";
-import { proposalApproval, type ConflictMode, type ConflictProposalPayload, type ConflictProvenance, type ConflictResolution, type ConflictVote } from "@/lib/conflict-resolution";
+import { MAX_AUTOMATIC_CONFLICT_ATTEMPTS, proposalApproval, type ConflictMode, type ConflictProposalPayload, type ConflictProvenance, type ConflictResolution, type ConflictVote } from "@/lib/conflict-resolution";
 
 type Database = ReturnType<typeof getDb>;
 const emptyProvenance: ConflictProvenance = { incoming: [], integrated: [], requiresOwner: true };
@@ -139,9 +139,14 @@ export async function queueApprovedProposal(sessionId: string, caseId: string, d
   if (!view?.proposal?.approved) return false;
   const required = view.proposal.requiredAuthorIds;
   const hasOverride = view.proposal.votes.some((vote) => vote.action === "override");
+  const history = await database.prepare(`SELECT COUNT(*) AS count FROM merge_conflict_attempts
+    WHERE case_id = ? AND snapshot_id = ? AND proposal_id = ? AND execution_mode = 'ai'`)
+    .bind(caseId, view.snapshotId, view.proposal.id).first<{ count: number }>();
+  const attempts = Number(history?.count ?? 0);
+  const exhausted = view.mode === "ai" && attempts >= MAX_AUTOMATIC_CONFLICT_ATTEMPTS;
   const statements = await database.batch([
-    database.prepare(`UPDATE merge_conflict_cases SET status = 'pending', resume_requested = 1, automatic_attempts = 0, revision = revision + 1,
-      waiting_reason = NULL, failure_reason = NULL, updated_at = ?
+    database.prepare(`UPDATE merge_conflict_cases SET status = ?, resume_requested = ?, automatic_attempts = ?, revision = revision + 1,
+      waiting_reason = ?, failure_reason = NULL, updated_at = ?
       WHERE id = ? AND revision = ? AND proposal_id = ? AND status = 'awaiting_input' AND current_resolver_run_id IS NULL
       AND EXISTS (SELECT 1 FROM sessions WHERE id = ? AND ended_at IS NULL)
       AND EXISTS (SELECT 1 FROM merge_conflict_snapshots sn JOIN agent_runs source ON source.id = sn.source_run_id
@@ -150,7 +155,7 @@ export async function queueApprovedProposal(sessionId: string, caseId: string, d
           AND c.candidate_sha = sn.candidate_sha AND c.remote_candidate_sha = sn.candidate_sha)
       AND (? = 1 OR (SELECT COUNT(*) FROM session_members WHERE session_id = ? AND removed_at IS NULL
         AND user_id IN (SELECT value FROM json_each(?))) = ?)`)
-      .bind(Date.now(), caseId, view.revision, view.proposal.id, sessionId, hasOverride ? 1 : 0, sessionId, JSON.stringify(required), required.length),
+      .bind(exhausted ? "failed" : "pending", exhausted ? 0 : 1, attempts, exhausted ? "Both AI attempts for this proposal are exhausted. Propose a revised outcome or an exact manual result." : null, Date.now(), caseId, view.revision, view.proposal.id, sessionId, hasOverride ? 1 : 0, sessionId, JSON.stringify(required), required.length),
     database.prepare("UPDATE sessions SET floor_revision = floor_revision + 1 WHERE id = ? AND changes() = 1").bind(sessionId),
   ]);
   return Number(statements[0].meta?.changes ?? 0) === 1;

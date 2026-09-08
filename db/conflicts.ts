@@ -4,9 +4,9 @@ import { getDb } from "./index";
 import { getActiveMembershipRole, getMembershipRole } from "./sessions";
 
 import { getConflictResolutionViews, refreshConflictSnapshot, getConflictDecisionView } from "./conflict-decisions";
-import type { ConflictMode } from "@/lib/conflict-resolution";
+import { MAX_AUTOMATIC_CONFLICT_ATTEMPTS, type ConflictMode } from "@/lib/conflict-resolution";
 
-export const MAX_AUTOMATIC_CONFLICT_ATTEMPTS = 2;
+export { MAX_AUTOMATIC_CONFLICT_ATTEMPTS } from "@/lib/conflict-resolution";
 
 type CaseRow = Omit<MergeConflictCase, "conflictPaths" | "questions" | "prompts" | "attempts" | "hasSnapshot" | "resolution"> & { conflictPaths: string; hasSnapshot: number };
 
@@ -334,7 +334,7 @@ export async function createConflictResolverRun(
     candidateId: string; candidateSha: string; remoteCandidateSha: string; ownerId: string;
   }>();
   if (!context || context.connectionStatus !== "ready" || context.candidateSha !== context.remoteCandidateSha) return null;
-  if (context.mode === "ai" && launchKind === "automatic" && (!context.autoResolve || context.automaticAttempts >= MAX_AUTOMATIC_CONFLICT_ATTEMPTS)) return null;
+  if (context.mode === "ai" && (context.automaticAttempts >= MAX_AUTOMATIC_CONFLICT_ATTEMPTS || launchKind === "automatic" && !context.autoResolve)) return null;
   if (context.mode !== "prepare" && launchKind !== "automatic" && !context.resumeRequested) return null;
   if (context.mode !== "prepare") {
     const resolution = (await getConflictResolutionViews(context.sessionId, database)).get(caseId);

@@ -718,3 +718,5 @@ Queue, agent cards, and Review share the conflict center; a prepared snapshot do
 Waiting-for-input finalization atomically releases the resolver, advances the case/floor revisions, and records one event. Workflow replay and cancellation cannot duplicate or overwrite that transition. Worker tests bind isolated R2 storage to exercise missing/malformed immutable snapshot recovery as well as D1 decisions.
 
 The shared conflict center keeps manual content in the dialog’s scroll area at mobile widths. Browser acceptance submits the complete edited result at 390px width, then checks shared agreement and integration. Queue destinations derive unresolved cases independently of the latest-20 run history.
+
+Repeated votes on the same immutable proposal never replenish its two AI attempts. Queueing derives the consumed budget from attempt history; every launch kind enforces the bound. A revised proposal or refreshed snapshot defines a new decision budget.
