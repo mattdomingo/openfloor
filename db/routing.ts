@@ -1,7 +1,7 @@
 import { getDb, type D1DatabaseLike } from "./index";
 import { deprovisionIdleGeneratedAgents, ensureAnswerAgent, ensureWorkerAgent } from "./floor";
 import type { StartRunResult } from "@/lib/agent-run-start";
-import { getPendingConflict, type PendingConflict } from "./conflicts";
+import { getPendingConflicts, type PendingConflict } from "./conflicts";
 import type { PromptIntent } from "@/lib/floor-types";
 import { resolveAutoAgentProvider } from "./provider-credentials";
 
@@ -160,8 +160,9 @@ export async function runRoutingTick(
   // An eligible case gets the next available slot, but a busy inherited
   // agent or gated provider is not eligible and therefore cannot freeze
   // unrelated ordinary work.
-  const pendingConflict = await getPendingConflict(sessionId, database);
-  if (pendingConflict && deps.startConflictResolution && !(deps.disabledProviders?.has(pendingConflict.agentProvider) ?? false)) {
+  const pendingConflicts = await getPendingConflicts(sessionId, database);
+  for (const pendingConflict of pendingConflicts) {
+    if (!deps.startConflictResolution) continue;
     const [agentActive, sessionCount, globalCount] = await Promise.all([
       database.prepare(`SELECT COUNT(*) AS count FROM agent_runs WHERE agent_id = ? AND ${ACTIVE_RUN_CONDITION}`)
         .bind(pendingConflict.agentId).first<{ count: number }>(),

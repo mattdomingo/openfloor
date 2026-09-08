@@ -1104,3 +1104,12 @@ Preview v1 supports only one JavaScript app at the repository root with exactly 
 **Rationale:** Earlier snapshots could truncate untouched tails, space-containing paths could corrupt keys, stale choices could silently apply to new hunks or fall back to AI, and integrated authors lacked decision rights. An immutable version boundary and expected-SHA publication make the choice people review the choice the system applies.
 
 **Consequences:** Additive migrations preserve historical checked enums and audit rows. Old answer/selection payloads are rejected until refreshed. Candidate movement invalidates proposals and approvals. Two AI attempts are permitted per snapshot/approved decision; deterministic preparation/application has no provider gate. Queue, agent cards, and Review use one collaborative center with real progress and inline recovery. The development acceptance and safe rollback sequence is documented in [conflict-resolution.md](conflict-resolution.md). Semantic assessment remains fallible and contradictions in unrelated files remain outside overlap detection.
+
+
+### Conflict execution recovery (2026-09-07)
+
+**Decision:** Finalize a resolver waiting for human input in one guarded D1 batch, including the case/run transition, event, and floor revision. Validate missing and malformed immutable artifacts against isolated R2 in worker tests.
+
+**Rationale:** Clients must receive a new authoritative revision when execution releases decision controls; replay and cancellation must not create duplicate events or overwrite newer state.
+
+**Consequences:** Waiting-state finalization is idempotent. Storage failures remain actionable refresh errors rather than partial manual application. Publication authorization rejects pending or failed required checks; no-change finalization also compares the session revision read before approval validation so concurrent membership or decision changes cannot complete obsolete work.

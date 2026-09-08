@@ -4,6 +4,7 @@ import { POST as postConflictInput } from "@/app/runtime/run/conflict-input/rout
 import { createFloorAgent, createFloorQueueItem, getFloorSnapshot } from "@/db/floor";
 import {
   advanceConflictAfterFailure,
+  finishResolverAwaitingInput,
   createConflictResolverRun,
   getMergeConflictCases,
   recordIntegrationConflict,
@@ -114,6 +115,28 @@ function postConflictInputRequest(token: string, body: unknown, headers: Record<
 }
 
 describe("durable merge conflicts", () => {
+  it("releases waiting execution atomically, once, without overriding cancellation", async () => {
+    const room = await prepared("waiting-finalization", true);
+    const resolver = (await createConflictResolverRun(room.caseId, "automatic", env.DB))!;
+    await env.DB.prepare("UPDATE agent_runs SET status = 'running' WHERE id = ?").bind(resolver.runId).run();
+    await requestConflictInput(resolver.runId, "These outcomes contradict each other.", [], env.DB);
+    const before = (await getFloorSnapshot(room.sessionId, room.owner.id, env.DB))!;
+    await finishResolverAwaitingInput(resolver.runId, env.DB);
+    const after = (await getFloorSnapshot(room.sessionId, room.owner.id, env.DB))!;
+    expect(after.revision).toBe(before.revision + 1);
+    expect((await getMergeConflictCases(room.sessionId, env.DB))[0].currentResolverRunId).toBeNull();
+    await finishResolverAwaitingInput(resolver.runId, env.DB);
+    expect((await getFloorSnapshot(room.sessionId, room.owner.id, env.DB))!.revision).toBe(after.revision);
+    const cancelledRoom = await prepared("waiting-cancelled", true);
+    const cancelled = (await createConflictResolverRun(cancelledRoom.caseId, "automatic", env.DB))!;
+    await requestConflictInput(cancelled.runId, "Choose an outcome.", [], env.DB);
+    await env.DB.prepare("UPDATE agent_runs SET status = 'cancel_requested' WHERE id = ?").bind(cancelled.runId).run();
+    const cancelledBefore = (await getFloorSnapshot(cancelledRoom.sessionId, cancelledRoom.owner.id, env.DB))!;
+    await finishResolverAwaitingInput(cancelled.runId, env.DB);
+    expect((await getFloorSnapshot(cancelledRoom.sessionId, cancelledRoom.owner.id, env.DB))!.revision).toBe(cancelledBefore.revision);
+    expect(await env.DB.prepare("SELECT status FROM agent_runs WHERE id = ?").bind(cancelled.runId).first()).toEqual({ status: "cancel_requested" });
+  });
+
   it("defaults automation on, records one idempotent case, and preserves omitted routing settings", async () => {
     const room = await seed("defaults");
     const floor = await getFloorSnapshot(room.sessionId, room.member.id, env.DB);
@@ -245,6 +268,10 @@ describe("durable merge conflicts", () => {
     report.preservedPromptIds.push(...view.provenance.integrated.map((prompt) => prompt.id));
     expect(await recordConflictAssessment(resolver.runId, report, env.DB)).not.toBeNull();
     await env.DB.prepare("UPDATE agent_runs SET status = 'checking' WHERE id = ?").bind(resolver.runId).run();
+    await env.DB.prepare(`INSERT INTO agent_run_checks (id, run_id, position, command, status, updated_at) VALUES (?, ?, 0, 'npm test', 'pending', 1)`)
+      .bind(crypto.randomUUID(), resolver.runId).run();
+    expect(await finishConflictWithoutChanges(resolver.runId, env.DB)).toBeNull();
+    await env.DB.prepare("UPDATE agent_run_checks SET status = 'passed' WHERE run_id = ?").bind(resolver.runId).run();
     expect(await finishConflictWithoutChanges(resolver.runId, env.DB)).not.toBeNull();
     expect((await getMergeConflictCases(room.sessionId, env.DB))[0]).toMatchObject({ status: "resolved" });
     expect(await env.DB.prepare("SELECT status, completion, run_branch AS branch FROM agent_runs WHERE id = ?").bind(resolver.runId).first()).toEqual({ status: "ready", completion: "no_changes", branch: null });

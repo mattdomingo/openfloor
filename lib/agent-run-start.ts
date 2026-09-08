@@ -41,10 +41,12 @@ import {
   requestConflictInput,
   type PendingConflict,
 } from "@/db/conflicts";
+import { setConflictWaitingReason, recordPreparedConflict, finishConflictPreparation, recordConflictAssessment } from "@/db/conflict-decisions";
 import { createDraftPullRequest, createRepositoryBranch, getInstallationRepository, getRepositoryRefSha, GitHubApiError, mergeRepositoryBranch, setTestRepositoryMergeConflict } from "@/lib/github";
+import { applyConflictSelections } from "./conflict-hunks";
 import { renderConflictResolverPrompt } from "@/lib/conflict-resolver-prompt";
 import { providerLabel } from "@/lib/provider-credentials";
-import { checkProviderBudget, getAgentBudgetContext } from "@/db/provider-credentials";
+import { checkProviderBudget } from "@/db/provider-credentials";
 import { disabledRunProviders } from "@/lib/provider-rollout";
 import { refreshRepositoryPreview } from "./repository-preview-lifecycle";
 import { openFloorBranchName } from "@/lib/repository-refs";
@@ -62,6 +64,7 @@ type TestRunFile = {
   diff: string;
 };
 type TestAgentRunData = {
+  conflictSnapshot?: { manifest: import("./conflict-workspace").ConflictManifest; files: import("./conflict-workspace").CapturedConflictFile[] };
   holdPrompts?: string[];
   failPrompts?: string[];
   conflictFirstAttemptPrompts?: string[];
@@ -172,6 +175,11 @@ export async function startQueueItemRun(sessionId: string, queueItemId: string, 
  * as ordinary runs. The case creator already pinned the source agent/model;
  * provider credentials continue to resolve from that agent owner at runtime. */
 export async function startConflictResolverRun(conflict: PendingConflict): Promise<StartRunResult> {
+  const held = async (kind: "disabled" | "quota_exhausted" | "budget_exhausted" | "conflict", message: string): Promise<StartRunResult> => {
+    const changed = await setConflictWaitingReason(conflict.id, message);
+    if (changed) await notifyFloorChanged(changed.sessionId, changed.revision, ["queue", "runs", "review"]);
+    return { ok: false, kind, message };
+  };
   const bindings = env as unknown as {
     AGENT_RUN_WORKFLOW?: WorkflowBinding;
     AGENT_RUN_ENABLED?: string;
@@ -180,23 +188,30 @@ export async function startConflictResolverRun(conflict: PendingConflict): Promi
     PREFLIGHT_LOGS?: R2BucketLike;
   };
   if (bindings.AGENT_RUN_ENABLED !== "true" && bindings.OPENFLOOR_TEST_ALLOW_IDENTITY_HEADERS !== "true") {
-    return { ok: false, kind: "disabled", message: "Agent execution is not enabled" };
+    return held("disabled", "Agent execution is not enabled. Enable the runtime before preparing or applying a resolution.");
   }
-  if (disabledRunProviders().has(conflict.agentProvider)) {
-    return { ok: false, kind: "disabled", message: `${providerLabel(conflict.agentProvider)} execution is not enabled` };
+  if (conflict.mode === "ai" && disabledRunProviders().has(conflict.agentProvider)) {
+    return held("disabled", `${providerLabel(conflict.agentProvider)} execution is not enabled. Manual resolution remains available.`);
   }
   const quota = await getOwnerHourQuota(conflict.sessionId, getDb());
   if (quota && quota.endedAt == null && quota.seconds >= quota.limitHours * 3600) {
-    return { ok: false, kind: "quota_exhausted", message: "Your plan's monthly session hours are used up." };
+    return held("quota_exhausted", "Your plan's monthly session hours are used up.");
   }
-  const budgetContext = await getAgentBudgetContext(conflict.agentId, getDb());
-  if (budgetContext) {
-    const budget = await checkProviderBudget(budgetContext.ownerUserId, budgetContext.provider, budgetContext.credentialKind, getDb());
-    if (!budget.ok) return { ok: false, kind: "budget_exhausted", message: budget.message };
+  if (conflict.mode === "ai") {
+    const source = await getDb().prepare(`SELECT fa.owner_user_id AS ownerId, source.billed_kind AS billedKind,
+      EXISTS (SELECT 1 FROM session_members sm WHERE sm.session_id = mc.session_id AND sm.user_id = fa.owner_user_id AND sm.removed_at IS NULL) AS ownerActive
+      FROM merge_conflict_cases mc JOIN agent_runs source ON source.id = mc.source_run_id JOIN floor_agents fa ON fa.id = source.agent_id WHERE mc.id = ?`)
+      .bind(conflict.id).first<{ ownerId: string; billedKind: "server" | "api_key" | "oauth" | null; ownerActive: number }>();
+    if (!source?.ownerActive || !source.billedKind) return held("disabled", "The original provider owner or billing source is unavailable. Use an agreed manual result.");
+    if (source.billedKind !== "server") {
+      const credential = await getDb().prepare("SELECT 1 FROM user_provider_credentials WHERE user_id = ? AND provider = ? AND kind = ?")
+        .bind(source.ownerId, conflict.agentProvider, source.billedKind).first();
+      if (!credential) return held("disabled", "The original provider credential is disconnected. Reconnect it or use manual resolution.");
+      const budget = await checkProviderBudget(source.ownerId, conflict.agentProvider, source.billedKind, getDb());
+      if (!budget.ok) return held("budget_exhausted", `${budget.message} Manual resolution remains available.`);
+    }
   }
-  const launchKind = conflict.resumeRequested
-    ? await hasAnsweredConflictQuestions(conflict.id) ? "answer" as const : "manual" as const
-    : "automatic" as const;
+  const launchKind = conflict.resumeRequested ? "manual" as const : "automatic" as const;
   const run = await createConflictResolverRun(conflict.id, launchKind, getDb());
   if (!run) return { ok: false, kind: "conflict", message: "The conflict case is no longer available to start." };
   if (bindings.OPENFLOOR_TEST_ALLOW_IDENTITY_HEADERS === "true" && bindings.OPENFLOOR_TEST_AGENT_RUN_DATA && bindings.PREFLIGHT_LOGS) {
@@ -208,13 +223,6 @@ export async function startConflictResolverRun(conflict: PendingConflict): Promi
     await bindings.AGENT_RUN_WORKFLOW.create({ id: run.runId, params: { runId: run.runId } });
   }
   return { ok: true, runId: run.runId };
-}
-
-async function hasAnsweredConflictQuestions(caseId: string): Promise<boolean> {
-  const row = await getDb().prepare(
-    "SELECT 1 AS present FROM merge_conflict_questions WHERE case_id = ? AND answer IS NOT NULL LIMIT 1",
-  ).bind(caseId).first<{ present: number }>();
-  return Boolean(row);
 }
 
 async function ensureNextCandidateCycle(sessionId: string, userId: string): Promise<void> {
@@ -254,11 +262,24 @@ async function runTestAgent(runId: string, encoded: string, bucket: R2BucketLike
   await bucket.put(promptKey, prompt, { httpMetadata: { contentType: "text/plain; charset=utf-8" } });
   await recordRunArtifact(runId, "prompt", promptKey, "text/plain; charset=utf-8", prompt.length);
   await markRunRunning(runId, `test-${runId}`);
+  await getDb().prepare("UPDATE agent_runs SET billed_kind = 'server' WHERE id = ? AND billed_kind IS NULL").bind(runId).run();
   await holdTestRunStage(runId, data);
   if (data.holdPrompts?.some((value) => context.prompts.some((prompt) => prompt.text.includes(value)))) return "hold";
+  if (context.conflictCaseId && context.conflictMode === "prepare") {
+    if (!data.conflictSnapshot) throw new Error("Browser test conflict fixture is missing");
+    const prefix = `conflicts/${context.conflictCaseId}/${runId}/v2`;
+    for (let index = 0; index < data.conflictSnapshot.files.length; index++) await bucket.put(`${prefix}/${index}.json`, JSON.stringify(data.conflictSnapshot.files[index]));
+    const manifestKey = `${prefix}/manifest.json`;
+    const manifest = JSON.stringify(data.conflictSnapshot.manifest);
+    await bucket.put(manifestKey, manifest);
+    await recordRunArtifact(runId, "conflict_snapshot", manifestKey, "application/json", manifest.length);
+    await recordPreparedConflict({ runId, manifestKey, paths: data.conflictSnapshot.manifest.files.map((file) => file.path) });
+    await finishConflictPreparation(runId);
+    return "hold";
+  }
   if (context.conflictCaseId && data.resolverQuestionPrompts?.some((value) => context.prompts.some((item) => item.text.includes(value)))) {
     const conflict = (await getMergeConflictCases(context.sessionId)).find((item) => item.id === context.conflictCaseId);
-    if (conflict && !conflict.questions.some((question) => question.answer !== null)) {
+    if (conflict && !conflict.resolution?.proposal?.approved) {
       await requestConflictInput(runId, "Repository intent is ambiguous and needs a session decision.", [
         "Should the resolver preserve the existing public behavior?",
         "May the resolver remove the conflicting legacy path?",
@@ -270,6 +291,16 @@ async function runTestAgent(runId: string, encoded: string, bucket: R2BucketLike
   const conflict = context.conflictCaseId
     ? (await getMergeConflictCases(context.sessionId)).find((item) => item.id === context.conflictCaseId)
     : null;
+  if (context.conflictCaseId && context.conflictMode === "ai") {
+    const provenance = conflict?.resolution?.provenance;
+    const recorded = await recordConflictAssessment(runId, { outcome: "compatible", explanation: "Browser fixture preserves both recorded intents.",
+      preservedPromptIds: [...(provenance?.incoming ?? []), ...(provenance?.integrated ?? [])].map((prompt) => prompt.id), evidence: ["Deterministic browser adapter; native Git application is covered separately."] });
+    if (!recorded) {
+      await requestConflictInput(runId, "Attribution requires an explicit owner decision.", []);
+      await finishResolverAwaitingInput(runId);
+      return "failed";
+    }
+  }
   const shouldFail = context.conflictCaseId
     ? (data.resolverFailPrompts?.some((value) => context.prompts.some((prompt) => prompt.text.includes(value))) ?? false)
       || (conflict?.automaticAttempts === 1
@@ -279,7 +310,19 @@ async function runTestAgent(runId: string, encoded: string, bucket: R2BucketLike
   const path = matchedPath ?? data.changedPath ?? "src/agent-change.ts";
   const matchedFiles = Object.entries(data.filesByPrompt ?? {}).find(([prompt]) => context.prompts.some((item) => item.text.includes(prompt)))?.[1];
   const fallbackDiff = data.diff ?? `diff --git a/${path} b/${path}\nnew file mode 100644\n--- /dev/null\n+++ b/${path}\n@@ -0,0 +1 @@\n+export const implemented = true;\n`;
-  const files = matchedFiles?.length ? matchedFiles : [{ path, changeKind: "add" as const, additions: 1, deletions: 0, summary: "Agent-created test change", diff: fallbackDiff }];
+  let files = matchedFiles?.length ? matchedFiles : [{ path, changeKind: "add" as const, additions: 1, deletions: 0, summary: "Agent-created test change", diff: fallbackDiff }];
+  if (context.conflictMode === "manual") {
+    const proposal = conflict?.resolution?.proposal;
+    if (!proposal?.approved || proposal.payload.kind !== "manual" || !data.conflictSnapshot) throw new Error("An approved exact manual fixture result is required");
+    const selections = proposal.payload.selections;
+    files = data.conflictSnapshot.files.map((file) => {
+      const choices = selections.filter((selection) => selection.path === file.path);
+      const whole = choices.find((choice) => choice.hunkIndex === -1);
+      const text = whole?.choice === "edited" ? whole.content! : whole?.choice === "ours" ? file.ours ?? "" : whole?.choice === "theirs" ? file.theirs ?? ""
+        : applyConflictSelections(file.merged!, new Map(choices.map((choice) => [choice.hunkIndex, choice.choice as "ours" | "theirs" | "both"])));
+      return { path: file.path, changeKind: "update" as const, additions: text.split("\n").length, deletions: 0, summary: "Applied the agreed manual result without a model call.", diff: `diff --git a/${file.path} b/${file.path}\n--- a/${file.path}\n+++ b/${file.path}\n@@ -0,0 +1,${text.split("\n").length} @@\n${text.split("\n").map((line) => `+${line}`).join("\n")}\n` };
+    });
+  }
   const matchedActivity = Object.entries(data.activityEventsByPrompt ?? {}).find(([prompt]) => context.prompts.some((item) => item.text.includes(prompt)))?.[1];
   const activitySource = matchedActivity ?? data.activityEvents ?? [
     { kind: "reasoning", detail: "Reviewing the requested change before editing." },
@@ -366,7 +409,7 @@ async function publishTestRun(runId: string, encoded: string) {
     : null;
   const sourceConflict = !context.conflictCaseId && context.attempt === 1
     && data.conflictFirstAttemptPrompts?.some((value) => context.prompts.some((prompt) => prompt.text.includes(value)));
-  const resolverConflict = Boolean(context.conflictCaseId && conflict?.automaticAttempts === 1
+  const resolverConflict = Boolean(context.conflictCaseId && conflict?.automaticAttempts === 1 && !conflict.attempts.some((attempt) => attempt.status === "conflicted")
     && data.resolverConflictFirstAttemptPrompts?.some((value) => context.prompts.some((prompt) => prompt.text.includes(value))));
   if (sourceConflict || resolverConflict) {
     setTestRepositoryMergeConflict(repository.id, commitSha);

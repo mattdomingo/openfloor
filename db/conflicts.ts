@@ -476,16 +476,26 @@ export async function isConflictInputRequested(runId: string, database = getDb()
 
 export async function finishResolverAwaitingInput(runId: string, database = getDb()): Promise<void> {
   const now = Date.now();
-  await database.prepare(
-    `UPDATE agent_runs SET status = 'failed', summary = 'Merge Resolver is waiting for session input.',
-            completed_at = ?, updated_at = ? WHERE id = ? AND status IN ('provisioning', 'running', 'checking')`,
-  ).bind(now, now, runId).run();
-  await database.prepare("UPDATE merge_conflict_cases SET current_resolver_run_id = NULL WHERE current_resolver_run_id = ? AND status = 'awaiting_input'").bind(runId).run();
-  await database.prepare(
-    `INSERT INTO agent_run_events (id, run_id, sequence, kind, detail, created_at)
-     SELECT ?, ?, COALESCE(MAX(sequence), 0) + 1, 'awaiting_input', 'Merge Resolver requested session input.', ?
-     FROM agent_run_events WHERE run_id = ?`,
-  ).bind(crypto.randomUUID(), runId, now, runId).run();
+  const token = crypto.randomUUID();
+  await database.batch([
+    database.prepare(`UPDATE merge_conflict_cases SET current_resolver_run_id = NULL, mutation_id = ?,
+      revision = revision + 1, updated_at = ? WHERE current_resolver_run_id = ? AND status = 'awaiting_input'
+      AND EXISTS (SELECT 1 FROM agent_runs r JOIN sessions s ON s.id = r.session_id
+        WHERE r.id = ? AND r.status IN ('provisioning', 'running', 'checking') AND s.ended_at IS NULL)`)
+      .bind(token, now, runId, runId),
+    database.prepare(`UPDATE agent_runs SET status = 'failed', summary = 'Merge Resolver is waiting for session input.',
+      completed_at = ?, updated_at = ? WHERE id = ?
+      AND EXISTS (SELECT 1 FROM merge_conflict_cases WHERE mutation_id = ?)`)
+      .bind(now, now, runId, token),
+    database.prepare(`INSERT INTO agent_run_events (id, run_id, sequence, kind, detail, created_at)
+      SELECT ?, ?, COALESCE((SELECT MAX(sequence) FROM agent_run_events WHERE run_id = ?), 0) + 1,
+        'awaiting_input', 'Merge Resolver requested session input.', ?
+      WHERE EXISTS (SELECT 1 FROM merge_conflict_cases WHERE mutation_id = ?)`)
+      .bind(crypto.randomUUID(), runId, runId, now, token),
+    database.prepare(`UPDATE sessions SET floor_revision = floor_revision + 1, updated_at = ?
+      WHERE id = (SELECT session_id FROM merge_conflict_cases WHERE mutation_id = ?)`)
+      .bind(now, token),
+  ]);
 }
 
 export async function advanceConflictAfterFailure(

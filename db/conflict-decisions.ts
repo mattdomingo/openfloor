@@ -287,6 +287,7 @@ export async function conflictExecutionAuthorized(runId: string, database = getD
     JOIN repository_candidates c ON c.id = r.candidate_id JOIN repository_connections rc ON rc.id = c.connection_id
     JOIN sessions s ON s.id = mc.session_id AND s.ended_at IS NULL
     WHERE a.run_id = ? AND mc.status = 'resolving' AND r.status IN ('running', 'checking', 'ready', 'publishing', 'published', 'integrating')
+      AND NOT EXISTS (SELECT 1 FROM agent_run_checks checks WHERE checks.run_id = r.id AND checks.status != 'passed')
       AND a.execution_mode != 'prepare' AND c.status = 'active' AND c.merged_at IS NULL AND rc.status = 'ready'
       AND sn.source_commit_sha = source.local_commit_sha AND sn.source_run_id = source.id
       AND sn.candidate_sha = r.candidate_sha AND c.candidate_sha = sn.candidate_sha AND c.remote_candidate_sha = sn.candidate_sha
@@ -316,17 +317,18 @@ export async function setConflictWaitingReason(caseId: string, reason: string, d
 }
 
 export async function finishConflictWithoutChanges(runId: string, database = getDb()) {
-  if (!await conflictExecutionAuthorized(runId, database)) return null;
-  const context = await database.prepare(`SELECT mc.id AS caseId, mc.session_id AS sessionId FROM merge_conflict_cases mc WHERE mc.current_resolver_run_id = ?`).bind(runId).first<{ caseId: string; sessionId: string }>();
-  if (!context) return null;
+  const context = await database.prepare(`SELECT mc.id AS caseId, mc.session_id AS sessionId, s.floor_revision AS floorRevision
+    FROM merge_conflict_cases mc JOIN sessions s ON s.id = mc.session_id WHERE mc.current_resolver_run_id = ?`)
+    .bind(runId).first<{ caseId: string; sessionId: string; floorRevision: number }>();
+  if (!context || !await conflictExecutionAuthorized(runId, database)) return null;
   const now = Date.now(); const token = crypto.randomUUID();
   const result = await database.batch([
     database.prepare(`UPDATE merge_conflict_cases SET status = 'resolved', resolved_at = ?, updated_at = ?, mutation_id = ?, revision = revision + 1,
       waiting_reason = NULL, failure_reason = NULL WHERE id = ? AND current_resolver_run_id = ? AND status = 'resolving'
       AND EXISTS (SELECT 1 FROM agent_runs r JOIN repository_candidates c ON c.id = r.candidate_id JOIN sessions s ON s.id = r.session_id
-        WHERE r.id = ? AND r.status = 'checking' AND s.ended_at IS NULL AND c.status = 'active' AND c.merged_at IS NULL
+        WHERE r.id = ? AND r.status = 'checking' AND s.ended_at IS NULL AND s.floor_revision = ? AND c.status = 'active' AND c.merged_at IS NULL
           AND c.candidate_sha = r.candidate_sha AND c.remote_candidate_sha = r.candidate_sha)`)
-      .bind(now, now, token, context.caseId, runId, runId),
+      .bind(now, now, token, context.caseId, runId, runId, context.floorRevision),
     database.prepare(`UPDATE agent_runs SET status = 'ready', completion = 'no_changes', run_branch = NULL,
       summary = 'The current candidate already matches the approved resolution; no Git change is needed.', completed_at = ?, updated_at = ?
       WHERE id = ? AND EXISTS (SELECT 1 FROM merge_conflict_cases WHERE id = ? AND mutation_id = ?)`).bind(now, now, runId, context.caseId, token),
