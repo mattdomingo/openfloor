@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { BASE_PATH } from "@/components/basePath";
 import { LocalDateTime } from "@/components/LocalDateTime";
-import { PersonName, useDialogDismiss } from "@/components/session/primitives";
+import { Avatar, HoverTip, Icon, type IconName, PersonName, useHoverTip, useDialogDismiss } from "@/components/session/primitives";
 import { QuotaNotice } from "@/components/session/QuotaNotice";
 import { usePresenceSocket } from "@/components/session/usePresenceSocket";
 import { initials } from "@/lib/display-name";
@@ -78,6 +78,7 @@ export function SessionScreen({
     setCandidate(initialCandidate);
   }
   const repositoryReady = isRepositoryReadyForFloor(repository, candidate);
+  const [setupOpen, setSetupOpen] = useState(!repositoryReady);
   const floorAccessible = endedAt == null && repositoryReady;
   const [repoGateOpen, setRepoGateOpen] = useState(repoGateRequested && !repositoryReady);
 
@@ -97,6 +98,7 @@ export function SessionScreen({
   // RepositoryCard, already rendered below in "Prepare the workspace".
   function goToRepositorySetup() {
     setRepoGateOpen(false);
+    setSetupOpen(true);
     document.getElementById("floor-setup-title")?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
@@ -160,27 +162,31 @@ export function SessionScreen({
 
   async function rotateInvite() {
     setInviteBusy(true);
-    const response = await fetch(`${BASE_PATH}/api/sessions/${session.id}/invite`, { method: "POST" });
-    const body = (await response.json()) as { inviteUrl?: string };
-    setInviteUrl(body.inviteUrl ?? null);
-    setInviteBusy(false);
-    setNotice("A new invite link is active. The previous link no longer works.");
+    try {
+      const response = await fetch(`${BASE_PATH}/api/sessions/${session.id}/invite`, { method: "POST" });
+      const body = await response.json() as { inviteUrl?: string; error?: string };
+      if (!response.ok || !body.inviteUrl) throw new Error(body.error ?? "Unable to create an invite link.");
+      setInviteUrl(body.inviteUrl);
+      setNotice("A new invite link is active. The previous link no longer works.");
+    } catch (error) { setNotice(error instanceof Error ? error.message : "Unable to create an invite link."); }
+    finally { setInviteBusy(false); }
   }
 
   async function revokeInviteLink() {
     setInviteBusy(true);
-    const response = await fetch(`${BASE_PATH}/api/sessions/${session.id}/invite`, { method: "DELETE" });
-    if (response.ok) {
+    try {
+      const response = await fetch(`${BASE_PATH}/api/sessions/${session.id}/invite`, { method: "DELETE" });
+      if (!response.ok) throw new Error("Unable to revoke the invite link.");
       setInviteUrl(null);
       setNotice("Invite link revoked.");
-    }
-    setInviteBusy(false);
+    } catch { setNotice("Unable to revoke the invite link."); }
+    finally { setInviteBusy(false); }
   }
 
   async function copyInvite() {
     if (!inviteUrl) return;
-    await navigator.clipboard.writeText(inviteUrl);
-    setNotice("Invite link copied.");
+    try { await navigator.clipboard.writeText(inviteUrl); setNotice("Invite link copied."); }
+    catch { setNotice("Unable to copy. Select and copy the link manually."); }
   }
 
   async function leave() {
@@ -205,9 +211,12 @@ export function SessionScreen({
 
   async function toggleLock() {
     setLockBusy(true);
-    const response = await fetch(`${BASE_PATH}/api/sessions/${session.id}/lock`, { method: session.lockedAt == null ? "POST" : "DELETE" });
-    if (response.ok) router.refresh();
-    setLockBusy(false);
+    try {
+      const response = await fetch(`${BASE_PATH}/api/sessions/${session.id}/lock`, { method: session.lockedAt == null ? "POST" : "DELETE" });
+      if (!response.ok) throw new Error("Unable to change session lock.");
+      router.refresh();
+    } catch { setNotice("Unable to change session lock."); }
+    finally { setLockBusy(false); }
   }
 
   return (
@@ -216,7 +225,7 @@ export function SessionScreen({
       <AppHeader user={user} sessionTitle={session.title} />
       <section className="session-hero lobby-hero">
         <div>
-          <p className="eyebrow">{endedAt != null ? "Ended session" : "Live session"}</p>
+          <p className="eyebrow">{endedAt != null ? "Ended session" : "Session lobby"}</p>
           <h1>{session.title}</h1>
           <p>{session.objective || "No objective has been written yet."}</p>
           <div className="lobby-hero-meta">
@@ -254,8 +263,8 @@ export function SessionScreen({
             <ul className="member-list">
               {visibleMembers.map((member) => (
                 <li key={member.id}>
-                  <span className="avatar" aria-hidden="true">{initials(member.displayName)}</span>
-                  <div><strong><PersonName name={member.displayName} />{member.id === user.id && <em> You</em>}</strong><span>Joined <LocalDateTime timestamp={member.joinedAt} mode="date" /></span></div>
+                  <Avatar userId={member.id} initials={initials(member.displayName)} tone={member.id === user.id ? "you" : "member-1"} />
+                  <div><strong><PersonName name={member.displayName} />{member.id === user.id && <em> You</em>}</strong></div>
                   <span className="member-role">{member.role}</span>
                   <span className="presence-label" data-online={member.online}>{member.online ? "Online" : "Offline"}</span>
                   {session.role === "owner" && member.id !== user.id && endedAt == null && (
@@ -270,7 +279,7 @@ export function SessionScreen({
                 <ul className="member-list">
                   {removedMembers.map((member) => (
                     <li key={member.id}>
-                      <span className="avatar" aria-hidden="true">{initials(member.displayName)}</span>
+                      <Avatar userId={member.id} initials={initials(member.displayName)} tone={member.id === user.id ? "you" : "member-1"} />
                       <div><strong><PersonName name={member.displayName} /></strong><span>Removed <LocalDateTime timestamp={member.removedAt} mode="date" /></span></div>
                       {endedAt == null && <button type="button" className="button" data-size="sm" disabled={restoreBusy === member.id} onClick={() => restoreMemberAccess(member.id)}>{restoreBusy === member.id ? "Restoring…" : "Allow back in"}</button>}
                     </li>
@@ -286,16 +295,15 @@ export function SessionScreen({
             {session.role === "owner" && endedAt == null ? (
               <>
                 <h2>Invite and lock</h2>
-                <p>The active invite is reusable. Locking suspends new joins without affecting anyone already here.</p>
                 {inviteUrl ? <input className="invite-value" value={inviteUrl} readOnly onFocus={(event) => event.currentTarget.select()} aria-label="Active invite link" /> : <div className="invite-empty">No active invite link.</div>}
                 <div className="button-row">
-                  {inviteUrl && <button className="button" data-variant="primary" onClick={copyInvite}>Copy link</button>}
-                  <button className="button" onClick={rotateInvite} disabled={inviteBusy}>{inviteUrl ? "Rotate" : "Create link"}</button>
-                  {inviteUrl && <button className="button danger-button" onClick={revokeInviteLink} disabled={inviteBusy}>Revoke</button>}
+                  {inviteUrl && <LobbyIconButton name="copy" label="Copy link" onClick={copyInvite} disabled={inviteBusy} />}
+                  <LobbyIconButton name="refresh" label={inviteUrl ? "Rotate" : "Create link"} onClick={rotateInvite} disabled={inviteBusy} />
+                  {inviteUrl && <LobbyIconButton name="trash" label="Revoke" onClick={revokeInviteLink} disabled={inviteBusy} />}
+                  <LobbyIconButton name={session.lockedAt == null ? "lock" : "unlock"} label={session.lockedAt == null ? "Lock session" : "Unlock session"} onClick={toggleLock} disabled={lockBusy} />
                 </div>
                 <div className="access-lock-row">
                   <div><strong>{session.lockedAt == null ? "Open to invited people" : "Session locked"}</strong><span>{session.lockedAt == null ? "Current invite holders may join." : "New joins are suspended."}</span></div>
-                  <button className="button" data-variant={session.lockedAt == null ? undefined : "primary"} onClick={toggleLock} disabled={lockBusy}>{session.lockedAt == null ? "Lock session" : "Unlock session"}</button>
                 </div>
               </>
             ) : (
@@ -310,10 +318,10 @@ export function SessionScreen({
         {endedAt == null && (
           <section className="floor-setup-section" aria-labelledby="floor-setup-title">
             <div className="floor-setup-heading">
-              <div><p className="eyebrow">Floor setup</p><h2 id="floor-setup-title">Prepare the workspace</h2><p>Repository access and an AI connection are required for the live floor. Skills and MCP servers are optional.</p></div>
+              <button type="button" className="lobby-setup-toggle" aria-expanded={setupOpen} aria-controls="floor-setup-content" onClick={() => setSetupOpen((value) => !value)}><span><span className="eyebrow">Floor setup</span><span id="floor-setup-title">Prepare the workspace</span></span><Icon name="chevronDown" /></button>
               <span className="setup-status" data-ready={repositoryReady}>{repositoryReady ? "Ready" : "Repository required"}</span>
             </div>
-            <div className="floor-setup-grid">
+            <div className="floor-setup-grid" id="floor-setup-content" hidden={!setupOpen}>
               <div className="floor-setup-tile">
                 <RepositoryCard sessionId={session.id} sessionTitle={session.title} sessionObjective={session.objective} role={session.role} initialRepository={repository} initialCandidate={candidate} onStateChange={updateRepositoryState} />
               </div>
@@ -511,4 +519,9 @@ function EndSessionDialog({ sessionId, onClose }: { sessionId: string; onClose: 
       </div>
     </dialog>
   );
+}
+
+function LobbyIconButton({ name, label, onClick, disabled }: { name: IconName; label: string; onClick: () => void; disabled: boolean }) {
+  const tip = useHoverTip();
+  return <><button type="button" className="button" aria-label={label} disabled={disabled} onClick={onClick} {...tip.handlers}><Icon name={name} size={18} /></button><HoverTip position={tip.position}>{label}</HoverTip></>;
 }

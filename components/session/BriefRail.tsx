@@ -149,7 +149,6 @@ export const BriefRail = memo(function BriefRail(props: BriefRailProps) {
         <div className="rail-section">
           <div className="rail-section-head">
             <span className="label">Assignments</span>
-            <span className="value">Shared with the session</span>
           </div>
           <div className="owner-list">
             {props.assignments.map((assignment) => (
