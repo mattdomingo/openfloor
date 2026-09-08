@@ -1,3 +1,4 @@
+import { conflictFixture } from "./conflict-fixture.mjs";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -34,6 +35,7 @@ const providerTestKeys = JSON.stringify({
   deepseek: ["sk-deepseek-e2e-accepted"],
 });
 const agentRunTestData = process.env.OPENFLOOR_TEST_AGENT_RUN_DATA ?? JSON.stringify({
+  conflictSnapshot: conflictFixture(statePath),
   holdPrompts: ["Hold for cancellation", "Hold persistent for auto provisioning", "Hold generated for auto provisioning"],
   failPrompts: ["intentionally failing"],
   conflictFirstAttemptPrompts: [

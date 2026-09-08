@@ -199,7 +199,8 @@ export type QueueGroup = { id: QueueGroupId; label: string; items: FloorQueueIte
 // that survive the run window. A discarded run folds into Live rather than
 // Cancelled — discard leaves the run published and the item parked, which is
 // where it already sat before grouping existed.
-export function queueItemGroup(item: FloorQueueItem, run: AgentRun | null | undefined): QueueGroupId {
+export function queueItemGroup(item: FloorQueueItem, run: AgentRun | null | undefined, conflict?: import("@/lib/floor-types").MergeConflictCase): QueueGroupId {
+  if (conflict && conflict.status !== "resolved") return conflict.status === "resolving" ? "live" : "conflicted";
   if (item.status === "queued" || item.status === "paused") return "live";
   if (item.rollback?.status === "requested" || item.rollback?.status === "running") return "live";
   if (item.rollback?.status === "failed" || run?.rollbackStatus === "failed") return "failed";
@@ -229,10 +230,11 @@ export function groupQueueItems(
   runsByQueueItemId: ReadonlyMap<string, AgentRun>,
   scope: QueueScope,
   currentUserId: string,
+  conflictsByQueue: ReadonlyMap<string, import("@/lib/floor-types").MergeConflictCase> = new Map(),
 ): QueueGroup[] {
   const scoped = scope === "mine" ? items.filter((item) => item.prompts.some((prompt) => prompt.authorUserId === currentUserId)) : items;
   const buckets = new Map<QueueGroupId, FloorQueueItem[]>(QUEUE_GROUP_ORDER.map((id) => [id, []]));
-  for (const item of scoped) buckets.get(queueItemGroup(item, runsByQueueItemId.get(item.id)))!.push(item);
+  for (const item of scoped) buckets.get(queueItemGroup(item, runsByQueueItemId.get(item.id), conflictsByQueue.get(item.id)))!.push(item);
   return QUEUE_GROUP_ORDER.map((id) => {
     const list = buckets.get(id)!;
     if (id === "live") list.sort((a, b) => a.position - b.position || a.createdAt - b.createdAt || a.id.localeCompare(b.id));

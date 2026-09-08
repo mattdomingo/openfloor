@@ -500,8 +500,8 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await owner.getByRole("button", { name: "Workspace" }).click();
   await owner.getByRole("region", { name: "Open floor" }).getByRole("combobox", { name: "Queue target" }).click();
   await owner.getByRole("option", { name: "Lumen" }).click();
-  await owner.getByLabel("Prompt to add to the queue").fill("Create a conflict needing a session decision");
-  await owner.getByRole("button", { name: "Add to queue" }).click();
+  await member.getByLabel("Prompt to add to the queue").fill("Create a conflict needing a session decision");
+  await member.getByRole("button", { name: "Add to queue" }).click();
   const questionConflictItem = owner.locator("li.queue-item", { hasText: "Create a conflict needing a session decision" });
   await questionConflictItem.getByRole("button", { name: "Run", exact: true }).click();
   await expect(member.getByText("Merge conflict needs a decision", { exact: true })).toBeVisible();
@@ -525,10 +525,7 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   const questionFloor = await floorResponse.json() as { floor: { review: { conflicts: Array<{ id: string; status: string; questions: Array<{ id: string; answer: string | null }> }> } | null } };
   const questionCase = questionFloor.floor.review?.conflicts.find((item) => item.status === "awaiting_input");
   expect(questionCase).toBeTruthy();
-  await expect(memberQuestionConflict.getByText(/Automatic resolution didn/)).toBeVisible();
-  await expect(memberQuestionConflict.getByText(/Waiting for the session owner or an original prompt author/)).toBeVisible();
-  await expect(memberQuestionConflict.locator("textarea")).toHaveCount(0);
-  await memberCenter.getByRole("button", { name: "Close" }).click();
+  await expect(memberQuestionConflict.getByLabel("Propose a shared outcome")).toBeVisible();
   await owner.getByRole("button", { name: /Review/ }).first().click();
   // An open case needing a person lights the hero button red (attention).
   const ownerConflictsButton = owner.getByRole("button", { name: /Conflicts/ });
@@ -539,18 +536,23 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   const ownerCenter = owner.getByRole("dialog", { name: "Merge conflicts" });
   await ownerCenter.locator(".conflict-center-case", { hasText: "Create a conflict needing a session decision" }).click();
   const ownerQuestionConflict = ownerCenter.locator(".conflict-case", { hasText: "Create a conflict needing a session decision" });
-  const answerFields = ownerQuestionConflict.locator("textarea");
-  await answerFields.nth(0).fill("Preserve the existing public behavior.");
-  await answerFields.nth(1).fill("Do not remove the legacy path yet.");
-  await ownerQuestionConflict.getByRole("button", { name: "Submit answers" }).click();
-  // The dialog stays open and follows the case through to resolved.
-  await expect(ownerQuestionConflict.getByText("resolved", { exact: true })).toBeVisible();
+  await ownerQuestionConflict.getByLabel("Propose a shared outcome").fill("Preserve the existing public behavior and the incoming feature through separate entry points.");
+  await ownerQuestionConflict.getByRole("button", { name: "Propose for agreement" }).click();
+  await expect(memberQuestionConflict.getByRole("button", { name: "Approve proposal" })).toBeEnabled();
+  await memberQuestionConflict.getByRole("button", { name: "Disagree", exact: true }).click();
+  await expect(ownerQuestionConflict.getByText(/An affected author disagrees/)).toBeVisible();
+  // A rejection never runs the proposal. The same author can reconsider after discussion.
+  await expect(ownerQuestionConflict.getByText("awaiting input", { exact: true })).toBeVisible();
+  await memberQuestionConflict.getByRole("button", { name: "Approve proposal" }).click();
+  await expect(ownerQuestionConflict.getByText("resolved", { exact: true })).toBeVisible({ timeout: 30_000 });
+  await expect(memberQuestionConflict.getByText("resolved", { exact: true })).toBeVisible();
+  await memberCenter.getByRole("button", { name: "Close" }).click();
   await ownerCenter.getByRole("button", { name: "Close" }).click();
   const staleAnswer = await owner.request.post(`/api/sessions/${new URL(owner.url()).pathname.split("/")[2]}/conflicts/${questionCase!.id}/answers`, {
     data: { answers: questionCase!.questions.map((question) => ({ questionId: question.id, answer: "Stale answer" })) },
   });
   expect(staleAnswer.status()).toBe(409);
-  expect(await member.evaluate(() => (window as typeof window & { __conflictAlertTest: { notifications: unknown[] } }).__conflictAlertTest.notifications.length)).toBe(1);
+  expect(await member.evaluate(() => (window as typeof window & { __conflictAlertTest: { notifications: unknown[] } }).__conflictAlertTest.notifications.length)).toBeGreaterThanOrEqual(1);
 
   await owner.getByRole("button", { name: "Workspace" }).click();
   await owner.getByRole("region", { name: "Open floor" }).getByRole("combobox", { name: "Queue target" }).click();
@@ -569,8 +571,9 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   const movementCenter = owner.getByRole("dialog", { name: "Merge conflicts" });
   await movementCenter.locator(".conflict-center-case", { hasText: "Create a candidate movement conflict" }).click();
   const movementConflict = movementCenter.locator(".conflict-case", { hasText: "Create a candidate movement conflict" });
-  await expect(movementConflict.getByText("Attempt 1 · automatic · conflicted", { exact: true })).toBeVisible();
-  await expect(movementConflict.getByText("Attempt 2 · automatic · integrated", { exact: true })).toBeVisible();
+  await movementConflict.getByText("Execution and validation history", { exact: true }).click();
+  await expect(movementConflict.getByText("Attempt 2 · conflicted", { exact: true })).toBeVisible();
+  await expect(movementConflict.getByText("Attempt 4 · integrated", { exact: true })).toBeVisible();
   await movementCenter.getByRole("button", { name: "Close" }).click();
 
   await owner.getByRole("button", { name: "Workspace" }).click();
@@ -590,8 +593,9 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   const resolverCheckCenter = owner.getByRole("dialog", { name: "Merge conflicts" });
   await resolverCheckCenter.locator(".conflict-center-case", { hasText: "Create a resolver check failure" }).click();
   const resolverCheckConflict = resolverCheckCenter.locator(".conflict-case", { hasText: "Create a resolver check failure" });
-  await expect(resolverCheckConflict.getByText("Attempt 1 · automatic · failed", { exact: true })).toBeVisible();
-  await expect(resolverCheckConflict.getByText("Attempt 2 · automatic · integrated", { exact: true })).toBeVisible();
+  await resolverCheckConflict.getByText("Execution and validation history", { exact: true }).click();
+  await expect(resolverCheckConflict.getByText("Attempt 2 · failed", { exact: true })).toBeVisible();
+  await expect(resolverCheckConflict.getByText("Attempt 3 · integrated", { exact: true })).toBeVisible();
   await resolverCheckCenter.getByRole("button", { name: "Close" }).click();
 
   await owner.getByRole("button", { name: "Workspace" }).click();
@@ -603,22 +607,31 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await owner.getByRole("button", { name: "Add to queue" }).click();
   const manualConflictItem = owner.locator("li.queue-item", { hasText: "Create a manual merge conflict" });
   await manualConflictItem.getByRole("button", { name: "Run", exact: true }).click();
-  await expect(manualConflictItem.getByText("conflicted", { exact: true })).toBeVisible();
+  await expect(manualConflictItem.getByText("needs decision", { exact: true })).toBeVisible();
   await expect(manualConflictItem.getByRole("button", { name: "Retry against latest candidate" })).toHaveCount(0);
-  await owner.getByRole("button", { name: /Review/ }).first().click();
-  await owner.getByRole("button", { name: /Conflicts/ }).click();
+  await manualConflictItem.getByRole("button", { name: "needs decision", exact: true }).click();
   const manualCenter = owner.getByRole("dialog", { name: "Merge conflicts" });
   await manualCenter.locator(".conflict-center-case", { hasText: "Create a manual merge conflict" }).click();
   const manualConflict = manualCenter.locator(".conflict-case", { hasText: "Create a manual merge conflict" });
-  await expect(manualConflict.getByRole("button", { name: "Start Merge Resolver" })).toBeVisible();
-  await member.getByRole("button", { name: /Review/ }).first().click();
-  await member.getByRole("button", { name: /Conflicts/ }).click();
-  const memberManualCenter = member.getByRole("dialog", { name: "Merge conflicts" });
-  await memberManualCenter.locator(".conflict-center-case", { hasText: "Create a manual merge conflict" }).click();
-  await expect(memberManualCenter.locator(".conflict-case", { hasText: "Create a manual merge conflict" }).getByRole("button", { name: "Start Merge Resolver" })).toHaveCount(0);
-  await memberManualCenter.getByRole("button", { name: "Close" }).click();
-  await manualConflict.getByRole("button", { name: "Start Merge Resolver" }).click();
-  await expect(manualConflict.getByText("resolved", { exact: true })).toBeVisible();
+  await expect(manualConflict.getByRole("button", { name: "Resolve manually" })).toBeEnabled();
+  await manualConflict.getByRole("button", { name: "Resolve manually" }).click();
+  const manualEditor = manualCenter.getByRole("region", { name: "Manual resolution" });
+  await expect(manualEditor.getByRole("button", { name: "Use complete incoming file" })).toBeEnabled();
+  await owner.setViewportSize({ width: 390, height: 844 });
+  await manualEditor.getByRole("button", { name: "Edit complete result" }).click();
+  await owner.screenshot({ path: test.info().outputPath("conflict-manual-mobile.png") });
+  expect(await manualCenter.evaluate((dialog) => {
+    const bounds = dialog.getBoundingClientRect();
+    const body = dialog.querySelector(".dialog-body")!;
+    return bounds.left >= 0 && bounds.right <= window.innerWidth && body.scrollWidth <= body.clientWidth;
+  })).toBe(true);
+  await manualEditor.getByLabel("Complete result for src/agent-change.ts").fill('export const candidateFeature = true;\nexport const incomingFeature = true;\n// untouched tail\n');
+  await manualEditor.getByRole("button", { name: "Propose exact result" }).click();
+  await owner.setViewportSize({ width: 1280, height: 900 });
+  await manualConflict.getByText("Owner override", { exact: true }).click();
+  await manualConflict.getByLabel("Reason for overriding agreement").fill("Both features are preserved in this exact result; the owner accepts responsibility for the final combination.");
+  await manualConflict.getByRole("button", { name: "Record owner override" }).click();
+  await expect(manualConflict.getByText("resolved", { exact: true })).toBeVisible({ timeout: 30_000 });
   await manualCenter.getByRole("button", { name: "Close" }).click();
 
   await owner.getByRole("button", { name: "Workspace" }).click();

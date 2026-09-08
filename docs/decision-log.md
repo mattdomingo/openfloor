@@ -1113,3 +1113,12 @@ Preview v1 supports only one JavaScript app at the repository root with exactly 
 **Rationale:** Clients must receive a new authoritative revision when execution releases decision controls; replay and cancellation must not create duplicate events or overwrite newer state.
 
 **Consequences:** Waiting-state finalization is idempotent. Storage failures remain actionable refresh errors rather than partial manual application. Publication authorization rejects pending or failed required checks; no-change finalization also compares the session revision read before approval validation so concurrent membership or decision changes cannot complete obsolete work.
+
+
+### Shared conflict center and mobile manual decisions (2026-09-07)
+
+**Decision:** Queue, agent cards, and Review open the same version-aware conflict center. Queue grouping and destinations use durable unresolved cases, including when preparation finishes or source runs leave the latest-20 window. The manual editor uses the dialog's scroll area and submits complete text at mobile widths.
+
+**Rationale:** A prepared snapshot must not hide an unresolved prompt under Completed, and a user must be able to inspect, propose, and approve an exact result from every conflict entry point.
+
+**Consequences:** Inline errors preserve drafts; current-version checks disable stale submissions. Two-user browser acceptance covers disagreement, approvals, owner override, candidate movement, manual editing with AI off, and a 390px viewport.
