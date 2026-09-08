@@ -1,3 +1,5 @@
+> Historical implementation plan. The 2026-09-08 personal-billing decision supersedes server-key fallback and subscription enablement described below. Current execution accepts personal API keys only; see AGENTS.md and the API contracts.
+
 # Task: add Claude as a second agent provider in openfloor
 
 You are working in the openfloor repo, branching off `main`. Read `AGENTS.md` before writing anything — it is the authoritative spec for this codebase, and the "Mandatory maintenance rule" at the top applies to this change. `README.md` covers setup and the manual plan-grant runbook.

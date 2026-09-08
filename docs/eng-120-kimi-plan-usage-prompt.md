@@ -1,3 +1,5 @@
+> Historical implementation plan. The 2026-09-08 personal-billing decision supersedes server-key fallback and subscription enablement described below. Current execution accepts personal API keys only; see AGENTS.md and the API contracts.
+
 # Task: accept a Moonshot (Kimi) coding-subscription credential alongside API keys — ENG-120
 
 You are working in the openfloor repo, on branch `ali/eng-120-kimi-plan-usage`, branched off `main`. Read `AGENTS.md` completely first — its "Mandatory maintenance rule" (AGENTS.md:7) applies to every commit here, **including a refusal commit**. `docs/glm-grok-subscription-provider-prompt.md` §1 and §4 are the precedent briefs; §4 (Claude setup tokens) is the design you are copying.
