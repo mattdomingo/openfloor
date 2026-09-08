@@ -40,7 +40,6 @@ export async function POST(request: Request, { params }: { params: Promise<{ pat
   // else refuse. A present-but-unreadable owner credential and a named-but-
   // unconnected kind both refuse rather than silently billing another payer.
   const resolved = await resolveRunProviderSecret(claims.runId, "openai", {
-    serverKey: bindings.OPENAI_API_KEY,
     encryptionKey: bindings.CREDENTIAL_ENCRYPTION_KEY,
   });
   if (!resolved.ok) return new Response(resolved.message, { status: 503 });

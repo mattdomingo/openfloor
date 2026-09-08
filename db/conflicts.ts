@@ -1,3 +1,4 @@
+import { queueAgentAccessError } from "./agent-access";
 import type { ConflictChoice, MergeConflictCase, MergeConflictQuestion } from "@/lib/floor-types";
 import type { CredentialProvider } from "@/lib/provider-credentials";
 import { getDb } from "./index";
@@ -320,6 +321,7 @@ export async function createConflictResolverRun(
     candidateId: string; candidateSha: string; remoteCandidateSha: string; ownerId: string;
   }>();
   if (!context || context.connectionStatus !== "ready" || context.candidateSha !== context.remoteCandidateSha) return null;
+  if (await queueAgentAccessError(context.sessionId, context.queueItemId, database)) return null;
   if (launchKind === "automatic" && (!context.autoResolve || context.automaticAttempts >= MAX_AUTOMATIC_CONFLICT_ATTEMPTS)) return null;
   if (launchKind !== "automatic" && !context.resumeRequested) return null;
   const previous = await database.prepare("SELECT COALESCE(MAX(attempt), 0) AS attempt FROM agent_runs WHERE queue_item_id = ?")

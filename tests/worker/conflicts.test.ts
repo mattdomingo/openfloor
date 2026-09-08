@@ -31,7 +31,7 @@ async function seed(suffix: string) {
   const created = await createSession(owner.id, { title: `Conflict ${suffix}`, objective: "Preserve both changes" }, env.DB);
   await acceptInvite(created.inviteId, member.id, env.DB);
   await acceptInvite(created.inviteId, unrelated.id, env.DB);
-  const input = parseAgentInput({ name: "Lumen", role: "Engineer", task: "Own integration", ownerUserId: member.id });
+  const input = parseAgentInput({ usageScope: "session", name: "Lumen", role: "Engineer", task: "Own integration", ownerUserId: member.id });
   if (!input) throw new Error("Invalid agent fixture");
   const withAgent = await createFloorAgent(created.session.id, member.id, input, env.DB);
   const agentId = withAgent!.agents[0].id;

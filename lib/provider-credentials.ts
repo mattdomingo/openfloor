@@ -54,6 +54,12 @@ export function credentialKindsForProvider(provider: CredentialProvider): readon
   return provider === "anthropic" || provider === "kimi" || provider === "openai" ? CREDENTIAL_KINDS : ["api_key"];
 }
 
+// Supported subscription parsers and gateways remain available for a future
+// acceptance rollout, but product connections and runs currently accept API keys only.
+export function availableCredentialKinds(_provider: CredentialProvider): readonly CredentialKind[] {
+  return credentialKindsForProvider(_provider).filter((kind) => kind === "api_key");
+}
+
 // Deduped: a provider can hold two credential rows (api_key + oauth) — it is
 // still one connected provider, not two options with the same value (which
 // also collide as React keys in a listbox). Shared by the create-agent
@@ -63,7 +69,7 @@ export function connectedProviders(
   credentials: readonly ProviderCredentialSummary[],
   enabled: readonly CredentialProvider[],
 ): CredentialProvider[] {
-  return [...new Set(credentials.map((credential) => credential.provider))].filter((provider) =>
+  return [...new Set(credentials.filter((credential) => credential.kind === "api_key").map((credential) => credential.provider))].filter((provider) =>
     enabled.includes(provider),
   );
 }
@@ -75,7 +81,7 @@ export function connectedKindsForProvider(
   credentials: readonly ProviderCredentialSummary[],
   provider: CredentialProvider,
 ): CredentialKind[] {
-  const accepted = credentialKindsForProvider(provider);
+  const accepted = availableCredentialKinds(provider);
   const connected = new Set(
     credentials.filter((credential) => credential.provider === provider).map((credential) => credential.kind),
   );
@@ -344,21 +350,10 @@ export function resolveRunModel(provider: CredentialProvider, agentModel: string
 
 export type RunCredentialResolution =
   | { source: "owner" }
-  | { source: "server" }
   | { source: "none"; reason: "no_credential" | "missing_selected_kind" };
 
-// Per-run resolution order: the agent owner's connected credential for the
-// run's provider, else the server-configured key, else refuse the run. The
-// agent's owner (chosen in the create-agent dialog) rather than the session
-// owner or run initiator: whoever provisions an agent is whose API usage its
-// runs bill. Plan quota (session hours) still bills the session owner —
-// deliberately separate ledgers. Never falls back from a present-but-failing
-// owner credential to the server key — a broken key must surface as a run
-// failure, not silently switch payer. When the agent names a credential kind
-// the owner has not connected, the run refuses even if a server key exists:
-// billing a payer the agent did not name is the same failure in a different
-// costume, and the distinguishable reason lets the gateway say which
-// connection is missing instead of the generic refusal.
+// Only the agent owner's personal API key may fund a run. Legacy server-key
+// input remains accepted for callers and regression tests, but is never used.
 export function resolveRunCredentialSource(input: {
   ownerCredentialPresent: boolean;
   serverKeyPresent: boolean;
@@ -366,6 +361,5 @@ export function resolveRunCredentialSource(input: {
 }): RunCredentialResolution {
   if (input.missingSelectedKind) return { source: "none", reason: "missing_selected_kind" };
   if (input.ownerCredentialPresent) return { source: "owner" };
-  if (input.serverKeyPresent) return { source: "server" };
   return { source: "none", reason: "no_credential" };
 }

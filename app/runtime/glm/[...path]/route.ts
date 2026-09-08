@@ -16,7 +16,6 @@ export async function POST(request: Request, { params }: { params: Promise<{ pat
     operation: "glm",
     provider: "glm",
     upstreamBase: "https://api.z.ai/api/anthropic/v1",
-    serverKeyBinding: "ZAI_API_KEY",
     buildAuthHeaders: (apiKey) => ({ authorization: `Bearer ${apiKey}` }),
     allowedPaths: ALLOWED_PATHS,
   });

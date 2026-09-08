@@ -77,6 +77,7 @@ export type AppUser = {
   avatarKey: string | null;
   onboardedAt: number | null;
   doNotDisturb: boolean;
+  defaultApiProvider?: CredentialProvider | null;
   plan: Plan;
   planStatus: PlanStatus;
   seatLimit: number | null;

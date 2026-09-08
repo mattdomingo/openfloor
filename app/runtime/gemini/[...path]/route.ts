@@ -51,7 +51,6 @@ export async function POST(request: Request, { params }: { params: Promise<{ pat
   // else refuse — a present-but-unreadable owner credential and a named-but-
   // unconnected kind both refuse rather than switching payer.
   const resolved = await resolveRunProviderSecret(claims.runId, "gemini", {
-    serverKey: bindings.GEMINI_API_KEY,
     encryptionKey: bindings.CREDENTIAL_ENCRYPTION_KEY,
   });
   if (!resolved.ok) return new Response(resolved.message, { status: 503 });

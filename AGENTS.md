@@ -576,7 +576,7 @@ Run the relevant flow first against development after every `release` deployment
 5. Verify lobby and floor presence.
 6. Verify a live draft appears and its three viewing modes work.
 7. Create an agent and confirm it persists after reload.
-8. Add unassigned and targeted queue prompts; reorder or merge them.
+8. Add unassigned and targeted queue prompts; reorder them. Prompt merging is unavailable.
 9. Send team and direct messages and verify DM privacy.
 10. Edit the objective and verify cross-browser update and reload persistence.
 11. Rotate and revoke the invite; verify old links reveal nothing.
@@ -705,3 +705,12 @@ Executor generation is `v13`, publisher `v5`, because the test scripts are inclu
 ### Session usability (2026-09-08)
 
 The guided tour provides Next while retaining real-control interaction. Required setup actions gate progression; optional fields remain optional. Detours restore the expected tab or dialog instead of skipping missing targets. Creation completes the home tour only after a successful API response. The lobby's workspace setup is a local disclosure, automatically opened by repository guidance. Lobby avatars use authenticated member images with initials fallback. The public logo is static at rest and offers a reduced-motion-aware idle invitation after ten seconds.
+
+
+### Personal billing, agent sharing, and retained Review history
+
+Only personal API keys may fund execution, including generated agents, Concierge, conflict resolution, and system feedback. Platform model secrets must never be a fallback. Subscription connection, selection, and execution are disabled; retain encrypted legacy records and usage history and allow removal. `users.default_api_provider` is the account-wide default; a sole enabled connected key resolves automatically, but an unavailable explicit default never substitutes another key. `session_members.auto_agents_enabled` is a self-only per-session preference, default on, subject to owner automation gates. Credential/default/preference changes refresh relevant floors and wake routing.
+
+Generated agents are scoped to session, prompt author, provider, and API credential kind. Never rewrite historical ownership or reuse another member's generated worker. Leaving or member removal preserves agent ownership and blocks future key access; it never transfers billing to the session owner. `floor_agents.usage_scope` defaults to `private`; only its owner may switch to `session`, explicitly permitting teammate requests to spend the owner's key. Recheck use permissions on targets and dispatch/retry. Revocation blocks future teammate runs while existing runs may finish; Pause/Stop remain shared safety controls. Legacy mixed-author work needs explicit sharing. Conflict and feedback work retain source billing and authorization.
+
+Review's nullable authoritative data does not remove its command bar or three-pane browsing layout. Empty checks are unavailable, never passing. Paginated session prompt list/detail reads are independent of candidate and latest-run windows, membership authorized, bounded, and use session-bound cursors. Preserve retained dismissed prompts, legacy merged groups, historical attribution, and exact attempt diffs. Prompt merge UI/API remain unavailable.

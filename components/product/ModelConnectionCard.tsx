@@ -17,7 +17,7 @@ export function ModelConnectionCard({
       <p className="eyebrow">Model access</p>
       <h2>AI connection</h2>
       <p>
-        A run uses the key connected by that agent&rsquo;s owner, then the configured server key. Stored values are
+        A run uses the key connected by that agent&rsquo;s owner, with no platform-funded fallback. Stored values are
         encrypted and never returned to the browser.
       </p>
       <ProviderCredentials initialCredentials={initialCredentials} providers={providers} showAgentDefaults />

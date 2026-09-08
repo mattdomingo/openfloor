@@ -16,7 +16,6 @@ export async function POST(request: Request, { params }: { params: Promise<{ pat
     operation: "qwen",
     provider: "qwen",
     upstreamBase: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
-    serverKeyBinding: "DASHSCOPE_API_KEY",
     allowedPaths: ALLOWED_PATHS,
   });
 }

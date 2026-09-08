@@ -491,27 +491,27 @@ describe("D1 session persistence", () => {
     await expect(leaveSession(created.session.id, member.id, env.DB)).resolves.toBe("missing");
   });
 
-  it("reassigns a leaving member's agents to the owner instead of stranding them", async () => {
+  it("preserves a leaving member's agent ownership without transferring billing", async () => {
     const owner = await upsertUser(identity("leave-agent-owner", "Owner"), env.DB);
     const member = await upsertUser(identity("leave-agent-member", "Member"), env.DB);
     const created = await createSession(owner.id, { title: "Room", objective: null }, env.DB);
     await acceptInvite(created.inviteId, member.id, env.DB);
-    const agentInput = parseAgentInput({ name: "Scout", role: "Researcher", task: "Look into things", ownerUserId: member.id });
+    const agentInput = parseAgentInput({ usageScope: "session", name: "Scout", role: "Researcher", task: "Look into things", ownerUserId: member.id });
     if (!agentInput) throw new Error("Invalid test agent");
     await createFloorAgent(created.session.id, member.id, agentInput, env.DB);
 
     await leaveSession(created.session.id, member.id, env.DB);
 
     const floor = await getFloorSnapshot(created.session.id, owner.id, env.DB);
-    expect(floor!.agents[0].ownerUserId).toBe(owner.id);
+    expect(floor!.agents[0].ownerUserId).toBe(member.id);
   });
 
-  it("lets the owner remove a member: frees their seat, blocks re-accepting the link, and reassigns their agents", async () => {
+  it("lets the owner remove a member: frees their seat, blocks re-accepting the link, and preserves agent ownership", async () => {
     const owner = await upsertUser(identity("remove-owner", "Owner"), env.DB);
     const member = await upsertUser(identity("remove-member", "Member"), env.DB);
     const created = await createSession(owner.id, { title: "Room", objective: null }, env.DB);
     await acceptInvite(created.inviteId, member.id, env.DB);
-    const agentInput = parseAgentInput({ name: "Scout", role: "Researcher", task: "Look into things", ownerUserId: member.id });
+    const agentInput = parseAgentInput({ usageScope: "session", name: "Scout", role: "Researcher", task: "Look into things", ownerUserId: member.id });
     if (!agentInput) throw new Error("Invalid test agent");
     await createFloorAgent(created.session.id, member.id, agentInput, env.DB);
 
@@ -524,10 +524,9 @@ describe("D1 session persistence", () => {
     expect(await getFloorSnapshot(created.session.id, member.id, env.DB)).toBeNull();
     expect(await getSessionMembers(created.session.id, owner.id, env.DB)).toHaveLength(1);
 
-    // Their agent transferred to the owner rather than being stranded on a
-    // non-member (the same invariant leaveSession now also preserves).
+    // Historical ownership and billing never transfer on removal.
     const floor = await getFloorSnapshot(created.session.id, owner.id, env.DB);
-    expect(floor!.agents[0].ownerUserId).toBe(owner.id);
+    expect(floor!.agents[0].ownerUserId).toBe(member.id);
 
     // Re-accepting the still-valid invite is refused, not silently successful
     // — the seat stays freed rather than being reclaimed by the same person.
@@ -641,7 +640,7 @@ describe("D1 session persistence", () => {
     // Unrelated floor mutations bump updated_at (via bumpFloorRevision) but
     // must never move objectiveUpdatedAt — otherwise the owner nudge
     // (lib/floor-state.ts's countMessagesSinceObjective) could never fire.
-    const agentInput = parseAgentInput({ name: "Builder", role: "Engineer", task: "Ship things", ownerUserId: owner.id });
+    const agentInput = parseAgentInput({ usageScope: "session", name: "Builder", role: "Engineer", task: "Ship things", ownerUserId: owner.id });
     if (!agentInput) throw new Error("Invalid test agent");
     await createFloorAgent(created.session.id, owner.id, agentInput, env.DB);
     await createFloorMessage(created.session.id, owner.id, { text: "hello team", recipientUserId: null }, env.DB);
@@ -950,7 +949,7 @@ describe("D1 session persistence", () => {
     const branch = `openfloor/${created.session.id.slice(0, 8)}/candidate/${candidateId.slice(0, 8)}`;
     await reserveRepositoryCandidate(created.session.id, owner.id, saved!.id, candidateId, "Resume room", "Continue the thread", branch, "main", "a".repeat(40), env.DB);
     await activateRepositoryCandidate(created.session.id, candidateId, "a".repeat(40), env.DB);
-    const parsed = parseAgentInput({ name: "Builder", role: "Engineer", task: "Implement the request", ownerUserId: owner.id });
+    const parsed = parseAgentInput({ usageScope: "session", name: "Builder", role: "Engineer", task: "Implement the request", ownerUserId: owner.id });
     if (!parsed) throw new Error("Invalid agent fixture");
     let floor = await createFloorAgent(created.session.id, owner.id, parsed, env.DB);
     const agentId = floor!.agents[0].id;
@@ -1002,7 +1001,7 @@ describe("D1 session persistence", () => {
     expect(await getRunExecutionContext(third.id, env.DB)).toEqual(expect.objectContaining({ resumeThreadId: null, resumeSessionStoreKey: null }));
   });
 
-  it("persists owner-gated agent runs, real files, checks, retry, and cancellation", async () => {
+  it("persists member-authorized agent runs, real files, checks, retry, and cancellation", async () => {
     const owner = await upsertUser(identity("run-owner", "Run Owner"), env.DB);
     const member = await upsertUser(identity("run-member", "Run Member"), env.DB);
     const created = await createSession(owner.id, { title: "Run room", objective: "Make a focused change" }, env.DB);
@@ -1015,12 +1014,12 @@ describe("D1 session persistence", () => {
     const branch = `openfloor/${created.session.id.slice(0, 8)}/candidate/${candidateId.slice(0, 8)}`;
     await reserveRepositoryCandidate(created.session.id, owner.id, saved!.id, candidateId, "Run room", "Make a focused change", branch, "main", "d".repeat(40), env.DB);
     await activateRepositoryCandidate(created.session.id, candidateId, "d".repeat(40), env.DB);
-    const parsed = parseAgentInput({ name: "Builder", role: "Engineer", task: "Implement the request", ownerUserId: owner.id });
+    const parsed = parseAgentInput({ usageScope: "session", name: "Builder", role: "Engineer", task: "Implement the request", ownerUserId: owner.id });
     if (!parsed) throw new Error("Invalid agent fixture");
     let floor = await createFloorAgent(created.session.id, owner.id, parsed, env.DB);
     floor = await createFloorQueueItem(created.session.id, owner.id, { prompt: "Add a real file", agentId: floor!.agents[0].id }, env.DB);
     const queueItemId = floor!.queue[0].id;
-    await expect(createAgentRun(created.session.id, queueItemId, member.id, "task", env.DB)).rejects.toBeInstanceOf(AgentRunNotReadyError);
+    await expect(createAgentRun(created.session.id, queueItemId, "outsider", "task", env.DB)).rejects.toBeInstanceOf(AgentRunNotReadyError);
     const run = await createAgentRun(created.session.id, queueItemId, owner.id, "task", env.DB);
     expect(run).toEqual(expect.objectContaining({ status: "provisioning", model: "gpt-5.6-terra", attempt: 1 }));
     const context = await getRunExecutionContext(run.id, env.DB);
@@ -1238,7 +1237,7 @@ describe("D1 session persistence", () => {
     const branch = `openfloor/${created.session.id.slice(0, 8)}/candidate/${candidateId.slice(0, 8)}`;
     await reserveRepositoryCandidate(created.session.id, owner.id, saved!.id, candidateId, "Integration room", "", branch, "main", "a".repeat(40), env.DB);
     await activateRepositoryCandidate(created.session.id, candidateId, "a".repeat(40), env.DB);
-    const parsed = parseAgentInput({ name: "Builder", role: "Engineer", task: "Implement the request", ownerUserId: owner.id });
+    const parsed = parseAgentInput({ usageScope: "session", name: "Builder", role: "Engineer", task: "Implement the request", ownerUserId: owner.id });
     if (!parsed) throw new Error("Invalid agent fixture");
     let floor = await createFloorAgent(created.session.id, owner.id, parsed, env.DB);
     floor = await createFloorQueueItem(created.session.id, owner.id, { prompt: "Add a real file", agentId: floor!.agents[0].id }, env.DB);
@@ -1282,7 +1281,7 @@ describe("D1 session persistence", () => {
     const branch = `openfloor/${created.session.id.slice(0, 8)}/candidate/${candidateId.slice(0, 8)}`;
     await reserveRepositoryCandidate(created.session.id, owner.id, saved!.id, candidateId, "External merge room", "", branch, "main", "a".repeat(40), env.DB);
     await activateRepositoryCandidate(created.session.id, candidateId, "a".repeat(40), env.DB);
-    const parsed = parseAgentInput({ name: "Builder", role: "Engineer", task: "Implement the request", ownerUserId: owner.id });
+    const parsed = parseAgentInput({ usageScope: "session", name: "Builder", role: "Engineer", task: "Implement the request", ownerUserId: owner.id });
     if (!parsed) throw new Error("Invalid agent fixture");
     let floor = await createFloorAgent(created.session.id, owner.id, parsed, env.DB);
     floor = await createFloorQueueItem(created.session.id, owner.id, { prompt: "Add a real file", agentId: floor!.agents[0].id }, env.DB);
@@ -1327,7 +1326,7 @@ describe("D1 session persistence", () => {
     const initialSha = "1".repeat(40);
     await reserveRepositoryCandidate(created.session.id, owner.id, saved!.id, candidateId, "Rollback room", "", branch, "main", initialSha, env.DB);
     await activateRepositoryCandidate(created.session.id, candidateId, initialSha, env.DB);
-    const parsed = parseAgentInput({ name: "Reverter", role: "Engineer", task: "Implement prompts", ownerUserId: agentOwner.id });
+    const parsed = parseAgentInput({ usageScope: "session", name: "Reverter", role: "Engineer", task: "Implement prompts", ownerUserId: agentOwner.id });
     if (!parsed) throw new Error("Invalid rollback agent fixture");
     let floor = await createFloorAgent(created.session.id, agentOwner.id, parsed, env.DB);
     floor = await createFloorQueueItem(created.session.id, engineer.id, { prompt: "Add the reversible change", agentId: floor!.agents[0].id }, env.DB);
@@ -1408,7 +1407,7 @@ describe("D1 session persistence", () => {
       env.DB,
     );
     await activateRepositoryCandidate(created.session.id, candidateId, initialSha, env.DB);
-    const parsed = parseAgentInput({ name: "Group Builder", role: "Engineer", task: "Implement grouped prompts", ownerUserId: owner.id });
+    const parsed = parseAgentInput({ usageScope: "session", name: "Group Builder", role: "Engineer", task: "Implement grouped prompts", ownerUserId: owner.id });
     if (!parsed) throw new Error("Invalid group rollback agent fixture");
     let floor = await createFloorAgent(created.session.id, owner.id, parsed, env.DB);
     const agentId = floor!.agents[0].id;

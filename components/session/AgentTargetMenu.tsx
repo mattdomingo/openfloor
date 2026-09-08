@@ -10,7 +10,7 @@ export function AgentTargetMenu({ value, onChange, agents, allowAuto = true }: {
       align="up"
       value={value ?? ""}
       onChange={(next) => onChange(next || null)}
-      options={allowAuto ? [{ value: "", label: "Auto" }, ...agents.map((agent) => ({ value: agent.id, label: agent.name }))] : agents.map((agent) => ({ value: agent.id, label: agent.name }))}
+      options={allowAuto ? [{ value: "", label: "Auto" }, ...agents.filter((agent) => agent.canUse !== false).map((agent) => ({ value: agent.id, label: agent.name }))] : agents.filter((agent) => agent.canUse !== false).map((agent) => ({ value: agent.id, label: agent.name }))}
     />
   );
 }

@@ -24,7 +24,6 @@ export type AnthropicCompatGatewayConfig = {
   // Worker secret binding name for the server-side fallback key. Bindings are
   // read by name here because gateways cast env inline by convention
   // (cloudflare-env.d.ts deliberately doesn't declare provider keys).
-  serverKeyBinding: string;
   // Kind-aware since subscription credentials became first-class: the
   // anthropic route sends x-api-key for api_key and `authorization: Bearer`
   // for oauth; kimi sends the reverse (Bearer for api_key, x-api-key for a
@@ -74,7 +73,6 @@ export async function handleAnthropicCompatProxy(
   // else refuse — a present-but-unreadable owner credential and a named-but-
   // unconnected kind both refuse rather than switching payer.
   const resolved = await resolveRunProviderSecret(claims.runId, config.provider, {
-    serverKey: bindings[config.serverKeyBinding],
     encryptionKey: bindings.CREDENTIAL_ENCRYPTION_KEY,
   });
   if (!resolved.ok) return new Response(resolved.message, { status: 503 });

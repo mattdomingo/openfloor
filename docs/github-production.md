@@ -95,22 +95,7 @@ openssl rand -hex 32 | npx wrangler secret put CREDENTIAL_ENCRYPTION_KEY
 
 Rotating this value invalidates every stored user credential — users must reconnect their keys in `/home/settings`.
 
-Optional server-side fallback keys, one per provider; without one, that provider's runs require the agent owner's connected key. Keep each provider's rollout flag (`CLAUDE_RUN_ENABLED`, `KIMI_RUN_ENABLED`, `GEMINI_RUN_ENABLED`) set to `false` until its code (and any bumped sandbox image) deploys and a credential resolves — while false, that provider's runs refuse as disabled and other providers are unaffected.
-
-```bash
-npx wrangler secret put ANTHROPIC_API_KEY
-npx wrangler secret put MOONSHOT_API_KEY
-npx wrangler secret put GEMINI_API_KEY
-npx wrangler secret put ZAI_API_KEY
-```
-
-Add an OpenAI project API key for server-side Codex execution:
-
-```bash
-npx wrangler secret put OPENAI_API_KEY
-```
-
-Enter the key at Wrangler's prompt. Do not place it in a repository, check command, queue prompt, or command-line argument. openfloor injects it only at the trusted Responses gateway; the Sandbox receives a short-lived run token instead of the project key.
+Every agent run requires the agent owner's connected personal API key in Settings. Server model secrets are ignored, including when populated in an existing deployment. Subscription connections are unavailable; stored records remain removable. Keep each provider's rollout flag disabled until its runner and gateway pass acceptance using a personal API key. The Sandbox receives only a scoped runtime token, never the personal key.
 
 ## Configure Workflow, Sandbox, and R2
 

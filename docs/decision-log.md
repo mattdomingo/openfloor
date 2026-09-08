@@ -1085,3 +1085,12 @@ Preview v1 supports only one JavaScript app at the repository root with exactly 
 **Rationale:** Clicking unrelated session tabs previously advanced into missing controls. The lobby obscured entry among setup text, and the pulsing entry mark resembled loading.
 
 **Consequences:** Tour storage remains per device. No persisted collaboration or authorization changes are introduced by these presentation changes.
+
+
+### 2026-09-08 — Personal billing and retained session Review
+
+**Decision:** Execution uses only personal API keys. Account defaults replace the session provider choice; personal membership automation defaults on and combines with the owner's gates. Generated agents belong to each prompt author; persistent agents default private and require explicit owner sharing for teammate spending. Subscription connections, selections, and execution are unavailable while encrypted records and audit remain intact. Review keeps its full layout with null data and provides paginated retained prompt history with exact attempt diffs.
+
+**Rationale:** A user's work must not silently spend platform or teammate credentials. Missing configuration must isolate affected work without blocking eligible teammates. Prompt ownership and results must remain inspectable across candidate cycles.
+
+**Consequences:** Additive account, membership, and agent columns preserve existing rows. Dispatch/retry rechecks authority; revocation does not cancel an active run. Gateway resolution refuses missing personal keys even with populated platform secrets. Old server-fallback and subscription-enablement decisions are superseded in those parts only; their historical implementation and usage records remain. Prompt merging remains unavailable; legacy mixed-author groups require explicitly shared agents. Member-scoped history cursors and bounded hydration preserve concealment and predictable reads.

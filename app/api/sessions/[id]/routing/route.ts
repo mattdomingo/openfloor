@@ -12,6 +12,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   if (isApiError(user)) return user;
   const input = parseRoutingSettingsInput(await readJson(request));
   if (!input) return Response.json({ error: "Provide a valid routing or generated-agent setting" }, { status: 400 });
+  if (input.autoAgentProvider !== undefined) return Response.json({ error: "Choose your account default API key in Settings." }, { status: 400 });
   const { id } = await params;
   const ownerError = await activeOwnerErrorResponse(id, user.id);
   if (ownerError) return ownerError;
