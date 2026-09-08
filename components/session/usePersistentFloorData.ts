@@ -149,8 +149,15 @@ export function usePersistentFloorData(sessionId: string, initialFloor: FloorSna
     request("/routing", "PATCH", { autoDispatch }), [request]);
   const setAutoProvisionAgents = useCallback((autoProvisionAgents: boolean) =>
     request("/routing", "PATCH", { autoProvisionAgents }), [request]);
-  const setAutoAgentProvider = useCallback((autoAgentProvider: import("@/lib/provider-credentials").CredentialProvider | null) =>
-    request("/routing", "PATCH", { autoAgentProvider }), [request]);
+  const setPersonalAutoAgents = useCallback((autoAgentsEnabled: boolean) => request("/membership", "PATCH", { autoAgentsEnabled }), [request]);
+  const setAutoAgentProvider = useCallback(async (autoAgentProvider: import("@/lib/provider-credentials").CredentialProvider | null) => {
+    try {
+      const response = await fetch(`${BASE_PATH}/api/account/settings`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ defaultApiProvider: autoAgentProvider }) });
+      if (!response.ok) { const body = await response.json() as { error?: string }; setError(body.error ?? "Unable to save default API key."); return false; }
+      await refresh();
+      return true;
+    } catch { setError("Unable to save default API key."); return false; }
+  }, [refresh]);
   const setAutoResolveConflicts = useCallback((autoResolveConflicts: boolean) =>
     request("/routing", "PATCH", { autoResolveConflicts }), [request]);
   const setAutoInjectFeedback = useCallback((autoInjectFeedback: boolean) =>
@@ -240,6 +247,7 @@ export function usePersistentFloorData(sessionId: string, initialFloor: FloorSna
     deleteQueueItem,
     setAutoDispatch,
     setAutoProvisionAgents,
+    setPersonalAutoAgents,
     setAutoAgentProvider,
     setAutoResolveConflicts,
     setAutoInjectFeedback,
@@ -287,6 +295,7 @@ export function usePersistentFloorData(sessionId: string, initialFloor: FloorSna
     deleteQueueItem,
     setAutoDispatch,
     setAutoProvisionAgents,
+    setPersonalAutoAgents,
     setAutoAgentProvider,
     setAutoResolveConflicts,
     setAutoInjectFeedback,

@@ -1,3 +1,4 @@
+import { agentCredentialError, queueAgentAccessError } from "@/db/agent-access";
 import {
   AgentRunConflictError,
   AgentRunNotReadyError,
@@ -84,7 +85,7 @@ type TestAgentRunData = {
 
 export type StartRunResult =
   | { ok: true; runId: string }
-  | { ok: false; kind: "disabled" | "not_ready" | "conflict" | "quota_exhausted" | "budget_exhausted"; message: string };
+  | { ok: false; kind: "disabled" | "not_ready" | "conflict" | "quota_exhausted" | "budget_exhausted" | "credential_unavailable"; message: string };
 
 // Providers whose runs cannot start right now, from the rollout gates. The
 // router passes this into runRoutingTick so gated items are SKIPPED during
@@ -103,6 +104,7 @@ export { disabledRunProviders } from "@/lib/provider-rollout";
 // forever, since "owner is out of hours" doesn't resolve until the month
 // rolls over.
 export async function startQueueItemRun(sessionId: string, queueItemId: string, userId: string, kind: "task" | "reply" = "task"): Promise<StartRunResult> {
+  if (!await getMembershipRole(sessionId, userId)) return { ok: false, kind: "not_ready", message: "Session not found" };
   const bindings = env as unknown as {
     AGENT_RUN_WORKFLOW?: WorkflowBinding;
     AGENT_RUN_ENABLED?: string;
@@ -142,6 +144,11 @@ export async function startQueueItemRun(sessionId: string, queueItemId: string, 
   // treat it as a per-item skip (continue to the next queue item), never the
   // session-wide hold every other non-"conflict" failure here triggers. See
   // the comment on that branch.
+  const accessError = await queueAgentAccessError(sessionId, queueItemId);
+  if (accessError) return { ok: false, kind: "credential_unavailable", message: accessError };
+  const target = await getDb().prepare("SELECT agent_id AS agentId FROM floor_queue_items WHERE id = ? AND session_id = ?").bind(queueItemId, sessionId).first<{ agentId: string }>();
+  const credentialError = target ? await agentCredentialError(target.agentId) : null;
+  if (credentialError) return { ok: false, kind: "credential_unavailable", message: credentialError };
   const budgetContext = await getQueueItemAgentBudgetContext(sessionId, queueItemId, getDb());
   if (budgetContext) {
     const budget = await checkProviderBudget(budgetContext.ownerUserId, budgetContext.provider, budgetContext.credentialKind, getDb());
@@ -189,6 +196,8 @@ export async function startConflictResolverRun(conflict: PendingConflict): Promi
   if (quota && quota.endedAt == null && quota.seconds >= quota.limitHours * 3600) {
     return { ok: false, kind: "quota_exhausted", message: "Your plan's monthly session hours are used up." };
   }
+  const credentialError = await agentCredentialError(conflict.agentId);
+  if (credentialError) return { ok: false, kind: "credential_unavailable", message: credentialError };
   const budgetContext = await getAgentBudgetContext(conflict.agentId, getDb());
   if (budgetContext) {
     const budget = await checkProviderBudget(budgetContext.ownerUserId, budgetContext.provider, budgetContext.credentialKind, getDb());
