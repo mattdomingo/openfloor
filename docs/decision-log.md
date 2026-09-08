@@ -1090,6 +1090,23 @@ Preview v1 supports only one JavaScript app at the repository root with exactly 
 
 **Consequences:** No host mounts or privileges are added. Only the private tmpfs permission changes, restoring ordinary unprivileged temporary-file creation. Executor/publisher generations advance to `v13`/`v5` because the image includes these test scripts. Container acceptance continues to verify lifecycle suppression, private loopback, zero capabilities, and blocked outbound traffic.
 
+### 2026-09-08 — Guided progression and a clearer session lobby
+
+**Decision:** Next advances the tutorial without dismissing it; required form steps stay gated and optional inputs do not become requirements. Missing contexts display recovery guidance. Successful session creation alone completes the final home step. The lobby uses a prominent floor-entry row, a local workspace-setup disclosure, authenticated member avatars, and accessible icon controls. The public mark no longer pulses; ten seconds of inactivity reveals an invitation with reduced-motion support.
+
+**Rationale:** Clicking unrelated session tabs previously advanced into missing controls. The lobby obscured entry among setup text, and the pulsing entry mark resembled loading.
+
+**Consequences:** Tour storage remains per device. No persisted collaboration or authorization changes are introduced by these presentation changes.
+
+
+### 2026-09-08 — Personal billing and retained session Review
+
+**Decision:** Execution uses only personal API keys. Account defaults replace the session provider choice; personal membership automation defaults on and combines with the owner's gates. Generated agents belong to each prompt author; persistent agents default private and require explicit owner sharing for teammate spending. Subscription connections, selections, and execution are unavailable while encrypted records and audit remain intact. Review keeps its full layout with null data and provides paginated retained prompt history with exact attempt diffs.
+
+**Rationale:** A user's work must not silently spend platform or teammate credentials. Missing configuration must isolate affected work without blocking eligible teammates. Prompt ownership and results must remain inspectable across candidate cycles.
+
+**Consequences:** Additive account, membership, and agent columns preserve existing rows. Dispatch/retry rechecks authority; revocation does not cancel an active run. Gateway resolution refuses missing personal keys even with populated platform secrets. Old server-fallback and subscription-enablement decisions are superseded in those parts only; their historical implementation and usage records remain. Prompt merging remains unavailable; legacy mixed-author groups require explicitly shared agents. Member-scoped history cursors and bounded hydration preserve concealment and predictable reads.
+
 ### 2026-09-07 — Bind manual conflict decisions to exact content
 
 **Decision:** Bind every snapshot read to its requested session, reject stale writes without mutation, preserve paths containing spaces, and require complete unchanged snapshot content and candidate SHA before deterministic application. A failed manual application cannot fall back to AI. A missing Git stage is checked explicitly before deletion.
@@ -1173,3 +1190,10 @@ Preview v1 supports only one JavaScript app at the repository root with exactly 
 **Rationale:** Attribution and conflict resolution touch the same run-creation and migration boundaries. An explicit predecessor sequence prevents conflicting metadata and preserves authorship across resolver attempts.
 
 **Consequences:** Validate both the reconciled #303 head and the cumulative #304 result, including runtime isolation. Sequential merges must preserve all three feature sets without migration table recreation.
+
+
+### 2026-09-08 — Preserve personal billing across the conflict stack
+
+**Decision:** Regenerate the unapplied personal-billing migration as `0050_equal_nebula.sql` after #302's 0048 and #303's regenerated 0049. Preserve v2 conflict preparation/manual resolution without requiring model billing. AI resolution refuses legacy platform/subscription billing and retains source-agent use authority. Retained prompt details expose immutable engineer attribution and validated GitHub commit links.
+
+**Consequences:** All three PRs retain release as their base and merge in order #302, #303, #304 using Create a merge commit. Local sequential simulations prove this method; squash merging was tested and produces conflicts because it drops predecessor ancestry. Existing release migrations remain byte-identical. The cumulative gate includes record-preserving upgrades, provider isolation, engineer credit, conflict consensus, and browser acceptance.

@@ -22,7 +22,7 @@ async function room() {
   const candidateId = crypto.randomUUID();
   await reserveRepositoryCandidate(sessionId, owner.id, saved!.id, candidateId, "Attribution", "", `openfloor/${sessionId.slice(0, 8)}/candidate/${candidateId.slice(0, 8)}`, "main", "a".repeat(40), env.DB);
   await activateRepositoryCandidate(sessionId, candidateId, "a".repeat(40), env.DB);
-  const floor = await createFloorAgent(sessionId, owner.id, parseAgentInput({ name: "Builder", role: "Engineer", task: "Build features" })!, env.DB);
+  const floor = await createFloorAgent(sessionId, owner.id, parseAgentInput({ usageScope: "session", name: "Builder", role: "Engineer", task: "Build features" })!, env.DB);
   const queued = await createFloorQueueItem(sessionId, member.id, { prompt: "Add a feature", agentId: floor!.agents[0].id }, env.DB);
   return { owner, member, sessionId, candidateId, queueItemId: queued!.queue[0].id };
 }
@@ -34,7 +34,7 @@ describe("engineer verification and run identity", () => {
     await expect(createAgentRun(r.sessionId, r.queueItemId, r.owner.id, "task", env.DB)).rejects.toThrow("GitHub verification required");
     expect((await getFloorSnapshot(r.sessionId, r.member.id, env.DB))?.queue[0].status).toBe("queued");
     expect(await env.DB.prepare("SELECT id FROM agent_runs WHERE session_id = ?").bind(r.sessionId).first()).toBeNull();
-    await expect(createAgentRun(r.sessionId, r.queueItemId, r.member.id, "task", env.DB)).rejects.toThrow("Session not found");
+    await expect(createAgentRun(r.sessionId, r.queueItemId, "outsider", "task", env.DB)).rejects.toThrow("Session not found");
     const reply = await createAgentRun(r.sessionId, r.queueItemId, r.owner.id, "reply", env.DB);
     expect(reply.kind).toBe("reply");
   });

@@ -12,7 +12,6 @@ export async function POST(request: Request, { params }: { params: Promise<{ pat
     operation: "deepseek",
     provider: "deepseek",
     upstreamBase: "https://api.deepseek.com",
-    serverKeyBinding: "DEEPSEEK_API_KEY",
     allowedPaths: ALLOWED_PATHS,
   });
 }

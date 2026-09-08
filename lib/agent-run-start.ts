@@ -1,3 +1,4 @@
+import { agentCredentialError, queueAgentAccessError } from "@/db/agent-access";
 import { GitHubVerificationRequiredError } from "@/db/run-attribution";
 import {
   AgentRunConflictError,
@@ -88,7 +89,7 @@ type TestAgentRunData = {
 
 export type StartRunResult =
   | { ok: true; runId: string }
-  | { ok: false; kind: "disabled" | "not_ready" | "conflict" | "quota_exhausted" | "budget_exhausted" | "github_verification_required"; message: string };
+  | { ok: false; kind: "disabled" | "not_ready" | "conflict" | "quota_exhausted" | "budget_exhausted" | "credential_unavailable" | "github_verification_required"; message: string };
 
 // Providers whose runs cannot start right now, from the rollout gates. The
 // router passes this into runRoutingTick so gated items are SKIPPED during
@@ -107,6 +108,7 @@ export { disabledRunProviders } from "@/lib/provider-rollout";
 // forever, since "owner is out of hours" doesn't resolve until the month
 // rolls over.
 export async function startQueueItemRun(sessionId: string, queueItemId: string, userId: string, kind: "task" | "reply" = "task"): Promise<StartRunResult> {
+  if (!await getMembershipRole(sessionId, userId)) return { ok: false, kind: "not_ready", message: "Session not found" };
   const bindings = env as unknown as {
     AGENT_RUN_WORKFLOW?: WorkflowBinding;
     AGENT_RUN_ENABLED?: string;
@@ -146,6 +148,11 @@ export async function startQueueItemRun(sessionId: string, queueItemId: string, 
   // treat it as a per-item skip (continue to the next queue item), never the
   // session-wide hold every other non-"conflict" failure here triggers. See
   // the comment on that branch.
+  const accessError = await queueAgentAccessError(sessionId, queueItemId);
+  if (accessError) return { ok: false, kind: "credential_unavailable", message: accessError };
+  const target = await getDb().prepare("SELECT agent_id AS agentId FROM floor_queue_items WHERE id = ? AND session_id = ?").bind(queueItemId, sessionId).first<{ agentId: string }>();
+  const credentialError = target ? await agentCredentialError(target.agentId) : null;
+  if (credentialError) return { ok: false, kind: "credential_unavailable", message: credentialError };
   const budgetContext = await getQueueItemAgentBudgetContext(sessionId, queueItemId, getDb());
   if (budgetContext) {
     const budget = await checkProviderBudget(budgetContext.ownerUserId, budgetContext.provider, budgetContext.credentialKind, getDb());
@@ -177,7 +184,7 @@ export async function startQueueItemRun(sessionId: string, queueItemId: string, 
  * as ordinary runs. The case creator already pinned the source agent/model;
  * provider credentials continue to resolve from that agent owner at runtime. */
 export async function startConflictResolverRun(conflict: PendingConflict): Promise<StartRunResult> {
-  const held = async (kind: "disabled" | "quota_exhausted" | "budget_exhausted" | "conflict", message: string): Promise<StartRunResult> => {
+  const held = async (kind: "disabled" | "quota_exhausted" | "budget_exhausted" | "credential_unavailable" | "conflict", message: string): Promise<StartRunResult> => {
     const changed = await setConflictWaitingReason(conflict.id, message);
     if (changed) await notifyFloorChanged(changed.sessionId, changed.revision, ["queue", "runs", "review"]);
     return { ok: false, kind, message };
@@ -205,7 +212,8 @@ export async function startConflictResolverRun(conflict: PendingConflict): Promi
       FROM merge_conflict_cases mc JOIN agent_runs source ON source.id = mc.source_run_id JOIN floor_agents fa ON fa.id = source.agent_id WHERE mc.id = ?`)
       .bind(conflict.id).first<{ ownerId: string; billedKind: "server" | "api_key" | "oauth" | null; ownerActive: number }>();
     if (!source?.ownerActive || !source.billedKind) return held("disabled", "The original provider owner or billing source is unavailable. Use an agreed manual result.");
-    if (source.billedKind !== "server") {
+    if (source.billedKind !== "api_key") return held("credential_unavailable", "The original billing source is unavailable. Use an agreed manual result.");
+    {
       const credential = await getDb().prepare("SELECT 1 FROM user_provider_credentials WHERE user_id = ? AND provider = ? AND kind = ?")
         .bind(source.ownerId, conflict.agentProvider, source.billedKind).first();
       if (!credential) return held("disabled", "The original provider credential is disconnected. Reconnect it or use manual resolution.");
@@ -264,7 +272,9 @@ async function runTestAgent(runId: string, encoded: string, bucket: R2BucketLike
   await bucket.put(promptKey, prompt, { httpMetadata: { contentType: "text/plain; charset=utf-8" } });
   await recordRunArtifact(runId, "prompt", promptKey, "text/plain; charset=utf-8", prompt.length);
   await markRunRunning(runId, `test-${runId}`);
-  await getDb().prepare("UPDATE agent_runs SET billed_kind = 'server' WHERE id = ? AND billed_kind IS NULL").bind(runId).run();
+  if (!context.conflictCaseId || context.conflictMode === "ai") {
+    await getDb().prepare("UPDATE agent_runs SET billed_kind = 'api_key' WHERE id = ? AND billed_kind IS NULL").bind(runId).run();
+  }
   await holdTestRunStage(runId, data);
   if (data.holdPrompts?.some((value) => context.prompts.some((prompt) => prompt.text.includes(value)))) return "hold";
   if (context.conflictCaseId && context.conflictMode === "prepare") {

@@ -14,6 +14,7 @@ export const users = sqliteTable(
     verifiedGitHub: text("verified_github"),
     avatarKey: text("avatar_key"),
     onboardedAt: integer("onboarded_at"),
+    defaultApiProvider: text("default_api_provider"),
     doNotDisturb: integer("do_not_disturb", { mode: "boolean" }).notNull().default(false),
     // The purchased tier. Only meaningful while planStatus is "active" — see
     // effectivePlan() in lib/plans.ts, which is what every limit check
@@ -230,6 +231,7 @@ export const sessionMembers = sqliteTable(
     userId: text("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
+    autoAgentsEnabled: integer("auto_agents_enabled", { mode: "boolean" }).notNull().default(true),
     role: text("role", { enum: ["owner", "member"] }).notNull(),
     joinedAt: integer("joined_at").notNull(),
     archivedAt: integer("archived_at"),
@@ -279,6 +281,7 @@ export const floorAgents = sqliteTable(
     sessionId: text("session_id").notNull().references(() => sessions.id, { onDelete: "cascade" }),
     createdBy: text("created_by").notNull().references(() => users.id),
     ownerUserId: text("owner_user_id").notNull().references(() => users.id),
+    usageScope: text("usage_scope", { enum: ["private", "session"] }).notNull().default("private"),
     name: text("name").notNull(),
     nameKey: text("name_key").notNull(),
     role: text("role").notNull(),

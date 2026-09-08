@@ -3,8 +3,10 @@ import type { Browser, BrowserContext, Page } from "@playwright/test";
 /** The first-visit guided tour overlays real controls; specs that aren't
     about the tour dismiss it before touching the grid. */
 export async function skipTourIfOpen(page: Page): Promise<void> {
-  const skip = page.locator(".tour-bubble").getByRole("button", { name: "Skip" });
-  if (await skip.isVisible({ timeout: 2000 }).catch(() => false)) await skip.click();
+  await page.evaluate(() => {
+    const key = Object.keys(localStorage).find((value) => value.startsWith("openfloor:tutorial:home:"));
+    if (key) window.dispatchEvent(new CustomEvent("openfloor:tour-complete", { detail: key }));
+  });
 }
 
 export function identityHeaders(id: string, email: string, name: string) {

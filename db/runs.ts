@@ -1,3 +1,4 @@
+import { canUseAgent, queueAgentAccessError } from "./agent-access";
 import { githubCommitUrl, readRunAttribution, type RunRequester } from "@/lib/run-attribution";
 import { getQueueRunAttribution } from "./run-attribution";
 import type { AgentRun, AgentRunCheck, AgentRunFile, AgentRunStatus, RunActivityEvent } from "@/lib/floor-types";
@@ -59,7 +60,7 @@ const AGENT_RUN_SELECT = `SELECT r.id, r.attribution AS attributionJson, reposit
    WHERE latest.run_id = r.id ORDER BY latest.created_at DESC, latest.id DESC LIMIT 1
  )`;
 
-type RunListScope = { column: "session_id" | "candidate_id"; value: string; limit: number | null; before?: string };
+type RunListScope = { column: "session_id" | "candidate_id" | "queue_item_id"; sessionId?: string; value: string; limit: number | null; before?: string };
 
 export async function getAgentRunsForMember(sessionId: string, userId: string, database = getDb()): Promise<AgentRun[] | null> {
   if (!(await getMembershipRole(sessionId, userId, database))) return null;
@@ -83,10 +84,15 @@ export async function getAgentRunsForCandidate(candidateId: string, database = g
   return getAgentRunsByScope({ column: "candidate_id", value: candidateId, limit: null }, database);
 }
 
+export async function getQueueItemRunHistory(queueItemId: string, sessionId: string, before: string | null, database: D1DatabaseLike = getDb()) {
+  const runs = await getAgentRunsByScope({ column: "queue_item_id", value: queueItemId, sessionId, limit: 21, before: before ?? undefined }, database);
+  return { runs: runs.slice(0, 20), nextCursor: runs.length > 20 ? runs[19].id : null };
+}
+
 async function getAgentRunsByScope(scope: RunListScope, database: D1DatabaseLike): Promise<AgentRun[]> {
   const limit = scope.limit === null ? "" : ` LIMIT ${scope.limit}`;
   const cursor = scope.before ? " AND (r.created_at, r.id) < (SELECT created_at, id FROM agent_runs WHERE id = ? AND session_id = ?)" : "";
-  const bindings = scope.before ? [scope.value, scope.before, scope.value] : [scope.value];
+  const bindings = scope.before ? [scope.value, scope.before, scope.sessionId ?? scope.value] : [scope.value];
   const rows = await database.prepare(
     `${AGENT_RUN_SELECT} WHERE r.${scope.column} = ?${cursor} ORDER BY r.created_at DESC, r.id DESC${limit}`,
   ).bind(...bindings).all<RunRecord>();
@@ -166,7 +172,7 @@ export async function getQueueItemAgentBudgetContext(
 }
 
 export async function createAgentRun(sessionId: string, queueItemId: string, userId: string, kind: "task" | "reply" = "task", database = getDb()): Promise<AgentRun> {
-  if ((await getActiveMembershipRole(sessionId, userId, database)) !== "owner") throw new AgentRunNotReadyError("Session not found");
+  if (!await getActiveMembershipRole(sessionId, userId, database)) throw new AgentRunNotReadyError("Session not found");
   const context = await database.prepare(
     `SELECT q.id AS queueItemId, q.status AS queueStatus, q.agent_id AS agentId, q.source_run_id AS sourceRunId,
             a.provider AS agentProvider, a.model AS agentModel, a.kind AS agentKind,
@@ -185,6 +191,8 @@ export async function createAgentRun(sessionId: string, queueItemId: string, use
   }>();
   if (!context) throw new AgentRunNotReadyError("Queue item not found");
   if (!context.agentId) throw new AgentRunNotReadyError("Assign this queue item to an agent before running it");
+  const accessError = await queueAgentAccessError(sessionId, queueItemId, database);
+  if (accessError || !await canUseAgent(sessionId, context.agentId, userId, database)) throw new AgentRunNotReadyError(accessError ?? "This agent is private.");
   if (context.queueStatus !== "queued") throw new AgentRunConflictError("This queue item is not ready to run");
   if (!context.connectionId || context.connectionStatus !== "ready" || !context.candidateId || !context.candidateSha || context.remoteCandidateSha !== context.candidateSha) {
     throw new AgentRunNotReadyError("Synchronize a ready, unmodified candidate before starting an agent run");
@@ -227,17 +235,31 @@ export async function createAgentRun(sessionId: string, queueItemId: string, use
         `INSERT INTO agent_runs
          (id, session_id, queue_item_id, agent_id, candidate_id, candidate_sha, run_branch, attempt, status, model, kind,
           resumed_from_run_id, workflow_instance_id, sandbox_id, created_by, created_at, updated_at, attribution)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'provisioning', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         SELECT ?, ?, ?, ?, ?, ?, ?, ?, 'provisioning', ?, ?, ?, ?, ?, ?, ?, ?, ?
+         FROM floor_queue_items q JOIN floor_agents a ON a.id = q.agent_id
+         JOIN sessions s ON s.id = q.session_id
+         WHERE q.id = ? AND q.session_id = ? AND q.status = 'queued' AND q.dismissed_at IS NULL AND s.ended_at IS NULL
+           AND a.paused_at IS NULL AND a.id = ? AND (a.owner_user_id = ? OR a.usage_scope = 'session')
+           AND (a.credential_kind IS NULL OR a.credential_kind = 'api_key')
+           AND EXISTS (SELECT 1 FROM session_members m WHERE m.session_id = q.session_id AND m.user_id = a.owner_user_id AND m.removed_at IS NULL)
+           AND EXISTS (SELECT 1 FROM session_members m WHERE m.session_id = q.session_id AND m.user_id = ? AND m.removed_at IS NULL)
+           AND (
+             (q.origin IS NULL AND EXISTS (SELECT 1 FROM floor_queue_prompts p WHERE p.queue_item_id = q.id)
+               AND (a.usage_scope = 'session' OR NOT EXISTS (SELECT 1 FROM floor_queue_prompts p WHERE p.queue_item_id = q.id AND p.author_user_id <> a.owner_user_id)))
+             OR (q.origin IS NOT NULL AND EXISTS (
+               SELECT 1 FROM agent_runs source WHERE source.id = q.source_run_id AND source.session_id = q.session_id AND source.agent_id = a.id
+                 AND (a.usage_scope = 'session' OR NOT EXISTS (SELECT 1 FROM floor_queue_prompts p WHERE p.queue_item_id = source.queue_item_id AND p.author_user_id <> a.owner_user_id)))))`,
       ).bind(id, sessionId, queueItemId, context.agentId, context.candidateId, context.candidateSha, runBranch, attempt,
-        model, effectiveKind === "reply" ? "reply" : null, resumeSource?.id ?? null, id, `run-${id}`, userId, now, now, JSON.stringify(attribution)),
-      database.prepare("UPDATE floor_queue_items SET status = 'running', updated_at = ? WHERE id = ? AND session_id = ? AND status = 'queued'")
-        .bind(now, queueItemId, sessionId),
+        model, effectiveKind === "reply" ? "reply" : null, resumeSource?.id ?? null, id, `run-${id}`, userId, now, now, JSON.stringify(attribution), queueItemId, sessionId, context.agentId, userId, userId),
+      database.prepare("UPDATE floor_queue_items SET status = 'running', updated_at = ? WHERE id = ? AND session_id = ? AND status = 'queued' AND EXISTS (SELECT 1 FROM agent_runs WHERE id = ?)")
+        .bind(now, queueItemId, sessionId, id),
       database.prepare("UPDATE sessions SET floor_revision = floor_revision + 1, updated_at = ? WHERE id = ?").bind(now, sessionId),
     ]);
   } catch (error) {
     if (String(error).toLowerCase().includes("unique")) throw new AgentRunConflictError("This queue item already has an active run");
     throw error;
   }
+  if (!await database.prepare("SELECT 1 FROM agent_runs WHERE id = ?").bind(id).first()) throw new AgentRunConflictError("Agent access or queue state changed before dispatch.");
   await appendRunEvent(id, "queued", `Run attempt ${attempt} created${resumeSource ? `, resuming attempt ${resumeSource.attempt}'s thread` : ""}.`, database);
   return (await getAgentRun(id, database))!;
 }

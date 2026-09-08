@@ -28,6 +28,8 @@ export type FloorAgent = {
   name: string;
   role: string;
   task: string;
+  usageScope?: "private" | "session";
+  canUse?: boolean;
   ownerUserId: string;
   ownerName: string;
   createdByUserId: string;
@@ -437,9 +439,10 @@ export type FloorSnapshot = {
   revision: number;
   autoDispatch: boolean;
   autoProvisionAgents: boolean;
+  personalAutoAgentsEnabled?: boolean;
   autoAgentProvider: CredentialProvider | null;
   effectiveAutoAgentProvider: CredentialProvider | null;
-  autoAgentProviderState: "selected" | "single_connected" | "openai_fallback" | "selection_required";
+  autoAgentProviderState: "selected" | "single_connected" | "missing_key" | "personal_disabled" | "default_unavailable" | "selection_required";
   autoResolveConflicts: boolean;
   autoInjectFeedback: boolean;
   agents: FloorAgent[];
@@ -479,6 +482,7 @@ export type CreateFloorAgentInput = {
   // Which of the owner's credential kinds pays for this agent's runs.
   // Omitted/null means "the owner's default"; the dialog offers the choice
   // only for providers that accept more than one kind.
+  usageScope?: "private" | "session";
   credentialKind?: CredentialKind | null;
   // Omitted/null means "the provider's default"; must be one of
   // PROVIDER_MODELS[provider], enforced server-side in parseAgentInput.
@@ -492,5 +496,26 @@ export type CreateFloorAgentInput = {
 export type FloorAgentSettingsPatch = {
   task?: string;
   model?: string | null;
+  usageScope?: "private" | "session";
   credentialKind?: CredentialKind | null;
+};
+
+export type SessionPromptHistoryItem = ReviewContributionPrompt & {
+  queueItemId: string;
+  status: FloorQueueItem["status"];
+  dismissedAt: number | null;
+  origin: FloorQueueItem["origin"];
+  agentId: string | null;
+  agentName: string | null;
+};
+export type SessionPromptHistoryPage = {
+  items: SessionPromptHistoryItem[];
+  nextCursor: string | null;
+  engineers: Array<{ id: string; name: string }>;
+  agents: Array<{ id: string; name: string }>;
+};
+export type SessionPromptHistoryDetail = {
+  prompt: SessionPromptHistoryItem;
+  runs: AgentRun[];
+  nextCursor: string | null;
 };

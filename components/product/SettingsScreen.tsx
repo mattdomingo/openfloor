@@ -486,9 +486,8 @@ function ConnectionsSection({ initialIdentity, initialCredentials, initialGithub
         />
       )}
       <p className="settings-category-detail">
-        Connect your own API keys. A run uses the key connected by that agent&rsquo;s owner, then the configured server key;
-        if neither is available, the run refuses clearly. Keys are encrypted, shown only by their last four characters,
-        and never sent back to the browser. Subscriptions are per-user, never shared, and never used as openfloor&rsquo;s fallback.
+        Connect your own API keys and choose the default for your auto agents. Shared agents use their owner&rsquo;s key.
+        openfloor does not provide model usage. Keys are encrypted and never returned to the browser.
       </p>
       <ProviderCredentials initialCredentials={initialCredentials} providers={enabledProviders} />
     </>

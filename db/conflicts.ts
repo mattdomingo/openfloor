@@ -1,3 +1,4 @@
+import { queueAgentAccessError } from "./agent-access";
 import type { ConflictChoice, MergeConflictCase, MergeConflictQuestion } from "@/lib/floor-types";
 import type { CredentialProvider } from "@/lib/provider-credentials";
 import { getDb } from "./index";
@@ -334,6 +335,7 @@ export async function createConflictResolverRun(
     candidateId: string; candidateSha: string; remoteCandidateSha: string; ownerId: string;
   }>();
   if (!context || context.connectionStatus !== "ready" || context.candidateSha !== context.remoteCandidateSha) return null;
+  if (context.mode === "ai" && await queueAgentAccessError(context.sessionId, context.queueItemId, database)) return null;
   if (context.mode === "ai" && (context.automaticAttempts >= MAX_AUTOMATIC_CONFLICT_ATTEMPTS || launchKind === "automatic" && !context.autoResolve)) return null;
   if (context.mode !== "prepare" && launchKind !== "automatic" && !context.resumeRequested) return null;
   if (context.mode !== "prepare") {

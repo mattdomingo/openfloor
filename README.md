@@ -150,4 +150,6 @@ See [`AGENTS.md`](AGENTS.md) for the product vision, system architecture, engine
 
 Runtime isolation and provider acceptance are documented in [the Josh beta runtime boundary](docs/josh-beta-runtime-isolation.md). The exact Sandbox image gate covers complete provider/tool containment and must pass before handoff.
 
+Personal API keys are required for model execution. Set your account default in Settings; a sole enabled connected key resolves automatically. Auto agents is a personal session preference, subject to the owner's automation gates. Persistent agents start as Only me; sharing with Everyone in this session authorizes requests against the agent owner's key. Subscription connections and server-key execution are unavailable. Review's Prompts browser includes retained prompts across candidate cycles and exact historical attempts, even when no current review exists.
+
 GitHub commit credit follows the engineer who prompted a code run. Every prompter verifies their personal GitHub account through Settings → Connections before execution; existing users refresh GitHub access once. Published commits use GitHub noreply addresses, with the first prompter as author, additional prompters as co-authors, and openfloor as committer. The final squash credits actual active contributors rather than every session member. Existing commits are never rewritten.

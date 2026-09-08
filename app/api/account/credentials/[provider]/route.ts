@@ -1,8 +1,10 @@
+import { notifyCredentialChange } from "@/lib/credential-changes";
 import { disabledRunProviders } from "@/lib/provider-rollout";
 import { getCredentialEncryptionSecret, getTestProviderKeys } from "@/db/index";
 import { deleteProviderCredential, setProviderCredentialLimit, upsertProviderCredential } from "@/db/provider-credentials";
 import { encryptCredential } from "@/lib/credential-crypto";
 import {
+  availableCredentialKinds,
   credentialAadContext,
   credentialFingerprint,
   credentialKindsForProvider,
@@ -29,7 +31,7 @@ export async function PUT(request: Request, { params }: { params: Promise<{ prov
   if (!input) {
     return Response.json({ error: "Send exactly one of apiKey, setupToken, or authJson, within its size limit" }, { status: 400 });
   }
-  if (!credentialKindsForProvider(provider).includes(input.kind)) {
+  if (!availableCredentialKinds(provider).includes(input.kind)) {
     return Response.json({ error: `${providerLabel(provider)} does not accept a subscription credential.` }, { status: 400 });
   }
   // API keys validate against the provider's models endpoint on connect;
@@ -58,6 +60,7 @@ export async function PUT(request: Request, { params }: { params: Promise<{ prov
     fingerprint: credentialFingerprint(input.fingerprintValue),
     validatedAt,
   });
+  await notifyCredentialChange(user.id);
   return Response.json({ credential });
 }
 
@@ -72,12 +75,13 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ pr
   const body = await request.json().catch(() => null);
   const input = parseCredentialLimitInput(body);
   if (!input) return Response.json({ error: "Send { kind, monthlyLimitUsd }, a whole-dollar number or null" }, { status: 400 });
-  if (!credentialKindsForProvider(provider).includes(input.kind)) {
+  if (!availableCredentialKinds(provider).includes(input.kind)) {
     return Response.json({ error: `${providerLabel(provider)} does not accept a subscription credential.` }, { status: 400 });
   }
   const monthlyLimitMicroUsd = input.monthlyLimitUsd === null ? null : Math.round(input.monthlyLimitUsd * 1_000_000);
   const credential = await setProviderCredentialLimit(user.id, provider, input.kind, monthlyLimitMicroUsd);
   if (!credential) return Response.json({ error: "That credential is not connected." }, { status: 404 });
+  await notifyCredentialChange(user.id);
   return Response.json({ credential });
 }
 
@@ -93,5 +97,6 @@ export async function DELETE(request: Request, { params }: { params: Promise<{ p
     return Response.json({ error: "Unknown credential kind" }, { status: 404 });
   }
   await deleteProviderCredential(user.id, provider, kind);
+  await notifyCredentialChange(user.id);
   return new Response(null, { status: 204 });
 }

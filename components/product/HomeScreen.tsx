@@ -313,6 +313,7 @@ export function HomeScreen({
             initialCredentials={initialCredentials}
             enabledProviders={enabledProviders}
             onClose={() => setCreating(false)}
+            onCreated={() => { const key = `openfloor:tutorial:home:${user.id}`; try { localStorage.setItem(key, "done"); } catch {} window.dispatchEvent(new CustomEvent("openfloor:tour-complete", { detail: key })); }}
           />
         )}
 
@@ -373,7 +374,11 @@ export function HomeScreen({
       {pendingDelete && <DeleteSessionDialog session={pendingDelete} onClose={() => setPendingDelete(null)} />}
       {/* Keyed per account so a recreated account sees the tour again; the
           dismissal itself stays device-local like the theme. */}
-      <GuidedTour storageKey={`openfloor:tutorial:home:${user.id}`} steps={HOME_TOUR} />
+      <GuidedTour storageKey={`openfloor:tutorial:home:${user.id}`} steps={HOME_TOUR.map((step, index) => index === 1 ? { ...step, onNext: () => void beginCreate() } : step)} recover={(index) => tab !== "active" ? {
+        selector: '.shop-tabs button:first-of-type', title: "Return to Active", body: "New sessions start in Active. Return there to continue the tutorial.", onNext: () => setTab("active"),
+      } : index >= 2 && !creating ? {
+        selector: '[aria-label="New session"]', title: "Reopen session setup", body: "Open New session to continue setup. Required fields still need to be completed.", onNext: () => void beginCreate(),
+      } : null} />
     </main>
   );
 }
@@ -391,6 +396,7 @@ export function HomeScreen({
 const HOME_TOUR: TourStep[] = [
   {
     selector: ".shop-tabs",
+    clickSelector: ".shop-tabs button:first-of-type",
     title: "Your sessions",
     body: "Filter Active, Archived, and Ended sessions, and check monthly usage. Drag a card by its grip to reorder the grid.",
   },
@@ -409,13 +415,13 @@ const HOME_TOUR: TourStep[] = [
     selector: '.create-dialog [data-tour="goal"]',
     title: "Say what done looks like",
     body: "This is the shared objective the floor works toward — the team can update it later.",
-    isSatisfied: () => Boolean((document.querySelector('.create-dialog [data-tour="goal"]') as HTMLTextAreaElement | null)?.value.trim()),
+    isSatisfied: () => true,
   },
   {
     selector: '.create-dialog [aria-label="Session repository"]',
     title: "Pick the repository",
     body: "The GitHub repository agents clone and push to. No repositories listed? Add GitHub access in Account Settings.",
-    isSatisfied: () => Boolean(document.querySelector('.create-dialog [aria-label="Session repository"] span')?.textContent?.trim()),
+    isSatisfied: () => document.querySelector('.create-dialog [data-tour="repository"]')?.getAttribute("data-ready") === "true",
     placement: "side",
   },
   {
@@ -432,7 +438,10 @@ const HOME_TOUR: TourStep[] = [
   {
     selector: '.create-dialog button[type="submit"]',
     title: "Create the session",
-    body: "Click Create session. You land on the agent floor — it walks you through itself the first time.",
+    body: "Create the session when setup is complete. If creation fails, fix the error and try again.",
+    isSatisfied: () => document.querySelector<HTMLButtonElement>('.create-dialog button[type="submit"]')?.disabled === false,
+    waitForAction: true,
+    onNext: () => document.querySelector<HTMLFormElement>(".create-dialog form")?.requestSubmit(),
   },
 ];
 
@@ -784,13 +793,14 @@ function SessionQuotaDialog({ onClose }: { onClose: () => void }) {
 // One <form> spans the whole dialog (display: contents, so it adds no box of
 // its own and .dialog's flex-column layout of head/body/foot is unaffected)
 // so Enter in a text field submits.
-function CreateSessionDialog({ repositories, repositoriesLoading, loadError, initialCredentials, enabledProviders, onClose }: {
+function CreateSessionDialog({ repositories, repositoriesLoading, loadError, initialCredentials, enabledProviders, onClose, onCreated }: {
   repositories: AccountGitHubRepositoryOption[];
   repositoriesLoading: boolean;
   loadError: string | null;
   initialCredentials: ProviderCredentialSummary[];
   enabledProviders: CredentialProvider[];
   onClose: () => void;
+  onCreated: () => void;
 }) {
   const router = useRouter();
   const { dismiss, dialogProps } = useDialogDismiss(onClose);
@@ -840,6 +850,7 @@ function CreateSessionDialog({ repositories, repositoriesLoading, loadError, ini
       setSubmitting(false);
       return;
     }
+    onCreated();
     router.push(body.setupStatus === "failed"
       ? `/session/${body.session.id}?repo=required`
       : `/session/${body.session.id}/floor`);
@@ -864,7 +875,7 @@ function CreateSessionDialog({ repositories, repositoriesLoading, loadError, ini
           <label><span>Task</span><input data-tour="task" value={title} onChange={(event) => setTitle(event.target.value)} maxLength={100} required autoFocus placeholder="What is this session for?" /></label>
           <label><span>Goal <em>optional</em></span><textarea data-tour="goal" value={objective} onChange={(event) => setObjective(event.target.value)} maxLength={2000} rows={3} placeholder="The shared objective the floor works toward" /></label>
           <label>
-            <span>Repository</span>
+            <span data-tour="repository" data-ready={!repositoriesLoading && repositories.some((repository) => repository.id === repositoryId)}>Repository</span>
             {repositories.length > 0 ? (
               <SelectMenu
                 label="Session repository"
@@ -902,8 +913,7 @@ function CreateSessionDialog({ repositories, repositoriesLoading, loadError, ini
           <section className="setup-credentials" aria-label="AI connection">
             <p>
               Optional: at least one connected provider is required to run agents — you can also add one later in
-              Settings. A run uses the key connected by that agent&rsquo;s owner, then the configured server key. If
-              neither is available, the run refuses clearly. Stored values are encrypted and never returned to the
+              Settings. A run uses the key connected by that agent&rsquo;s owner, with no platform-funded fallback. A missing personal key prevents execution. Stored values are encrypted and never returned to the
               browser.
             </p>
             <ProviderCredentials initialCredentials={credentials} providers={enabledProviders} showAgentDefaults onCredentialsChange={setCredentials} />

@@ -59,7 +59,7 @@ export type InvitePreview = {
 
 const APP_USER_COLUMNS = `id, chatgpt_user_id AS providerUserId, email, display_name AS displayName,
               first_name AS firstName, last_name AS lastName, github_handle AS githubHandle, verified_github AS verifiedGitHub,
-              avatar_key AS avatarKey, onboarded_at AS onboardedAt, do_not_disturb AS doNotDisturb,
+              avatar_key AS avatarKey, onboarded_at AS onboardedAt, do_not_disturb AS doNotDisturb, default_api_provider AS defaultApiProvider,
               plan, plan_status AS planStatus, seat_limit AS seatLimit, created_at AS createdAt, updated_at AS updatedAt,
               deleted_at AS deletedAt, early_access_granted_at AS earlyAccessGrantedAt,
               early_access_revoked_at AS earlyAccessRevokedAt, early_access_grant_source AS earlyAccessGrantSource`;
@@ -772,21 +772,10 @@ export async function leaveSession(
   const now = Date.now();
   await database.batch([
     database.prepare("DELETE FROM floor_assignments WHERE session_id = ? AND user_id = ?").bind(sessionId, userId),
-    // Keeps floor_agents.owner_user_id pointed at a real member: without
-    // this, a leaving agent owner strands the create-time invariant
-    // (db/floor.ts's createFloorAgent requires the owner be a member) and
-    // the snapshot still renders the agent because it joins users, not
-    // session_members.
-    database
-      .prepare(
-        `UPDATE floor_agents SET owner_user_id = (
-           SELECT user_id FROM session_members WHERE session_id = ? AND role = 'owner' AND removed_at IS NULL
-         ), updated_at = ?
-         WHERE session_id = ? AND owner_user_id = ?`,
-      )
-      .bind(sessionId, now, sessionId, userId),
+    // Retain the original payer and attribution. Membership guards block
+    // future spending once the owner leaves; ownership never transfers.
     database.prepare("DELETE FROM session_members WHERE session_id = ? AND user_id = ?").bind(sessionId, userId),
-    database.prepare("UPDATE sessions SET updated_at = ? WHERE id = ?").bind(now, sessionId),
+    database.prepare("UPDATE sessions SET updated_at = ?, floor_revision = floor_revision + 1 WHERE id = ?").bind(now, sessionId),
   ]);
   return "left";
 }
@@ -820,11 +809,7 @@ export async function removeMember(
       .prepare("UPDATE session_members SET removed_at = ?, removed_by = ? WHERE session_id = ? AND user_id = ? AND removed_at IS NULL")
       .bind(now, ownerId, sessionId, targetUserId),
     database.prepare("DELETE FROM floor_assignments WHERE session_id = ? AND user_id = ?").bind(sessionId, targetUserId),
-    // Their content (chat, queue prompts) stays as session history; only the
-    // agents they owned transfer, to the owner doing the removing.
-    database
-      .prepare("UPDATE floor_agents SET owner_user_id = ?, updated_at = ? WHERE session_id = ? AND owner_user_id = ?")
-      .bind(ownerId, now, sessionId, targetUserId),
+    // Preserve agent ownership and historical attribution on removal.
     database
       .prepare("UPDATE sessions SET updated_at = ?, floor_revision = floor_revision + 1 WHERE id = ?")
       .bind(now, sessionId),

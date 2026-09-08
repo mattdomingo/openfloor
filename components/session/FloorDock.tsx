@@ -100,10 +100,10 @@ export const FloorDock = memo(function FloorDock({ onSubmit, onUploadFiles, agen
     {notice && <div className="dock-toast" data-visible={noticeVisible ? "true" : "false"}><StatusLine notice={notice} visible={noticeVisible} tone={noticeTone} /></div>}
     <div className="dock-inner"><form className="composer" onSubmit={(event) => { event.preventDefault(); void submitPrompt(); }}>
       {teammates.length > 0 && <div className="composer-head"><div className="floor-presence"><span>Live drafts</span><div className="presence">{teammates.map((person) => <Avatar key={person.id} userId={person.id} initials={person.initials} tone={person.tone} online={person.online} typing={typingDrafts.get(person.id)?.typing} />)}</div></div></div>}
-      <MentionComposer textareaRef={textareaRef} agents={agents} ariaLabel="Prompt to add to the queue" value={value} onValueChange={updateDraft} />
+      <MentionComposer textareaRef={textareaRef} agents={agents.filter((agent) => agent.canUse !== false)} ariaLabel="Prompt to add to the queue" value={value} onValueChange={updateDraft} />
       {attachments.length > 0 && <ul className="composer-attachments" aria-label="Attached files">{attachments.map((file, index) => <li key={`${file.name}-${index}`} className="attachment-chip"><Icon name="file" size={12} /><span>{file.name}</span><button type="button" aria-label={`Remove ${file.name}`} onClick={() => removeAttachment(index)}><Icon name="close" size={9} /></button></li>)}</ul>}
       <div className="composer-foot">
-        <AgentTargetMenu value={queueTarget} onChange={onQueueTargetChange} agents={agents} />
+        <AgentTargetMenu value={queueTarget} onChange={onQueueTargetChange} agents={agents.filter((agent) => agent.canUse !== false)} />
         <SegmentedControl label="Teammate drafts" value={draftVisibility} options={draftVisibilityOptions} onChange={setDraftVisibility} />
         <input ref={fileInputRef} type="file" multiple style={{ display: "none" }} onChange={(event) => { addAttachments(event.target.files); event.target.value = ""; }} />
         <button type="button" className="icon-button" aria-label="Attach files or photos" title="Attach files or photos" onClick={() => fileInputRef.current?.click()}><Icon name="attach" /></button>

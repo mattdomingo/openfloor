@@ -41,7 +41,7 @@ async function floorRoom(suffix: string) {
 }
 
 function agentInput(ownerUserId: string, name = "Lumen") {
-  const input = parseAgentInput({ name, role: "Researcher", task: "Map the API", ownerUserId });
+  const input = parseAgentInput({ usageScope: "session", name, role: "Researcher", task: "Map the API", ownerUserId });
   if (!input) throw new Error("Invalid test agent");
   return input;
 }
@@ -170,7 +170,7 @@ describe("D1 persistent floor", () => {
 
   it("persists a chosen provider and defaults the rest to openai", async () => {
     const room = await floorRoom("providers");
-    const claudeInput = parseAgentInput({ name: "Claude", role: "Researcher", task: "Research", ownerUserId: room.owner.id, provider: "anthropic" });
+    const claudeInput = parseAgentInput({ usageScope: "session", name: "Claude", role: "Researcher", task: "Research", ownerUserId: room.owner.id, provider: "anthropic" });
     if (!claudeInput) throw new Error("Invalid test agent");
     const floor = await createFloorAgent(room.sessionId, room.owner.id, claudeInput, env.DB);
     expect(floor?.agents.find((agent) => agent.name === "Claude")?.provider).toBe("anthropic");
@@ -180,17 +180,17 @@ describe("D1 persistent floor", () => {
 
   it("exposes an agent's stored billing choice and persists a chosen model", async () => {
     const room = await floorRoom("billing-visible");
-    const input = parseAgentInput({ name: "Sub", role: "Researcher", task: "Research", ownerUserId: room.owner.id, provider: "anthropic", credentialKind: "oauth", model: "claude-sonnet-5" });
+    const input = parseAgentInput({ usageScope: "session", name: "Sub", role: "Researcher", task: "Research", ownerUserId: room.owner.id, provider: "anthropic", credentialKind: "api_key", model: "claude-sonnet-5" });
     if (!input) throw new Error("Invalid test agent");
     const floor = await createFloorAgent(room.sessionId, room.owner.id, input, env.DB);
     const agent = floor?.agents.find((candidate) => candidate.name === "Sub");
-    expect(agent?.credentialKind).toBe("oauth");
+    expect(agent?.credentialKind).toBe("api_key");
     expect(agent?.model).toBe("claude-sonnet-5");
   });
 
   it("edits task, model, and billing on a persistent agent against its stored provider", async () => {
     const room = await floorRoom("agent-settings");
-    const input = parseAgentInput({ name: "Edit", role: "Engineer", task: "Work", ownerUserId: room.owner.id, provider: "anthropic" });
+    const input = parseAgentInput({ usageScope: "session", name: "Edit", role: "Engineer", task: "Work", ownerUserId: room.owner.id, provider: "anthropic" });
     if (!input) throw new Error("Invalid test agent");
     const floor = await createFloorAgent(room.sessionId, room.owner.id, input, env.DB);
     const agentId = floor!.agents[0].id;
@@ -210,7 +210,7 @@ describe("D1 persistent floor", () => {
     // Same rule for a billing kind the stored provider does not accept.
     // (This used kimi until its Kimi Code plan kind became real on
     // 2026-08-26; glm remains api_key-only.)
-    const glmInput = parseAgentInput({ name: "GlmEdit", role: "Engineer", task: "Work", ownerUserId: room.owner.id, provider: "glm" });
+    const glmInput = parseAgentInput({ usageScope: "session", name: "GlmEdit", role: "Engineer", task: "Work", ownerUserId: room.owner.id, provider: "glm" });
     if (!glmInput) throw new Error("Invalid test agent");
     const glmFloor = await createFloorAgent(room.sessionId, room.owner.id, glmInput, env.DB);
     const glmAgentId = glmFloor!.agents.find((agent) => agent.name === "GlmEdit")!.id;
@@ -223,7 +223,7 @@ describe("D1 persistent floor", () => {
 
   it("refuses a billing change while the agent has a run in flight, then accepts it", async () => {
     const room = await floorRoom("billing-edit");
-    const input = parseAgentInput({ name: "Bill", role: "Engineer", task: "Work", ownerUserId: room.owner.id, provider: "anthropic" });
+    const input = parseAgentInput({ usageScope: "session", name: "Bill", role: "Engineer", task: "Work", ownerUserId: room.owner.id, provider: "anthropic" });
     if (!input) throw new Error("Invalid test agent");
     let floor = await createFloorAgent(room.sessionId, room.owner.id, input, env.DB);
     const agentId = floor!.agents[0].id;
@@ -232,14 +232,14 @@ describe("D1 persistent floor", () => {
     const runId = await insertRun(room.sessionId, agentId, room.owner.id, itemId, "running");
     // The gateway resolves credential_kind live on every proxied request, so
     // an in-flight run would bill the new payer mid-run — refuse instead.
-    await expect(updateFloorAgentSettings(room.sessionId, room.owner.id, agentId, { credentialKind: "oauth" }, env.DB)).rejects.toBeInstanceOf(FloorConflictError);
+    await expect(updateFloorAgentSettings(room.sessionId, room.owner.id, agentId, { credentialKind: "api_key" }, env.DB)).rejects.toBeInstanceOf(FloorConflictError);
     // A model edit during the same run is fine: the run's model was frozen
     // into agent_runs.model at creation and cannot be disturbed.
     const during = await updateFloorAgentSettings(room.sessionId, room.owner.id, agentId, { model: "claude-sonnet-5" }, env.DB);
     expect(during?.agents[0].model).toBe("claude-sonnet-5");
     await env.DB.prepare("UPDATE agent_runs SET status = 'ready' WHERE id = ?").bind(runId).run();
-    const after = await updateFloorAgentSettings(room.sessionId, room.owner.id, agentId, { credentialKind: "oauth" }, env.DB);
-    expect(after?.agents[0].credentialKind).toBe("oauth");
+    const after = await updateFloorAgentSettings(room.sessionId, room.owner.id, agentId, { credentialKind: "api_key" }, env.DB);
+    expect(after?.agents[0].credentialKind).toBe("api_key");
     const reset = await updateFloorAgentSettings(room.sessionId, room.owner.id, agentId, { credentialKind: null }, env.DB);
     expect(reset?.agents[0].credentialKind).toBeNull();
   });
@@ -489,5 +489,69 @@ describe("D1 persistent floor", () => {
         summary: "GitHub pull request diff",
       }),
     ]);
+  });
+});
+
+describe("personal agent spending authority and retained prompts", () => {
+  it("defaults private, permits explicit sharing, and revokes future use without stopping a running attempt", async () => {
+    const room = await floorRoom("private-policy");
+    const input = parseAgentInput({ name: "Private", role: "Engineer", task: "Implement" })!;
+    const floor = await createFloorAgent(room.sessionId, room.owner.id, input, env.DB);
+    const agent = floor!.agents[0];
+    expect(agent.usageScope).toBe("private");
+    expect((await getFloorSnapshot(room.sessionId, room.member.id, env.DB))!.agents[0].canUse).toBe(false);
+    await expect(createFloorQueueItem(room.sessionId, room.member.id, { prompt: "Spend owner key", agentId: agent.id }, env.DB)).rejects.toBeInstanceOf(FloorTargetError);
+    await expect(updateFloorAgentSettings(room.sessionId, room.member.id, agent.id, { usageScope: "session" }, env.DB)).rejects.toBeInstanceOf(FloorTargetError);
+    await updateFloorAgentSettings(room.sessionId, room.owner.id, agent.id, { usageScope: "session" }, env.DB);
+    const shared = await createFloorQueueItem(room.sessionId, room.member.id, { prompt: "Shared request", agentId: agent.id }, env.DB);
+    const itemId = shared!.queue[0].id;
+    const runId = await insertRun(room.sessionId, agent.id, room.owner.id, itemId, "running");
+    await updateFloorAgentSettings(room.sessionId, room.owner.id, agent.id, { usageScope: "private" }, env.DB);
+    const { queueAgentAccessError } = await import("@/db/agent-access");
+    expect(await queueAgentAccessError(room.sessionId, itemId, env.DB)).toContain("private");
+    const feedback = await createFloorQueueItem(room.sessionId, room.owner.id, { prompt: "System feedback", agentId: agent.id }, env.DB);
+    const feedbackId = feedback!.queue.find((item) => item.id !== itemId)!.id;
+    await env.DB.prepare("UPDATE floor_queue_items SET origin = 'review_comments', source_run_id = ? WHERE id = ?").bind(runId, feedbackId).run();
+    expect(await queueAgentAccessError(room.sessionId, feedbackId, env.DB)).toContain("source agent is private");
+    expect(await env.DB.prepare("SELECT status FROM agent_runs WHERE id = ?").bind(runId).first()).toEqual({ status: "running" });
+    await pauseFloorAgent(room.sessionId, room.member.id, agent.id, true, env.DB);
+    expect((await getFloorSnapshot(room.sessionId, room.owner.id, env.DB))!.agents[0].pausedAt).not.toBeNull();
+  });
+
+  it("keeps generated pools separate by owner and provider", async () => {
+    const room = await floorRoom("personal-pools");
+    const owner = await ensureAnswerAgent(room.sessionId, room.owner.id, "openai", env.DB);
+    const member = await ensureAnswerAgent(room.sessionId, room.member.id, "openai", env.DB);
+    const alternate = await ensureAnswerAgent(room.sessionId, room.owner.id, "anthropic", env.DB);
+    expect(new Set([owner.id, member.id, alternate.id]).size).toBe(3);
+    expect((await ensureAnswerAgent(room.sessionId, room.owner.id, "openai", env.DB)).id).toBe(owner.id);
+  });
+
+  it("paginates dismissed and legacy merged prompt history with session-bound cursors and exact attempt diffs", async () => {
+    const { listSessionPromptHistory, getSessionPromptHistory } = await import("@/db/prompt-history");
+    const room = await floorRoom("prompt-history");
+    const other = await floorRoom("prompt-history-other");
+    const floor = await createFloorAgent(room.sessionId, room.owner.id, agentInput(room.owner.id), env.DB);
+    const agentId = floor!.agents[0].id;
+    const queued = await createFloorQueueItem(room.sessionId, room.owner.id, { prompt: "Historical request", agentId }, env.DB);
+    const itemId = queued!.queue[0].id;
+    const promptId = queued!.queue[0].prompts[0].id;
+    const runId = await insertRun(room.sessionId, agentId, room.owner.id, itemId);
+    await env.DB.prepare("INSERT INTO agent_run_files (id, run_id, path, change_kind, additions, deletions, summary, diff_preview, created_at) VALUES (?, ?, 'real.ts', 'add', 1, 0, 'Actual result', '+actual', 1)").bind(crypto.randomUUID(), runId).run();
+    for (let i = 0; i < 28; i++) await env.DB.prepare("INSERT INTO floor_queue_prompts (id, queue_item_id, author_user_id, text, created_at) VALUES (?, ?, ?, ?, ?)").bind(crypto.randomUUID(), itemId, room.member.id, `Legacy merged ${i}`, Date.now() + i).run();
+    await env.DB.prepare("UPDATE floor_queue_items SET dismissed_at = ? WHERE id = ?").bind(Date.now(), itemId).run();
+    const first = (await listSessionPromptHistory(room.sessionId, room.member.id, {}, env.DB))!;
+    expect(first.items).toHaveLength(25);
+    expect(first.items.every((item) => item.dismissedAt !== null)).toBe(true);
+    const second = (await listSessionPromptHistory(room.sessionId, room.member.id, { before: first.nextCursor }, env.DB))!;
+    expect(second.items).toHaveLength(4);
+    expect(new Set([...first.items, ...second.items].map((item) => item.id)).size).toBe(29);
+    const detail = await getSessionPromptHistory(room.sessionId, room.member.id, promptId, null, env.DB);
+    expect(detail?.runs[0].files[0].diffPreview).toBe("+actual");
+    const merged = await getSessionPromptHistory(room.sessionId, room.member.id, first.items[0].id, null, env.DB);
+    expect(merged?.runs[0].id).toBe(runId);
+    expect(await listSessionPromptHistory(room.sessionId, room.outsider.id, {}, env.DB)).toBeNull();
+    expect(await getSessionPromptHistory(other.sessionId, other.owner.id, promptId, null, env.DB)).toBeNull();
+    await expect(listSessionPromptHistory(other.sessionId, other.owner.id, { before: promptId }, env.DB)).rejects.toThrow("Invalid prompt cursor");
   });
 });

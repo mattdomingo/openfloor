@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { SelectMenu } from "@/components/session/SelectMenu";
 import { BASE_PATH } from "@/components/basePath";
 import { Spinner } from "@/components/session/primitives";
 import { formatTokens } from "@/components/session/data";
@@ -37,16 +38,45 @@ export function ProviderCredentials({
   onCredentialsChange?: (credentials: ProviderCredentialSummary[]) => void;
 }) {
   const [credentials, setCredentials] = useState(initialCredentials);
+  const [defaultProvider, setDefaultProvider] = useState<CredentialProvider | null>(null);
+  const [defaultError, setDefaultError] = useState<string | null>(null);
+  const [defaultBusy, setDefaultBusy] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    void fetch(`${BASE_PATH}/api/account/credentials`, { cache: "no-store" }).then(async (response) => {
+      if (!response.ok) throw new Error("Unable to load your default API key.");
+      const body = await response.json() as { defaultApiProvider: CredentialProvider | null };
+      if (!cancelled) setDefaultProvider(body.defaultApiProvider);
+    }).catch(() => { if (!cancelled) setDefaultError("Unable to load your default API key."); });
+    return () => { cancelled = true; };
+  }, []);
+  async function saveDefault(provider: string) {
+    setDefaultBusy(true);
+    setDefaultError(null);
+    try {
+      const response = await fetch(`${BASE_PATH}/api/account/settings`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ defaultApiProvider: provider || null }) });
+      const body = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(body.error ?? "Unable to save your default API key.");
+      setDefaultProvider((provider || null) as CredentialProvider | null);
+    } catch (error) { setDefaultError(error instanceof Error ? error.message : "Unable to save your default API key."); }
+    finally { setDefaultBusy(false); }
+  }
+  const defaultOptions = credentials.filter((credential) => credential.kind === "api_key" && providers.includes(credential.provider)).map((credential) => ({ value: credential.provider, label: providerLabel(credential.provider) }));
   const visibleProviders = [...new Set([...providers, ...credentials.map((credential) => credential.provider)])];
 
   return (
     <ul className="settings-category-list provider-credential-list">
+      <li className="provider-default-key">
+        <label>Default API key for your auto agents</label>
+        <SelectMenu label="Default API key for your auto agents" value={defaultProvider ?? ""} disabled={defaultBusy} onChange={(value) => void saveDefault(value)} options={[{ value: "", label: defaultOptions.length === 1 ? `Automatic: ${defaultOptions[0].label}` : "Choose a default" }, ...defaultOptions, ...(defaultProvider && !defaultOptions.some((option) => option.value === defaultProvider) ? [{ value: defaultProvider, label: `${providerLabel(defaultProvider)} — unavailable` }] : [])]} />
+        {defaultError && <p role="alert" className="form-error">{defaultError}</p>}
+      </li>
       {visibleProviders.flatMap((provider) =>
-        credentialKindsForProvider(provider).filter((kind) => providers.includes(provider) || credentials.some((credential) => credential.provider === provider && credential.kind === kind)).map((kind) => (
+        credentialKindsForProvider(provider).filter((kind) => (kind === "api_key" && providers.includes(provider)) || credentials.some((credential) => credential.provider === provider && credential.kind === kind)).map((kind) => (
           <ProviderCredentialRow
             key={`${provider}:${kind}`}
             provider={provider}
-            available={providers.includes(provider)}
+            available={kind === "api_key" && providers.includes(provider)}
             kind={kind}
             credential={credentials.find((credential) => credential.provider === provider && credential.kind === kind) ?? null}
             showAgentDefaults={showAgentDefaults}
@@ -185,7 +215,7 @@ function ProviderCredentialRow({ provider, kind, credential, available, showAgen
       </button>
       {expanded && (
         <div id={panelId} className="provider-credential-body">
-          {!available && <p className="notice" data-tone="attention">This provider is disabled in this environment. Your saved credential remains removable, but cannot run agents.</p>}
+          {!available && <p className="notice" data-tone="attention">This connection is unavailable. Your saved credential remains removable, but cannot run agents.</p>}
           {credential ? (
             <>
               {/* .settings-category-row .button (globals.css) grid-places the
@@ -202,7 +232,7 @@ function ProviderCredentialRow({ provider, kind, credential, available, showAgen
                     <>{bundle ? <>account ····{credential.fingerprint}</> : <>····{credential.fingerprint}</>}.</>
                   )}
                 </span>
-                <ProviderBudgetControl credential={credential} busy={busy} onSaveLimit={saveLimit} />
+                {available && <ProviderBudgetControl credential={credential} busy={busy} onSaveLimit={saveLimit} />}
               </div>
               <button type="button" className="button" data-variant="quiet" data-size="sm" onClick={disconnect} disabled={busy}>
                 {busy ? <><Spinner />Disconnecting…</> : "Disconnect"}

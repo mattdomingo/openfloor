@@ -137,6 +137,7 @@ async function openAiKindAgentRun(
   const agent = floor?.agents.find((candidate) => candidate.name === name);
   if (!agent) throw new Error("Agent was not created");
   await env.DB.prepare("UPDATE floor_agents SET credential_kind = ? WHERE id = ?").bind(credentialKind, agent.id).run();
+  if (credentialKind === "oauth") await env.DB.prepare("UPDATE floor_agents SET credential_kind = 'oauth' WHERE id = ?").bind(agent.id).run();
   return insertRunRow(sessionId, agent.id, ownerUserId, "running");
 }
 
@@ -148,11 +149,12 @@ async function kindAgentRun(
   credentialKind: "api_key" | "oauth" | null,
   provider: "anthropic" | "kimi" = "anthropic",
 ): Promise<string> {
-  const input = parseAgentInput({ name, role: "Engineer", task: "Work", ownerUserId, provider, credentialKind });
+  const input = parseAgentInput({ name, role: "Engineer", task: "Work", ownerUserId, provider, credentialKind: credentialKind === "oauth" ? "api_key" : credentialKind });
   if (!input) throw new Error("Invalid test agent");
   const floor = await createFloorAgent(sessionId, ownerUserId, input, env.DB);
   const agent = floor?.agents.find((candidate) => candidate.name === name);
   if (!agent) throw new Error("Agent was not created");
+  if (credentialKind === "oauth") await env.DB.prepare("UPDATE floor_agents SET credential_kind = 'oauth' WHERE id = ?").bind(agent.id).run();
   return insertRunRow(sessionId, agent.id, ownerUserId, "running");
 }
 
@@ -214,34 +216,20 @@ describe("provider credential persistence", () => {
     expect((await listProviderCredentials(user.id, env.DB)).map((entry) => entry.kind)).toEqual(["api_key"]);
   });
 
-  it("resolves generated-agent defaults from connected, rollout-enabled owner keys", async () => {
-    const { sessionId, owner } = await room("auto-provider");
-    expect(await resolveAutoAgentProvider(sessionId, env.DB)).toEqual({
-      configuredProvider: null, effectiveProvider: "openai", state: "openai_fallback",
-    });
-
-    await connectKey(owner.id, "anthropic", "sk-ant-auto-one");
-    expect(await resolveAutoAgentProvider(sessionId, env.DB)).toEqual({
-      configuredProvider: null, effectiveProvider: "anthropic", state: "single_connected",
-    });
-    expect(await resolveAutoAgentProvider(sessionId, env.DB, new Set(["anthropic"]))).toEqual({
-      configuredProvider: null, effectiveProvider: "openai", state: "openai_fallback",
-    });
-
-    await connectOpenAiKey(owner.id, "sk-openai-auto-two");
-    expect(await resolveAutoAgentProvider(sessionId, env.DB)).toEqual({
-      configuredProvider: null, effectiveProvider: null, state: "selection_required",
-    });
-    await setSessionRoutingSettings(sessionId, owner.id, { autoAgentProvider: "anthropic" }, env.DB);
-    expect(await resolveAutoAgentProvider(sessionId, env.DB)).toEqual({
-      configuredProvider: "anthropic", effectiveProvider: "anthropic", state: "selected",
-    });
-
-    await deleteProviderCredential(owner.id, "anthropic", "api_key", env.DB);
-    expect(await resolveAutoAgentProvider(sessionId, env.DB)).toEqual({
-      configuredProvider: null, effectiveProvider: "openai", state: "single_connected",
-    });
-  });
+  it("resolves personal defaults without falling back from an unavailable choice", async () => {
+ const { sessionId, owner, member } = await room("auto-provider");
+ expect(await resolveAutoAgentProvider(sessionId, env.DB)).toMatchObject({ effectiveProvider: null, state: "missing_key" });
+ await connectKey(owner.id, "anthropic", "sk-ant-auto-one");
+ expect(await resolveAutoAgentProvider(sessionId, env.DB)).toMatchObject({ effectiveProvider: "anthropic", state: "single_connected" });
+ expect(await resolveAutoAgentProvider(sessionId, env.DB, new Set(["anthropic"]))).toMatchObject({ effectiveProvider: null, state: "missing_key" });
+ expect(await resolveAutoAgentProvider(sessionId, env.DB, new Set(), member.id)).toMatchObject({ effectiveProvider: null, state: "missing_key" });
+ await connectOpenAiKey(owner.id, "sk-openai-auto-two");
+ expect(await resolveAutoAgentProvider(sessionId, env.DB)).toMatchObject({ state: "selection_required" });
+ await env.DB.prepare("UPDATE users SET default_api_provider = 'anthropic' WHERE id = ?").bind(owner.id).run();
+ expect(await resolveAutoAgentProvider(sessionId, env.DB)).toMatchObject({ effectiveProvider: "anthropic", state: "selected" });
+ await deleteProviderCredential(owner.id, "anthropic", "api_key", env.DB);
+ expect(await resolveAutoAgentProvider(sessionId, env.DB)).toMatchObject({ effectiveProvider: null, state: "default_unavailable" });
+});
 
   it("keeps generated-agent provider changes owner-only and requires a connected key", async () => {
     const { sessionId, owner, member } = await room("auto-provider-auth");
@@ -267,13 +255,11 @@ describe("provider credential persistence", () => {
     expect(resolved?.kind).toBe("api_key");
     // Provider is part of the key: no anthropic credential exists yet.
     expect((await getRunAgentOwnerCredential(runId, "anthropic", env.DB))?.ciphertext).toBeNull();
-    // Removing the member transfers their agents to the removing owner
-    // (removeMember, PR #75) — billing follows the transfer, so the removed
-    // member's key is never billed and the new owner's key resolves instead.
+    // Removing a member preserves ownership and refuses further spending.
     const removal = await removeMember(sessionId, owner.id, member.id, env.DB);
     expect(typeof removal).toBe("object");
     const transferred = await getRunAgentOwnerCredential(runId, "openai", env.DB);
-    expect(transferred?.ownerUserId).toBe(owner.id);
+    expect(transferred).toBeNull();
   });
 
   it("matches the agent's named credential kind, defaulting a null kind to api_key", async () => {
@@ -289,7 +275,7 @@ describe("provider credential persistence", () => {
     expect(viaKey?.kind).toBe("api_key");
     expect(viaKey?.requestedKind).toBe("api_key");
     const viaSub = await getRunAgentOwnerCredential(oauthRun, "anthropic", env.DB);
-    expect(viaSub?.kind).toBe("oauth");
+    expect(viaSub?.kind).toBeNull();
     expect(viaSub?.requestedKind).toBe("oauth");
     // A null kind is "the owner's default": api_key while both rows exist.
     const viaDefault = await getRunAgentOwnerCredential(defaultRun, "anthropic", env.DB);
@@ -297,7 +283,7 @@ describe("provider credential persistence", () => {
     expect(viaDefault?.requestedKind).toBeNull();
     // With the api_key row gone, the default falls to the single oauth row...
     await deleteProviderCredential(owner.id, "anthropic", "api_key", env.DB);
-    expect((await getRunAgentOwnerCredential(defaultRun, "anthropic", env.DB))?.kind).toBe("oauth");
+    expect((await getRunAgentOwnerCredential(defaultRun, "anthropic", env.DB))?.kind).toBeNull();
     // ...but an agent that NAMED api_key gets no credential, and the caller
     // can see the named-kind miss (requestedKind set, ciphertext null).
     const missed = await getRunAgentOwnerCredential(apiKeyRun, "anthropic", env.DB);
@@ -305,21 +291,14 @@ describe("provider credential persistence", () => {
     expect(missed?.requestedKind).toBe("api_key");
   });
 
-  it("resolves the newly named kind on the next run after a post-creation billing edit", async () => {
-    const { sessionId, owner } = await room("kind-edit");
-    await connectKey(owner.id, "anthropic", "sk-ant-api03-kkkk");
-    await connectKey(owner.id, "anthropic", "sk-ant-oat01-ssss", "oauth");
-    const firstRun = await kindAgentRun(sessionId, owner.id, "EditAgent", "api_key");
-    expect((await getRunAgentOwnerCredential(firstRun, "anthropic", env.DB))?.kind).toBe("api_key");
-    const agent = await env.DB.prepare("SELECT agent_id AS agentId FROM agent_runs WHERE id = ?").bind(firstRun).first<{ agentId: string }>();
-    // Finish the run first — the edit refuses while one is in flight.
-    await env.DB.prepare("UPDATE agent_runs SET status = 'ready' WHERE id = ?").bind(firstRun).run();
-    await updateFloorAgentSettings(sessionId, owner.id, agent!.agentId, { credentialKind: "oauth" }, env.DB);
-    const nextRun = await insertRunRow(sessionId, agent!.agentId, owner.id, "running");
-    const resolved = await getRunAgentOwnerCredential(nextRun, "anthropic", env.DB);
-    expect(resolved?.kind).toBe("oauth");
-    expect(resolved?.requestedKind).toBe("oauth");
-  });
+  it("refuses subscription billing edits while retaining saved subscription credentials", async () => {
+ const { sessionId, owner } = await room("kind-edit");
+ await connectKey(owner.id, "anthropic", "sk-ant-oat01-ssss", "oauth");
+ const runId = await kindAgentRun(sessionId, owner.id, "EditAgent", "api_key");
+ const agent = await env.DB.prepare("SELECT agent_id AS id FROM agent_runs WHERE id = ?").bind(runId).first<{ id: string }>();
+ await expect(updateFloorAgentSettings(sessionId, owner.id, agent!.id, { credentialKind: "oauth" }, env.DB)).rejects.toThrow("billing option");
+ expect((await listProviderCredentials(owner.id, env.DB))[0].kind).toBe("oauth");
+});
 
   it("a cross-method re-key (account merge path) preserves the user id, so credentials stay decryptable", async () => {
     // upsertUser's byEmail fallback re-keys the SAME row to the new provider
@@ -392,14 +371,14 @@ describe("OpenAI gateway credential resolution", () => {
     expect(capture.authorization).toBe("Bearer sk-openai-agent-owner");
   });
 
-  it("uses the server key only when the owner has no credential", async () => {
+  it("refuses server-only execution when the owner has no credential", async () => {
     const { sessionId, runId } = await runningRun("gw-server");
     (env as unknown as Record<string, unknown>).OPENAI_API_KEY = "sk-openai-server-key";
     const capture = { authorization: null as string | null };
     stubUpstream(capture);
     const response = await postOpenAiGateway(gatewayRequest(await signedRunToken(runId, sessionId)), gatewayParams());
-    expect(response.status).toBe(200);
-    expect(capture.authorization).toBe("Bearer sk-openai-server-key");
+    expect(response.status).toBe(503);
+    expect(capture.authorization).toBeNull();
   });
 
   // db/runs.ts's recordRunUsage reads agent_runs.billed_kind at run
@@ -425,13 +404,13 @@ describe("OpenAI gateway credential resolution", () => {
     expect(afterSecond?.billedKind).toBe("api_key");
   });
 
-  it("records billed_kind as server when the server-fallback key pays", async () => {
+  it("does not record server spend when no personal key is connected", async () => {
     const { sessionId, runId } = await runningRun("gw-billed-kind-server");
     (env as unknown as Record<string, unknown>).OPENAI_API_KEY = "sk-openai-server-key";
     stubUpstream({ authorization: null });
     await postOpenAiGateway(gatewayRequest(await signedRunToken(runId, sessionId)), gatewayParams());
     const row = await env.DB.prepare("SELECT billed_kind AS billedKind FROM agent_runs WHERE id = ?").bind(runId).first<{ billedKind: string }>();
-    expect(row?.billedKind).toBe("server");
+    expect(row?.billedKind).toBeNull();
   });
 
   it("refuses the run when neither an owner nor a server credential exists", async () => {
@@ -586,6 +565,7 @@ describe("OpenAI gateway credential resolution", () => {
     }
     // Server key resolves while the owner has no kimi credential.
     (env as unknown as Record<string, unknown>).MOONSHOT_API_KEY = "sk-kimi-server-key";
+    await connectKey(owner.id, "kimi", "sk-kimi-server-key");
     expect((await kimiRequest("v1/messages")).status).toBe(200);
     // A connected owner key takes over from the server key.
     await connectKey(owner.id, "kimi", "sk-kimi-owner-gwkey");
@@ -722,8 +702,8 @@ describe("OpenAI gateway credential resolution", () => {
       }),
       { params: Promise.resolve({ path: ["v1beta", "models", "gemini-3.5-flash:generateContent"] }) },
     );
-    expect(served.status).toBe(200);
-    expect(captured).toEqual(["AIza-server-key"]);
+    expect(served.status).toBe(503);
+    expect(captured).toEqual([]);
     delete (env as unknown as Record<string, unknown>).GEMINI_API_KEY;
   });
 
@@ -750,6 +730,7 @@ describe("OpenAI gateway credential resolution", () => {
     }
     // Server key resolves while the owner has no glm credential.
     (env as unknown as Record<string, unknown>).ZAI_API_KEY = "zai-server-key";
+    await connectKey(owner.id, "glm", "zai-server-key");
     expect((await glmRequest("v1/messages")).status).toBe(200);
     // A connected owner key takes over from the server key.
     await connectKey(owner.id, "glm", "zai-owner-gwkey");
@@ -838,6 +819,7 @@ describe("OpenAI gateway credential resolution", () => {
     }
     // Server key resolves while the owner has no qwen credential.
     (env as unknown as Record<string, unknown>).DASHSCOPE_API_KEY = "sk-dashscope-server-key";
+    await connectKey(owner.id, "qwen", "sk-dashscope-server-key");
     const streamed = await qwenRequest("v1/chat/completions");
     expect(streamed.status).toBe(200);
     // SSE passthrough plus the vendor's rate-limit signals; nothing else leaks.
@@ -916,7 +898,7 @@ describe("OpenAI gateway credential resolution", () => {
     await connectKey(owner.id, "qwen", "sk-sp-evil", "oauth");
     const input = parseAgentInput({ name: "Rogue", role: "R", task: "T", ownerUserId: owner.id, provider: "qwen" });
     if (!input) throw new Error("Invalid test agent");
-    const floor = await createFloorAgent(sessionId, owner.id, { ...input, credentialKind: "oauth" }, env.DB);
+    const floor = await createFloorAgent(sessionId, owner.id, input, env.DB);
     const agent = floor?.agents.find((candidate) => candidate.name === "Rogue");
     if (!agent) throw new Error("Agent was not created");
     const runId = await insertRunRow(sessionId, agent.id, owner.id, "running");
@@ -963,6 +945,7 @@ describe("OpenAI gateway credential resolution", () => {
       );
     }
     (env as unknown as Record<string, unknown>).DEEPSEEK_API_KEY = "sk-deepseek-server-key";
+    await connectKey(owner.id, "deepseek", "sk-deepseek-server-key");
     expect((await deepseekRequest("v1/chat/completions")).status).toBe(200);
     await connectKey(owner.id, "deepseek", "sk-deepseek-owner-key");
     expect((await deepseekRequest("chat/completions")).status).toBe(200);
@@ -988,119 +971,29 @@ describe("OpenAI gateway credential resolution", () => {
     expect(await refused.text()).toContain("No DeepSeek credential");
   });
 
-  it("bills exactly the credential kind each agent names, through the gateway", async () => {
-    const { sessionId, owner } = await room("kind-gateway");
-    await connectKey(owner.id, "anthropic", "sk-ant-api03-gwaa");
-    await connectKey(owner.id, "anthropic", "sk-ant-oat01-gwbb", "oauth");
-    const apiKeyRun = await kindAgentRun(sessionId, owner.id, "KeyAgent", "api_key");
-    const oauthRun = await kindAgentRun(sessionId, owner.id, "SubAgent", "oauth");
-    const captured: Array<{ apiKey: string | null; bearer: string | null; beta: string | null }> = [];
-    vi.stubGlobal("fetch", async (_url: string, init: { headers: Headers }) => {
-      captured.push({
-        apiKey: init.headers.get("x-api-key"),
-        bearer: init.headers.get("authorization"),
-        beta: init.headers.get("anthropic-beta"),
-      });
-      return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
-    });
-    async function callGateway(runId: string, clientBeta?: string) {
-      const token = await signRunGatewayToken(
-        { runId, sessionId, repositoryId: "repo", candidateSha: "sha-run", operation: "anthropic" },
-        GATEWAY_SECRET,
-      );
-      return postAnthropicGateway(
-        new Request("https://app.opnflr.com/runtime/anthropic/v1/messages", {
-          method: "POST",
-          headers: {
-            authorization: `Bearer ${token}`,
-            "content-type": "application/json",
-            ...(clientBeta ? { "anthropic-beta": clientBeta } : {}),
-          },
-          body: JSON.stringify({ model: "claude-opus-5" }),
-        }),
-        { params: Promise.resolve({ path: ["v1", "messages"] }) },
-      );
-    }
-    expect((await callGateway(apiKeyRun, "claude-code-20250219")).status).toBe(200);
-    expect((await callGateway(oauthRun, "claude-code-20250219,interleaved-thinking-2025-05-14")).status).toBe(200);
-    // Same owner, same provider, two agents — each run resolved the
-    // credential its agent named, in that credential's native auth form:
-    // the API key as x-api-key, the setup token as a Bearer with the oauth
-    // beta flag MERGED after the client's own flags (never overwriting them,
-    // and never the incidental extended-cache-ttl flag).
-    expect(captured[0]).toEqual({ apiKey: "sk-ant-api03-gwaa", bearer: null, beta: "claude-code-20250219" });
-    expect(captured[1]).toEqual({
-      apiKey: null,
-      bearer: "Bearer sk-ant-oat01-gwbb",
-      beta: "claude-code-20250219,interleaved-thinking-2025-05-14,oauth-2025-04-20",
-    });
-    // A client that already carries the oauth flag does not get a duplicate;
-    // a client with no beta header gets exactly the flag.
-    expect((await callGateway(oauthRun, "oauth-2025-04-20,claude-code-20250219")).status).toBe(200);
-    expect(captured[2].beta).toBe("oauth-2025-04-20,claude-code-20250219");
-    expect((await callGateway(oauthRun)).status).toBe(200);
-    expect(captured[3].beta).toBe("oauth-2025-04-20");
-    // Disconnect the subscription: the subscription-bound agent refuses with
-    // the actionable message — never the api_key row, never the server key —
-    // while the api_key agent keeps running.
-    await deleteProviderCredential(owner.id, "anthropic", "oauth", env.DB);
-    (env as unknown as Record<string, unknown>).ANTHROPIC_API_KEY = "sk-ant-server-key";
-    const refused = await callGateway(oauthRun);
-    expect(refused.status).toBe(503);
-    expect(await refused.text()).toContain("This agent is set to use your Anthropic subscription, which is not connected");
-    expect((await callGateway(apiKeyRun)).status).toBe(200);
-    expect(captured[4]).toEqual({ apiKey: "sk-ant-api03-gwaa", bearer: null, beta: null });
-    delete (env as unknown as Record<string, unknown>).ANTHROPIC_API_KEY;
-  });
+  it("refuses legacy anthropic subscription execution before upstream access", async () => {
+ const { sessionId, owner } = await room("disabled-anthropic-oauth");
+ await connectKey(owner.id, "anthropic", "saved-subscription-secret", "oauth");
+ const runId = await kindAgentRun(sessionId, owner.id, "Legacy", "oauth");
+ const fetchSpy = vi.fn(); vi.stubGlobal("fetch", fetchSpy);
+ const token = await signRunGatewayToken({ runId, sessionId, repositoryId: "repo", candidateSha: "sha-run", operation: "anthropic" }, GATEWAY_SECRET);
+ const response = await postAnthropicGateway(gatewayRequest(token), { params: Promise.resolve({ path: ["v1", "messages"] }) });
+ expect(response.status).toBe(503);
+ expect(await response.text()).toContain("Subscription connections are unavailable");
+ expect(fetchSpy).not.toHaveBeenCalled();
+});
 
-  it("routes each kimi credential kind to its own upstream, in its documented auth form", async () => {
-    const { sessionId, owner } = await room("kimi-kind-gateway");
-    await connectKey(owner.id, "kimi", "sk-kimi-payg-aaaa");
-    await connectKey(owner.id, "kimi", "sk-kimi-plan-bbbb", "oauth");
-    const apiKeyRun = await kindAgentRun(sessionId, owner.id, "PaygAgent", "api_key", "kimi");
-    const oauthRun = await kindAgentRun(sessionId, owner.id, "PlanAgent", "oauth", "kimi");
-    const captured: Array<{ url: string; apiKey: string | null; bearer: string | null }> = [];
-    vi.stubGlobal("fetch", async (url: string, init: { headers: Headers }) => {
-      captured.push({ url, apiKey: init.headers.get("x-api-key"), bearer: init.headers.get("authorization") });
-      return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
-    });
-    async function callGateway(runId: string) {
-      const token = await signRunGatewayToken(
-        { runId, sessionId, repositoryId: "repo", candidateSha: "sha-run", operation: "kimi" },
-        GATEWAY_SECRET,
-      );
-      return postKimiGateway(
-        new Request("https://app.opnflr.com/runtime/kimi/v1/messages", {
-          method: "POST",
-          headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-          body: JSON.stringify({ model: "kimi-k3" }),
-        }),
-        { params: Promise.resolve({ path: ["v1", "messages"] }) },
-      );
-    }
-    expect((await callGateway(apiKeyRun)).status).toBe(200);
-    expect((await callGateway(oauthRun)).status).toBe(200);
-    // The URL assertion encodes the vendor-documented split (2026-08-26
-    // decision-log entry): a PAYG key stays on Moonshot's Anthropic-compat
-    // surface as a Bearer, while a Kimi Code plan key goes to the plan's own
-    // host in the x-api-key form (what the vendor's ANTHROPIC_API_KEY guide
-    // produces) — and neither request carries the other credential's form.
-    expect(captured[0]).toEqual({ url: "https://api.moonshot.ai/anthropic/v1/messages", bearer: "Bearer sk-kimi-payg-aaaa", apiKey: null });
-    expect(captured[1]).toEqual({ url: "https://api.kimi.com/coding/v1/messages", apiKey: "sk-kimi-plan-bbbb", bearer: null });
-    // Disconnect the plan: the plan-bound agent refuses with the actionable
-    // message — never the api_key row, never the server key — while the
-    // api_key agent keeps running.
-    await deleteProviderCredential(owner.id, "kimi", "oauth", env.DB);
-    (env as unknown as Record<string, unknown>).MOONSHOT_API_KEY = "sk-kimi-server-key";
-    const before = captured.length;
-    const refused = await callGateway(oauthRun);
-    expect(refused.status).toBe(503);
-    expect(await refused.text()).toContain("This agent is set to use your Moonshot subscription, which is not connected");
-    expect(captured.length).toBe(before);
-    expect((await callGateway(apiKeyRun)).status).toBe(200);
-    expect(captured[before]).toEqual({ url: "https://api.moonshot.ai/anthropic/v1/messages", bearer: "Bearer sk-kimi-payg-aaaa", apiKey: null });
-    delete (env as unknown as Record<string, unknown>).MOONSHOT_API_KEY;
-  });
+  it("refuses legacy kimi subscription execution before upstream access", async () => {
+ const { sessionId, owner } = await room("disabled-kimi-oauth");
+ await connectKey(owner.id, "kimi", "saved-subscription-secret", "oauth");
+ const runId = await kindAgentRun(sessionId, owner.id, "Legacy", "oauth", "kimi");
+ const fetchSpy = vi.fn(); vi.stubGlobal("fetch", fetchSpy);
+ const token = await signRunGatewayToken({ runId, sessionId, repositoryId: "repo", candidateSha: "sha-run", operation: "kimi" }, GATEWAY_SECRET);
+ const response = await postKimiGateway(gatewayRequest(token), { params: Promise.resolve({ path: ["v1", "messages"] }) });
+ expect(response.status).toBe(503);
+ expect(await response.text()).toContain("Subscription connections are unavailable");
+ expect(fetchSpy).not.toHaveBeenCalled();
+});
 
   it("forwards retry-after and the anthropic-ratelimit-* family to the run", async () => {
     const { sessionId, owner, runId } = await runningRun("ratelimit");
@@ -1149,7 +1042,7 @@ describe("OpenAI gateway credential resolution", () => {
     await connectKey(owner.id, "glm", "sk-glm-oat01-evil", "oauth");
     const input = parseAgentInput({ name: "Rogue", role: "R", task: "T", ownerUserId: owner.id, provider: "glm" });
     if (!input) throw new Error("Invalid test agent");
-    const floor = await createFloorAgent(sessionId, owner.id, { ...input, credentialKind: "oauth" }, env.DB);
+    const floor = await createFloorAgent(sessionId, owner.id, input, env.DB);
     const agent = floor?.agents.find((candidate) => candidate.name === "Rogue");
     if (!agent) throw new Error("Agent was not created");
     const runId = await insertRunRow(sessionId, agent.id, owner.id, "running");
@@ -1174,41 +1067,17 @@ describe("OpenAI gateway credential resolution", () => {
     delete (env as unknown as Record<string, unknown>).ZAI_API_KEY;
   });
 
-  it("sends only the access token of an openai oauth bundle, to the ChatGPT upstream", async () => {
-    const { sessionId, member, runId } = await runningRun("openai-oauth", "member");
-    // A real pasted bundle is pretty-printed, so interior newlines survive
-    // storage by design. The gateway extracts tokens.access_token and sends
-    // ONLY that: the bundle itself would leak the refresh token and would
-    // crash Headers.set on those newlines besides.
-    const bundle = JSON.stringify({
-      tokens: { account_id: "acct-chatgpt-1", access_token: LIVE_CHATGPT_TOKEN, refresh_token: "rt-secret" },
-      last_refresh: new Date().toISOString(),
-    }, null, 2);
-    await connectKey(member.id, "openai", bundle, "oauth");
-    await env.DB.prepare("UPDATE floor_agents SET credential_kind = 'oauth' WHERE session_id = ?").bind(sessionId).run();
-    const fetchSpy = vi.fn(async () => new Response("{}", { status: 200, headers: { "content-type": "application/json" } }));
-    vi.stubGlobal("fetch", fetchSpy);
-    const request = gatewayRequest(await signedRunToken(runId, sessionId));
-    request.headers.set("content-encoding", "zstd");
-    const response = await postOpenAiGateway(request, gatewayParams());
-    expect(response.status).toBe(200);
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
-    const [url, init] = fetchSpy.mock.calls[0] as unknown as [string, RequestInit];
-    // A subscription bearer authenticates only against the ChatGPT backend;
-    // api.openai.com answers 401 for it (Spike D).
-    expect(url).toBe("https://chatgpt.com/backend-api/codex/responses");
-    const sent = new Headers(init.headers);
-    expect(sent.get("authorization")).toBe(`Bearer ${LIVE_CHATGPT_TOKEN}`);
-    // The account header is the gateway's to inject: the run holds no bundle.
-    expect(sent.get("chatgpt-account-id")).toBe("acct-chatgpt-1");
-    // The CLI compresses request bodies; dropping this presents compressed
-    // bytes as plain JSON and earns an unrelated-looking upstream 400.
-    expect(sent.get("content-encoding")).toBe("zstd");
-    const headerValues = [...sent.values()].join("\n");
-    expect(headerValues).not.toContain("rt-secret");
-    expect(headerValues).not.toContain("account_id");
-    expect(sent.get("authorization")).not.toContain("\n");
-  });
+  it("refuses legacy openai subscription execution before upstream access", async () => {
+ const { sessionId, owner } = await room("disabled-openai-oauth");
+ await connectKey(owner.id, "openai", "saved-subscription-secret", "oauth");
+ const runId = await openAiKindAgentRun(sessionId, owner.id, "Legacy", "oauth");
+ const fetchSpy = vi.fn(); vi.stubGlobal("fetch", fetchSpy);
+ const token = await signRunGatewayToken({ runId, sessionId, repositoryId: "repo", candidateSha: "sha-run", operation: "openai" }, GATEWAY_SECRET);
+ const response = await postOpenAiGateway(gatewayRequest(token), { params: Promise.resolve({ path: ["v1", "responses"] }) });
+ expect(response.status).toBe(503);
+ expect(await response.text()).toContain("Subscription connections are unavailable");
+ expect(fetchSpy).not.toHaveBeenCalled();
+});
 
   it("refuses a malformed stored openai bundle rather than sending garbage upstream", async () => {
     const { sessionId, member, runId } = await runningRun("openai-oauth-bad", "member");
@@ -1221,7 +1090,7 @@ describe("OpenAI gateway credential resolution", () => {
     vi.stubGlobal("fetch", fetchSpy);
     const refused = await postOpenAiGateway(gatewayRequest(await signedRunToken(runId, sessionId)), gatewayParams());
     expect(refused.status).toBe(503);
-    expect(await refused.text()).toContain("could not be read");
+    expect(await refused.text()).toContain("Subscription connections are unavailable");
     expect(fetchSpy).not.toHaveBeenCalled();
     delete (env as unknown as Record<string, unknown>).OPENAI_API_KEY;
   });
@@ -1238,7 +1107,7 @@ describe("OpenAI gateway credential resolution", () => {
     vi.stubGlobal("fetch", fetchSpy);
     const refused = await postOpenAiGateway(gatewayRequest(await signedRunToken(runId, sessionId)), gatewayParams());
     expect(refused.status).toBe(503);
-    expect(await refused.text()).toContain("which is not connected");
+    expect(await refused.text()).toContain("Subscription connections are unavailable");
     expect(fetchSpy).not.toHaveBeenCalled();
     delete (env as unknown as Record<string, unknown>).OPENAI_API_KEY;
   });
@@ -1316,24 +1185,17 @@ describe("OpenAI gateway credential resolution", () => {
     expect(fallback?.refreshToken).toBe("rt-untouched");
   });
 
-  it("keeps an api_key openai agent on api.openai.com while a sibling agent bills the subscription", async () => {
-    const { sessionId, owner } = await room("openai-two-kinds");
-    await connectKey(owner.id, "openai", "sk-openai-owner-both", "api_key");
-    await connectKey(owner.id, "openai", JSON.stringify({
-      tokens: { account_id: "acct-both", access_token: LIVE_CHATGPT_TOKEN, refresh_token: "rt" },
-    }), "oauth");
-    const keyRun = await openAiKindAgentRun(sessionId, owner.id, "OpenAiKeyAgent", "api_key");
-    const subRun = await openAiKindAgentRun(sessionId, owner.id, "OpenAiSubAgent", "oauth");
-    const fetchSpy = vi.fn(async () => new Response("{}", { status: 200, headers: { "content-type": "application/json" } }));
-    vi.stubGlobal("fetch", fetchSpy);
-    await postOpenAiGateway(gatewayRequest(await signedRunToken(keyRun, sessionId)), gatewayParams());
-    await postOpenAiGateway(gatewayRequest(await signedRunToken(subRun, sessionId)), gatewayParams());
-    const calls = fetchSpy.mock.calls as unknown as [string, RequestInit][];
-    expect(calls[0][0]).toBe("https://api.openai.com/v1/responses");
-    expect(new Headers(calls[0][1].headers).get("authorization")).toBe("Bearer sk-openai-owner-both");
-    expect(calls[1][0]).toBe("https://chatgpt.com/backend-api/codex/responses");
-    expect(new Headers(calls[1][1].headers).get("authorization")).toBe(`Bearer ${LIVE_CHATGPT_TOKEN}`);
-  });
+  it("keeps API-key execution available while refusing a sibling subscription agent", async () => {
+ const { sessionId, owner } = await room("openai-siblings");
+ await connectOpenAiKey(owner.id, "sk-personal");
+ await connectKey(owner.id, "openai", "saved-bundle", "oauth");
+ const keyRun = await openAiKindAgentRun(sessionId, owner.id, "Key", "api_key");
+ const subscriptionRun = await openAiKindAgentRun(sessionId, owner.id, "Sub", "oauth");
+ const fetchSpy = vi.fn(async () => new Response("{}")); vi.stubGlobal("fetch", fetchSpy);
+ expect((await postOpenAiGateway(gatewayRequest(await signedRunToken(keyRun, sessionId)), gatewayParams())).status).toBe(200);
+ expect((await postOpenAiGateway(gatewayRequest(await signedRunToken(subscriptionRun, sessionId)), gatewayParams())).status).toBe(503);
+ expect(fetchSpy).toHaveBeenCalledTimes(1);
+});
 
   it("keeps the existing rejection paths", async () => {
     const { sessionId, owner, runId } = await runningRun("gw-reject");

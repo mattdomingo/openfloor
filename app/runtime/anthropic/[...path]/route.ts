@@ -10,7 +10,6 @@ export async function POST(request: Request, { params }: { params: Promise<{ pat
     operation: "anthropic",
     provider: "anthropic",
     upstreamBase: "https://api.anthropic.com/v1",
-    serverKeyBinding: "ANTHROPIC_API_KEY",
     // api_key rows (and the server key) go upstream as x-api-key; a
     // subscription setup token authenticates as `authorization: Bearer` plus
     // the oauth beta flag the handler merges (Spike C, 2026-08-24: those two

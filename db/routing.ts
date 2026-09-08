@@ -1,3 +1,4 @@
+import { queueAgentAccessError, agentCredentialError } from "./agent-access";
 import { getDb, type D1DatabaseLike } from "./index";
 import { deprovisionIdleGeneratedAgents, ensureAnswerAgent, ensureWorkerAgent } from "./floor";
 import type { StartRunResult } from "@/lib/agent-run-start";
@@ -36,6 +37,10 @@ export type RoutingDeps = {
 };
 
 type AgentRow = {
+  ownerUserId: string;
+  usageScope: string;
+  hasKey: number;
+  credentialKind: string | null;
   id: string;
   name: string;
   role: string;
@@ -49,6 +54,7 @@ type QueueRow = {
   id: string;
   agentId: string | null;
   assignedBy: "user" | "router" | null;
+  origin: string | null;
   intent: PromptIntent | null;
   position: number;
 };
@@ -154,7 +160,6 @@ export async function runRoutingTick(
     "SELECT user_id AS userId FROM session_members WHERE session_id = ? AND role = 'owner' AND removed_at IS NULL ORDER BY joined_at, user_id LIMIT 1",
   ).bind(sessionId).first<{ userId: string }>();
   if (!owner) return { acted: false, held: false, revision: null, wakeAt: null };
-  const ownerUserId = owner.userId;
 
   // Conflict resolution is a separate automation from ordinary dispatch.
   // An eligible case gets the next available slot, but a busy inherited
@@ -195,32 +200,28 @@ export async function runRoutingTick(
     return { acted: true, held: false, revision: Number(revision?.revision ?? 0), wakeAt: nextRetireAt };
   }
 
-  const providerResolution = session.autoProvisionAgents
-    ? await resolveAutoAgentProvider(
-        sessionId,
-        database,
-        deps.disabledProviders as ReadonlySet<import("@/lib/provider-credentials").CredentialProvider> | undefined,
-      )
-    : null;
-  const generatedProvider = providerResolution?.effectiveProvider ?? null;
-  const providerDisabled = generatedProvider ? (deps.disabledProviders?.has(generatedProvider) ?? false) : false;
-  const canProvision = Boolean(session.autoProvisionAgents && generatedProvider && !providerDisabled);
+  const canProvision = Boolean(session.autoProvisionAgents);
+  const providerResolutions = new Map<string, Awaited<ReturnType<typeof resolveAutoAgentProvider>>>();
+  async function providerFor(userId: string) {
+    if (!providerResolutions.has(userId)) providerResolutions.set(userId, await resolveAutoAgentProvider(sessionId, database, deps.disabledProviders as ReadonlySet<import("@/lib/provider-credentials").CredentialProvider> | undefined, userId));
+    return providerResolutions.get(userId)!;
+  }
 
   const [queueResult, promptResult, agentResult, activityResult, globalCount] = await Promise.all([
     database.prepare(
-      `SELECT id, agent_id AS agentId, assigned_by AS assignedBy, intent, position
+      `SELECT id, agent_id AS agentId, assigned_by AS assignedBy, origin, intent, position
        FROM floor_queue_items WHERE session_id = ? AND status = 'queued' AND dismissed_at IS NULL
        ORDER BY position, created_at, id`,
     ).bind(sessionId).all<QueueRow>(),
     database.prepare(
-      `SELECT p.queue_item_id AS queueItemId, p.text
+      `SELECT p.queue_item_id AS queueItemId, p.text, p.author_user_id AS authorUserId
        FROM floor_queue_prompts p
        JOIN floor_queue_items q ON q.id = p.queue_item_id
        WHERE q.session_id = ? AND q.status = 'queued' AND q.dismissed_at IS NULL
        ORDER BY p.created_at, p.id`,
-    ).bind(sessionId).all<{ queueItemId: string; text: string }>(),
+    ).bind(sessionId).all<{ queueItemId: string; text: string; authorUserId: string }>(),
     database.prepare(
-      `SELECT id, name, role, task, provider, kind, created_at AS createdAt FROM floor_agents
+      `SELECT id, name, role, task, provider, kind, created_at AS createdAt, owner_user_id AS ownerUserId, usage_scope AS usageScope, credential_kind AS credentialKind, EXISTS (SELECT 1 FROM user_provider_credentials c WHERE c.user_id = floor_agents.owner_user_id AND c.provider = floor_agents.provider AND c.kind = 'api_key') AS hasKey FROM floor_agents
        WHERE session_id = ? AND deprovisioned_at IS NULL AND paused_at IS NULL ORDER BY created_at, id`,
     ).bind(sessionId).all<AgentRow>(),
     database.prepare(
@@ -237,7 +238,11 @@ export async function runRoutingTick(
   const queue = queueResult.results;
   const agents = agentResult.results;
   const promptsByItem = new Map<string, string[]>();
+  const authorsByItem = new Map<string, Set<string>>();
   for (const prompt of promptResult.results) {
+    const authors = authorsByItem.get(prompt.queueItemId) ?? new Set<string>();
+    authors.add(prompt.authorUserId);
+    authorsByItem.set(prompt.queueItemId, authors);
     const list = promptsByItem.get(prompt.queueItemId) ?? [];
     list.push(prompt.text);
     promptsByItem.set(prompt.queueItemId, list);
@@ -271,6 +276,19 @@ export async function runRoutingTick(
     intentByItem.set(item.id, item.intent ?? classifyPrompt((promptsByItem.get(item.id) ?? []).join(" ")));
   }
   // --- Assign phase: give every unassigned queued item an agent. ---
+  // Re-route only untouched automatic assignments after an explicit default
+  // change. Historical ownership and running attempts remain unchanged.
+  for (const item of queue) {
+    const agent = agents.find((candidate) => candidate.id === item.agentId);
+    if (!agent?.kind || item.assignedBy !== "router") continue;
+    const personal = await providerFor(agent.ownerUserId);
+    if (!personal.effectiveProvider || personal.effectiveProvider === agent.provider) continue;
+    const changed = await database.prepare(`UPDATE floor_queue_items SET agent_id = NULL, assigned_by = NULL, assigned_reason = NULL, updated_at = ?
+      WHERE id = ? AND session_id = ? AND status = 'queued' AND assigned_by = 'router' AND agent_id = ? AND origin IS NULL
+      AND NOT EXISTS (SELECT 1 FROM agent_runs r WHERE r.queue_item_id = floor_queue_items.id)`)
+      .bind(now, item.id, sessionId, agent.id).run();
+    if (Number(changed.meta?.changes ?? 0)) { item.agentId = null; item.assignedBy = null; changedQueueOrRuns = true; }
+  }
   const unassigned = queue.filter((item) => item.agentId === null);
   // A worker mid-retirement-grace-window (deprovisionIdleGeneratedAgents,
   // db/floor.ts) is still deprovisioned_at IS NULL and so still appears in
@@ -293,9 +311,10 @@ export async function runRoutingTick(
         })
         .map((item) => item.agentId!),
     );
-    async function resolveAnswerAgent(): Promise<string | null> {
+    async function resolveAnswerAgent(ownerUserId: string, generatedProvider: import("@/lib/provider-credentials").CredentialProvider | null): Promise<string | null> {
       if (!canProvision || !generatedProvider) return null;
       const available = agents.find((agent) => agent.kind === "answer"
+        && agent.ownerUserId === ownerUserId && agent.provider === generatedProvider && agent.credentialKind === "api_key"
         && !busyAgents.has(agent.id)
         && !claimedThisTick.has(agent.id)
         && !(deps.disabledProviders?.has(agent.provider) ?? false));
@@ -304,22 +323,26 @@ export async function runRoutingTick(
       const unavailable = [...new Set([...busyAgents, ...claimedThisTick])];
       const provisioned = await ensureAnswerAgent(sessionId, ownerUserId, generatedProvider, database, unavailable);
       if (!agents.some((agent) => agent.id === provisioned.id)) {
-        agents.push({ id: provisioned.id, name: provisioned.name, role: "Session answers", task: "Answer questions about this session and its repository.", provider: generatedProvider, kind: "answer", createdAt: now });
+        agents.push({ ownerUserId, usageScope: "private", hasKey: 1, credentialKind: "api_key", id: provisioned.id, name: provisioned.name, role: "Session answers", task: "Answer questions about this session and its repository.", provider: generatedProvider, kind: "answer", createdAt: now });
       }
       if (provisioned.changed) changedQueueOrRuns = true;
       return provisioned.id;
     }
     for (const item of unassigned) {
+      const authors = [...(authorsByItem.get(item.id) ?? [])];
+      const authorId = authors.length === 1 ? authors[0] : null;
+      const providerResolution = authorId ? await providerFor(authorId) : null;
+      const generatedProvider = canProvision ? providerResolution?.effectiveProvider ?? null : null;
+      const ownerUserId = authorId ?? owner.userId;
+
       const intent = intentByItem.get(item.id) ?? "task";
 
       if (intent !== "task") {
-        const agentId = await resolveAnswerAgent();
+        const agentId = await resolveAnswerAgent(ownerUserId, generatedProvider);
         if (!agentId) {
           const reason = providerResolution?.state === "selection_required"
             ? "Choose a default generated-agent provider"
-            : providerDisabled
-              ? "The generated-agent provider is not enabled"
-              : "Automatic agent provisioning is off";
+            : providerResolution?.state === "missing_key" || providerResolution?.state === "default_unavailable" ? "Auto agents unavailable — connect your default API key in Settings" : "Automatic agent provisioning is off";
           decisions.push({ queueItemId: item.id, agentId: null, runId: null, decision: "held", reason, candidates: [] });
           held = true;
           continue;
@@ -341,7 +364,8 @@ export async function runRoutingTick(
         continue;
       }
 
-      let availableAgents = taskAgents;
+      let availableAgents = taskAgents.filter((agent) => agent.credentialKind !== "oauth" && agent.hasKey &&
+        (agent.kind ? agent.ownerUserId === authorId && agent.provider === generatedProvider : agent.usageScope === "session" || agent.ownerUserId === authorId));
 
       const promptTokens = tokenize((promptsByItem.get(item.id) ?? []).join(" "));
       let candidates: CandidateSnapshot[] = availableAgents.map((agent) => {
@@ -377,7 +401,7 @@ export async function runRoutingTick(
       if (pool.length === 0 && canProvision && generatedProvider && claimedThisTick.size < routingCapacity) {
         const task = (promptsByItem.get(item.id) ?? []).join(" ").slice(0, 1_000);
         const provisioned = await ensureWorkerAgent(sessionId, ownerUserId, generatedProvider, task, database);
-        const worker: AgentRow = { id: provisioned.id, name: provisioned.name, role: "Auto-provisioned engineer", task, provider: generatedProvider, kind: "worker", createdAt: now };
+        const worker: AgentRow = { ownerUserId, usageScope: "private", hasKey: 1, credentialKind: "api_key", id: provisioned.id, name: provisioned.name, role: "Auto-provisioned engineer", task, provider: generatedProvider, kind: "worker", createdAt: now };
         availableAgents = [...availableAgents, worker];
         taskAgents.push(worker);
         agents.push(worker);
@@ -390,11 +414,9 @@ export async function runRoutingTick(
           ? "No agents exist in this session"
           : providerResolution?.state === "selection_required"
             ? "Choose a default generated-agent provider"
-            : providerDisabled
-              ? "The generated-agent provider is not enabled"
-              : candidates.some((candidate) => candidate.eligible)
+            : candidates.some((candidate) => candidate.eligible)
                 ? "No matching agent; assign an agent manually or enable Auto agents"
-                : "No idle agent or automatic run capacity is available";
+                : providerResolution?.state === "missing_key" || providerResolution?.state === "default_unavailable" ? "Auto agents unavailable — connect your default API key in Settings" : "No idle agent or automatic run capacity is available";
         decisions.push({ queueItemId: item.id, agentId: null, runId: null, decision: "held", reason, candidates });
         held = true;
         continue;
@@ -489,7 +511,17 @@ export async function runRoutingTick(
         continue;
       }
       const runKind = agent?.kind === "answer" || (item.intent !== "task" && item.intent !== null) ? "reply" : "task";
-      const result = await deps.startRun(sessionId, item.id, owner.userId, runKind);
+      const accessError = await queueAgentAccessError(sessionId, item.id, database);
+      const credentialError = agent ? await agentCredentialError(agent.id, database) : "Agent unavailable";
+      const preference = agent?.kind && !item.origin ? await providerFor(agent.ownerUserId) : null;
+      if (accessError || credentialError || (preference && (!preference.effectiveProvider || preference.effectiveProvider !== agent.provider))) {
+        decisions.push({ queueItemId: item.id, agentId: item.agentId, runId: null, decision: "held", reason: accessError ?? credentialError ?? "Auto agents are disabled for this member. Check the personal default API key.", candidates: [] });
+        held = true;
+        continue;
+      }
+      const authors = [...(authorsByItem.get(item.id) ?? [])];
+      const runActor = agent && (agent.usageScope !== "session" || authors.length !== 1) ? agent.ownerUserId : authors[0] ?? owner.userId;
+      const result = await deps.startRun(sessionId, item.id, runActor, runKind);
       if (result.ok) {
         dispatchedAgents.add(item.agentId);
         capacity -= 1;
@@ -498,7 +530,7 @@ export async function runRoutingTick(
       } else if (result.kind === "conflict") {
         // Duplicate wake or a manual Run raced us; the unique index already guarded this.
         continue;
-      } else if (result.kind === "budget_exhausted" || result.kind === "github_verification_required") {
+      } else if (result.kind === "budget_exhausted" || result.kind === "credential_unavailable" || result.kind === "github_verification_required") {
         // Per-owner, per-credential — like the disabledProviders check above,
         // NOT a session-wide precondition. One agent owner's exhausted
         // Anthropic budget must never freeze another owner's agents, or even

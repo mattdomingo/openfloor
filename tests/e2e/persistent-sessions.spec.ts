@@ -44,6 +44,7 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await owner.goto(createdSessionUrl);
   await expect(owner.getByText("Floor ready")).toBeVisible();
   await expect(owner.getByRole("dialog")).toHaveCount(0);
+  await owner.getByRole("button", { name: /Prepare the workspace/ }).click();
   await expect(owner.getByText("openfloor-test/repository-integration")).toBeVisible();
   // RepositoryCard itself only shows a status chip for externally_modified
   // (components/product/RepositoryCard.tsx) — the plain-ready state's
@@ -71,6 +72,7 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await expect(member.locator("li", { hasText: "Owner E." }).getByText("Online", { exact: true })).toBeVisible();
 
   await member.reload();
+  await member.getByRole("button", { name: /Prepare the workspace/ }).click();
   await expect(member.getByText("openfloor-test/repository-integration")).toBeVisible();
   await expect(member.getByRole("button", { name: "Configure" })).toHaveCount(0);
   await expect(member.getByRole("button", { name: "Disconnect" })).toHaveCount(0);
@@ -82,6 +84,7 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await expect(owner.locator(".setup-status[data-ready='true']")).toHaveText("Ready");
   await expect(owner.getByRole("button", { name: "Sync repository" })).toHaveCount(0);
   await member.reload();
+  await member.getByRole("button", { name: /Prepare the workspace/ }).click();
   await expect(member.getByText(/openfloor\/[0-9a-f]{8}\/candidate\/release-coordination-[0-9a-f]{8}/)).toBeVisible();
 
   await owner.getByRole("link", { name: "Enter agent floor" }).click();
@@ -193,6 +196,8 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await owner.locator("label.label-with-help", { hasText: "Description" }).hover();
   await expect(owner.getByRole("tooltip")).toHaveText("Standing instructions the agent follows across prompts, like a system prompt.");
   await owner.getByLabel("Description").fill("Map the persistent agent API");
+  await owner.getByRole("combobox", { name: "Who can use this agent" }).click();
+  await owner.getByRole("option", { name: "Everyone in this session" }).click();
   await owner.getByRole("dialog").getByRole("button", { name: "Create agent" }).click();
   await expect(owner.getByRole("dialog")).toBeHidden();
   await expect(agentFloor.getByRole("tab", { name: "Lumen" })).toBeVisible();

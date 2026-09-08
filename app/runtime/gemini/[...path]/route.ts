@@ -20,7 +20,7 @@ const ALLOWED_PATH_PATTERN = /^(v1beta|v1)\/models\/[\w.-]+:(generateContent|str
 const ALLOWED_QUERY_PARAMS = new Set(["alt"]);
 
 export async function POST(request: Request, { params }: { params: Promise<{ path: string[] }> }) {
-  const bindings = env as unknown as { RUNTIME_GATEWAY_SECRET?: string; GEMINI_API_KEY?: string; CREDENTIAL_ENCRYPTION_KEY?: string };
+  const bindings = env as unknown as { RUNTIME_GATEWAY_SECRET?: string; CREDENTIAL_ENCRYPTION_KEY?: string };
   const token = request.headers.get("x-goog-api-key")
     ?? request.headers.get("authorization")?.match(/^Bearer (.+)$/)?.[1];
   if (!token || !bindings.RUNTIME_GATEWAY_SECRET) return new Response("Not found", { status: 404 });
@@ -51,7 +51,6 @@ export async function POST(request: Request, { params }: { params: Promise<{ pat
   // else refuse — a present-but-unreadable owner credential and a named-but-
   // unconnected kind both refuse rather than switching payer.
   const resolved = await resolveRunProviderSecret(claims.runId, "gemini", {
-    serverKey: bindings.GEMINI_API_KEY,
     encryptionKey: bindings.CREDENTIAL_ENCRYPTION_KEY,
   });
   if (!resolved.ok) return new Response(resolved.message, { status: 503 });

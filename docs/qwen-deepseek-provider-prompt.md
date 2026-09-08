@@ -1,3 +1,5 @@
+> Historical implementation plan. The 2026-09-08 personal-billing decision supersedes server-key fallback and subscription enablement described below. Current execution accepts personal API keys only; see AGENTS.md and the API contracts.
+
 # Task: add Qwen Code (Alibaba/DashScope) and DeepSeek as agent-run providers in openfloor
 
 You are working in the openfloor repo (`/Users/aliharoon/Desktop/openfloor_repos/openfloor`). Read `AGENTS.md` first — it is the authoritative spec and its "Mandatory maintenance rule" (AGENTS.md:7) applies to every commit. `docs/kimi-grok-gemini-provider-prompt.md` is the precedent brief for adding providers; this task is its Gemini recipe applied twice. Before touching anything: `git fetch origin`, branch from `origin/main`, and check whether PR #256 (`ali/ao-thread-resume-pr-feedback`, thread resume + PR feedback nudges) has merged — if not, branch from that PR's head instead, because §5 builds on its `persistSessionStore`/`lib/run-resume.ts` seam and `RUN_SANDBOX_IMAGE_VERSION` is already `v5` there. Do not rebase or edit PR #256. Never put Claude session links in commits or PR bodies.

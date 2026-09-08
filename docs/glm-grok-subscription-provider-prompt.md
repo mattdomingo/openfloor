@@ -1,3 +1,5 @@
+> Historical implementation plan. The 2026-09-08 personal-billing decision supersedes server-key fallback and subscription enablement described below. Current execution accepts personal API keys only; see AGENTS.md and the API contracts.
+
 # Task: add GLM (Z.ai) and Grok (xAI) as agent-run providers, accept Claude / ChatGPT **subscription** credentials alongside API keys, and let each agent pick its model
 
 You are working in the openfloor repo, branching off `main`. Read `AGENTS.md` completely first — its "Mandatory maintenance rule" (AGENTS.md:7) applies to every commit here. `docs/claude-provider-prompt.md` and `docs/kimi-grok-gemini-provider-prompt.md` are the precedent briefs; this task extends both and **reverses one of their outcomes** (the Grok exclusion).

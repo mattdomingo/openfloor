@@ -5,6 +5,7 @@ import type { FloorSnapshot } from "@/lib/floor-types";
 test("legacy engineers verify before code execution and retain credit across History and Review", async ({ browser }) => {
   test.setTimeout(120_000);
   const owner = await authenticatedContext(browser, "attribution-owner", "attribution-owner@example.com", "Dispatch", "Owner");
+  expect((await owner.request.put("/api/account/credentials/openai", { data: { apiKey: "sk-openai-e2e-accepted" } })).ok()).toBe(true);
   const engineer = await browser.newContext({ extraHTTPHeaders: identityHeaders("legacy-attribution-e2e", "legacy-attribution@example.com", "Legacy Engineer") });
   const repositories = await (await owner.request.get("/api/account/github/repositories")).json();
   const repository = repositories.repositories[0];
@@ -18,9 +19,9 @@ test("legacy engineers verify before code execution and retain credit across His
   await engineerPage.getByRole("button", { name: "Join session" }).click();
   await engineerPage.goto(`/session/${session.id}/floor`);
   await skipTourIfOpen(engineerPage);
-  const firstAgent = await (await owner.request.post(`${root}/agents`, { data: { name: "First builder", role: "Engineer", task: "Implement features" } })).json();
+  const firstAgent = await (await owner.request.post(`${root}/agents`, { data: { usageScope: "session", name: "First builder", role: "Engineer", task: "Implement features" } })).json();
   const firstId = firstAgent.floor.agents[0].id;
-  const secondAgent = await (await owner.request.post(`${root}/agents`, { data: { name: "Second builder", role: "Engineer", task: "Implement features" } })).json();
+  const secondAgent = await (await owner.request.post(`${root}/agents`, { data: { usageScope: "session", name: "Second builder", role: "Engineer", task: "Implement features" } })).json();
   const secondId = secondAgent.floor.agents.find((a: { name: string }) => a.name === "Second builder").id;
   const queued = await (await engineer.request.post(`${root}/queue`, { data: { prompt: "Add engineer attribution feature", agentId: firstId } })).json();
   const waitingId = queued.floor.queue[0].id;
@@ -41,7 +42,7 @@ test("legacy engineers verify before code execution and retain credit across His
   await expect.poll(async () => (await floor()).runs.find((run) => run.queueItemId === waitingId)?.status).toBe("integrated");
   const run = (await floor()).runs.find((run) => run.queueItemId === waitingId)!;
   expect(run.attribution?.authors).toEqual([{ userId: "12345678-1234-4234-8234-123456789abc", githubId: "78187493394", login: "test-12345678" }]);
-  expect(run.createdBy).not.toBe(run.attribution?.authors[0].userId);
+  expect(run.createdBy).toBe(run.attribution?.authors[0].userId);
   await engineerPage.goto(`/session/${session.id}/floor`);
   await skipTourIfOpen(engineerPage);
   await engineerPage.getByRole("button", { name: "Run history", exact: true }).click();
@@ -52,6 +53,7 @@ test("legacy engineers verify before code execution and retain credit across His
   await history.getByRole("button", { name: "Close", exact: true }).click();
   await engineerPage.getByRole("button", { name: "Review", exact: true }).click();
   await engineerPage.getByRole("button", { name: "Prompts", exact: true }).click();
+  await engineerPage.locator(".review-prompt-item", { hasText: "Legacy E." }).click();
   await expect(engineerPage.getByRole("link", { name: "@test-12345678" })).toBeVisible();
   await engineerPage.reload();
   expect((await floor()).runs.find((item) => item.id === run.id)?.attribution).toEqual(run.attribution);

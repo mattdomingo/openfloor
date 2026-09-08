@@ -193,17 +193,8 @@ export const TopBar = memo(function TopBar({
       </div>
 
       {/* Controls: what you're looking at, who else is here, what you can do. */}
-      <nav className="screen-nav" aria-label="Workspace screens">
-        <button type="button" aria-pressed={screen === "workspace"} onClick={() => onScreen("workspace")}>
-          Workspace{unreadTeamCount > 0 && <span className="nav-unread-dot" aria-label={`${unreadTeamCount} unread team messages`} />}
-        </button>
-        <button type="button" aria-pressed={screen === "review"} onClick={() => onScreen("review")}>Review{reviewAttentionCount > 0 && <span className="nav-review-badge" aria-label={`${reviewAttentionCount} conflict case${reviewAttentionCount === 1 ? "" : "s"} need attention`}>{reviewAttentionCount}</span>}</button>
-      </nav>
 
-      <div className="topbar-actions">
-        {/* Offline members lead (left), online trail (right, nearest Invite) —
-            tone is computed from the unsorted list first so it stays stable
-            per person regardless of who else is online right now. */}
+
         <div className="presence" aria-label={`${members.filter((member) => member.online).length} people online`}>
           {members
             .map((member, index) => ({ member, tone: member.id === user.id ? "you" : `member-${index}` }))
@@ -213,6 +204,16 @@ export const TopBar = memo(function TopBar({
               <Avatar key={member.id} userId={member.id} initials={initials(member.displayName)} tone={tone} online={member.online} />
             ))}
         </div>
+      <div className="topbar-actions">
+        {/* Offline members lead (left), online trail (right, nearest Invite) —
+            tone is computed from the unsorted list first so it stays stable
+            per person regardless of who else is online right now. */}
+      <nav className="screen-nav" aria-label="Workspace screens">
+        <button type="button" aria-pressed={screen === "workspace"} onClick={() => onScreen("workspace")}>
+          Workspace{unreadTeamCount > 0 && <span className="nav-unread-dot" aria-label={`${unreadTeamCount} unread team messages`} />}
+        </button>
+        <button type="button" aria-pressed={screen === "review"} onClick={() => onScreen("review")}>Review{reviewAttentionCount > 0 && <span className="nav-review-badge" aria-label={`${reviewAttentionCount} conflict case${reviewAttentionCount === 1 ? "" : "s"} need attention`}>{reviewAttentionCount}</span>}</button>
+      </nav>
         {session.role === "owner" && (
           <button type="button" ref={inviteButtonRef} className="button invite-button" onClick={() => setInviting(true)}>
             <Icon name="plus" />Invite
