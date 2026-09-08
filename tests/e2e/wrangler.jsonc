@@ -17,7 +17,7 @@
     { "tag": "v1", "new_sqlite_classes": ["SessionPresence"] },
     { "tag": "v2", "new_sqlite_classes": ["SessionRouter"] }
   ],
-  "r2_buckets": [{ "binding": "PREFLIGHT_LOGS", "bucket_name": "openfloor-e2e-artifacts" }],
+  "r2_buckets": [{ "binding": "PREFLIGHT_LOGS", "bucket_name": "openfloor-e2e-artifacts" }, { "binding": "USER_AVATARS", "bucket_name": "openfloor-e2e-avatars" }],
   "vars": { "REPOSITORY_PREVIEW_ENABLED": "false" },
   "d1_databases": [{
     "binding": "DB",

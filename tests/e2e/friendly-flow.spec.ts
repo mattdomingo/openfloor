@@ -48,3 +48,49 @@ for (const reducedMotion of ["reduce", "no-preference"] as const) {
     await context.close();
   });
 }
+
+test("lobby shows joined avatars, accessible controls and complete empty Review", async ({ browser }) => {
+  const owner = await authenticatedContext(browser, "friendly-lobby-owner", "friendly-lobby-owner@example.com", "Lobby", "Owner");
+  const member = await authenticatedContext(browser, "friendly-lobby-member", "friendly-lobby-member@example.com", "Lobby", "Member");
+  const avatar = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
+  for (const [context, lastName] of [[owner, "Owner"], [member, "Member"]] as const) {
+    const uploaded = await context.request.patch("/api/account/profile", { multipart: { firstName: "Lobby", lastName, githubHandle: "", avatar: { name: "avatar.png", mimeType: "image/png", buffer: avatar } } });
+    expect(uploaded.ok()).toBe(true);
+  }
+  const repositories = await (await owner.request.get("/api/account/github/repositories")).json();
+  const repository = repositories.repositories[0];
+  const created = await owner.request.post("/api/sessions", { data: { title: "Friendly lobby", repositoryId: repository.id, accountInstallationId: repository.accountInstallationId } });
+  expect(created.status()).toBe(201);
+  const { session, inviteUrl } = await created.json();
+  const page = await owner.newPage();
+  await page.goto(`/session/${session.id}`);
+  await expect(page.getByRole("button", { name: /Prepare the workspace/ })).toHaveAttribute("aria-expanded", "false");
+  const joined = await member.newPage();
+  await joined.goto(new URL(inviteUrl).pathname);
+  await joined.getByRole("button", { name: "Join session" }).click();
+  await expect(page.locator(".member-panel .member-list img")).toHaveCount(2);
+  await expect.poll(() => page.locator(".member-panel .member-list img").evaluateAll((images) => images.every((image) => (image as HTMLImageElement).naturalWidth > 0))).toBe(true);
+  await expect(page.locator(".member-panel").getByText(/Joined/)).toHaveCount(0);
+  await page.getByRole("button", { name: "Copy link", exact: true }).hover();
+  await expect(page.getByRole("tooltip")).toContainText("Copy");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.getByRole("link", { name: "Enter agent floor" })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.getByRole("button", { name: /Prepare the workspace/ }).click();
+  await expect(page.getByRole("button", { name: /Prepare the workspace/ })).toHaveAttribute("aria-expanded", "true");
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.getByRole("link", { name: "Enter agent floor" }).click();
+  await page.getByRole("button", { name: "Review", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "No review available" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Prompts", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Squash merge", exact: true })).toBeDisabled();
+  await expect(page.getByText("No checks available", { exact: true })).toBeVisible();
+  for (let index = 0; index < 26; index++) expect((await owner.request.post(`/api/sessions/${session.id}/queue`, { data: { prompt: `Retained prompt ${index}`, agentId: null } })).ok()).toBe(true);
+  await page.getByRole("button", { name: "Prompts", exact: true }).click();
+  await expect(page.locator(".review-prompt-item")).toHaveCount(25);
+  await page.getByRole("button", { name: "Load more", exact: true }).click();
+  await expect(page.locator(".review-prompt-item")).toHaveCount(26);
+  await expect(page.getByText("This prompt has not produced a run.")).toBeVisible();
+  await owner.close();
+  await member.close();
+});
