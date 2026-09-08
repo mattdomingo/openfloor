@@ -342,21 +342,24 @@ function ProviderBudgetControl({ credential, busy, onSaveLimit }: {
         <div className="provider-budget-form">
           <label className="field">
             <span className="label">Monthly limit (USD, blank for none)</span>
-            <input
-              type="number"
-              min={0}
-              step="1"
-              inputMode="numeric"
-              value={limitInput}
-              onChange={(event) => setLimitInput(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key !== "Enter") return;
-                event.preventDefault();
-                submitLimit();
-              }}
-              placeholder="No limit"
-              aria-label="Monthly limit in US dollars"
-            />
+            <span className="currency-input">
+              <span aria-hidden="true">$</span>
+              <input
+                type="number"
+                min={0}
+                step="1"
+                inputMode="numeric"
+                value={limitInput}
+                onChange={(event) => setLimitInput(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key !== "Enter") return;
+                  event.preventDefault();
+                  submitLimit();
+                }}
+                placeholder="No limit"
+                aria-label="Monthly limit in US dollars"
+              />
+            </span>
           </label>
           <div className="form-actions">
             <button type="button" className="button" data-variant="primary" data-size="sm" disabled={busy} onClick={submitLimit}>{busy ? "Saving…" : "Save"}</button>

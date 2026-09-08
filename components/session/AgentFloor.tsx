@@ -90,6 +90,7 @@ export const AgentFloor = memo(function AgentFloor({ chrome, sessionId, agents, 
   const [creating, setCreating] = useState(false);
   const [runHistoryOpen, setRunHistoryOpen] = useState(false);
   const [historyAgentId, setHistoryAgentId] = useState<string | null>(null);
+  const autoProvisionTip = useHoverTip();
   const createButtonRef = useRef<HTMLButtonElement>(null);
   const historyAgent = agents.find((agent) => agent.id === historyAgentId) ?? null;
   const providerOptions: SelectMenuOption[] = connectedProviders(providerCredentials, enabledProviders).map(
@@ -163,10 +164,11 @@ export const AgentFloor = memo(function AgentFloor({ chrome, sessionId, agents, 
         <AgentBulkControlsMenu onPauseAll={onPauseAllAgents} onResumeAll={onResumeAllAgents} onStopAll={onStopAllAgents} busy={agentControlsBusy} />
       )}
       {owner && (
-        <button type="button" className="chip auto-agent-toggle" data-selected={autoProvisionAgents ? "true" : "false"} aria-pressed={autoProvisionAgents} onClick={() => void onAutoProvisionAgents(!autoProvisionAgents)}>
-          Auto agents {autoProvisionAgents ? "on" : "off"}
+        <button type="button" className="chip auto-agent-toggle" data-selected={autoProvisionAgents ? "true" : "false"} aria-pressed={autoProvisionAgents} aria-label="Auto" onClick={() => void onAutoProvisionAgents(!autoProvisionAgents)} {...autoProvisionTip.handlers}>
+          Auto
         </button>
       )}
+      {owner && <HoverTip position={autoProvisionTip.position}>Automatically spin up agents</HoverTip>}
       {owner && autoProvisionAgents && providerOptions.length > 0 && (
         <SelectMenu
           value={autoAgentProvider ?? effectiveAutoAgentProvider ?? ""}

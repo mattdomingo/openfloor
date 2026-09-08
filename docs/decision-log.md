@@ -1069,3 +1069,11 @@ Preview v1 supports only one JavaScript app at the repository root with exactly 
 **Rationale:** Preview on `release` still targeted helpers the isolation hotfix deleted. Restoring setuid/srt would reopen SEC-01. Reusing the existing namespace, broker, and image-gate keeps one execution boundary instead of a second privileged preview identity.
 
 **Consequences:** Agent runs must not receive `CAP_NET_ADMIN` or the loopback setup shell. Exact-image tests cover npm, pnpm, Yarn, and Bun lifecycle suppression plus loopback HTTP with blocked outbound traffic. Enabling the gate still requires wildcard DNS/TLS, a preview Access application, and the documented acceptance runbook. Every later image-content change must bump the pool key again.
+
+### 2026-09-07 — Keep preview acceptance fixtures inside the execution namespace
+
+**Decision:** Place container preview fixtures under the existing `/tmp/openfloor` mount, close the loopback test server, and give the private tmpfs `/tmp` standard mode `1777`.
+
+**Rationale:** The sync CI fixture was invisible inside the isolated namespace; later assertions also contained an escaped regular expression a live server that prevented process completion, and an unwritable private temporary directory that broke Yarn.
+
+**Consequences:** No host mounts or privileges are added. Only the private tmpfs permission changes, restoring ordinary unprivileged temporary-file creation. Executor/publisher generations advance to `v13`/`v5` because the image includes these test scripts. Container acceptance continues to verify lifecycle suppression, private loopback, zero capabilities, and blocked outbound traffic.

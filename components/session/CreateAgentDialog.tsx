@@ -15,8 +15,10 @@ import {
   type CredentialProvider,
   type ProviderCredentialSummary,
 } from "@/lib/provider-credentials";
-import { Icon, Spinner, useDialogDismiss } from "./primitives";
+import { HoverTip, Icon, Spinner, useDialogDismiss, useHoverTip } from "./primitives";
 import { SelectMenu } from "./SelectMenu";
+
+const AGENT_DESCRIPTION_HELP = "Standing instructions the agent follows across prompts, like a system prompt.";
 
 export function CreateAgentDialog({
   sessionId,
@@ -34,6 +36,9 @@ export function CreateAgentDialog({
   providerCredentials: ProviderCredentialSummary[];
 }) {
   const titleId = useId();
+  const descriptionId = useId();
+  const descriptionHelpId = useId();
+  const descriptionTip = useHoverTip();
   const { dismiss, dialogProps } = useDialogDismiss(onClose);
   const nameRef = useRef<HTMLInputElement>(null);
   const [name, setName] = useState("");
@@ -79,7 +84,14 @@ export function CreateAgentDialog({
         </div>
         <div className="dialog-body">
           <label className="field"><span className="label">Name</span><input ref={nameRef} value={name} onChange={(event) => setName(event.target.value)} required maxLength={24} /></label>
-          <label className="field"><span className="label">Task</span><textarea value={task} onChange={(event) => setTask(event.target.value)} required maxLength={1000} rows={4} /></label>
+          <div className="field">
+            <label className="label-with-help" htmlFor={descriptionId} tabIndex={0} {...descriptionTip.handlers}>
+              Description <span className="field-help-mark" aria-hidden="true">?</span>
+            </label>
+            <textarea id={descriptionId} aria-describedby={descriptionHelpId} value={task} onChange={(event) => setTask(event.target.value)} required maxLength={1000} rows={4} />
+            <span id={descriptionHelpId} className="sr-only">{AGENT_DESCRIPTION_HELP}</span>
+            <HoverTip position={descriptionTip.position} wrap>{AGENT_DESCRIPTION_HELP}</HoverTip>
+          </div>
           <p className="form-note">You own this agent. Shared routing may run it and spend your connected provider credential.</p>
           {available.length === 0 ? (
             <p className="notice" data-tone="attention" role="status">

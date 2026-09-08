@@ -163,14 +163,14 @@ function executeWorkspace(sandbox: Sandbox, command: string, options: NonNullabl
   return sandbox.exec(`node /opt/openfloor/runtime-sandbox.mjs /bin/bash -c ${quoted}`, options);
 }
 
-const PUBLISHER_SANDBOX_IMAGE_VERSION = "v4";
+const PUBLISHER_SANDBOX_IMAGE_VERSION = "v5";
 // Pooled run sandboxes are keyed only by repository (see db/sandbox-pool.ts),
 // so a container built from a stale image would otherwise stay claimable for
 // up to POOL_IDLE_TTL_MS after a deploy that changed Dockerfile.sandbox.
 // Namespacing the pool key by image version makes old-image entries
 // unreachable immediately; the existing idle sweep reclaims them.
 // Bump this whenever Dockerfile.sandbox's run-sandbox contents change.
-const RUN_SANDBOX_IMAGE_VERSION = "v12";
+const RUN_SANDBOX_IMAGE_VERSION = "v13";
 // Provider CLIs and native tools share a credential-free execution namespace.
 // Scratch and transcript state are removed before a pooled sandbox is reused.
 const RUN_PROVIDER_HOME = "/tmp/openfloor/provider-home";

@@ -26,6 +26,9 @@ isolated(`
   import { spawnSync } from 'node:child_process';
   assert.equal(process.getuid(), 10002);
   assert.equal(process.getgid(), 10001);
+  const temporary = fs.mkdtempSync('/tmp/workspace-tool-');
+  fs.writeFileSync(temporary + '/output', 'private temporary file');
+  assert.equal(fs.readFileSync(temporary + '/output', 'utf8'), 'private temporary file');
   const status = fs.readFileSync('/proc/self/status','utf8');
   assert.match(status, /NoNewPrivs:\\s+1/);
   for (const capability of ['CapInh','CapPrm','CapEff','CapBnd','CapAmb']) assert.match(status, new RegExp(capability + ':\\\\s+0+'));
