@@ -701,3 +701,7 @@ Session creation uses the server-loaded quota summary to show a Plan & usage dia
 ### Preview isolation test fixtures (2026-09-07)
 
 Executor generation is `v13`, publisher `v5`, because the test scripts are included in the Sandbox image. Container preview fixtures live under `/tmp/openfloor`, which the execution namespace mounts. Tests must not broaden production mounts to reach host fixtures. The private tmpfs `/tmp` uses standard mode `1777` so the unprivileged tools can create temporary files; no host temporary directory is exposed. The loopback test closes its server and verifies zero capabilities before checking blocked outbound connections.
+
+### Session usability (2026-09-08)
+
+The guided tour provides Next while retaining real-control interaction. Required setup actions gate progression; optional fields remain optional. Detours restore the expected tab or dialog instead of skipping missing targets. Creation completes the home tour only after a successful API response. The lobby's workspace setup is a local disclosure, automatically opened by repository guidance. Lobby avatars use authenticated member images with initials fallback. The public logo is static at rest and offers a reduced-motion-aware idle invitation after ten seconds.

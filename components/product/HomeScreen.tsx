@@ -313,6 +313,7 @@ export function HomeScreen({
             initialCredentials={initialCredentials}
             enabledProviders={enabledProviders}
             onClose={() => setCreating(false)}
+            onCreated={() => { const key = `openfloor:tutorial:home:${user.id}`; try { localStorage.setItem(key, "done"); } catch {} window.dispatchEvent(new CustomEvent("openfloor:tour-complete", { detail: key })); }}
           />
         )}
 
@@ -373,7 +374,11 @@ export function HomeScreen({
       {pendingDelete && <DeleteSessionDialog session={pendingDelete} onClose={() => setPendingDelete(null)} />}
       {/* Keyed per account so a recreated account sees the tour again; the
           dismissal itself stays device-local like the theme. */}
-      <GuidedTour storageKey={`openfloor:tutorial:home:${user.id}`} steps={HOME_TOUR} />
+      <GuidedTour storageKey={`openfloor:tutorial:home:${user.id}`} steps={HOME_TOUR.map((step, index) => index === 1 ? { ...step, onNext: () => void beginCreate() } : step)} recover={(index) => tab !== "active" ? {
+        selector: '.shop-tabs button:first-of-type', title: "Return to Active", body: "New sessions start in Active. Return there to continue the tutorial.", onNext: () => setTab("active"),
+      } : index >= 2 && !creating ? {
+        selector: '[aria-label="New session"]', title: "Reopen session setup", body: "Open New session to continue setup. Required fields still need to be completed.", onNext: () => void beginCreate(),
+      } : null} />
     </main>
   );
 }
@@ -391,6 +396,7 @@ export function HomeScreen({
 const HOME_TOUR: TourStep[] = [
   {
     selector: ".shop-tabs",
+    clickSelector: ".shop-tabs button:first-of-type",
     title: "Your sessions",
     body: "Filter Active, Archived, and Ended sessions, and check monthly usage. Drag a card by its grip to reorder the grid.",
   },
@@ -409,7 +415,7 @@ const HOME_TOUR: TourStep[] = [
     selector: '.create-dialog [data-tour="goal"]',
     title: "Say what done looks like",
     body: "This is the shared objective the floor works toward — the team can update it later.",
-    isSatisfied: () => Boolean((document.querySelector('.create-dialog [data-tour="goal"]') as HTMLTextAreaElement | null)?.value.trim()),
+    isSatisfied: () => true,
   },
   {
     selector: '.create-dialog [aria-label="Session repository"]',
@@ -432,7 +438,10 @@ const HOME_TOUR: TourStep[] = [
   {
     selector: '.create-dialog button[type="submit"]',
     title: "Create the session",
-    body: "Click Create session. You land on the agent floor — it walks you through itself the first time.",
+    body: "Create the session when setup is complete. If creation fails, fix the error and try again.",
+    isSatisfied: () => document.querySelector<HTMLButtonElement>('.create-dialog button[type="submit"]')?.disabled === false,
+    waitForAction: true,
+    onNext: () => document.querySelector<HTMLFormElement>(".create-dialog form")?.requestSubmit(),
   },
 ];
 
@@ -784,13 +793,14 @@ function SessionQuotaDialog({ onClose }: { onClose: () => void }) {
 // One <form> spans the whole dialog (display: contents, so it adds no box of
 // its own and .dialog's flex-column layout of head/body/foot is unaffected)
 // so Enter in a text field submits.
-function CreateSessionDialog({ repositories, repositoriesLoading, loadError, initialCredentials, enabledProviders, onClose }: {
+function CreateSessionDialog({ repositories, repositoriesLoading, loadError, initialCredentials, enabledProviders, onClose, onCreated }: {
   repositories: AccountGitHubRepositoryOption[];
   repositoriesLoading: boolean;
   loadError: string | null;
   initialCredentials: ProviderCredentialSummary[];
   enabledProviders: CredentialProvider[];
   onClose: () => void;
+  onCreated: () => void;
 }) {
   const router = useRouter();
   const { dismiss, dialogProps } = useDialogDismiss(onClose);
@@ -840,6 +850,7 @@ function CreateSessionDialog({ repositories, repositoriesLoading, loadError, ini
       setSubmitting(false);
       return;
     }
+    onCreated();
     router.push(body.setupStatus === "failed"
       ? `/session/${body.session.id}?repo=required`
       : `/session/${body.session.id}/floor`);

@@ -1077,3 +1077,11 @@ Preview v1 supports only one JavaScript app at the repository root with exactly 
 **Rationale:** The sync CI fixture was invisible inside the isolated namespace; later assertions also contained an escaped regular expression a live server that prevented process completion, and an unwritable private temporary directory that broke Yarn.
 
 **Consequences:** No host mounts or privileges are added. Only the private tmpfs permission changes, restoring ordinary unprivileged temporary-file creation. Executor/publisher generations advance to `v13`/`v5` because the image includes these test scripts. Container acceptance continues to verify lifecycle suppression, private loopback, zero capabilities, and blocked outbound traffic.
+
+### 2026-09-08 — Guided progression and a clearer session lobby
+
+**Decision:** Next advances the tutorial without dismissing it; required form steps stay gated and optional inputs do not become requirements. Missing contexts display recovery guidance. Successful session creation alone completes the final home step. The lobby uses a prominent floor-entry row, a local workspace-setup disclosure, authenticated member avatars, and accessible icon controls. The public mark no longer pulses; ten seconds of inactivity reveals an invitation with reduced-motion support.
+
+**Rationale:** Clicking unrelated session tabs previously advanced into missing controls. The lobby obscured entry among setup text, and the pulsing entry mark resembled loading.
+
+**Consequences:** Tour storage remains per device. No persisted collaboration or authorization changes are introduced by these presentation changes.
