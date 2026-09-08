@@ -726,6 +726,8 @@ Separately, the lobby's `SessionSetupDialog`/`setupRequested`/`?setup=1` are del
 
 ### 2026-08-28 — Manual conflict resolution applies human choices deterministically, never through the model
 
+**Status:** Snapshot matching, stale-write, and AI-fallback policies superseded by "Bind manual conflict decisions to exact content" (2026-09-07).
+
 **Decision:** When the automatic Merge Resolver stops on `failed` or `awaiting_input`, a human (session owner or an original prompt author — the same rule as free-text conflict answers) can resolve the merge by picking ours/theirs/both per conflict hunk instead of writing free text or retrying the same agent. Every resolver attempt, automatic or manual, now captures a bounded `conflict_snapshot` artifact right after its three-way merge — base/ours/theirs/merged bodies for up to 40 conflicted paths, each side capped at 16 KiB — so a snapshot exists to resolve against the moment automation first stops, not only after a dedicated capture run. `lib/conflict-hunks.ts` parses the plain two-way `<<<<<<<`/`=======`/`>>>>>>>` markers this merge produces (it does not use `merge.conflictStyle=diff3`, so there is no per-hunk common-ancestor section to expose) into real hunks, and turns a whole-file delete/modify, modify/delete, or binary conflict into one synthetic hunk apiece so the same `{path, hunkIndex, choice}` shape covers every case. Submitting a complete choice set resumes the case for a new resolver attempt (launch kind `manual`) whose workflow rewrites the marker blocks directly with the recorded choices and skips starting an agent process — no model call is made, so a human's explicit decision can never be silently overridden by one.
 
 **Rationale:** A failed automatic attempt previously had no next step besides retrying the identical inputs, and the only "human input" channel (free-text answers to agent-posed questions) is a poor fit for a decision that's really just "keep this side" — nobody could even see the conflicting lines, since `conflict_paths` only ever stored file paths. Applying the choices deterministically rather than feeding them back into another agent run removes the model from a place it adds risk without value: the human has already made the decision, and a second interpretation step can only drift from it.
@@ -1077,3 +1079,11 @@ Preview v1 supports only one JavaScript app at the repository root with exactly 
 **Rationale:** The sync CI fixture was invisible inside the isolated namespace; later assertions also contained an escaped regular expression a live server that prevented process completion, and an unwritable private temporary directory that broke Yarn.
 
 **Consequences:** No host mounts or privileges are added. Only the private tmpfs permission changes, restoring ordinary unprivileged temporary-file creation. Executor/publisher generations advance to `v13`/`v5` because the image includes these test scripts. Container acceptance continues to verify lifecycle suppression, private loopback, zero capabilities, and blocked outbound traffic.
+
+### 2026-09-07 — Bind manual conflict decisions to exact content
+
+**Decision:** Bind every snapshot read to its requested session, reject stale writes without mutation, preserve paths containing spaces, and require complete unchanged snapshot content and candidate SHA before deterministic application. A failed manual application cannot fall back to AI. A missing Git stage is checked explicitly before deletion.
+
+**Rationale:** Prior selection matching used only path/hunk counts; incomplete previews could truncate files, rejected writes could replace accepted choices, and an owner could read another session's snapshot.
+
+**Consequences:** Existing history is retained. Incomplete legacy snapshots must be refreshed before manual application. Regression coverage includes cross-session owners, losing submissions, and parseable truncated files.

@@ -134,3 +134,24 @@ describe("manual conflict resolution (hunk selections)", () => {
     await expect(getConflictSelectionsForCase(room.caseId, env.DB)).resolves.toBeNull();
   });
 });
+
+
+describe("manual selection race and session boundaries", () => {
+  it("conceals another session's snapshot from an owner", async () => {
+    const own = await seed("cross-session-owner");
+    const other = await seed("cross-session-target");
+    await seedFailedResolverWithSnapshot(other.caseId, "private/other.json");
+    expect(await getConflictSnapshotArtifact(own.sessionId, other.caseId, own.owner.id, env.DB)).toBe("forbidden");
+  });
+
+  it("a rejected second submission changes neither choices nor revision", async () => {
+    const room = await seed("rejected-write");
+    const runId = await seedFailedResolverWithSnapshot(room.caseId, "snapshot.json");
+    const choices = [{ path: "src/shared feature.ts", hunkIndex: 0, choice: "ours" as const }];
+    expect(await recordConflictSelections(room.sessionId, room.caseId, room.owner.id, runId, choices, env.DB)).toBe("recorded");
+    const before = await env.DB.prepare("SELECT floor_revision FROM sessions WHERE id = ?").bind(room.sessionId).first();
+    expect(await recordConflictSelections(room.sessionId, room.caseId, room.member.id, runId, [{ ...choices[0], choice: "theirs" }], env.DB)).toBe("stale");
+    expect((await getConflictSelectionsForCase(room.caseId, env.DB))?.selections).toEqual(choices);
+    expect(await env.DB.prepare("SELECT floor_revision FROM sessions WHERE id = ?").bind(room.sessionId).first()).toEqual(before);
+  });
+});

@@ -317,6 +317,16 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
           // of the prior attempt's snapshot the human actually chose
           // ours/theirs/both against, silently discarding their decision.
           const record = await getConflictSelectionsForCase(context.conflictCaseId, this.env.DB);
+          let selectedFiles: ConflictSnapshotFileRaw[] | null = null;
+          if (record) {
+            const selected = await this.env.DB.prepare(
+              "SELECT r.candidate_sha AS candidateSha, ar.r2_key AS r2Key FROM agent_runs r JOIN agent_run_artifacts ar ON ar.run_id = r.id AND ar.kind = 'conflict_snapshot' WHERE r.id = ?",
+            ).bind(record.snapshotRunId).first<{ candidateSha: string; r2Key: string }>();
+            if (!selected || selected.candidateSha !== context.candidateSha) throw new NonRetryableError("The candidate changed. Refresh and confirm the manual resolution again.");
+            const stored = await this.env.PREFLIGHT_LOGS.get(selected.r2Key);
+            if (!stored) throw new NonRetryableError("The selected snapshot is unavailable. Refresh before resolving.");
+            selectedFiles = (await new Response(stored.body).json() as { files: ConflictSnapshotFileRaw[] }).files;
+          }
           // Captured on every attempt (automatic or manual) so a manual
           // resolution is available the moment automation fails, without
           // needing a fresh sandbox — see AGENTS.md's Merge Resolver section.
@@ -330,11 +340,17 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
               try {
                 const parsed = JSON.parse(captured.stdout) as { files: ConflictSnapshotFileRaw[] };
                 snapshotFiles = parsed.files;
-                const snapshotJson = JSON.stringify(parsed).slice(0, MAX_SNAPSHOT_BYTES);
+                if (record && (snapshotFiles.some((file) => file.truncated)
+                    || JSON.stringify(snapshotFiles) !== JSON.stringify(selectedFiles))) {
+                  throw new NonRetryableError("Conflict content changed. Refresh and confirm the manual resolution again.");
+                }
+                const snapshotJson = JSON.stringify(parsed);
+                if (snapshotJson.length > MAX_SNAPSHOT_BYTES) throw new Error("Conflict snapshot exceeds its storage bound");
                 const snapshotKey = `conflicts/${context.conflictCaseId}/${runId}/snapshot.json`;
                 await this.env.PREFLIGHT_LOGS.put(snapshotKey, snapshotJson, { httpMetadata: { contentType: "application/json; charset=utf-8" } });
                 await recordRunArtifact(runId, "conflict_snapshot", snapshotKey, "application/json; charset=utf-8", snapshotJson.length, this.env.DB);
-              } catch {
+              } catch (error) {
+                if (record) throw error;
                 // A malformed capture is non-fatal: this attempt just has no
                 // manual-resolution fallback available yet; the automatic
                 // resolver agent still runs exactly as it always has.
@@ -364,7 +380,7 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
               const decisions = decisionsByPath.get(path);
               if (!decisions || decisions.length === 0) { mismatch = true; break; }
               if (raw.kind === "content") {
-                if (raw.merged === null) { mismatch = true; break; }
+                if (raw.merged === null || raw.truncated) { mismatch = true; break; }
                 try {
                   resolvedContent.set(path, applyConflictSelections(raw.merged, new Map(decisions.map((decision) => [decision.hunkIndex, decision.choice]))));
                 } catch { mismatch = true; break; }
@@ -381,10 +397,13 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
               }
               for (const [path, choice] of fileLevelChoices) {
                 const quoted = `'${path.replace(/'/g, "'\\''")}'`;
-                await executeWorkspace(sandbox,
-                  `git checkout --${choice} -- ${quoted} 2>/dev/null && git add -- ${quoted} || git rm -f -q -- ${quoted}`,
+                const raw = snapshotFiles.find((file) => file.path === path)!;
+                const deleted = choice === "ours" ? raw.kind === "delete_modify" : raw.kind === "modify_delete";
+                const applied = await executeWorkspace(sandbox,
+                  deleted ? `git rm -f -q -- ${quoted}` : `git checkout --${choice} -- ${quoted} && git add -- ${quoted}`,
                   { cwd: "/workspace/repository", timeout: 30_000 },
                 );
+                if (!applied.success) throw new NonRetryableError("The chosen file version could not be applied.");
               }
               const staged = await executeWorkspace(sandbox, "git -c core.hooksPath=/dev/null add -A", { cwd: "/workspace/repository", timeout: 60_000 });
               if (staged.success) {
@@ -393,6 +412,7 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
               }
             }
           }
+          if (record && !manualApplied) throw new NonRetryableError("The manual resolution could not be applied. Refresh and review it again; no AI replacement was made.");
         }
         // Thread resume: restore the prior attempt's provider session store
         // so the runner can continue that conversation (eligibility decided

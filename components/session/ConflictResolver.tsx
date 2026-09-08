@@ -8,7 +8,7 @@ import { Icon, SegmentedControl } from "./primitives";
 type LoadState = { key: string; snapshot: ConflictSnapshot | null; error: string | null };
 
 function hunkKey(path: string, hunkIndex: number): string {
-  return `${path} ${hunkIndex}`;
+  return JSON.stringify([path, hunkIndex]);
 }
 
 // Every (path, hunkIndex) a real decision is needed for — unparseable files
@@ -87,8 +87,8 @@ export function ConflictResolverBody({ sessionId, caseId, busy, onExit, onSubmit
     setSubmitting(true);
     setSubmitError(null);
     const payload = [...required].map((key) => {
-      const [path, hunkIndexText] = key.split(" ");
-      return { path, hunkIndex: Number(hunkIndexText), choice: selections.get(key)! };
+      const [path, hunkIndex] = JSON.parse(key) as [string, number];
+      return { path, hunkIndex, choice: selections.get(key)! };
     });
     const ok = await onSubmit(caseId, snapshot.snapshotRunId, payload);
     setSubmitting(false);
@@ -99,7 +99,7 @@ export function ConflictResolverBody({ sessionId, caseId, busy, onExit, onSubmit
   const activeFile = snapshot?.files.find((file) => file.path === selectedPath) ?? null;
 
   return <>
-    <p className="conflict-center-step">Choose ours, theirs, or both for every conflicting section. Applying is instant — no agent runs.</p>
+    <p className="conflict-center-step">Choose ours, theirs, or both for every conflicting section. Choices are applied exactly, then checked and integrated. No AI rewrites your selection.</p>
     <div className="conflict-resolver-body">
       {loading ? <p className="review-empty">Loading conflicting sections…</p>
         : loadError ? <p className="review-empty" role="alert">{loadError}</p>

@@ -108,6 +108,9 @@ export async function getMergeConflictCases(sessionId: string, database = getDb(
 async function authorizeConflictDecision(sessionId: string, caseId: string, userId: string, database: ReturnType<typeof getDb>): Promise<boolean> {
   const role = await getActiveMembershipRole(sessionId, userId, database);
   if (!role) return false;
+  const boundCase = await database.prepare("SELECT 1 AS present FROM merge_conflict_cases WHERE id = ? AND session_id = ?")
+    .bind(caseId, sessionId).first();
+  if (!boundCase) return false;
   if (role === "owner") return true;
   const authored = await database.prepare(
     `SELECT 1 AS allowed FROM merge_conflict_cases mc
@@ -194,9 +197,10 @@ export async function recordConflictSelections(
   const statements = selections.map((selection) => database.prepare(
     `INSERT INTO merge_conflict_selections (id, case_id, snapshot_run_id, path, hunk_index, choice, selected_by, created_at)
      SELECT ?, ?, ?, ?, ?, ?, ?, ? WHERE ? = ${latestSnapshotSubquery}
+       AND EXISTS (SELECT 1 FROM merge_conflict_cases WHERE id = ? AND status IN ('failed', 'awaiting_input') AND current_resolver_run_id IS NULL)
      ON CONFLICT(snapshot_run_id, path, hunk_index) DO UPDATE SET
        choice = excluded.choice, selected_by = excluded.selected_by, created_at = excluded.created_at`,
-  ).bind(crypto.randomUUID(), caseId, snapshotRunId, selection.path, selection.hunkIndex, selection.choice, userId, now, snapshotRunId, caseId));
+  ).bind(crypto.randomUUID(), caseId, snapshotRunId, selection.path, selection.hunkIndex, selection.choice, userId, now, snapshotRunId, caseId, caseId));
   const results = await database.batch([
     ...statements,
     database.prepare(
@@ -206,8 +210,8 @@ export async function recordConflictSelections(
     ).bind(now, caseId, sessionId, snapshotRunId, caseId),
     database.prepare(
       `UPDATE sessions SET floor_revision = floor_revision + 1, updated_at = ?
-       WHERE id = ? AND EXISTS (SELECT 1 FROM merge_conflict_cases WHERE id = ? AND resume_requested = 1 AND status = 'pending')`,
-    ).bind(now, sessionId, caseId),
+       WHERE id = ? AND changes() = 1`,
+    ).bind(now, sessionId),
   ]);
   const caseChanges = Number(results[statements.length]?.meta?.changes ?? 0) === 1;
   return caseChanges ? "recorded" : "stale";
@@ -466,13 +470,14 @@ export async function advanceConflictAfterFailure(
 ): Promise<{ sessionId: string; retry: boolean } | null> {
   const row = await database.prepare(
     `SELECT mc.id AS caseId, mc.session_id AS sessionId, mc.automatic_attempts AS automaticAttempts,
-            s.auto_resolve_conflicts AS autoResolve, source.queue_item_id AS queueItemId
+            s.auto_resolve_conflicts AS autoResolve, source.queue_item_id AS queueItemId,
+            EXISTS (SELECT 1 FROM merge_conflict_selections ms WHERE ms.case_id = mc.id) AS hasHumanSelections
      FROM merge_conflict_attempts mca JOIN merge_conflict_cases mc ON mc.id = mca.case_id
      JOIN sessions s ON s.id = mc.session_id JOIN agent_runs source ON source.id = mc.source_run_id
-     WHERE mca.run_id = ? AND mc.status = 'resolving'`,
-  ).bind(runId).first<{ caseId: string; sessionId: string; automaticAttempts: number; autoResolve: number; queueItemId: string }>();
+     WHERE mca.run_id = ? AND mc.current_resolver_run_id = mca.run_id AND mc.status = 'resolving'`,
+  ).bind(runId).first<{ caseId: string; sessionId: string; automaticAttempts: number; autoResolve: number; queueItemId: string; hasHumanSelections: number }>();
   if (!row) return null;
-  const retry = retryEligible && Boolean(row.autoResolve) && Number(row.automaticAttempts) < MAX_AUTOMATIC_CONFLICT_ATTEMPTS;
+  const retry = !row.hasHumanSelections && retryEligible && Boolean(row.autoResolve) && Number(row.automaticAttempts) < MAX_AUTOMATIC_CONFLICT_ATTEMPTS;
   const now = Date.now();
   await database.batch([
     database.prepare(

@@ -157,6 +157,7 @@ export type ConflictFileSnapshot = {
  * synthetic hunk at index 0 so the same {path, hunkIndex, choice} selection
  * shape covers every case — see AGENTS.md's Merge Resolver section. */
 export function buildConflictFileSnapshot(raw: ConflictSnapshotFileRaw): ConflictFileSnapshot {
+  if (raw.truncated) return { path: raw.path, kind: raw.kind, hunks: [], unparseable: true, truncated: true };
   if (raw.kind === "content") {
     if (raw.merged === null) return { path: raw.path, kind: "content", hunks: [], unparseable: true, truncated: raw.truncated };
     try {

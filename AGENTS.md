@@ -701,3 +701,7 @@ Session creation uses the server-loaded quota summary to show a Plan & usage dia
 ### Preview isolation test fixtures (2026-09-07)
 
 Executor generation is `v13`, publisher `v5`, because the test scripts are included in the Sandbox image. Container preview fixtures live under `/tmp/openfloor`, which the execution namespace mounts. Tests must not broaden production mounts to reach host fixtures. The private tmpfs `/tmp` uses standard mode `1777` so the unprivileged tools can create temporary files; no host temporary directory is exposed. The loopback test closes its server and verifies zero capabilities before checking blocked outbound connections.
+
+### Conflict decision safety (2026-09-07)
+
+Conflict snapshot access binds the case to the requested session before owner authorization. Rejected or stale selections change neither saved choices nor floor revision. Manual application requires the exact candidate and complete unchanged snapshot content; truncated previews are never application input. A manual application failure stops for human review without an automatic model fallback. Git checkout failures must never be interpreted as a request to delete a file.
