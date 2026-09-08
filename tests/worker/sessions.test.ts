@@ -64,7 +64,7 @@ import {
   beginRunIntegration,
   AgentRunNotReadyError,
   cancelRunIntegration,
-  createAgentRun,
+  createAgentRun as createUnverifiedAgentRun,
   finishAgentReply,
   finishAgentRun,
   finishRunPublished,
@@ -108,6 +108,16 @@ import { getReviewContribution, listReviewContributions, resolveReviewRollbackIm
 
 function identity(id: string, name: string) {
   return { providerUserId: `chatgpt-${id}`, email: `${id}@example.com`, displayName: name, fullName: name };
+}
+
+// Existing execution fixtures represent engineers who completed GitHub verification.
+async function createAgentRun(...args: Parameters<typeof createUnverifiedAgentRun>) {
+  const database = args[4] ?? env.DB;
+  const authors = await database.prepare("SELECT DISTINCT author_user_id AS id FROM floor_queue_prompts WHERE queue_item_id = ?").bind(args[1]).all<{ id: string }>();
+  for (const author of authors.results) {
+    await database.prepare("UPDATE users SET verified_github = ? WHERE id = ?").bind(JSON.stringify({ id: String(parseInt(author.id.replace(/-/g, "").slice(0, 10), 16)), login: `engineer-${author.id.slice(0, 8)}`, verifiedAt: 1 }), author.id).run();
+  }
+  return createUnverifiedAgentRun(...args);
 }
 
 describe("D1 session persistence", () => {

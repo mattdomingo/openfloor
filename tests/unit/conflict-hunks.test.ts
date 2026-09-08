@@ -138,3 +138,11 @@ describe("buildConflictFileSnapshot", () => {
     expect(snapshot.hunks).toEqual([{ index: 0, oursLabel: "Ours", theirsLabel: "Theirs", oursLines: [], theirsLines: [] }]);
   });
 });
+
+
+it("never treats a truncated but parseable file as safely editable", () => {
+  const merged = "<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> source\n" + "preserve\n".repeat(4000);
+  const snapshot = buildConflictFileSnapshot({ path: "large.ts", kind: "content", merged: merged.slice(0, 16384), ours: null, theirs: null, base: null, truncated: true });
+  expect(snapshot.unparseable).toBe(true);
+  expect(snapshot.hunks).toEqual([]);
+});

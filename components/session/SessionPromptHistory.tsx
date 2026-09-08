@@ -5,6 +5,7 @@ import { BASE_PATH } from "@/components/basePath";
 import type { SessionPromptHistoryDetail, SessionPromptHistoryPage } from "@/lib/floor-types";
 import { LocalDateTime } from "@/components/LocalDateTime";
 import { Markdown } from "./Markdown";
+import { RunAttributionInfo } from "./RunAttributionInfo";
 import { SelectMenu } from "./SelectMenu";
 
 const EMPTY: SessionPromptHistoryPage = { items: [], nextCursor: null, engineers: [], agents: [] };
@@ -73,6 +74,7 @@ export function SessionPromptDetail({ sessionId, promptId, revision }: { session
     {!promptId ? <p className="review-empty">Select a prompt.</p> : error ? <p className="review-empty" role="alert">{error}<button type="button" className="button" onClick={() => setRetry((value) => value + 1)}>Retry</button></p> : !detail ? <p className="review-empty">Loading changes…</p> : <>
       <div className="review-summary"><strong>{detail.prompt.origin ? "System feedback" : detail.prompt.authorName}</strong><Markdown>{detail.prompt.text}</Markdown><p>{detail.prompt.agentName ?? "Unassigned"} · {detail.prompt.status} · <LocalDateTime timestamp={detail.prompt.createdAt} /></p></div>
       {detail.runs.length > 0 && <SelectMenu label="Run attempt" value={run?.id ?? ""} onChange={setRunId} options={detail.runs.map((item) => ({ value: item.id, label: `Attempt ${item.attempt} · ${item.agentName} · ${item.status}` }))} />}
+      {run && <RunAttributionInfo attribution={run.attribution} promptedBy={run.promptedBy} commitUrl={run.commitUrl} />}
       {run?.finalResponse && <Markdown className="review-summary">{run.finalResponse}</Markdown>}
       {run?.files.length ? run.files.map((file) => <section key={file.id}><div className="review-pane-head"><h3>{file.path}</h3></div>{file.diffPreview ? <pre className="review-code" aria-label={`Diff preview for ${file.path}`}>{file.diffPreview.split("\n").map((line, index) => <span className="review-line" data-type={line.startsWith("+") ? "add" : line.startsWith("-") ? "remove" : "context"} key={index}><code>{line}</code></span>)}</pre> : <p className="review-empty">No diff preview available.</p>}</section>) : <p className="review-empty">{run ? "This attempt has no recorded file changes." : "This prompt has not produced a run."}</p>}
       {detail.nextCursor && <button type="button" className="button" onClick={() => setCursor(detail.nextCursor)}>Earlier attempts</button>}

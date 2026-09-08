@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "61fcd048-3b8b-41a1-9a40-66ae2eb3c7ff",
+  "id": "288c5a4f-aa69-4a9c-b3ff-44b1d626cd47",
   "prevId": "2c9d7e81-6a14-4b0f-9c3e-8f1a2b4d6e70",
   "tables": {
     "agent_run_artifacts": {
@@ -834,6 +834,13 @@
           "notNull": true,
           "autoincrement": false
         },
+        "attribution": {
+          "name": "attribution",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "session_id": {
           "name": "session_id",
           "type": "text",
@@ -1445,14 +1452,6 @@
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
-        },
-        "usage_scope": {
-          "name": "usage_scope",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "'private'"
         },
         "name": {
           "name": "name",
@@ -4892,14 +4891,6 @@
           "notNull": true,
           "autoincrement": false
         },
-        "auto_agents_enabled": {
-          "name": "auto_agents_enabled",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": true
-        },
         "role": {
           "name": "role",
           "type": "text",
@@ -5839,6 +5830,13 @@
           "notNull": false,
           "autoincrement": false
         },
+        "verified_github": {
+          "name": "verified_github",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "avatar_key": {
           "name": "avatar_key",
           "type": "text",
@@ -5849,13 +5847,6 @@
         "onboarded_at": {
           "name": "onboarded_at",
           "type": "integer",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "default_api_provider": {
-          "name": "default_api_provider",
-          "type": "text",
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false

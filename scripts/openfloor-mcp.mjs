@@ -38,6 +38,23 @@ server.registerTool(
 );
 
 if (conflictInputUrl && conflictInputToken) {
+  server.registerTool("openfloor_report_conflict_resolution", {
+    title: "Report merge compatibility",
+    description: "Required before publishing a merge resolution. Report preserved prompt IDs and concrete repository/test evidence. Report decision_required or blocked if intent cannot be combined safely; that stops publication for human input.",
+    inputSchema: {
+      outcome: z.enum(["compatible", "decision_required", "blocked"]),
+      explanation: z.string().min(1).max(4000),
+      preservedPromptIds: z.array(z.string().min(1).max(100)).max(500),
+      evidence: z.array(z.string().min(1).max(1000)).min(1).max(20),
+    },
+  }, async (report) => {
+    try {
+      const response = await fetch(conflictInputUrl, {
+        method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${conflictInputToken}` }, body: JSON.stringify(report),
+      });
+      return { content: [{ type: "text", text: response.ok ? "Report recorded. Only a compatible report may continue to validation." : "Report rejected. Re-read both intents and current approvals; request human input when evidence is missing." }], isError: !response.ok };
+    } catch { return { content: [{ type: "text", text: "Report could not be saved. Retry; publication requires a saved report." }], isError: true }; }
+  });
   server.registerTool(
     "openfloor_request_conflict_input",
     {

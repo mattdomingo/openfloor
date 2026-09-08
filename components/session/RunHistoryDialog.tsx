@@ -1,5 +1,6 @@
 "use client";
 
+import { RunAttributionInfo } from "./RunAttributionInfo";
 import { useEffect, useState } from "react";
 import { BASE_PATH } from "@/components/basePath";
 import { LocalDateTime } from "@/components/LocalDateTime";
@@ -56,6 +57,7 @@ export function RunHistoryDialog({ sessionId, activity, onClose }: { sessionId: 
         <button type="button" className="button" aria-expanded={selectedId === run.id} onClick={() => setSelectedId(selectedId === run.id ? null : run.id)}>
           {run.agentName} · {run.agentKind === "answer" ? "Concierge" : run.agentKind === "worker" ? "Generated worker" : "Persistent agent"} · {runStatusToken(run)} · attempt {run.attempt} · <LocalDateTime timestamp={run.createdAt} />
         </button>
+        <RunAttributionInfo attribution={run.attribution} promptedBy={run.promptedBy} commitUrl={run.commitUrl} />
         {selected?.id === run.id && <div className="spotlight-execution">
           <p>{run.model}</p>
           {run.finalResponse && <Markdown>{run.finalResponse}</Markdown>}

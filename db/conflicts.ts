@@ -4,9 +4,12 @@ import type { CredentialProvider } from "@/lib/provider-credentials";
 import { getDb } from "./index";
 import { getActiveMembershipRole, getMembershipRole } from "./sessions";
 
-export const MAX_AUTOMATIC_CONFLICT_ATTEMPTS = 2;
+import { getConflictResolutionViews, refreshConflictSnapshot, getConflictDecisionView } from "./conflict-decisions";
+import { MAX_AUTOMATIC_CONFLICT_ATTEMPTS, type ConflictMode } from "@/lib/conflict-resolution";
 
-type CaseRow = Omit<MergeConflictCase, "conflictPaths" | "questions" | "prompts" | "attempts" | "hasSnapshot"> & { conflictPaths: string; hasSnapshot: number };
+export { MAX_AUTOMATIC_CONFLICT_ATTEMPTS } from "@/lib/conflict-resolution";
+
+type CaseRow = Omit<MergeConflictCase, "conflictPaths" | "questions" | "prompts" | "attempts" | "hasSnapshot" | "resolution"> & { conflictPaths: string; hasSnapshot: number };
 
 function paths(value: string | null): string[] {
   try {
@@ -86,8 +89,10 @@ export async function getMergeConflictCases(sessionId: string, database = getDb(
     if (row.checkCommand && row.checkStatus) attempt.checks.push({ command: row.checkCommand, status: row.checkStatus });
     attemptsByCase.set(row.caseId, list);
   }
+  const resolutions = await getConflictResolutionViews(sessionId, database);
   return rows.results.map((row) => ({
     ...row,
+    resolution: resolutions.get(row.id) ?? null,
     currentResolverRunId: row.currentResolverRunId ?? null,
     explanation: row.explanation ?? null,
     conflictPaths: paths(row.conflictPaths),
@@ -109,6 +114,9 @@ export async function getMergeConflictCases(sessionId: string, database = getDb(
 async function authorizeConflictDecision(sessionId: string, caseId: string, userId: string, database: ReturnType<typeof getDb>): Promise<boolean> {
   const role = await getActiveMembershipRole(sessionId, userId, database);
   if (!role) return false;
+  const boundCase = await database.prepare("SELECT 1 AS present FROM merge_conflict_cases WHERE id = ? AND session_id = ?")
+    .bind(caseId, sessionId).first();
+  if (!boundCase) return false;
   if (role === "owner") return true;
   const authored = await database.prepare(
     `SELECT 1 AS allowed FROM merge_conflict_cases mc
@@ -195,9 +203,10 @@ export async function recordConflictSelections(
   const statements = selections.map((selection) => database.prepare(
     `INSERT INTO merge_conflict_selections (id, case_id, snapshot_run_id, path, hunk_index, choice, selected_by, created_at)
      SELECT ?, ?, ?, ?, ?, ?, ?, ? WHERE ? = ${latestSnapshotSubquery}
+       AND EXISTS (SELECT 1 FROM merge_conflict_cases WHERE id = ? AND status IN ('failed', 'awaiting_input') AND current_resolver_run_id IS NULL)
      ON CONFLICT(snapshot_run_id, path, hunk_index) DO UPDATE SET
        choice = excluded.choice, selected_by = excluded.selected_by, created_at = excluded.created_at`,
-  ).bind(crypto.randomUUID(), caseId, snapshotRunId, selection.path, selection.hunkIndex, selection.choice, userId, now, snapshotRunId, caseId));
+  ).bind(crypto.randomUUID(), caseId, snapshotRunId, selection.path, selection.hunkIndex, selection.choice, userId, now, snapshotRunId, caseId, caseId));
   const results = await database.batch([
     ...statements,
     database.prepare(
@@ -207,8 +216,8 @@ export async function recordConflictSelections(
     ).bind(now, caseId, sessionId, snapshotRunId, caseId),
     database.prepare(
       `UPDATE sessions SET floor_revision = floor_revision + 1, updated_at = ?
-       WHERE id = ? AND EXISTS (SELECT 1 FROM merge_conflict_cases WHERE id = ? AND resume_requested = 1 AND status = 'pending')`,
-    ).bind(now, sessionId, caseId),
+       WHERE id = ? AND changes() = 1`,
+    ).bind(now, sessionId),
   ]);
   const caseChanges = Number(results[statements.length]?.meta?.changes ?? 0) === 1;
   return caseChanges ? "recorded" : "stale";
@@ -234,7 +243,7 @@ export async function getConflictSelectionsForCase(
 
 /** Creates one stable case for an original conflict, or advances the same
  * case when a resolver result itself conflicts after the candidate moved. */
-export async function recordIntegrationConflict(runId: string, reason: string, database = getDb()): Promise<{ sessionId: string; caseId: string } | null> {
+export async function recordIntegrationConflict(runId: string, reason: string, database = getDb(), overlap: { trigger: "git" | "overlap"; paths: string[] } = { trigger: "git", paths: [] }): Promise<{ sessionId: string; caseId: string } | null> {
   const row = await database.prepare(
     `SELECT r.session_id AS sessionId, mca.case_id AS existingCaseId,
             s.auto_resolve_conflicts AS autoResolve, mc.automatic_attempts AS automaticAttempts
@@ -247,11 +256,11 @@ export async function recordIntegrationConflict(runId: string, reason: string, d
   if (!row) return null;
   const now = Date.now();
   if (row.existingCaseId) {
-    const retry = Boolean(row.autoResolve) && Number(row.automaticAttempts ?? 0) < MAX_AUTOMATIC_CONFLICT_ATTEMPTS;
+    const retry = true; // Preparation is deterministic and independent of AI automation.
     await database.prepare(
-      `UPDATE merge_conflict_cases SET latest_source_run_id = ?, current_resolver_run_id = NULL,
-              status = ?, failure_reason = ?, updated_at = ? WHERE id = ?`,
-    ).bind(runId, retry ? "pending" : "failed", retry ? null : reason.slice(0, 2_000), now, row.existingCaseId).run();
+      `UPDATE merge_conflict_cases SET latest_source_run_id = source_run_id, current_resolver_run_id = NULL,
+              status = ?, mode = 'prepare', automatic_attempts = 0, snapshot_id = NULL, proposal_id = NULL, revision = revision + 1, failure_reason = ?, updated_at = ? WHERE id = ? AND current_resolver_run_id = ?`,
+    ).bind(retry ? "pending" : "failed", retry ? null : reason.slice(0, 2_000), now, row.existingCaseId, runId).run();
     await database.prepare("UPDATE floor_queue_items SET status = 'blocked', updated_at = ? WHERE id = (SELECT queue_item_id FROM agent_runs WHERE id = ?)")
       .bind(now, runId).run();
     return { sessionId: row.sessionId, caseId: row.existingCaseId };
@@ -260,10 +269,10 @@ export async function recordIntegrationConflict(runId: string, reason: string, d
   await database.prepare(
     `INSERT INTO merge_conflict_cases
        (id, session_id, source_run_id, latest_source_run_id, status, explanation, conflict_paths,
-        automatic_attempts, resume_requested, failure_reason, created_at, updated_at)
-     VALUES (?, ?, ?, ?, 'pending', ?, '[]', 0, 0, NULL, ?, ?)
+        automatic_attempts, resume_requested, failure_reason, trigger, created_at, updated_at)
+     VALUES (?, ?, ?, ?, 'pending', ?, ?, 0, 0, NULL, ?, ?, ?)
      ON CONFLICT(source_run_id) DO NOTHING`,
-  ).bind(id, row.sessionId, runId, runId, reason.slice(0, 4_000), now, now).run();
+  ).bind(id, row.sessionId, runId, runId, reason.slice(0, 4_000), JSON.stringify(overlap.paths), overlap.trigger, now, now).run();
   const existing = await database.prepare("SELECT id FROM merge_conflict_cases WHERE source_run_id = ?")
     .bind(runId).first<{ id: string }>();
   return existing ? { sessionId: row.sessionId, caseId: existing.id } : null;
@@ -278,22 +287,25 @@ export type PendingConflict = {
   automaticAttempts: number;
   resumeRequested: boolean;
   autoResolve: boolean;
+  mode: ConflictMode;
 };
 
-export async function getPendingConflict(sessionId: string, database = getDb()): Promise<PendingConflict | null> {
-  const row = await database.prepare(
+export async function getPendingConflicts(sessionId: string, database = getDb()): Promise<PendingConflict[]> {
+  const rows = await database.prepare(
     `SELECT mc.id, mc.session_id AS sessionId, source.agent_id AS agentId, a.provider AS agentProvider,
-            mc.status, mc.automatic_attempts AS automaticAttempts, mc.resume_requested AS resumeRequested,
+            mc.status, mc.mode, mc.automatic_attempts AS automaticAttempts, mc.resume_requested AS resumeRequested,
             s.auto_resolve_conflicts AS autoResolve
-     FROM merge_conflict_cases mc
-     JOIN sessions s ON s.id = mc.session_id
-     JOIN agent_runs source ON source.id = mc.latest_source_run_id
-     JOIN floor_agents a ON a.id = source.agent_id
+     FROM merge_conflict_cases mc JOIN sessions s ON s.id = mc.session_id
+     JOIN agent_runs source ON source.id = mc.latest_source_run_id JOIN floor_agents a ON a.id = source.agent_id
      WHERE mc.session_id = ? AND mc.status IN ('pending', 'failed') AND mc.current_resolver_run_id IS NULL
-       AND (mc.resume_requested = 1 OR (s.auto_resolve_conflicts = 1 AND mc.status = 'pending' AND mc.automatic_attempts < ?))
-     ORDER BY mc.updated_at, mc.id LIMIT 1`,
-  ).bind(sessionId, MAX_AUTOMATIC_CONFLICT_ATTEMPTS).first<Omit<PendingConflict, "autoResolve" | "resumeRequested"> & { autoResolve: number; resumeRequested: number }>();
-  return row ? { ...row, autoResolve: Boolean(row.autoResolve), resumeRequested: Boolean(row.resumeRequested), automaticAttempts: Number(row.automaticAttempts) } : null;
+       AND (mc.resume_requested = 1 OR (mc.mode = 'prepare' AND mc.status = 'pending')
+         OR (s.auto_resolve_conflicts = 1 AND mc.status = 'pending' AND mc.automatic_attempts < ?))
+     ORDER BY mc.updated_at, mc.id LIMIT 100`,
+  ).bind(sessionId, MAX_AUTOMATIC_CONFLICT_ATTEMPTS).all<Omit<PendingConflict, "autoResolve" | "resumeRequested"> & { autoResolve: number; resumeRequested: number }>();
+  return rows.results.map((row) => ({ ...row, autoResolve: Boolean(row.autoResolve), resumeRequested: Boolean(row.resumeRequested), automaticAttempts: Number(row.automaticAttempts) }));
+}
+export async function getPendingConflict(sessionId: string, database = getDb()): Promise<PendingConflict | null> {
+  return (await getPendingConflicts(sessionId, database))[0] ?? null;
 }
 
 export async function createConflictResolverRun(
@@ -304,7 +316,8 @@ export async function createConflictResolverRun(
   const context = await database.prepare(
     `SELECT mc.session_id AS sessionId, mc.status, mc.resume_requested AS resumeRequested,
             mc.automatic_attempts AS automaticAttempts, s.auto_resolve_conflicts AS autoResolve,
-            source.queue_item_id AS queueItemId, source.agent_id AS agentId, source.model,
+            mc.mode, mc.snapshot_id AS snapshotId, mc.proposal_id AS proposalId, mc.revision, mc.latest_source_run_id AS sourceRunId,
+            source.queue_item_id AS queueItemId, source.agent_id AS agentId, source.model, source.attribution,
             rc.status AS connectionStatus,
             c.id AS candidateId, c.candidate_sha AS candidateSha, c.remote_candidate_sha AS remoteCandidateSha,
             owner.user_id AS ownerId
@@ -317,13 +330,22 @@ export async function createConflictResolverRun(
      WHERE mc.id = ? AND mc.current_resolver_run_id IS NULL AND mc.status IN ('pending', 'failed')`,
   ).bind(caseId).first<{
     sessionId: string; status: string; resumeRequested: number; automaticAttempts: number; autoResolve: number;
-    queueItemId: string; agentId: string; model: string; connectionStatus: string;
+    mode: ConflictMode; snapshotId: string | null; proposalId: string | null; revision: number; sourceRunId: string;
+    attribution: string | null; queueItemId: string; agentId: string; model: string; connectionStatus: string;
     candidateId: string; candidateSha: string; remoteCandidateSha: string; ownerId: string;
   }>();
   if (!context || context.connectionStatus !== "ready" || context.candidateSha !== context.remoteCandidateSha) return null;
-  if (await queueAgentAccessError(context.sessionId, context.queueItemId, database)) return null;
-  if (launchKind === "automatic" && (!context.autoResolve || context.automaticAttempts >= MAX_AUTOMATIC_CONFLICT_ATTEMPTS)) return null;
-  if (launchKind !== "automatic" && !context.resumeRequested) return null;
+  if (context.mode === "ai" && await queueAgentAccessError(context.sessionId, context.queueItemId, database)) return null;
+  if (context.mode === "ai" && (context.automaticAttempts >= MAX_AUTOMATIC_CONFLICT_ATTEMPTS || launchKind === "automatic" && !context.autoResolve)) return null;
+  if (context.mode !== "prepare" && launchKind !== "automatic" && !context.resumeRequested) return null;
+  if (context.mode !== "prepare") {
+    const resolution = (await getConflictResolutionViews(context.sessionId, database)).get(caseId);
+    if (!resolution?.snapshotId || resolution.candidateSha !== context.candidateSha) {
+      await refreshConflictSnapshot(context.sessionId, caseId, null, database);
+      return null;
+    }
+    if (context.proposalId && !resolution.proposal?.approved || context.mode === "manual" && !resolution.proposal?.approved) return null;
+  }
   const previous = await database.prepare("SELECT COALESCE(MAX(attempt), 0) AS attempt FROM agent_runs WHERE queue_item_id = ?")
     .bind(context.queueItemId).first<{ attempt: number }>();
   const attempt = Number(previous?.attempt ?? 0) + 1;
@@ -335,20 +357,24 @@ export async function createConflictResolverRun(
       database.prepare(
         `INSERT INTO agent_runs
          (id, session_id, queue_item_id, agent_id, candidate_id, candidate_sha, run_branch, attempt, status, model,
-          workflow_instance_id, sandbox_id, created_by, created_at, updated_at)
-         SELECT ?, ?, ?, ?, ?, ?, ?, ?, 'provisioning', ?, ?, ?, ?, ?, ?
-         WHERE EXISTS (SELECT 1 FROM merge_conflict_cases WHERE id = ? AND current_resolver_run_id IS NULL AND status IN ('pending', 'failed'))`,
+          workflow_instance_id, sandbox_id, created_by, created_at, updated_at, attribution)
+         SELECT ?, ?, ?, ?, ?, ?, ?, ?, 'provisioning', ?, ?, ?, ?, ?, ?, ?
+         WHERE EXISTS (SELECT 1 FROM merge_conflict_cases WHERE id = ? AND revision = ? AND current_resolver_run_id IS NULL AND status IN ('pending', 'failed'))`,
       ).bind(runId, context.sessionId, context.queueItemId, context.agentId, context.candidateId, context.candidateSha,
-        runBranch, attempt, context.model, runId, `run-${runId}`, context.ownerId, now, now, caseId),
+        runBranch, attempt, context.model, runId, `run-${runId}`, context.ownerId, now, now, context.attribution, caseId, context.revision),
       database.prepare(
-        `INSERT INTO merge_conflict_attempts (id, case_id, run_id, launch_kind, created_at)
-         SELECT ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM agent_runs WHERE id = ?)`,
-      ).bind(crypto.randomUUID(), caseId, runId, launchKind, now, runId),
+        `INSERT INTO merge_conflict_attempts (id, case_id, run_id, launch_kind, execution_mode, snapshot_id, proposal_id, source_run_id, created_at)
+         SELECT ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM agent_runs WHERE id = ?)`,
+      ).bind(crypto.randomUUID(), caseId, runId, launchKind, context.mode, context.snapshotId, context.proposalId, context.sourceRunId, now, runId),
+      database.prepare(`INSERT INTO agent_run_checks (id, run_id, position, command, status, updated_at)
+        SELECT ? || ':' || position, ?, position, command, 'pending', ? FROM agent_run_checks
+        WHERE run_id = ? AND ? != 'prepare' AND EXISTS (SELECT 1 FROM agent_runs WHERE id = ?)`)
+        .bind(runId, runId, now, context.sourceRunId, context.mode, runId),
       database.prepare(
         `UPDATE merge_conflict_cases SET current_resolver_run_id = ?, status = 'resolving', resume_requested = 0,
-                automatic_attempts = automatic_attempts + ?, failure_reason = NULL, updated_at = ?
+                automatic_attempts = automatic_attempts + ?, failure_reason = NULL, waiting_reason = NULL, revision = revision + 1, updated_at = ?
          WHERE id = ? AND EXISTS (SELECT 1 FROM merge_conflict_attempts WHERE run_id = ?)`,
-      ).bind(runId, launchKind === "manual" ? 0 : 1, now, caseId, runId),
+      ).bind(runId, context.mode === "ai" ? 1 : 0, now, caseId, runId),
       database.prepare(
         `UPDATE floor_queue_items SET status = 'running', updated_at = ? WHERE id = ?
          AND EXISTS (SELECT 1 FROM merge_conflict_attempts WHERE run_id = ?)`,
@@ -372,7 +398,7 @@ export async function createConflictResolverRun(
 
 export async function getConflictRunContext(runId: string, database = getDb()) {
   const row = await database.prepare(
-    `SELECT mc.id AS caseId, mc.session_id AS sessionId, mc.latest_source_run_id AS sourceRunId,
+    `SELECT mc.id AS caseId, mc.session_id AS sessionId, source.id AS sourceRunId,
             mc.status, mc.explanation, mc.conflict_paths AS conflictPaths,
             source.candidate_sha AS sourceCandidateSha, source.bundle_key AS sourceBundleKey,
             source.run_branch AS sourceRunBranch, source.local_commit_sha AS sourceLocalCommitSha,
@@ -384,7 +410,7 @@ export async function getConflictRunContext(runId: string, database = getDb()) {
      FROM merge_conflict_attempts mca
      JOIN merge_conflict_cases mc ON mc.id = mca.case_id
      JOIN agent_runs resolver ON resolver.id = mca.run_id
-     JOIN agent_runs source ON source.id = mc.latest_source_run_id
+     JOIN agent_runs source ON source.id = COALESCE(mca.source_run_id, mc.latest_source_run_id)
      JOIN repository_candidates c ON c.id = resolver.candidate_id
      JOIN repository_connections rc ON rc.id = c.connection_id
      WHERE mca.run_id = ?`,
@@ -420,20 +446,23 @@ export async function requestConflictInput(
   ).bind(runId).first<{ caseId: string; sessionId: string; queueItemId: string }>();
   if (!context) return null;
   const now = Date.now();
-  await database.batch([
-    database.prepare("DELETE FROM merge_conflict_questions WHERE case_id = ? AND answer IS NULL").bind(context.caseId),
-    ...questions.map((question, position) => database.prepare(
-      `INSERT INTO merge_conflict_questions
-       (id, case_id, requested_by_run_id, position, question, requested_at)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-    ).bind(crypto.randomUUID(), context.caseId, runId, position, question, now)),
-    database.prepare(
-      `UPDATE merge_conflict_cases SET status = 'awaiting_input', explanation = ?, current_resolver_run_id = NULL,
-              failure_reason = NULL, updated_at = ? WHERE id = ? AND status = 'resolving'`,
-    ).bind(explanation, now, context.caseId),
-    database.prepare("UPDATE floor_queue_items SET status = 'blocked', updated_at = ? WHERE id = ?").bind(now, context.queueItemId),
-    database.prepare("UPDATE sessions SET floor_revision = floor_revision + 1, updated_at = ? WHERE id = ?").bind(now, context.sessionId),
+  const token = crypto.randomUUID();
+  const result = await database.batch([
+    database.prepare(`UPDATE merge_conflict_cases SET status = 'awaiting_input', explanation = ?, waiting_reason = 'A product decision requires affected authors to agree.', revision = revision + 1,
+      mutation_id = ?, failure_reason = NULL, updated_at = ? WHERE id = ? AND current_resolver_run_id = ? AND status = 'resolving'
+      AND EXISTS (SELECT 1 FROM agent_runs r JOIN sessions s ON s.id = r.session_id WHERE r.id = ? AND r.status IN ('provisioning', 'running', 'checking') AND s.ended_at IS NULL)`)
+      .bind(explanation, token, now, context.caseId, runId, runId),
+    database.prepare(`DELETE FROM merge_conflict_questions WHERE case_id = ? AND answer IS NULL
+      AND EXISTS (SELECT 1 FROM merge_conflict_cases WHERE id = ? AND mutation_id = ?)`).bind(context.caseId, context.caseId, token),
+    ...questions.map((question, position) => database.prepare(`INSERT INTO merge_conflict_questions (id, case_id, requested_by_run_id, position, question, requested_at)
+      SELECT ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM merge_conflict_cases WHERE id = ? AND mutation_id = ?)`)
+      .bind(crypto.randomUUID(), context.caseId, runId, position, question, now, context.caseId, token)),
+    database.prepare(`UPDATE floor_queue_items SET status = 'blocked', updated_at = ? WHERE id = ?
+      AND EXISTS (SELECT 1 FROM merge_conflict_cases WHERE id = ? AND mutation_id = ?)`).bind(now, context.queueItemId, context.caseId, token),
+    database.prepare(`UPDATE sessions SET floor_revision = floor_revision + 1, updated_at = ? WHERE id = ?
+      AND EXISTS (SELECT 1 FROM merge_conflict_cases WHERE id = ? AND mutation_id = ?)`).bind(now, context.sessionId, context.caseId, token),
   ]);
+  if (Number(result[0].meta?.changes ?? 0) !== 1) return null;
   const revision = await database.prepare("SELECT floor_revision AS revision FROM sessions WHERE id = ?")
     .bind(context.sessionId).first<{ revision: number }>();
   return { sessionId: context.sessionId, revision: Number(revision?.revision ?? 0), caseId: context.caseId };
@@ -442,22 +471,33 @@ export async function requestConflictInput(
 export async function isConflictInputRequested(runId: string, database = getDb()): Promise<boolean> {
   const row = await database.prepare(
     `SELECT 1 AS requested FROM merge_conflict_attempts mca JOIN merge_conflict_cases mc ON mc.id = mca.case_id
-     WHERE mca.run_id = ? AND mc.status = 'awaiting_input'`,
+     WHERE mca.run_id = ? AND mc.current_resolver_run_id = mca.run_id AND mc.status = 'awaiting_input'`,
   ).bind(runId).first<{ requested: number }>();
   return Boolean(row);
 }
 
 export async function finishResolverAwaitingInput(runId: string, database = getDb()): Promise<void> {
   const now = Date.now();
-  await database.prepare(
-    `UPDATE agent_runs SET status = 'failed', summary = 'Merge Resolver is waiting for session input.',
-            completed_at = ?, updated_at = ? WHERE id = ? AND status IN ('provisioning', 'running', 'checking', 'cancel_requested')`,
-  ).bind(now, now, runId).run();
-  await database.prepare(
-    `INSERT INTO agent_run_events (id, run_id, sequence, kind, detail, created_at)
-     SELECT ?, ?, COALESCE(MAX(sequence), 0) + 1, 'awaiting_input', 'Merge Resolver requested session input.', ?
-     FROM agent_run_events WHERE run_id = ?`,
-  ).bind(crypto.randomUUID(), runId, now, runId).run();
+  const token = crypto.randomUUID();
+  await database.batch([
+    database.prepare(`UPDATE merge_conflict_cases SET current_resolver_run_id = NULL, mutation_id = ?,
+      revision = revision + 1, updated_at = ? WHERE current_resolver_run_id = ? AND status = 'awaiting_input'
+      AND EXISTS (SELECT 1 FROM agent_runs r JOIN sessions s ON s.id = r.session_id
+        WHERE r.id = ? AND r.status IN ('provisioning', 'running', 'checking') AND s.ended_at IS NULL)`)
+      .bind(token, now, runId, runId),
+    database.prepare(`UPDATE agent_runs SET status = 'failed', summary = 'Merge Resolver is waiting for session input.',
+      completed_at = ?, updated_at = ? WHERE id = ?
+      AND EXISTS (SELECT 1 FROM merge_conflict_cases WHERE mutation_id = ?)`)
+      .bind(now, now, runId, token),
+    database.prepare(`INSERT INTO agent_run_events (id, run_id, sequence, kind, detail, created_at)
+      SELECT ?, ?, COALESCE((SELECT MAX(sequence) FROM agent_run_events WHERE run_id = ?), 0) + 1,
+        'awaiting_input', 'Merge Resolver requested session input.', ?
+      WHERE EXISTS (SELECT 1 FROM merge_conflict_cases WHERE mutation_id = ?)`)
+      .bind(crypto.randomUUID(), runId, runId, now, token),
+    database.prepare(`UPDATE sessions SET floor_revision = floor_revision + 1, updated_at = ?
+      WHERE id = (SELECT session_id FROM merge_conflict_cases WHERE mutation_id = ?)`)
+      .bind(now, token),
+  ]);
 }
 
 export async function advanceConflictAfterFailure(
@@ -467,39 +507,43 @@ export async function advanceConflictAfterFailure(
   retryEligible = true,
 ): Promise<{ sessionId: string; retry: boolean } | null> {
   const row = await database.prepare(
-    `SELECT mc.id AS caseId, mc.session_id AS sessionId, mc.automatic_attempts AS automaticAttempts,
-            s.auto_resolve_conflicts AS autoResolve, source.queue_item_id AS queueItemId
+    `SELECT mc.id AS caseId, mc.session_id AS sessionId, mc.automatic_attempts AS automaticAttempts, mca.execution_mode AS executionMode, mca.launch_kind AS launchKind, mca.proposal_id AS proposalId,
+            s.auto_resolve_conflicts AS autoResolve, source.queue_item_id AS queueItemId,
+            EXISTS (SELECT 1 FROM merge_conflict_selections ms WHERE ms.case_id = mc.id) AS hasHumanSelections
      FROM merge_conflict_attempts mca JOIN merge_conflict_cases mc ON mc.id = mca.case_id
      JOIN sessions s ON s.id = mc.session_id JOIN agent_runs source ON source.id = mc.source_run_id
-     WHERE mca.run_id = ? AND mc.status = 'resolving'`,
-  ).bind(runId).first<{ caseId: string; sessionId: string; automaticAttempts: number; autoResolve: number; queueItemId: string }>();
+     WHERE mca.run_id = ? AND mc.current_resolver_run_id = mca.run_id AND mc.status = 'resolving'`,
+  ).bind(runId).first<{ caseId: string; sessionId: string; automaticAttempts: number; autoResolve: number; queueItemId: string; hasHumanSelections: number; executionMode: ConflictMode; launchKind: string; proposalId: string | null }>();
   if (!row) return null;
-  const retry = retryEligible && Boolean(row.autoResolve) && Number(row.automaticAttempts) < MAX_AUTOMATIC_CONFLICT_ATTEMPTS;
+  const retry = row.executionMode === "ai" && retryEligible && (Boolean(row.autoResolve) || row.proposalId !== null || row.launchKind !== "automatic") && Number(row.automaticAttempts) < MAX_AUTOMATIC_CONFLICT_ATTEMPTS;
   const now = Date.now();
-  await database.batch([
-    database.prepare(
-      `UPDATE merge_conflict_cases SET current_resolver_run_id = NULL, status = ?, failure_reason = ?, updated_at = ? WHERE id = ?`,
-    ).bind(retry ? "pending" : "failed", reason.slice(0, 2_000), now, row.caseId),
-    database.prepare("UPDATE floor_queue_items SET status = 'blocked', updated_at = ? WHERE id = ?").bind(now, row.queueItemId),
+  const token = crypto.randomUUID();
+  const changed = await database.batch([
+    database.prepare(`UPDATE merge_conflict_cases SET current_resolver_run_id = NULL, status = ?, failure_reason = ?, waiting_reason = ?, resume_requested = ?,
+      mutation_id = ?, revision = revision + 1, updated_at = ? WHERE id = ? AND current_resolver_run_id = ? AND status = 'resolving'`)
+      .bind(retry ? "pending" : "failed", reason.slice(0, 2_000), retry ? "AI will retry with the failure evidence." : "Resolution stopped. Review the error, then propose a new result or retry preparation.", retry ? 1 : 0, token, now, row.caseId, runId),
+    database.prepare(`UPDATE floor_queue_items SET status = 'blocked', updated_at = ? WHERE id = ?
+      AND EXISTS (SELECT 1 FROM merge_conflict_cases WHERE id = ? AND mutation_id = ?)`).bind(now, row.queueItemId, row.caseId, token),
+    database.prepare(`UPDATE sessions SET floor_revision = floor_revision + 1 WHERE id = ?
+      AND EXISTS (SELECT 1 FROM merge_conflict_cases WHERE id = ? AND mutation_id = ?)`).bind(row.sessionId, row.caseId, token),
   ]);
+  if (Number(changed[0].meta?.changes ?? 0) !== 1) return null;
   return { sessionId: row.sessionId, retry };
 }
 
-export async function requestConflictResolution(sessionId: string, caseId: string, userId: string, database = getDb()): Promise<boolean | null> {
-  if ((await getActiveMembershipRole(sessionId, userId, database)) !== "owner") return null;
-  const exists = await database.prepare("SELECT id FROM merge_conflict_cases WHERE id = ? AND session_id = ?")
-    .bind(caseId, sessionId).first<{ id: string }>();
-  if (!exists) return null;
+export async function requestConflictResolution(sessionId: string, caseId: string, userId: string, database = getDb(), revision?: number): Promise<boolean | null> {
+  if (!await getActiveMembershipRole(sessionId, userId, database)) return null;
+  const view = await getConflictDecisionView(sessionId, caseId, userId, database);
+  if (!view?.canPropose) return null;
+  if (revision !== view.resolution.revision || view.resolution.proposal && !view.resolution.proposal.approved) return false;
   const now = Date.now();
   const results = await database.batch([
-    database.prepare(
-      `UPDATE merge_conflict_cases SET status = 'pending', resume_requested = 1, failure_reason = NULL, updated_at = ?
-       WHERE id = ? AND session_id = ? AND status IN ('pending', 'failed') AND current_resolver_run_id IS NULL`,
-    ).bind(now, caseId, sessionId),
-    database.prepare(
-      `UPDATE sessions SET floor_revision = floor_revision + 1, updated_at = ?
-       WHERE id = ? AND EXISTS (SELECT 1 FROM merge_conflict_cases WHERE id = ? AND session_id = ? AND resume_requested = 1)`,
-    ).bind(now, sessionId, caseId, sessionId),
+    database.prepare(`UPDATE merge_conflict_cases SET status = 'pending', resume_requested = 1, failure_reason = NULL,
+      waiting_reason = NULL, revision = revision + 1, updated_at = ?
+      WHERE id = ? AND session_id = ? AND revision = ? AND status IN ('pending', 'failed', 'awaiting_input') AND current_resolver_run_id IS NULL AND (mode != 'ai' OR automatic_attempts < 2)
+      AND EXISTS (SELECT 1 FROM sessions s JOIN session_members sm ON sm.session_id = s.id WHERE s.id = ? AND s.ended_at IS NULL AND sm.user_id = ? AND sm.removed_at IS NULL)`)
+      .bind(now, caseId, sessionId, revision, sessionId, userId),
+    database.prepare("UPDATE sessions SET floor_revision = floor_revision + 1, updated_at = ? WHERE id = ? AND changes() = 1").bind(now, sessionId),
   ]);
   return Number(results[0]?.meta?.changes ?? 0) > 0;
 }
@@ -563,15 +607,15 @@ export async function getConflictCaseForMember(sessionId: string, caseId: string
   return (await getMergeConflictCases(sessionId, database)).find((item) => item.id === caseId) ?? null;
 }
 
-export async function markConflictResolved(runId: string, candidateSha: string, database = getDb()): Promise<void> {
+export async function markConflictResolved(runId: string, candidateSha: string, database = getDb()): Promise<boolean> {
   const now = Date.now();
-  await database.prepare(
-    `UPDATE merge_conflict_cases SET status = 'resolved', current_resolver_run_id = ?, failure_reason = NULL,
-            resolved_at = ?, updated_at = ?
-     WHERE id = (SELECT case_id FROM merge_conflict_attempts WHERE run_id = ?)`,
-  ).bind(runId, now, now, runId).run();
-  await database.prepare(
-    `UPDATE merge_conflict_cases SET explanation = COALESCE(explanation, ?)
-     WHERE id = (SELECT case_id FROM merge_conflict_attempts WHERE run_id = ?)`,
-  ).bind(`Merge Resolver integrated the resolved changes at ${candidateSha}.`, runId).run();
+  const result = await database.prepare(`UPDATE merge_conflict_cases SET status = 'resolved', failure_reason = NULL, waiting_reason = NULL,
+      revision = revision + 1, resolved_at = ?, updated_at = ?
+    WHERE current_resolver_run_id = ? AND status = 'resolving'
+      AND EXISTS (SELECT 1 FROM merge_conflict_attempts a JOIN agent_runs r ON r.id = a.run_id
+        JOIN repository_candidates c ON c.id = r.candidate_id WHERE a.run_id = ? AND a.case_id = merge_conflict_cases.id
+        AND (r.status = 'integrated' AND r.integrated_candidate_sha = ? OR r.status = 'ready' AND r.completion = 'no_changes'
+          AND a.execution_mode != 'prepare' AND c.candidate_sha = ? AND c.remote_candidate_sha = ?))`)
+    .bind(now, now, runId, runId, candidateSha, candidateSha, candidateSha).run();
+  return Number(result.meta?.changes ?? 0) === 1;
 }

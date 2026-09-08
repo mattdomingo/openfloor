@@ -11,6 +11,8 @@ import {
   recordIntegrationConflict,
 } from "@/db/conflicts";
 import { acceptInvite, createSession, upsertUser } from "@/db/sessions";
+import { recordPreparedConflict } from "@/db/conflict-decisions";
+import { readSnapshotManifest, readSnapshotFile } from "@/lib/conflict-snapshot-server";
 import { parseAgentInput } from "@/lib/validation";
 
 function identity(id: string, name: string) {
@@ -132,5 +134,57 @@ describe("manual conflict resolution (hunk selections)", () => {
     const room = await seed("no-selections");
     await seedFailedResolverWithSnapshot(room.caseId, "conflicts/case/run/snapshot.json");
     await expect(getConflictSelectionsForCase(room.caseId, env.DB)).resolves.toBeNull();
+  });
+});
+
+
+describe("manual selection race and session boundaries", () => {
+  it("conceals another session's snapshot from an owner", async () => {
+    const own = await seed("cross-session-owner");
+    const other = await seed("cross-session-target");
+    await seedFailedResolverWithSnapshot(other.caseId, "private/other.json");
+    expect(await getConflictSnapshotArtifact(own.sessionId, other.caseId, own.owner.id, env.DB)).toBe("forbidden");
+  });
+
+  it("a rejected second submission changes neither choices nor revision", async () => {
+    const room = await seed("rejected-write");
+    const runId = await seedFailedResolverWithSnapshot(room.caseId, "snapshot.json");
+    const choices = [{ path: "src/shared feature.ts", hunkIndex: 0, choice: "ours" as const }];
+    expect(await recordConflictSelections(room.sessionId, room.caseId, room.owner.id, runId, choices, env.DB)).toBe("recorded");
+    const before = await env.DB.prepare("SELECT floor_revision FROM sessions WHERE id = ?").bind(room.sessionId).first();
+    expect(await recordConflictSelections(room.sessionId, room.caseId, room.member.id, runId, [{ ...choices[0], choice: "theirs" }], env.DB)).toBe("stale");
+    expect((await getConflictSelectionsForCase(room.caseId, env.DB))?.selections).toEqual(choices);
+    expect(await env.DB.prepare("SELECT floor_revision FROM sessions WHERE id = ?").bind(room.sessionId).first()).toEqual(before);
+  });
+});
+
+
+describe("immutable snapshot storage", () => {
+  it("reports missing and malformed manifests while concealing other sessions", async () => {
+    const room = await seed("manifest-storage");
+    const other = await seed("manifest-other");
+    const resolver = (await createConflictResolverRun(room.caseId, "automatic", env.DB))!;
+    const manifestKey = `conflicts/${room.caseId}/${resolver.runId}/v2/manifest.json`;
+    await recordPreparedConflict({ runId: resolver.runId, manifestKey, paths: ["src/shared.ts"] }, env.DB);
+    await expect(readSnapshotManifest(other.sessionId, room.caseId, other.owner.id)).resolves.toBeNull();
+    await expect(readSnapshotManifest(room.sessionId, room.caseId, room.owner.id)).rejects.toThrow("Snapshot files are unavailable");
+    await (env as unknown as { PREFLIGHT_LOGS: R2Bucket }).PREFLIGHT_LOGS.put(manifestKey, "{broken");
+    await expect(readSnapshotManifest(room.sessionId, room.caseId, room.owner.id)).rejects.toThrow("malformed");
+    await (env as unknown as { PREFLIGHT_LOGS: R2Bucket }).PREFLIGHT_LOGS.put(manifestKey, JSON.stringify({ version: 2, files: [{ path: "../escape" }] }));
+    await expect(readSnapshotManifest(room.sessionId, room.caseId, room.owner.id)).rejects.toThrow("Invalid conflict manifest");
+  });
+
+  it("refuses missing, truncated, and mismatched complete file content", async () => {
+    const entry = { path: "src/space ü.ts", file: "0.json", kind: "content" as const, fingerprint: "a".repeat(64), wholeFileOnly: true, canEdit: true, hunkCount: 0 };
+    const manifestKey = "conflicts/storage-validation/manifest.json";
+    await expect(readSnapshotFile(manifestKey, entry)).rejects.toThrow("file is unavailable");
+    const file = { path: entry.path, fingerprint: entry.fingerprint, truncated: false, wholeFileOnly: true,
+      stages: [null, null, null], kind: "content", base: "", ours: "candidate", theirs: "incoming", merged: "result" };
+    await (env as unknown as { PREFLIGHT_LOGS: R2Bucket }).PREFLIGHT_LOGS.put("conflicts/storage-validation/0.json", JSON.stringify({ ...file, truncated: true }));
+    await expect(readSnapshotFile(manifestKey, entry)).rejects.toThrow("Invalid conflict file");
+    await (env as unknown as { PREFLIGHT_LOGS: R2Bucket }).PREFLIGHT_LOGS.put("conflicts/storage-validation/0.json", JSON.stringify({ ...file, fingerprint: "b".repeat(64) }));
+    await expect(readSnapshotFile(manifestKey, entry)).rejects.toThrow("Invalid conflict file");
+    await (env as unknown as { PREFLIGHT_LOGS: R2Bucket }).PREFLIGHT_LOGS.put("conflicts/storage-validation/0.json", JSON.stringify(file));
+    await expect(readSnapshotFile(manifestKey, entry)).resolves.toMatchObject({ path: entry.path, merged: "result" });
   });
 });

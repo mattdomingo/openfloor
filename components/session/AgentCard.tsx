@@ -62,7 +62,7 @@ export const AgentCard = memo(function AgentCard({ agent, tone, latestRun, activ
           {conflictStatus === "needs-input" && conflict && onOpenConflict && (
             <button type="button" className="agent-conflict-strip" onClick={(event) => { event.stopPropagation(); onOpenConflict(conflict.caseId); }}>
               <Icon name="alert" size={12} />
-              {conflict.status === "failed" ? "Automatic resolution failed — resolve it" : "Waiting on your answer"}
+              {conflict.status === "failed" ? "Automatic resolution failed — resolve it" : "Waiting for agreement"}
             </button>
           )}
           {controllable && (
@@ -113,7 +113,7 @@ export const AgentSpotlight = memo(function AgentSpotlight({ agent, tone, sessio
             <button type="button" className="agent-conflict-strip" onClick={() => onOpenConflict(conflict.caseId)}>
               <Icon name="alert" size={12} />
               {conflictStatus === "needs-input"
-                ? conflict.status === "failed" ? "Automatic resolution failed — resolve it in Review" : "Waiting on your answer — open Review"
+                ? conflict.status === "failed" ? "Automatic resolution failed — resolve it in Review" : "Waiting for agreement — open Review"
                 : "Resolving a merge conflict in Review"}
             </button>
           )}

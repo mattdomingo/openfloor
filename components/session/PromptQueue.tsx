@@ -1,5 +1,7 @@
 "use client";
 
+import { BASE_PATH } from "@/components/basePath";
+
 import { memo, useMemo, useState, type DragEvent, type MouseEvent as ReactMouseEvent } from "react";
 import type { AgentRun, FloorAgent, FloorQueueItem } from "@/lib/floor-types";
 import { LocalDateTime } from "@/components/LocalDateTime";
@@ -13,7 +15,9 @@ import { QueueOrderMenu } from "./QueueOrderMenu";
 
 const scopeOptions: { value: QueueScope; label: string }[] = [{ value: "mine", label: "You" }, { value: "team", label: "Team" }];
 
-export const PromptQueue = memo(function PromptQueue({ chrome, items, runs, agents, owner, runEnabled, busy, autoDispatch, onAutoDispatch, autoResolveConflicts, onAutoResolveConflicts, autoInjectFeedback, onAutoInjectFeedback, browserConflictAlerts, onBrowserConflictAlerts, onRun, onCancel, onDiscard, onRollback, onRetry, onEditPrompt, onPause, onDelete, onSetAgent, currentUserId, scope, onScope, orderMode, onOrderMode, draggedItemId, onItemDragStart, onItemDragEnd, onItemDrop, onFocusAgent, onOpenReview }: {
+export const PromptQueue = memo(function PromptQueue({ chrome, items, runs, agents, owner, runEnabled, busy, autoDispatch, onAutoDispatch, autoResolveConflicts, onAutoResolveConflicts, autoInjectFeedback, onAutoInjectFeedback, browserConflictAlerts, onBrowserConflictAlerts, onRun, onCancel, onDiscard, onRollback, onRetry, onEditPrompt, onPause, onDelete, onSetAgent, currentUserId, scope, onScope, orderMode, onOrderMode, draggedItemId, onItemDragStart, onItemDragEnd, onItemDrop, onFocusAgent, onOpenReview, conflicts, onOpenConflict }: {
+  conflicts: import("@/lib/floor-types").MergeConflictCase[];
+  onOpenConflict: (caseId: string) => void;
   chrome: PanelChrome;
   items: FloorQueueItem[];
   runs: AgentRun[];
@@ -68,7 +72,8 @@ export const PromptQueue = memo(function PromptQueue({ chrome, items, runs, agen
     return map;
   }, [runs]);
 
-  const groups = useMemo(() => groupQueueItems(items, runsByQueueItemId, scope, currentUserId), [items, runsByQueueItemId, scope, currentUserId]);
+  const conflictsByQueue = useMemo(() => new Map(conflicts.filter((item) => item.status !== "resolved").map((item) => [item.queueItemId, item])), [conflicts]);
+  const groups = useMemo(() => groupQueueItems(items, runsByQueueItemId, scope, currentUserId, conflictsByQueue), [items, runsByQueueItemId, scope, currentUserId, conflictsByQueue]);
   const liveGroup = groups[0];
   const totalVisible = groups.reduce((count, group) => count + group.items.length, 0);
   // Section expand state is local-only (resets on reload). Conflicted starts
@@ -84,6 +89,7 @@ export const PromptQueue = memo(function PromptQueue({ chrome, items, runs, agen
     const long = item.prompts.length > 3 || item.prompts.some((prompt) => prompt.text.length > 110);
     const first = item.prompts[0];
     const run = runsByQueueItemId.get(item.id);
+    const conflict = conflictsByQueue.get(item.id);
     const cancellable = run && ["provisioning", "running", "checking", "cancel_requested"].includes(run.status);
     // A resumed prompt goes back to "queued"/"paused" immediately, but its last
     // run row (if any) can still carry a stale failed/cancelled status — the
@@ -91,7 +97,7 @@ export const PromptQueue = memo(function PromptQueue({ chrome, items, runs, agen
     const rollbackStatus = item.rollback?.status === "requested" || item.rollback?.status === "running" ? "rolling_back"
       : item.rollback?.status === "completed" ? "rolled_back"
       : item.rollback?.status === "failed" ? "rollback_failed" : null;
-    const statusValue = item.status === "queued" || item.status === "paused"
+    const statusValue = conflict ? conflict.status === "resolving" ? "resolving" : conflict.status === "pending" ? "conflicted" : "needs_decision" : item.status === "queued" || item.status === "paused"
       ? item.status
       : rollbackStatus ?? (run?.discardedAt ? "discarded" : run ? runStatusToken(run) : item.status);
     const editing = editingId === item.id;
@@ -107,13 +113,14 @@ export const PromptQueue = memo(function PromptQueue({ chrome, items, runs, agen
     // with target "Auto" in that state has no path to a Run button at all.
     const retargetable = manageable && item.status === "queued" && !item.agentId && agents.length > 0;
     const rollbackAllowed = item.rollback?.canStart === true;
-    const requestedDestination = editing ? null : queueItemDestination(item, run);
+    const requestedDestination = editing ? null : conflict ? { kind: "conflict" as const, caseId: conflict.id } : queueItemDestination(item, run);
     const destination = requestedDestination?.kind === "agent" && !agents.some((agent) => agent.id === requestedDestination.agentId)
       ? { kind: "detail" as const } : requestedDestination;
     const detailShown = destination?.kind === "detail" && detailOpen[item.id] === true;
     function activateDestination() {
       if (!destination) return;
-      if (destination.kind === "agent") onFocusAgent(destination.agentId);
+      if (destination.kind === "conflict") onOpenConflict(destination.caseId);
+      else if (destination.kind === "agent") onFocusAgent(destination.agentId);
       else if (destination.kind === "review") onOpenReview(destination.runId, destination.status);
       else setDetailOpen((current) => ({ ...current, [item.id]: !current[item.id] }));
     }
@@ -133,6 +140,7 @@ export const PromptQueue = memo(function PromptQueue({ chrome, items, runs, agen
       onDragLeave={draggableItem ? (event: DragEvent<HTMLLIElement>) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragOverId((current) => current === item.id ? null : current); } : undefined}
       onDrop={draggableItem ? () => { setDragOverId(null); onItemDrop(item.id); } : undefined}>
       <div className="queue-item-head"><span className="queue-identity">{draggableItem && <span className="queue-grip" title="Drag to reorder" aria-hidden="true"><Icon name="grip" /></span>}<span className="queue-position" aria-label={`Queue position ${item.position}`}>#{item.position}</span><span className="queue-chip" data-kind="author">{item.prompts.length > 1 ? `${item.prompts.length} prompts` : first ? <PersonName name={first.authorName} /> : null}</span>{item.agentId && agents.some((agent) => agent.id === item.agentId) ? <button type="button" className="queue-chip queue-chip-button" data-kind={item.assignedBy === "router" ? "agent-auto" : "agent"} title={item.assignedBy === "router" ? item.assignedReason ?? "Assigned automatically" : "Open this agent"} onClick={() => onFocusAgent(item.agentId!)}>{item.agentName ?? "Unassigned"}{item.assignedBy === "router" && " · auto"}</button> : retargetable ? <AgentTargetMenu value={null} agents={agents} allowAuto={false} onChange={(agentId) => { if (agentId) void onSetAgent(item.id, agentId); }} /> : <span className="queue-chip" data-kind="agent">{item.agentName ?? "Unassigned"}</span>}</span>{item.intent === "question" && <span className="queue-chip" data-kind="intent">Question</span>}{item.intent === "noise" && <span className="queue-chip" data-kind="intent">Not a task</span>}{first && <span className="queue-time"><LocalDateTime timestamp={first.createdAt} /></span>}</div>
+      {item.status === "queued" && !item.origin && agents.find((agent) => agent.id === item.agentId)?.kind !== "answer" && item.intent !== "question" && item.intent !== "noise" && item.prompts.some((prompt) => prompt.githubVerified === false) && <p className="form-error">Waiting for GitHub verification: {[...new Set(item.prompts.filter((prompt) => prompt.githubVerified === false).map((prompt) => prompt.authorName))].join(", ")}. <a href={`${BASE_PATH}/home/settings?section=connections`}>Verify in Settings</a></p>}
       {editing ? <form className="queue-edit-form" onSubmit={(event) => { event.preventDefault(); const text = draftText.trim(); if (!text || !first) return; void onEditPrompt(item.id, first.id, text).then((ok) => { if (ok) setEditingId(null); }); }}>
         <textarea className="queue-edit-textarea" value={draftText} onChange={(event) => setDraftText(event.target.value)} maxLength={4000} autoFocus />
         <div className="queue-edit-actions">

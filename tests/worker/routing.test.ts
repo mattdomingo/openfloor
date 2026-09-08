@@ -400,6 +400,29 @@ describe("agent router tick", () => {
     expect((await queueItem(okItemId))?.status).toBe("running");
   });
 
+  it("skips unverified authors and keeps dispatching while scheduling verification retries", async () => {
+    const room = await routingRoom("github-verification");
+    const overBudgetAgentId = await addAgent(room.sessionId, room.owner.id, "OverBudget", "Researcher", "Research the domain model");
+    const okAgentId = await addAgent(room.sessionId, room.owner.id, "Ok", "Engineer", "Implement backend changes");
+    const first = await createFloorQueueItem(room.sessionId, room.owner.id, { prompt: "Over-budget work item", agentId: overBudgetAgentId }, env.DB);
+    const overBudgetItemId = first?.queue.find((item) => item.agentId === overBudgetAgentId)?.id;
+    const second = await createFloorQueueItem(room.sessionId, room.owner.id, { prompt: "Ok work item", agentId: okAgentId }, env.DB);
+    const okItemId = second?.queue.find((item) => item.agentId === okAgentId)?.id;
+    if (!overBudgetItemId || !okItemId) throw new Error("Queue items were not created");
+
+    const stub = startRunStub([{ ok: false, kind: "github_verification_required", message: "GitHub verification required for Engineer." }]);
+    const outcome = await runRoutingTick(room.sessionId, "enqueue", stub.deps, env.DB);
+    expect(outcome.held).toBe(true);
+    expect(stub.calls.map((call) => call.queueItemId)).toEqual([overBudgetItemId, okItemId]);
+    const recorded = await decisions(room.sessionId);
+    const skipped = recorded.find((decision) => decision.queueItemId === overBudgetItemId);
+    expect(skipped?.decision).toBe("skipped");
+    expect(skipped?.reason).toContain("GitHub verification");
+    expect(recorded.find((decision) => decision.queueItemId === okItemId)?.decision).toBe("dispatched");
+    expect((await queueItem(overBudgetItemId))?.status).toBe("queued");
+    expect((await queueItem(okItemId))?.status).toBe("running");
+  });
+
   it("dispatches gated providers normally once the gate opens", async () => {
     const room = await routingRoom("mixed-open");
     await env.DB.prepare(`INSERT INTO user_provider_credentials (user_id, provider, kind, ciphertext, fingerprint, created_at, updated_at) VALUES (?, 'anthropic', 'api_key', 'test', 'test', ?, ?)`)
@@ -789,4 +812,21 @@ describe("personal automation isolation", () => {
     expect((await resolveAutoAgentProvider(room.sessionId, env.DB, new Set(), room.member.id)).state).toBe("personal_disabled");
     expect((await resolveAutoAgentProvider(room.sessionId, env.DB, new Set(), room.owner.id)).effectiveProvider).toBe("openai");
   });
+});
+
+it("reassigns untouched generated work after a personal default changes without changing old agent ownership", async () => {
+  const { ensureAnswerAgent } = await import("@/db/floor");
+  const room = await routingRoom("changed-personal-default");
+  const old = await ensureAnswerAgent(room.sessionId, room.member.id, "openai", env.DB);
+  const floor = await createFloorQueueItem(room.sessionId, room.member.id, { prompt: "What is this repository?", agentId: null }, env.DB);
+  const itemId = floor!.queue[0].id;
+  await env.DB.prepare("UPDATE floor_queue_items SET agent_id = ?, assigned_by = 'router' WHERE id = ?").bind(old.id, itemId).run();
+  await env.DB.prepare("INSERT INTO user_provider_credentials (user_id, provider, kind, ciphertext, fingerprint, created_at, updated_at) VALUES (?, 'anthropic', 'api_key', 'test', 'test', 1, 1)").bind(room.member.id).run();
+  await env.DB.prepare("UPDATE users SET default_api_provider = 'anthropic' WHERE id = ?").bind(room.member.id).run();
+  const stub = startRunStub();
+  await runRoutingTick(room.sessionId, "toggle", stub.deps, env.DB);
+  const assigned = (await queueItem(itemId))!.agentId;
+  expect(assigned).not.toBe(old.id);
+  expect(await env.DB.prepare("SELECT owner_user_id AS owner, provider FROM floor_agents WHERE id = ?").bind(assigned).first()).toEqual({ owner: room.member.id, provider: "anthropic" });
+  expect(await env.DB.prepare("SELECT owner_user_id AS owner, provider FROM floor_agents WHERE id = ?").bind(old.id).first()).toEqual({ owner: room.member.id, provider: "openai" });
 });

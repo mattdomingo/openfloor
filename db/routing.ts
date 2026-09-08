@@ -2,7 +2,7 @@ import { queueAgentAccessError, agentCredentialError } from "./agent-access";
 import { getDb, type D1DatabaseLike } from "./index";
 import { deprovisionIdleGeneratedAgents, ensureAnswerAgent, ensureWorkerAgent } from "./floor";
 import type { StartRunResult } from "@/lib/agent-run-start";
-import { getPendingConflict, type PendingConflict } from "./conflicts";
+import { getPendingConflicts, type PendingConflict } from "./conflicts";
 import type { PromptIntent } from "@/lib/floor-types";
 import { resolveAutoAgentProvider } from "./provider-credentials";
 
@@ -54,6 +54,7 @@ type QueueRow = {
   id: string;
   agentId: string | null;
   assignedBy: "user" | "router" | null;
+  origin: string | null;
   intent: PromptIntent | null;
   position: number;
 };
@@ -164,8 +165,9 @@ export async function runRoutingTick(
   // An eligible case gets the next available slot, but a busy inherited
   // agent or gated provider is not eligible and therefore cannot freeze
   // unrelated ordinary work.
-  const pendingConflict = await getPendingConflict(sessionId, database);
-  if (pendingConflict && deps.startConflictResolution && !(deps.disabledProviders?.has(pendingConflict.agentProvider) ?? false)) {
+  const pendingConflicts = await getPendingConflicts(sessionId, database);
+  for (const pendingConflict of pendingConflicts) {
+    if (!deps.startConflictResolution) continue;
     const [agentActive, sessionCount, globalCount] = await Promise.all([
       database.prepare(`SELECT COUNT(*) AS count FROM agent_runs WHERE agent_id = ? AND ${ACTIVE_RUN_CONDITION}`)
         .bind(pendingConflict.agentId).first<{ count: number }>(),
@@ -207,7 +209,7 @@ export async function runRoutingTick(
 
   const [queueResult, promptResult, agentResult, activityResult, globalCount] = await Promise.all([
     database.prepare(
-      `SELECT id, agent_id AS agentId, assigned_by AS assignedBy, intent, position
+      `SELECT id, agent_id AS agentId, assigned_by AS assignedBy, origin, intent, position
        FROM floor_queue_items WHERE session_id = ? AND status = 'queued' AND dismissed_at IS NULL
        ORDER BY position, created_at, id`,
     ).bind(sessionId).all<QueueRow>(),
@@ -274,6 +276,19 @@ export async function runRoutingTick(
     intentByItem.set(item.id, item.intent ?? classifyPrompt((promptsByItem.get(item.id) ?? []).join(" ")));
   }
   // --- Assign phase: give every unassigned queued item an agent. ---
+  // Re-route only untouched automatic assignments after an explicit default
+  // change. Historical ownership and running attempts remain unchanged.
+  for (const item of queue) {
+    const agent = agents.find((candidate) => candidate.id === item.agentId);
+    if (!agent?.kind || item.assignedBy !== "router") continue;
+    const personal = await providerFor(agent.ownerUserId);
+    if (!personal.effectiveProvider || personal.effectiveProvider === agent.provider) continue;
+    const changed = await database.prepare(`UPDATE floor_queue_items SET agent_id = NULL, assigned_by = NULL, assigned_reason = NULL, updated_at = ?
+      WHERE id = ? AND session_id = ? AND status = 'queued' AND assigned_by = 'router' AND agent_id = ? AND origin IS NULL
+      AND NOT EXISTS (SELECT 1 FROM agent_runs r WHERE r.queue_item_id = floor_queue_items.id)`)
+      .bind(now, item.id, sessionId, agent.id).run();
+    if (Number(changed.meta?.changes ?? 0)) { item.agentId = null; item.assignedBy = null; changedQueueOrRuns = true; }
+  }
   const unassigned = queue.filter((item) => item.agentId === null);
   // A worker mid-retirement-grace-window (deprovisionIdleGeneratedAgents,
   // db/floor.ts) is still deprovisioned_at IS NULL and so still appears in
@@ -498,8 +513,8 @@ export async function runRoutingTick(
       const runKind = agent?.kind === "answer" || (item.intent !== "task" && item.intent !== null) ? "reply" : "task";
       const accessError = await queueAgentAccessError(sessionId, item.id, database);
       const credentialError = agent ? await agentCredentialError(agent.id, database) : "Agent unavailable";
-      const preference = agent?.kind ? await providerFor(agent.ownerUserId) : null;
-      if (accessError || credentialError || (preference && !preference.effectiveProvider)) {
+      const preference = agent?.kind && !item.origin ? await providerFor(agent.ownerUserId) : null;
+      if (accessError || credentialError || (preference && (!preference.effectiveProvider || preference.effectiveProvider !== agent.provider))) {
         decisions.push({ queueItemId: item.id, agentId: item.agentId, runId: null, decision: "held", reason: accessError ?? credentialError ?? "Auto agents are disabled for this member. Check the personal default API key.", candidates: [] });
         held = true;
         continue;
@@ -515,11 +530,12 @@ export async function runRoutingTick(
       } else if (result.kind === "conflict") {
         // Duplicate wake or a manual Run raced us; the unique index already guarded this.
         continue;
-      } else if (result.kind === "budget_exhausted" || result.kind === "credential_unavailable") {
+      } else if (result.kind === "budget_exhausted" || result.kind === "credential_unavailable" || result.kind === "github_verification_required") {
         // Per-owner, per-credential — like the disabledProviders check above,
         // NOT a session-wide precondition. One agent owner's exhausted
         // Anthropic budget must never freeze another owner's agents, or even
         // this owner's other providers, on the same floor.
+        if (result.kind === "github_verification_required") held = true;
         decisions.push({ queueItemId: item.id, agentId: item.agentId, runId: null, decision: "skipped", reason: result.message, candidates: [] });
         continue;
       } else {

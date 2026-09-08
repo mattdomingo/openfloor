@@ -493,6 +493,8 @@ Superseded in full by "Require account-level GitHub installation and provision c
 
 ### 2026-08-25 — Resolve real integration conflicts with specialized durable system runs
 
+**Status:** Conflict decision, snapshot, and retry behavior partially superseded by “Version-bound collaborative conflict resolution” (2026-09-07). Unrelated controls and isolation decisions remain current.
+
 **Decision:** A real GitHub `409` during serialized candidate integration creates one idempotent `merge_conflict_cases` record attached to the original queue item. Conflict work uses ordinary `agent_runs` associated through `merge_conflict_attempts`, labeled “Merge Resolver” and never represented by a fabricated floor agent. `sessions.auto_resolve_conflicts` defaults on independently from `auto_dispatch`; eligible cases take routing priority over new prompts while respecting existing caps, quota, repository readiness, provider gates, and inherited-agent availability. The resolver inherits the latest source run's agent, pinned provider/model, and agent-owner credential/billing policy. It reconstructs a genuine three-way merge from the latest candidate archive, exact source candidate archive, and retained verified R2 bundle; persists actual unmerged paths; receives the complete session brief plus source/history/answers; and publishes only through the existing checks, bundle validation, non-force branch, candidate lease, reconciliation, and draft-PR integration pipeline.
 
 **Rationale:** Conflict resolution must preserve both repository truth and session intent. Reusing verified run/publication machinery keeps GitHub write authority outside the repository process and preserves every attempt, while dedicated case state can express routing, human questions, retry budgets, and Review audit without widening the checked `agent_runs.status` enum or recreating that heavily referenced table. A true three-way workspace gives the model actual ancestry and markers instead of asking it to infer a merge from textual summaries.
@@ -568,6 +570,8 @@ The generated-agent exclusion in this historical decision is superseded by the l
 **Consequences:** Migration `0031_misty_justice.sql` adds only the rollback table and indexes; old code safely ignores it and rollback is dropping that additive table after code rollback. Failed attempts remain retryable and visible; a successful attempt is unique per run. Candidate movement, merged candidates, missing checks, revert conflicts, and lease mismatches fail closed without a push. If GitHub advances but the final D1 write exhausts its retries, the candidate lease intentionally remains held rather than recording a false failure against the old SHA. Completed rollbacks are excluded from active Review attribution and future session briefs, but their run files/checks/events/artifacts remain readable. Rollback is part of the quota wind-down set and does not consume the owner's hour gate.
 
 ### 2026-08-26 — ENG-138 worker controls, concurrent Concierge, and authored conflict decisions
+
+**Status:** Conflict decision, snapshot, and retry behavior partially superseded by “Version-bound collaborative conflict resolution” (2026-09-07). Unrelated controls and isolation decisions remain current.
 
 **Decision:** Generated workers now share the existing individual and owner-bulk Pause/Resume/Stop mutations with persistent agents, while remaining non-editable and non-deletable; Concierge remains rejected by every manual lifecycle endpoint. Pause only blocks new dispatch. Stop also pauses, and only a session-owner caller cancels the active run. Paused workers remain visible while Auto agents is enabled; disabling it clears worker pauses before retirement. The router allocates a distinct idle or reused Concierge for each concurrently dispatchable question/noise item, retires successful idle reply agents, and later reuses those rows. Resolver prompts prominently list original authored prompts and must request human input for mutually exclusive outcomes unless explicit supersession exists. Conflict answers are limited to the active session owner or a current original prompt author, with concealed `404` for everyone else.
 
@@ -677,6 +681,8 @@ Separately, the lobby's `SessionSetupDialog`/`setupRequested`/`?setup=1` are del
 
 ### 2026-08-26 — Session members are co-authors of the squash commit (ENG-65)
 
+**Status:** Partially superseded by “Credit original engineers in Git commits” (2026-09-08): contributor selection, verified noreply identity, and run authorship replace member-wide login-email credit; the default squash title remains unchanged.
+
 **Decision:** The owner's squash merge sends a `commit_message` of `Co-authored-by: <display name> <email>` trailers — one per active session member, join-ordered, deduped by email, names flattened to trailer-safe single lines (`coauthorTrailers` in `lib/github.ts`, fed by `getSessionMemberIdentities` in `db/sessions.ts`). The squash commit is the only commit that ever reaches the base branch, so trailers there credit the whole team without touching the publisher, the sandbox image, or the byte-identical rollback reconstruction. Run-branch and candidate-integration commits stay bot-authored; the merge-commit message path truncates at 250 chars and must not carry trailers.
 
 **Rationale:** Emails are the login addresses D1 already holds; GitHub links a co-author when the address is on their account and shows the literal line otherwise. `users.github_handle` is self-typed and unverified, so it is deliberately not used.
@@ -726,6 +732,10 @@ Separately, the lobby's `SessionSetupDialog`/`setupRequested`/`?setup=1` are del
 
 ### 2026-08-28 — Manual conflict resolution applies human choices deterministically, never through the model
 
+**Status:** Conflict decision, snapshot, and retry behavior partially superseded by “Version-bound collaborative conflict resolution” (2026-09-07). Unrelated controls and isolation decisions remain current.
+
+**Status:** Snapshot matching, stale-write, and AI-fallback policies superseded by "Bind manual conflict decisions to exact content" (2026-09-07).
+
 **Decision:** When the automatic Merge Resolver stops on `failed` or `awaiting_input`, a human (session owner or an original prompt author — the same rule as free-text conflict answers) can resolve the merge by picking ours/theirs/both per conflict hunk instead of writing free text or retrying the same agent. Every resolver attempt, automatic or manual, now captures a bounded `conflict_snapshot` artifact right after its three-way merge — base/ours/theirs/merged bodies for up to 40 conflicted paths, each side capped at 16 KiB — so a snapshot exists to resolve against the moment automation first stops, not only after a dedicated capture run. `lib/conflict-hunks.ts` parses the plain two-way `<<<<<<<`/`=======`/`>>>>>>>` markers this merge produces (it does not use `merge.conflictStyle=diff3`, so there is no per-hunk common-ancestor section to expose) into real hunks, and turns a whole-file delete/modify, modify/delete, or binary conflict into one synthetic hunk apiece so the same `{path, hunkIndex, choice}` shape covers every case. Submitting a complete choice set resumes the case for a new resolver attempt (launch kind `manual`) whose workflow rewrites the marker blocks directly with the recorded choices and skips starting an agent process — no model call is made, so a human's explicit decision can never be silently overridden by one.
 
 **Rationale:** A failed automatic attempt previously had no next step besides retrying the identical inputs, and the only "human input" channel (free-text answers to agent-posed questions) is a poor fit for a decision that's really just "keep this side" — nobody could even see the conflicting lines, since `conflict_paths` only ever stored file paths. Applying the choices deterministically rather than feeding them back into another agent run removes the model from a place it adds risk without value: the human has already made the decision, and a second interpretation step can only drift from it.
@@ -765,6 +775,8 @@ Separately, the lobby's `SessionSetupDialog`/`setupRequested`/`?setup=1` are del
 **Consequences:** No schema change — `pull_request_draft` and the ready-audit columns already existed, and `review.status` (`db/floor.ts`) already derives `"ready"`/`"draft"` from `pullRequestDraft`, so the floor snapshot, Review hero, and merge gate pick the state up without new plumbing. Neither route checks the candidate's `integration_run_id` lease (unchanged from `review/ready` — draft conversion does not push refs), so the new route joins the merge/abandon lease-check family only if a future change makes it mutate refs. The e2e suite covers the cancel-leaves-draft semantics and a full ready → not-ready → ready round trip before merge; worker coverage pins the draft writer's audit preservation in `tests/worker/sessions.test.ts`.
 
 ### 2026-08-28 — Review gains resizable panes and a single conflict-center popup
+
+**Status:** Conflict decision, snapshot, and retry behavior partially superseded by “Version-bound collaborative conflict resolution” (2026-09-07). Unrelated controls and isolation decisions remain current.
 
 **Decision:** The review screen's three columns (files, diff, inspector) are resizable with the workspace's drag-handle pattern: pointer-capture handles rendered as absolutely positioned grid children of `.review-grid` (no extra grid tracks), widths held in `ReviewScreen` React state and applied through the `--review-files-w` / `--review-inspector-w` CSS variables (defaults 280px / 400px — the inspector starts wider than the old 300px cap — clamped 250–560px, hidden under the existing ≤900px stacked layout). Merge conflicts no longer render as an inline list in the Status tab. The review hero owns a **Conflicts** button carrying the same attention vocabulary as agent cards — amber while the resolver works, red and breathing once a case needs a person, gated by `prefers-reduced-motion` — which opens `ConflictCenterDialog`, one modal that is the home for every case on the candidate. The dialog lists open cases first in a rail (with a clamped prompt preview so same-agent cases are distinguishable), shows a guided per-case view that states plainly when automatic resolution stopped and what the person can do (answer questions, owner retry, or manual resolution), and embeds the per-hunk editor as its final step instead of stacking a second dialog. `ConflictResolver.tsx` therefore exports `ConflictResolverBody` — the same fetch/select/submit logic with its dialog chrome removed, taking `onExit`/`onSubmitted` callbacks instead of closing itself — and the banner, agent-card, and browser-notification deep-links (`selectedConflictCaseId`) open the center already focused on that case. `ReviewScreen` treats that prop as a one-shot signal (`handledConflictCaseId`) so the popup does not re-open after the user closes it.
 
@@ -1094,3 +1106,94 @@ Preview v1 supports only one JavaScript app at the repository root with exactly 
 **Rationale:** A user's work must not silently spend platform or teammate credentials. Missing configuration must isolate affected work without blocking eligible teammates. Prompt ownership and results must remain inspectable across candidate cycles.
 
 **Consequences:** Additive account, membership, and agent columns preserve existing rows. Dispatch/retry rechecks authority; revocation does not cancel an active run. Gateway resolution refuses missing personal keys even with populated platform secrets. Old server-fallback and subscription-enablement decisions are superseded in those parts only; their historical implementation and usage records remain. Prompt merging remains unavailable; legacy mixed-author groups require explicitly shared agents. Member-scoped history cursors and bounded hydration preserve concealment and predictable reads.
+
+### 2026-09-07 — Bind manual conflict decisions to exact content
+
+**Decision:** Bind every snapshot read to its requested session, reject stale writes without mutation, preserve paths containing spaces, and require complete unchanged snapshot content and candidate SHA before deterministic application. A failed manual application cannot fall back to AI. A missing Git stage is checked explicitly before deletion.
+
+**Rationale:** Prior selection matching used only path/hunk counts; incomplete previews could truncate files, rejected writes could replace accepted choices, and an owner could read another session's snapshot.
+
+**Consequences:** Existing history is retained. Incomplete legacy snapshots must be refreshed before manual application. Regression coverage includes cross-session owners, losing submissions, and parseable truncated files.
+
+
+### 2026-09-07 — Version-bound collaborative conflict resolution
+
+**Decision:** Keep durable cases, isolated runners, verified bundles, and candidate locks; replace first-response decisions with immutable snapshots/proposals and unanimous affected-author approval, plus an explicit reasoned owner override. Prepare snapshots without model credentials. Manual application uses complete Git inputs and cannot invoke AI as a fallback. Assess overlapping file work, including clean Git merges, and bind AI reports/publication to the current exact candidate and original provider/model/payer.
+
+**Rationale:** Earlier snapshots could truncate untouched tails, space-containing paths could corrupt keys, stale choices could silently apply to new hunks or fall back to AI, and integrated authors lacked decision rights. An immutable version boundary and expected-SHA publication make the choice people review the choice the system applies.
+
+**Consequences:** Additive migrations preserve historical checked enums and audit rows. Old answer/selection payloads are rejected until refreshed. Candidate movement invalidates proposals and approvals. Two AI attempts are permitted per snapshot/approved decision; deterministic preparation/application has no provider gate. Queue, agent cards, and Review use one collaborative center with real progress and inline recovery. The development acceptance and safe rollback sequence is documented in [conflict-resolution.md](conflict-resolution.md). Semantic assessment remains fallible and contradictions in unrelated files remain outside overlap detection.
+
+
+### Conflict execution recovery (2026-09-07)
+
+**Decision:** Finalize a resolver waiting for human input in one guarded D1 batch, including the case/run transition, event, and floor revision. Validate missing and malformed immutable artifacts against isolated R2 in worker tests.
+
+**Rationale:** Clients must receive a new authoritative revision when execution releases decision controls; replay and cancellation must not create duplicate events or overwrite newer state.
+
+**Consequences:** Waiting-state finalization is idempotent. Storage failures remain actionable refresh errors rather than partial manual application. Publication authorization rejects pending or failed required checks; no-change finalization also compares the session revision read before approval validation so concurrent membership or decision changes cannot complete obsolete work.
+
+
+### Shared conflict center and mobile manual decisions (2026-09-07)
+
+**Decision:** Queue, agent cards, and Review open the same version-aware conflict center. Queue grouping and destinations use durable unresolved cases, including when preparation finishes or source runs leave the latest-20 window. The manual editor uses the dialog's scroll area and submits complete text at mobile widths.
+
+**Rationale:** A prepared snapshot must not hide an unresolved prompt under Completed, and a user must be able to inspect, propose, and approve an exact result from every conflict entry point.
+
+**Consequences:** Inline errors preserve drafts; current-version checks disable stale submissions. Two-user browser acceptance covers disagreement, approvals, owner override, candidate movement, manual editing with AI off, and a 390px viewport.
+
+
+### Preserve retry budgets across repeated approvals (2026-09-07)
+
+**Decision:** Derive an approved proposal's consumed AI budget from its immutable attempt history and enforce the limit for every launch kind. Repeated approvals do not replenish attempts.
+
+**Rationale:** A vote changes agreement, not the proposal being implemented; replaying a vote must not bypass the bounded model-spending policy.
+
+**Consequences:** An exhausted proposal remains stopped with an actionable reason. A revised proposal or refreshed snapshot starts a new budget, while exact manual application remains independent of AI attempts.
+### 2026-09-08 — Verify prompt authors before code execution
+
+**Decision:** Both GitHub account connection flows read the authenticated personal `/user` identity and atomically persist its numeric ID, login, and verification timestamp with verified installation access. `users.verified_github` is nullable JSON, separate from the self-entered `github_handle`; GitHub tokens and private email addresses are never retained for attribution. Settings exposes the verified account and reuses connection refresh for existing users. Account deletion clears this field.
+
+**Rationale:** Installation access can belong to an organization and does not identify the engineer who prompted work. A typed handle cannot establish GitHub authorship.
+
+**Consequences:** Migration `0048_tearful_centennial.sql` adds nullable columns to users and runs without rebuilding either table. New human-authored code runs require all original prompt authors to verify before execution and capture ordered, deduplicated public Git identity in `agent_runs.attribution`. Manual start/retry returns `409` with `github_verification_required`; automatic dispatch skips only the affected item and schedules a retry. Verification notifies affected floors and wakes their routers. Replies remain available, and system-originated feedback does not inherit the owner's bookkeeping identity. Existing rows remain compatible. Application rollback leaves the additive columns in place.
+
+### 2026-09-08 — Credit original engineers in Git commits
+
+**Decision:** The trusted publisher validates immutable run-author GitHub IDs/logins and creates engineer-authored commits with openfloor as committer. Additional unique engineers receive co-author trailers. Git author names are verified logins and emails are GitHub ID-based noreply addresses. Conflict resolvers inherit the source run snapshot. System feedback remains bot-authored. Final squash uses all active integrated candidate contributions, not current membership or the floor's latest 20 runs, excluding completed rollbacks and noncontributors. Legacy contributors may receive future squash credit once verified, without rewriting old commits.
+
+**Rationale:** Prompt authors, rather than dispatchers, agent owners, or everyone present in a session, supplied the work's intent. A stable run snapshot makes publication retries reproduce the same SHA even if an account is renamed or reconnected.
+
+**Consequences:** Run list responses add parsed attribution and current prompt-author names in the existing run SELECT, preserving one run read plus two set-based file/check reads. Published public identity is retained as run audit on account deletion; account verification is cleared and user-facing names remain Deleted user. Baselines, integration merge identity, rollback reconstruction, bundle validation, transport credentials, and SHA leases are unchanged. Publisher/executor image generations advance to v6/v14, after the release runtime fixes used v5/v13. Application rollback keeps the additive columns and must drain new attributed publication attempts before rolling the publisher back, because an old publisher would calculate different run SHAs. Existing in-flight legacy runs retain bot authorship.
+
+### 2026-09-08 — Make engineer attribution visible in existing history and review
+
+**Decision:** Run History and Review contribution cards/details show original prompters, verified public GitHub identities, and links to recorded run commits. The shared presentation labels system feedback explicitly, explains legacy runs without recorded Git authorship, and suppresses deleted engineers' profile links. Review file contributors derive from retained run prompt history, including dismissed items, instead of substituting a dispatcher.
+
+**Rationale:** Git credit alone does not make it easy to locate an engineer's changes inside the coordination room. Reusing the existing History and Review surfaces avoids another competing activity dashboard.
+
+**Consequences:** Run and contribution responses add validated commit links and attribution without per-run read fan-out. Engineer filters, empty states, review authorization, and deleted-user display semantics remain intact. A two-user browser acceptance case starts with a legacy account lacking proof, verifies a per-item dispatch hold, reconnects through Settings, and checks retained engineer credit.
+
+### 2026-09-08 — Explicit empty-contributor squash messages
+
+**Decision:** Squash merge always sends an explicit commit message. When no eligible engineers remain, it uses a neutral openfloor message without co-author trailers.
+
+**Rationale:** Omitting the message lets GitHub generate one from branch history and potentially restore credit for rolled-back contributions.
+
+**Consequences:** Empty contributor lists are intentional and never fall back to historical attribution. The GitHub client test asserts the outgoing request body; browser acceptance reads each session's actual PR number rather than assuming its shared test repository has no prior PRs.
+
+
+### 2026-09-08 — Stack attribution before conflict resolution v2
+
+**Decision:** Deliver #302, #303, then #304, keeping each PR based on release and retaining predecessor commits. Resolver attempts inherit immutable source engineer attribution alongside v2 conflict revision guards. Regenerate the unapplied v2 schema as `0049_living_vapor.sql` after attribution migration 0048; no already-applied migration changes.
+
+**Rationale:** Attribution and conflict resolution touch the same run-creation and migration boundaries. An explicit predecessor sequence prevents conflicting metadata and preserves authorship across resolver attempts.
+
+**Consequences:** Validate both the reconciled #303 head and the cumulative #304 result, including runtime isolation. Sequential merges must preserve all three feature sets without migration table recreation.
+
+
+### 2026-09-08 — Preserve personal billing across the conflict stack
+
+**Decision:** Regenerate the unapplied personal-billing migration as `0050_equal_nebula.sql` after #302's 0048 and #303's regenerated 0049. Preserve v2 conflict preparation/manual resolution without requiring model billing. AI resolution refuses legacy platform/subscription billing and retains source-agent use authority. Retained prompt details expose immutable engineer attribution and validated GitHub commit links.
+
+**Consequences:** All three PRs retain release as their base and merge in order #302, #303, #304. Existing release migrations remain byte-identical. The cumulative gate includes record-preserving upgrades, provider isolation, engineer credit, conflict consensus, and browser acceptance.

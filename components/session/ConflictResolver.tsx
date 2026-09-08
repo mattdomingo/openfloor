@@ -1,202 +1,112 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { BASE_PATH } from "@/components/basePath";
-import type { ConflictChoice, ConflictFileSnapshot, ConflictHunk, ConflictSnapshot } from "@/lib/floor-types";
-import { Icon, SegmentedControl } from "./primitives";
+import type { MergeConflictCase } from "@/lib/floor-types";
+import type { ConflictHunk } from "@/lib/conflict-hunks";
+import type { ConflictManifest } from "@/lib/conflict-workspace";
+import type { ConflictMutation, ManualConflictSelection } from "@/lib/conflict-resolution";
 
-type LoadState = { key: string; snapshot: ConflictSnapshot | null; error: string | null };
+type FileDetail = {
+  path: string; fingerprint: string; kind: string; wholeFileOnly: boolean; ours: string | null; theirs: string | null;
+  oursDeleted: boolean; theirsDeleted: boolean; hunks: ConflictHunk[]; totalHunks: number; nextAfter: number | null; result?: string;
+};
+type Snapshot = { id: string; revision: number; files: ConflictManifest["files"]; detail: FileDetail | null; canPropose: boolean };
+const key = (path: string, index: number) => JSON.stringify([path, index]);
 
-function hunkKey(path: string, hunkIndex: number): string {
-  return `${path} ${hunkIndex}`;
-}
-
-// Every (path, hunkIndex) a real decision is needed for — unparseable files
-// contribute none (there is nothing to show a human to decide on), which is
-// exactly why they also block submission below rather than silently letting
-// their markers pass through unresolved.
-function requiredKeys(files: ConflictFileSnapshot[]): Set<string> {
-  const keys = new Set<string>();
-  for (const file of files) {
-    if (file.unparseable) continue;
-    for (const hunk of file.hunks) keys.add(hunkKey(file.path, hunk.index));
-  }
-  return keys;
-}
-
-// The per-hunk manual resolver, rendered without its own dialog chrome so the
-// conflict center can embed it as the guided flow's final step. onExit leaves
-// the editor (back to the case overview); onSubmitted fires after a successful
-// apply so the host decides where to go next.
-export function ConflictResolverBody({ sessionId, caseId, busy, onExit, onSubmitted, onSubmit }: {
-  sessionId: string;
-  caseId: string;
-  busy: boolean;
-  onExit: () => void;
-  onSubmitted: () => void;
-  onSubmit: (caseId: string, snapshotRunId: string, selections: Array<{ path: string; hunkIndex: number; choice: ConflictChoice }>) => Promise<boolean>;
+export function ConflictResolverBody({ sessionId, conflict, busy, onExit, onMutation }: {
+  sessionId: string; conflict: MergeConflictCase; busy: boolean; onExit: () => void; onMutation: ConflictMutation;
 }) {
-  const [result, setResult] = useState<LoadState | null>(null);
-  const [selections, setSelections] = useState<Map<string, ConflictChoice>>(new Map());
-  const [selectedPath, setSelectedPath] = useState<string | null>(null);
+  const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
+  const [fileIndex, setFileIndex] = useState(0);
+  const [page, setPage] = useState(0);
+  const [reload, setReload] = useState(0);
+  const [detail, setDetail] = useState<FileDetail | null>(null);
+  const [choicesSnapshot, setChoicesSnapshot] = useState<string | null>(null);
+  const [choices, setChoices] = useState<Record<string, ManualConflictSelection>>({});
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [submitError, setSubmitError] = useState<string | null>(null);
-
+  const endpoint = `${BASE_PATH}/api/sessions/${sessionId}/conflicts/${encodeURIComponent(conflict.id)}/snapshot`;
   useEffect(() => {
-    let cancelled = false;
-    void fetch(`${BASE_PATH}/api/sessions/${sessionId}/conflicts/${encodeURIComponent(caseId)}/snapshot`, { cache: "no-store" })
-      .then(async (response) => {
-        const body = await response.json() as { snapshot?: ConflictSnapshot; error?: string };
-        if (!response.ok || !body.snapshot) throw new Error(body.error ?? "This conflict's snapshot could not be loaded");
-        return body.snapshot;
-      })
-      .then((snapshot) => {
-        if (cancelled) return;
-        setResult({ key: caseId, snapshot, error: null });
-        setSelections(new Map(snapshot.existingSelections.map((selection) => [hunkKey(selection.path, selection.hunkIndex), selection.choice])));
-        setSelectedPath(snapshot.files.find((file) => !file.unparseable && file.hunks.length > 0)?.path ?? snapshot.files[0]?.path ?? null);
-      })
-      .catch((loadError) => { if (!cancelled) setResult({ key: caseId, snapshot: null, error: loadError instanceof Error ? loadError.message : "This conflict's snapshot could not be loaded" }); });
-    return () => { cancelled = true; };
-  }, [sessionId, caseId]);
-
-  const snapshot = result?.key === caseId ? result.snapshot : null;
-  const loadError = result?.key === caseId ? result.error : null;
-  const loading = result?.key !== caseId;
-
-  const required = useMemo(() => requiredKeys(snapshot?.files ?? []), [snapshot]);
-  const decidedCount = useMemo(() => [...required].filter((key) => selections.has(key)).length, [required, selections]);
-  const blockedByUnparseable = snapshot?.files.some((file) => file.unparseable) ?? false;
-  const blockedByOmitted = (snapshot?.omittedPaths.length ?? 0) > 0;
-  const canSubmit = Boolean(snapshot) && required.size > 0 && decidedCount === required.size && !blockedByUnparseable && !blockedByOmitted;
-
-  function setHunkChoice(path: string, hunkIndex: number, choice: ConflictChoice) {
-    setSelections((current) => new Map(current).set(hunkKey(path, hunkIndex), choice));
-  }
-
-  function applyToWholeFile(file: ConflictFileSnapshot, choice: ConflictChoice) {
-    setSelections((current) => {
-      const next = new Map(current);
-      for (const hunk of file.hunks) next.set(hunkKey(file.path, hunk.index), choice);
+    const controller = new AbortController();
+    void fetch(endpoint, { cache: "no-store", signal: controller.signal }).then(async (response) => {
+      const body = await response.json() as { snapshot?: Snapshot; error?: string };
+      if (!response.ok || !body.snapshot) throw new Error(body.error ?? "File versions could not be loaded.");
+      if (!controller.signal.aborted) { setSnapshot(body.snapshot); setError(null); }
+    }).catch((cause) => { if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : "File versions could not be loaded."); });
+    return () => controller.abort();
+  }, [endpoint, reload]);
+  useEffect(() => {
+    if (!snapshot) return;
+    const controller = new AbortController();
+    void fetch(`${endpoint}?file=${fileIndex}&after=${page}`, { cache: "no-store", signal: controller.signal }).then(async (response) => {
+      const body = await response.json() as { snapshot?: Snapshot; error?: string };
+      if (!response.ok || !body.snapshot) throw new Error(body.error ?? "File could not be loaded.");
+      if (body.snapshot.id !== snapshot.id) throw new Error("File versions changed. Your draft remains below. Reload versions before deciding again.");
+      if (!controller.signal.aborted) { setDetail(body.snapshot.detail); setError(null); }
+    }).catch((cause) => { if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : "File could not be loaded."); });
+    return () => controller.abort();
+  }, [endpoint, snapshot, fileIndex, page]);
+  const entry = snapshot?.files[fileIndex];
+  const activeDetail = detail?.path === entry?.path ? detail : null;
+  const stale = Boolean(snapshot && (snapshot.id !== conflict.resolution?.snapshotId || Object.keys(choices).length > 0 && choicesSnapshot !== snapshot.id));
+  const available = !busy && !submitting && !loading && !stale && snapshot?.canPropose && !conflict.currentResolverRunId && conflict.status !== "resolved";
+  function choose(path: string, hunkIndex: number, choice: ManualConflictSelection["choice"], content?: string) {
+    setChoicesSnapshot(snapshot?.id ?? null);
+    setChoices((current) => {
+      const next = { ...current };
+      // Complete-file and section choices are mutually exclusive.
+      for (const [id, selection] of Object.entries(next)) if (selection.path === path && (hunkIndex === -1 || selection.hunkIndex === -1)) delete next[id];
+      next[key(path, hunkIndex)] = { path, hunkIndex, choice, ...(content !== undefined ? { content } : {}) };
       return next;
     });
   }
-
-  async function submit() {
-    if (!snapshot || !canSubmit) return;
-    setSubmitting(true);
-    setSubmitError(null);
-    const payload = [...required].map((key) => {
-      const [path, hunkIndexText] = key.split(" ");
-      return { path, hunkIndex: Number(hunkIndexText), choice: selections.get(key)! };
-    });
-    const ok = await onSubmit(caseId, snapshot.snapshotRunId, payload);
-    setSubmitting(false);
-    if (ok) onSubmitted();
-    else setSubmitError("This conflict snapshot is out of date — reload and try again.");
+  function decided(file: ConflictManifest["files"][number]) {
+    return Boolean(choices[key(file.path, -1)]) || !file.wholeFileOnly && file.hunkCount > 0 && Array.from({ length: file.hunkCount }, (_, index) => choices[key(file.path, index)]).every(Boolean);
   }
-
-  const activeFile = snapshot?.files.find((file) => file.path === selectedPath) ?? null;
-
-  return <>
-    <p className="conflict-center-step">Choose ours, theirs, or both for every conflicting section. Applying is instant — no agent runs.</p>
+  async function editFullResult() {
+    if (!snapshot || !entry) return;
+    setLoading(true); setError(null);
+    try {
+      const response = await fetch(`${endpoint}?file=${fileIndex}&format=text`, { cache: "no-store" });
+      const body = await response.json() as { snapshot?: Snapshot; error?: string };
+      if (!response.ok || body.snapshot?.id !== snapshot.id || typeof body.snapshot.detail?.result !== "string") throw new Error(body.error ?? "Full file changed or cannot be edited. Refresh versions.");
+      choose(entry.path, -1, "edited", body.snapshot.detail.result);
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "Full file could not be loaded."); }
+    finally { setLoading(false); }
+  }
+  async function submit() {
+    if (!snapshot || !available) return;
+    setSubmitting(true); setError(null);
+    try {
+      const result = await onMutation(conflict.id, "selections", { revision: conflict.resolution!.revision, snapshotId: snapshot.id, selections: Object.values(choices) });
+      if (result.ok) onExit(); else setError(result.error ?? "Could not save this proposal. Your draft is preserved.");
+    } finally { setSubmitting(false); }
+  }
+  const whole = entry ? choices[key(entry.path, -1)] : undefined;
+  return <section className="conflict-center-detail" aria-label="Manual resolution">
+    <h3>Choose the exact result</h3><p>Candidate contains the team’s integrated work. Incoming contains this prompt’s changes. Complete-file choices replace that entire file; section choices preserve untouched content. Submission proposes this exact result for agreement.</p>
+    {stale && <p role="alert">Candidate changed. Draft preserved, submission disabled. Reload versions and review again.</p>}
     <div className="conflict-resolver-body">
-      {loading ? <p className="review-empty">Loading conflicting sections…</p>
-        : loadError ? <p className="review-empty" role="alert">{loadError}</p>
-        : snapshot && <>
-          <nav className="conflict-file-list" aria-label="Conflicted files">
-            <ul>
-              {snapshot.files.map((file) => {
-                const fileRequired = file.unparseable ? [] : file.hunks.map((hunk) => hunkKey(file.path, hunk.index));
-                const fileDecided = fileRequired.filter((key) => selections.has(key)).length;
-                return <li key={file.path}>
-                  <button type="button" className="conflict-file-item" data-selected={file.path === selectedPath ? "true" : "false"} onClick={() => setSelectedPath(file.path)}>
-                    <Icon name="file" size={12} />
-                    <code>{file.path}</code>
-                    {file.unparseable
-                      ? <span className="queue-chip" data-kind="status" data-status="failed">Can&rsquo;t parse</span>
-                      : <span className="queue-chip" data-kind="status" data-status={fileDecided === fileRequired.length ? "ready" : "pending"}>{fileDecided}/{fileRequired.length}</span>}
-                  </button>
-                </li>;
-              })}
-              {snapshot.omittedPaths.map((path) => <li key={path}><span className="conflict-file-item" data-selected="false"><Icon name="file" size={12} /><code>{path}</code><span className="queue-chip" data-kind="status" data-status="failed">Too large</span></span></li>)}
-            </ul>
-          </nav>
-          <div className="conflict-file-detail">
-            {activeFile && <ConflictFileEditor file={activeFile} selections={selections} onHunkChoice={setHunkChoice} onWholeFile={applyToWholeFile} />}
-            {blockedByUnparseable && <p className="conflict-markers-hint"><Icon name="alert" size={12} />One or more files couldn&rsquo;t be parsed for manual editing — resolve automatically instead, or ask the resolver to retry.</p>}
-            {blockedByOmitted && <p className="conflict-markers-hint"><Icon name="alert" size={12} />Some conflicted files were too large to load here — resolve automatically instead.</p>}
-          </div>
+      <nav className="conflict-file-list" aria-label="Affected files"><ul>{snapshot?.files.map((file, index) => <li key={file.path}><button className="conflict-file-item" type="button" aria-current={fileIndex === index ? "true" : undefined} onClick={() => { setFileIndex(index); setPage(0); }}><code>{file.path}</code><span>{decided(file) ? "Chosen" : "Needs choice"}</span></button></li>)}</ul></nav>
+      <div className="conflict-file-detail">
+        {entry && <><h4>{entry.path}</h4><div className="conflict-case-actions"><button className="button" disabled={!available} aria-pressed={whole?.choice === "ours"} onClick={() => choose(entry.path, -1, "ours")}>{activeDetail?.oursDeleted ? "Delete file (candidate)" : "Use complete candidate file"}</button><button className="button" disabled={!available} aria-pressed={whole?.choice === "theirs"} onClick={() => choose(entry.path, -1, "theirs")}>{activeDetail?.theirsDeleted ? "Delete file (incoming)" : "Use complete incoming file"}</button>{entry.canEdit && <button className="button" disabled={!available} onClick={() => void editFullResult()}>Edit complete result</button>}</div>
+          {whole?.choice === "edited" ? <label>Complete result for {entry.path}<textarea className="conflict-full-editor" spellCheck={false} value={whole.content ?? ""} onChange={(event) => choose(entry.path, -1, "edited", event.target.value)} /><small>Entire file loaded. Remove all conflict markers before submitting.</small></label> : <>
+            {whole && <p role="status">Entire {whole.choice === "ours" ? "candidate" : "incoming"} version selected.</p>}
+            <div className="conflict-version-grid">{([['Candidate preview', activeDetail?.ours], ['Incoming preview', activeDetail?.theirs]] as const).map(([label, text]) => <div key={label}><h4>{label}</h4><pre className="conflict-result-preview">{text ?? "Binary, oversized, or deleted. The complete Git blob is preserved when selected."}</pre><small>Display preview only; complete-file choices use the original blob.</small></div>)}</div>
+            {activeDetail?.hunks.map((hunk) => {
+              const selection = choices[key(entry.path, hunk.index)]?.choice;
+              const preview = selection === "ours" ? hunk.oursLines : selection === "theirs" ? hunk.theirsLines : selection === "both" ? [...hunk.oursLines, ...hunk.theirsLines] : null;
+              return <fieldset key={hunk.index} disabled={!available}><legend>Section {hunk.index + 1}</legend><div className="conflict-version-grid"><pre className="conflict-result-preview" aria-label={`Candidate section ${hunk.index + 1}`}>{hunk.oursLines.join("\n")}</pre><pre className="conflict-result-preview" aria-label={`Incoming section ${hunk.index + 1}`}>{hunk.theirsLines.join("\n")}</pre></div>{([['ours', 'Candidate section'], ['theirs', 'Incoming section'], ['both', 'Concatenate candidate then incoming']] as const).map(([value, label]) => <label key={value}><input type="radio" name={key(entry.path, hunk.index)} checked={selection === value} onChange={() => choose(entry.path, hunk.index, value)} />{label}</label>)}{preview && <><strong>Result preview</strong><pre className="conflict-result-preview">{preview.join("\n")}</pre></>}</fieldset>;
+            })}
+            {activeDetail && activeDetail.totalHunks > 20 && <nav aria-label="Conflict sections"><button className="button" disabled={page === 0} onClick={() => setPage(Math.max(0, page - 20))}>Previous sections</button><button className="button" disabled={activeDetail.nextAfter === null} onClick={() => setPage(activeDetail.nextAfter!)}>Next sections</button></nav>}
+          </>}
         </>}
-    </div>
-    <div className="dialog-foot">
-      {snapshot && required.size > 0 && <span className="conflict-progress">{decidedCount}/{required.size} sections decided</span>}
-      {submitError && <p className="objective-error">{submitError}</p>}
-      <button type="button" className="button" data-variant="quiet" onClick={onExit} disabled={busy || submitting}>Back</button>
-      <button type="button" className="button" data-variant="primary" disabled={!canSubmit || busy || submitting} onClick={() => void submit()}>{submitting ? "Applying…" : "Apply resolution"}</button>
-    </div>
-  </>;
-}
-
-function ConflictFileEditor({ file, selections, onHunkChoice, onWholeFile }: {
-  file: ConflictFileSnapshot;
-  selections: Map<string, ConflictChoice>;
-  onHunkChoice: (path: string, hunkIndex: number, choice: ConflictChoice) => void;
-  onWholeFile: (file: ConflictFileSnapshot, choice: ConflictChoice) => void;
-}) {
-  if (file.unparseable) return <p className="review-empty">This file&rsquo;s conflict markers could not be parsed — it isn&rsquo;t editable here.</p>;
-  const isWholeFileChoice = file.kind !== "content";
-  return <div className="conflict-file-editor">
-    {file.kind === "content" && file.hunks.length > 1 && (
-      <div className="conflict-file-bulk">
-        <span>Apply to every section in this file</span>
-        <SegmentedControl label={`Bulk choice for ${file.path}`} value="" onChange={(value) => onWholeFile(file, value as ConflictChoice)} options={[
-          { value: "ours", label: "Ours" }, { value: "theirs", label: "Theirs" }, { value: "both", label: "Both" },
-        ]} />
+        {!snapshot && !error && <p role="status">Loading exact file versions…</p>}
       </div>
-    )}
-    {file.hunks.map((hunk, index) => (
-      <ConflictHunkEditor
-        key={hunk.index}
-        hunk={hunk}
-        index={index}
-        total={file.hunks.length}
-        wholeFile={isWholeFileChoice}
-        choice={selections.get(hunkKey(file.path, hunk.index)) ?? null}
-        onChoice={(choice) => onHunkChoice(file.path, hunk.index, choice)}
-      />
-    ))}
-  </div>;
-}
-
-function ConflictHunkEditor({ hunk, index, total, wholeFile, choice, onChoice }: {
-  hunk: ConflictHunk;
-  index: number;
-  total: number;
-  wholeFile: boolean;
-  choice: ConflictChoice | null;
-  onChoice: (choice: ConflictChoice) => void;
-}) {
-  const diverges = new Set(hunk.oursLines);
-  const theirsDiverges = new Set(hunk.theirsLines);
-  return <section className="conflict-hunk" data-decided={choice ? "true" : "false"}>
-    <div className="conflict-hunk-head">
-      <strong>{wholeFile ? "Whole file" : `Section ${index + 1} of ${total}`}</strong>
-      <SegmentedControl label={wholeFile ? "Choice" : `Choice for section ${index + 1}`} value={choice ?? ""} onChange={(value) => onChoice(value as ConflictChoice)} options={
-        wholeFile
-          ? [{ value: "ours", label: hunk.oursLabel || "Ours" }, { value: "theirs", label: hunk.theirsLabel || "Theirs" }]
-          : [{ value: "ours", label: "Ours" }, { value: "theirs", label: "Theirs" }, { value: "both", label: "Both" }]
-      } />
     </div>
-    <div className="conflict-panes">
-      <section className="conflict-pane" data-side="ours" data-selected={choice === "ours" || choice === "both" ? "true" : undefined}>
-        <div className="conflict-pane-head"><strong>{hunk.oursLabel || "Ours"}</strong></div>
-        <pre className="review-code">{hunk.oursLines.length === 0 ? <span className="review-line"><i> </i><code>(no content)</code></span> : hunk.oursLines.map((text, lineIndex) => <span key={lineIndex} className="review-line" data-diverges={!theirsDiverges.has(text) ? "true" : undefined}><i>{choice === "ours" || choice === "both" ? "+" : " "}</i><code>{text}</code></span>)}</pre>
-      </section>
-      <section className="conflict-pane" data-side="theirs" data-selected={choice === "theirs" || choice === "both" ? "true" : undefined}>
-        <div className="conflict-pane-head"><strong>{hunk.theirsLabel || "Theirs"}</strong></div>
-        <pre className="review-code">{hunk.theirsLines.length === 0 ? <span className="review-line"><i> </i><code>(no content)</code></span> : hunk.theirsLines.map((text, lineIndex) => <span key={lineIndex} className="review-line" data-diverges={!diverges.has(text) ? "true" : undefined}><i>{choice === "theirs" || choice === "both" ? "+" : " "}</i><code>{text}</code></span>)}</pre>
-      </section>
-    </div>
+    {error && <p className="objective-error" role="alert">{error}</p>}
+    <div className="conflict-case-actions"><button className="button" onClick={onExit}>Back</button><button className="button" onClick={() => { void onMutation(conflict.id, "reload"); setReload((value) => value + 1); }}>Retry loading</button><button className="button" disabled={busy || submitting} onClick={() => { setChoices({}); setPage(0); setFileIndex(0); setDetail(null); void onMutation(conflict.id, "reload"); setReload((value) => value + 1); }}>Discard draft and reload versions</button><button className="button" data-variant="primary" disabled={!available || !snapshot?.files.length || !snapshot.files.every(decided)} onClick={() => void submit()}>{submitting ? "Saving proposal…" : "Propose exact result"}</button></div>
   </section>;
 }

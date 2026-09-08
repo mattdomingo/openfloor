@@ -1,4 +1,6 @@
 import { canUseAgent, queueAgentAccessError } from "./agent-access";
+import { githubCommitUrl, readRunAttribution, type RunRequester } from "@/lib/run-attribution";
+import { getQueueRunAttribution } from "./run-attribution";
 import type { AgentRun, AgentRunCheck, AgentRunFile, AgentRunStatus, RunActivityEvent } from "@/lib/floor-types";
 import { resolveRunModel, type CredentialProvider } from "@/lib/provider-credentials";
 import { pickResumeSource, type ResumeCandidateRow } from "@/lib/run-resume";
@@ -9,12 +11,22 @@ export class AgentRunConflictError extends Error {}
 export class AgentRunNotReadyError extends Error {}
 export class AgentRunIntegrationBusyError extends Error {}
 
-type RunRecord = Omit<AgentRun, "checks" | "files">;
+type RunRecord = Omit<AgentRun, "checks" | "files" | "attribution" | "promptedBy"> & { attributionJson: string | null; promptedByJson: string; repositoryFullName: string | null };
+
+function publicRunRecord(row: RunRecord) {
+  const { attributionJson, promptedByJson, repositoryFullName, ...run } = row;
+  return { ...run, commitUrl: githubCommitUrl(repositoryFullName, run.runCommitSha), attribution: readRunAttribution(attributionJson), promptedBy: (JSON.parse(promptedByJson ?? "[]") as RunRequester[]).map((person) => ({ ...person, deleted: Boolean(person.deleted) })) };
+}
 type CheckRecord = Omit<AgentRunCheck, "hasLog"> & { logKey: string | null };
 type ScopedCheckRecord = CheckRecord & { runId: string };
 type ScopedFileRecord = AgentRunFile & { runId: string };
 
-const AGENT_RUN_SELECT = `SELECT r.id, r.queue_item_id AS queueItemId, r.agent_id AS agentId, a.name AS agentName, a.kind AS agentKind,
+const AGENT_RUN_SELECT = `SELECT r.id, r.attribution AS attributionJson, repository.repository_full_name AS repositoryFullName,
+        (SELECT json_group_array(json_object('userId', userId, 'name', name, 'deleted', deleted)) FROM (
+          SELECT DISTINCT u.id AS userId, u.display_name AS name, u.deleted_at IS NOT NULL AS deleted
+          FROM floor_queue_prompts p JOIN users u ON u.id = p.author_user_id
+          WHERE p.queue_item_id = r.queue_item_id ORDER BY p.created_at, p.id
+        )) AS promptedByJson, r.queue_item_id AS queueItemId, r.agent_id AS agentId, a.name AS agentName, a.kind AS agentKind,
         r.candidate_id AS candidateId, r.candidate_sha AS candidateSha, r.attempt, r.status, r.kind, r.completion,
         r.run_branch AS runBranch, r.local_commit_sha AS localCommitSha,
         r.run_commit_sha AS runCommitSha, r.remote_run_sha AS remoteRunSha,
@@ -38,6 +50,8 @@ const AGENT_RUN_SELECT = `SELECT r.id, r.queue_item_id AS queueItemId, r.agent_i
         rb.failure_reason AS rollbackFailureReason, rb.created_by AS rollbackBy,
         rb.created_at AS rollbackRequestedAt, rb.completed_at AS rollbackCompletedAt
  FROM agent_runs r JOIN floor_agents a ON a.id = r.agent_id
+ LEFT JOIN repository_candidates candidate ON candidate.id = r.candidate_id
+ LEFT JOIN repository_connections repository ON repository.id = candidate.connection_id
  LEFT JOIN agent_runs prior ON prior.id = r.resumed_from_run_id
  LEFT JOIN merge_conflict_attempts mca ON mca.run_id = r.id
  LEFT JOIN merge_conflict_cases source_case ON source_case.source_run_id = r.id
@@ -122,7 +136,7 @@ async function getAgentRunsByScope(scope: RunListScope, database: D1DatabaseLike
     filesByRun.set(runId, values);
   }
   return rows.results.map((run) => ({
-    ...run,
+    ...publicRunRecord(run),
     attempt: Number(run.attempt),
     checks: checksByRun.get(run.id) ?? [],
     files: filesByRun.get(run.id) ?? [],
@@ -184,6 +198,7 @@ export async function createAgentRun(sessionId: string, queueItemId: string, use
     throw new AgentRunNotReadyError("Synchronize a ready, unmodified candidate before starting an agent run");
   }
   const effectiveKind: "task" | "reply" = context.agentKind === "answer" ? "reply" : kind;
+  const attribution = await getQueueRunAttribution(sessionId, queueItemId, effectiveKind !== "reply", database);
   if (context.agentDeprovisionedAt !== null && context.agentKind) {
     await database.prepare(
       "UPDATE floor_agents SET deprovisioned_at = NULL, idle_since = NULL, updated_at = ? WHERE id = ? AND session_id = ? AND kind IN ('answer', 'worker')",
@@ -219,8 +234,8 @@ export async function createAgentRun(sessionId: string, queueItemId: string, use
       database.prepare(
         `INSERT INTO agent_runs
          (id, session_id, queue_item_id, agent_id, candidate_id, candidate_sha, run_branch, attempt, status, model, kind,
-          resumed_from_run_id, workflow_instance_id, sandbox_id, created_by, created_at, updated_at)
-         SELECT ?, ?, ?, ?, ?, ?, ?, ?, 'provisioning', ?, ?, ?, ?, ?, ?, ?, ?
+          resumed_from_run_id, workflow_instance_id, sandbox_id, created_by, created_at, updated_at, attribution)
+         SELECT ?, ?, ?, ?, ?, ?, ?, ?, 'provisioning', ?, ?, ?, ?, ?, ?, ?, ?, ?
          FROM floor_queue_items q JOIN floor_agents a ON a.id = q.agent_id
          JOIN sessions s ON s.id = q.session_id
          WHERE q.id = ? AND q.session_id = ? AND q.status = 'queued' AND q.dismissed_at IS NULL AND s.ended_at IS NULL
@@ -235,7 +250,7 @@ export async function createAgentRun(sessionId: string, queueItemId: string, use
                SELECT 1 FROM agent_runs source WHERE source.id = q.source_run_id AND source.session_id = q.session_id AND source.agent_id = a.id
                  AND (a.usage_scope = 'session' OR NOT EXISTS (SELECT 1 FROM floor_queue_prompts p WHERE p.queue_item_id = source.queue_item_id AND p.author_user_id <> a.owner_user_id)))))`,
       ).bind(id, sessionId, queueItemId, context.agentId, context.candidateId, context.candidateSha, runBranch, attempt,
-        model, effectiveKind === "reply" ? "reply" : null, resumeSource?.id ?? null, id, `run-${id}`, userId, now, now, queueItemId, sessionId, context.agentId, userId, userId),
+        model, effectiveKind === "reply" ? "reply" : null, resumeSource?.id ?? null, id, `run-${id}`, userId, now, now, JSON.stringify(attribution), queueItemId, sessionId, context.agentId, userId, userId),
       database.prepare("UPDATE floor_queue_items SET status = 'running', updated_at = ? WHERE id = ? AND session_id = ? AND status = 'queued' AND EXISTS (SELECT 1 FROM agent_runs WHERE id = ?)")
         .bind(now, queueItemId, sessionId, id),
       database.prepare("UPDATE sessions SET floor_revision = floor_revision + 1, updated_at = ? WHERE id = ?").bind(now, sessionId),
@@ -254,12 +269,12 @@ export async function getAgentRun(runId: string, database = getDb()): Promise<Ag
     `${AGENT_RUN_SELECT} WHERE r.id = ?`,
   ).bind(runId).first<RunRecord>();
   if (!row) return null;
-  return { ...row, attempt: Number(row.attempt), checks: await getRunChecks(runId, database), files: await getRunFiles(runId, database) };
+  return { ...publicRunRecord(row), attempt: Number(row.attempt), checks: await getRunChecks(runId, database), files: await getRunFiles(runId, database) };
 }
 
 export async function getRunExecutionContext(runId: string, database = getDb()) {
   const run = await database.prepare(
-    `SELECT r.id, r.session_id AS sessionId, r.queue_item_id AS queueItemId, r.agent_id AS agentId,
+    `SELECT r.id, r.attribution AS attributionJson, r.session_id AS sessionId, r.queue_item_id AS queueItemId, r.agent_id AS agentId,
             r.candidate_sha AS candidateSha, r.attempt, r.status, r.kind, r.completion, r.sandbox_id AS sandboxId,
             r.run_branch AS runBranch, r.bundle_key AS bundleKey, r.bundle_size_bytes AS bundleSizeBytes,
             r.local_commit_sha AS localCommitSha,
@@ -271,7 +286,7 @@ export async function getRunExecutionContext(runId: string, database = getDb()) 
             rc.repository_owner AS repositoryOwner, rc.repository_name AS repositoryName,
             rc.repository_full_name AS repositoryFullName,
             c.branch_name AS candidateBranch,
-            mca.case_id AS conflictCaseId,
+            mca.case_id AS conflictCaseId, mca.execution_mode AS conflictMode, mca.snapshot_id AS conflictSnapshotId, mca.proposal_id AS conflictProposalId,
             prior.codex_thread_id AS resumeThreadId, prior.attempt AS resumedFromAttempt, prior.status AS resumedFromStatus,
             store.r2_key AS resumeSessionStoreKey
      FROM agent_runs r
@@ -284,13 +299,13 @@ export async function getRunExecutionContext(runId: string, database = getDb()) 
      LEFT JOIN agent_run_artifacts store ON store.run_id = prior.id AND store.kind = 'session_store'
      WHERE r.id = ?`,
   ).bind(runId).first<{
-    id: string; sessionId: string; queueItemId: string; agentId: string; candidateSha: string; attempt: number; status: AgentRunStatus;
+    attributionJson: string | null; id: string; sessionId: string; queueItemId: string; agentId: string; candidateSha: string; attempt: number; status: AgentRunStatus;
     kind: "reply" | null; completion: "no_changes" | null;
     runBranch: string | null; bundleKey: string | null; bundleSizeBytes: number | null; localCommitSha: string | null; createdAt: number;
     sandboxId: string; sandboxProcessId: string | null; model: string; sessionTitle: string; objective: string | null;
     agentName: string; agentRole: string; agentTask: string; provider: CredentialProvider; installationId: string; repositoryId: string;
     repositoryOwner: string; repositoryName: string; repositoryFullName: string; candidateBranch: string;
-    conflictCaseId: string | null;
+    conflictCaseId: string | null; conflictMode: import("@/lib/conflict-resolution").ConflictMode | null; conflictSnapshotId: string | null; conflictProposalId: string | null;
     resumeThreadId: string | null; resumedFromAttempt: number | null; resumedFromStatus: AgentRunStatus | null; resumeSessionStoreKey: string | null;
   }>();
   if (!run) return null;
@@ -302,6 +317,7 @@ export async function getRunExecutionContext(runId: string, database = getDb()) 
     .bind(runId).all<{ id: string; position: number; command: string }>();
   return {
     ...run,
+    attribution: readRunAttribution(run.attributionJson),
     resumedFromAttempt: run.resumedFromAttempt === null ? null : Number(run.resumedFromAttempt),
     prompts: prompts.results,
     checks: checks.results.map((check) => ({ ...check, position: Number(check.position) })),

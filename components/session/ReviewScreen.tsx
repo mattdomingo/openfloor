@@ -1,5 +1,6 @@
 "use client";
 
+import { RunAttributionInfo } from "./RunAttributionInfo";
 import { memo, useEffect, useMemo, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, Fragment } from "react";
 import { LocalDateTime } from "@/components/LocalDateTime";
 import type { FloorMessage, FloorParticipant, FloorReviewSnapshot, RepositoryPreviewSnapshot, ReviewContribution, ReviewContributor, ReviewContributorFacet, SessionFile } from "@/lib/floor-types";
@@ -14,7 +15,7 @@ import { SessionPromptDetail, SessionPromptRail, useSessionPromptHistory } from 
 import { useReviewContributionDetail, useReviewContributions } from "./useReviewContributions";
 import type { RepositorySource } from "./useRepositoryTree";
 import { ConflictCenterDialog } from "./ConflictCenterDialog";
-import type { ConflictChoice } from "@/lib/floor-types";
+import type { ConflictMutation } from "@/lib/conflict-resolution";
 
 type PendingAction = { type: "merge"; deleteCandidateBranch: boolean } | { type: "deleteBranch" } | { type: "abandon"; deleteBranch: boolean };
 type Selection = { kind: "changed"; id: string } | { kind: "repo"; path: string };
@@ -50,7 +51,7 @@ function mergeReadiness(review: FloorReviewSnapshot | null, blockers: string[]):
   return "blocked";
 }
 
-export const ReviewScreen = memo(function ReviewScreen({ sessionId, revision, review, preview, previewEnabled, repository, repositoryTree, selectedConflictCaseId, promptRequest, owner, busy, blockingRunId, onStartPreview, onStopPreview, onRequestRollback, onSync, onReady, onUnready, onMerge, onMergeLock, onDeleteBranch, onAbandon, onCancelRun, onResolveConflict, onAnswerConflict, onSubmitConflictSelections, teamChat, onSendTeamMessage, participants, currentUserId, sessionFiles }: {
+export const ReviewScreen = memo(function ReviewScreen({ sessionId, revision, review, preview, previewEnabled, repository, repositoryTree, selectedConflictCaseId, promptRequest, owner, busy, blockingRunId, onStartPreview, onStopPreview, onRequestRollback, onSync, onReady, onUnready, onMerge, onMergeLock, onDeleteBranch, onAbandon, onCancelRun, onConflictMutation, teamChat, onSendTeamMessage, participants, currentUserId, sessionFiles }: {
   sessionId: string;
   revision: number;
   review: FloorReviewSnapshot | null;
@@ -74,9 +75,7 @@ export const ReviewScreen = memo(function ReviewScreen({ sessionId, revision, re
   onDeleteBranch: () => Promise<boolean>;
   onAbandon: (deleteBranch: boolean) => Promise<boolean>;
   onCancelRun: (runId: string) => Promise<void>;
-  onResolveConflict: (caseId: string) => Promise<boolean>;
-  onAnswerConflict: (caseId: string, answers: Array<{ questionId: string; answer: string }>) => Promise<boolean>;
-  onSubmitConflictSelections: (caseId: string, snapshotRunId: string, selections: Array<{ path: string; hunkIndex: number; choice: ConflictChoice }>) => Promise<boolean>;
+  onConflictMutation: ConflictMutation;
   teamChat: FloorMessage[];
   sessionFiles: SessionFile[];
   onSendTeamMessage: (text: string, recipientUserId: string | null) => Promise<boolean>;
@@ -447,7 +446,7 @@ export const ReviewScreen = memo(function ReviewScreen({ sessionId, revision, re
     {review && deleteConfirmOpen && <DeleteBranchConfirmDialog branch={review?.branch} busy={busy} onClose={() => setDeleteConfirmOpen(false)} onConfirm={runDeleteBranch} />}
     {review && abandonConfirmOpen && <AbandonConfirmDialog branch={review?.branch} busy={busy} onClose={() => setAbandonConfirmOpen(false)} onConfirm={runAbandon} />}
     {blockingRunId && pendingAction && <IntegrationBlockedDialog retrying={retrying} onClose={() => setPendingAction(null)} onConfirm={cancelBlockingRunAndRetry} />}
-    {conflictCenter && <ConflictCenterDialog sessionId={sessionId} conflicts={conflicts} initialCaseId={conflictCenter.caseId} owner={owner} currentUserId={currentUserId} busy={busy} onClose={() => setConflictCenter(null)} onResolve={onResolveConflict} onAnswer={onAnswerConflict} onSubmitSelections={onSubmitConflictSelections} />}
+    {conflictCenter && <ConflictCenterDialog sessionId={sessionId} conflicts={conflicts} initialCaseId={conflictCenter.caseId} owner={owner} currentUserId={currentUserId} busy={busy} onClose={() => setConflictCenter(null)} onMutation={onConflictMutation} />}
   </section>;
 });
 
@@ -512,6 +511,7 @@ function contributionPreview(contribution: ReviewContribution) {
 }
 
 function EngineerNames({ contribution }: { contribution: ReviewContribution }) {
+  if (contribution.attribution?.kind === "system") return <>Automated feedback</>;
   const names = [...new Set(contribution.prompts.map((prompt) => prompt.authorName))];
   return names.map((name, index) => <Fragment key={name}>{index > 0 ? ", " : ""}<PersonName name={name} /></Fragment>);
 }
@@ -527,6 +527,7 @@ function ContributionCards({ source, onOpen, onRollback }: {
   return <div className="review-contribution-cards" aria-label="Prompt contributions">
     {source.items.map((contribution) => <details key={contribution.runId} className="review-contribution-card">
       <summary><span><strong>{contribution.agentName}</strong><small><EngineerNames contribution={contribution} /></small></span><span className="queue-chip" data-kind="status" data-status={contribution.rollbackStatus ?? "active"}>{contributionLabel(contribution)}</span></summary>
+      <RunAttributionInfo attribution={contribution.attribution} promptedBy={contribution.prompts.map((prompt) => ({ userId: prompt.authorUserId, name: prompt.authorName, deleted: Boolean(prompt.authorDeleted) }))} commitUrl={contribution.commitUrl} />
       <p>{contributionPreview(contribution)}</p>
       {contribution.rollbackStatus === "failed" && contribution.rollbackFailureReason && <p className="review-empty" role="alert">{contribution.rollbackFailureReason}</p>}
       <div className="review-contribution-actions"><button type="button" className="button" data-size="sm" onClick={() => onOpen(contribution.runId)}>View prompt changes</button>{contribution.canRollback && <button type="button" className="button danger-button" data-size="sm" onClick={() => onRollback(contribution.runId)}>Remove changes</button>}</div>
@@ -546,6 +547,7 @@ function PromptContributionDetail({ detail, status, onRollback }: {
   return <section className="review-pane review-prompt-detail" aria-label="Prompt contribution detail">
     <div className="review-pane-head"><div><h3>{contribution.prompts.length === 1 ? "Prompt changes" : `${contribution.prompts.length} merged prompts`}</h3><small>{contribution.agentName} · <EngineerNames contribution={contribution} /></small></div><span className="queue-chip" data-kind="status" data-status={contribution.rollbackStatus ?? "active"}>{contributionLabel(contribution)}</span></div>
     <div className="review-prompt-detail-body">
+      <RunAttributionInfo attribution={contribution.attribution} promptedBy={contribution.prompts.map((prompt) => ({ userId: prompt.authorUserId, name: prompt.authorName, deleted: Boolean(prompt.authorDeleted) }))} commitUrl={contribution.commitUrl} />
       <ol className="review-prompt-copy">{contribution.prompts.map((prompt) => <li key={prompt.id}><strong><PersonName name={prompt.authorName} /></strong><p>{prompt.text}</p><small><LocalDateTime timestamp={prompt.createdAt} /></small></li>)}</ol>
       {contribution.rollbackStatus === "failed" && contribution.rollbackFailureReason && <p className="review-empty" role="alert">{contribution.rollbackFailureReason}</p>}
       {status === "active" && contribution.canRollback && <div className="review-prompt-detail-actions"><button type="button" className="button danger-button" onClick={() => onRollback({ scope: "prompt", subjectId: contribution.runId })}>Remove changes</button></div>}
@@ -628,7 +630,7 @@ function RepositoryTreeBranch({ nodes, depth, expandedDirs, onToggleDir, selecte
 }
 
 function requesterNames(requestedBy: ReviewContributor["requestedBy"]) {
-  if (requestedBy.length === 0) return "someone";
+  if (requestedBy.length === 0) return "no recorded human prompter";
   const shown = requestedBy.length <= 2 ? requestedBy : requestedBy.slice(0, 1);
   return <>{shown.map((requester, index) => <Fragment key={requester.userId}>{index > 0 ? ", " : ""}<PersonName name={requester.userName} /></Fragment>)}{requestedBy.length > 2 && ` +${requestedBy.length - 1}`}</>;
 }

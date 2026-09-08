@@ -1,4 +1,5 @@
 import { canUseAgent } from "./agent-access";
+import { readGitHubIdentity } from "@/lib/github-identity";
 import type {
   AgentRun,
   FloorAgent,
@@ -61,12 +62,12 @@ export async function getFloorSnapshot(
 async function readFloorSnapshot(sessionId: string, userId: string, database: D1DatabaseLike): Promise<FloorSnapshot> {
   const [session, providerResolution, agents, assignments, messages, files, queue, prompts, repository, activeCandidate, reviewCandidate, latestPreflight, preview, runs, conflicts] = await Promise.all([
     database.prepare(
-      `SELECT s.floor_revision AS revision, s.auto_dispatch AS autoDispatch,
+      `SELECT s.floor_revision AS revision, s.ended_at AS endedAt, s.auto_dispatch AS autoDispatch,
               s.auto_provision_agents AS autoProvisionAgents, s.auto_resolve_conflicts AS autoResolveConflicts,
               s.auto_inject_feedback AS autoInjectFeedback,
               (SELECT role FROM session_members WHERE session_id = s.id AND user_id = ? AND removed_at IS NULL) AS viewerRole
        FROM sessions s WHERE s.id = ?`,
-    ).bind(userId, sessionId).first<{ revision: number; autoDispatch: number; autoProvisionAgents: number; autoResolveConflicts: number; autoInjectFeedback: number; viewerRole: "owner" | "member" }>(),
+    ).bind(userId, sessionId).first<{ revision: number; endedAt: number | null; autoDispatch: number; autoProvisionAgents: number; autoResolveConflicts: number; autoInjectFeedback: number; viewerRole: "owner" | "member" }>(),
     resolveAutoAgentProvider(sessionId, database, disabledRunProviders(), userId),
     database.prepare(
       // Two extra joins for lifetime cost (Agent tile meter): `cost` sums
@@ -156,13 +157,13 @@ async function readFloorSnapshot(sessionId: string, userId: string, database: D1
     ).bind(sessionId).all<QueueRecord>(),
     database.prepare(
       `SELECT p.id, p.queue_item_id AS queueItemId, p.author_user_id AS authorUserId,
-              author.display_name AS authorName, p.text, p.created_at AS createdAt
+              author.verified_github AS githubIdentity, author.display_name AS authorName, p.text, p.created_at AS createdAt
        FROM floor_queue_prompts p
        JOIN floor_queue_items q ON q.id = p.queue_item_id
        JOIN users author ON author.id = p.author_user_id
        WHERE q.session_id = ? AND q.dismissed_at IS NULL
        ORDER BY p.created_at, p.id`,
-    ).bind(sessionId).all<PromptRecord>(),
+    ).bind(sessionId).all<PromptRecord & { githubIdentity: string | null }>(),
     getRepositoryConnectionForMember(sessionId, userId, database),
     getActiveRepositoryCandidate(sessionId, database),
     getLatestRepositoryReviewCandidate(sessionId, database),
@@ -174,11 +175,19 @@ async function readFloorSnapshot(sessionId: string, userId: string, database: D1
     getMergeConflictCases(sessionId, database),
   ]);
 
+  for (const conflict of conflicts) {
+    if (!conflict.resolution) continue;
+    const authored = [...conflict.resolution.provenance.incoming, ...conflict.resolution.provenance.integrated,
+      ...(!conflict.resolution.snapshotId ? conflict.prompts : [])].some((prompt) => prompt.authorUserId === userId);
+    conflict.resolution.actions = { canPropose: session?.endedAt == null && (session?.viewerRole === "owner" || authored),
+      canOverride: session?.endedAt == null && session?.viewerRole === "owner" };
+  }
+
   const promptsByItem = new Map<string, FloorQueuePrompt[]>();
   for (const prompt of prompts.results) {
-    const { queueItemId, ...publicPrompt } = prompt;
+    const { queueItemId, githubIdentity, ...publicPrompt } = prompt;
     const list = promptsByItem.get(queueItemId) ?? [];
-    list.push(publicPrompt);
+    list.push({ ...publicPrompt, githubVerified: Boolean(readGitHubIdentity(githubIdentity)) });
     promptsByItem.set(queueItemId, list);
   }
 
@@ -237,7 +246,7 @@ async function readFloorSnapshot(sessionId: string, userId: string, database: D1
     latestPreflight,
     preview,
     runs,
-    review: buildRunReview(candidateRuns, reviewCandidate, candidateReview, promptsByItem, assignments.results, conflicts),
+    review: buildRunReview(candidateRuns, reviewCandidate, candidateReview, promptsByItem, conflicts),
   };
 }
 
@@ -245,14 +254,13 @@ async function readFloorSnapshot(sessionId: string, userId: string, database: D1
 function contributorsByPath(
   reviewRuns: AgentRun[],
   promptsByItem: Map<string, FloorQueuePrompt[]>,
-  memberNames: Map<string, string>,
 ): Map<string, ReviewContributor[]> {
   const byPath = new Map<string, ReviewContributor[]>();
   for (const run of reviewRuns) {
     const prompts = promptsByItem.get(run.queueItemId) ?? [];
-    const requestedBy = prompts.length > 0
-      ? [...new Map(prompts.map((prompt) => [prompt.authorUserId, { userId: prompt.authorUserId, userName: prompt.authorName }])).values()]
-      : [{ userId: run.createdBy, userName: memberNames.get(run.createdBy) ?? "Unknown" }];
+    const requestedBy = run.attribution?.kind === "system" ? [] : run.promptedBy
+      ? run.promptedBy.map((person) => ({ userId: person.userId, userName: person.name }))
+      : [...new Map(prompts.map((prompt) => [prompt.authorUserId, { userId: prompt.authorUserId, userName: prompt.authorName }])).values()];
     for (const file of run.files) {
       const contributors = byPath.get(file.path) ?? [];
       const existing = contributors.find((contributor) => contributor.agentId === run.agentId);
@@ -274,7 +282,6 @@ function buildRunReview(
   candidate: Awaited<ReturnType<typeof getLatestRepositoryReviewCandidate>>,
   githubReview: Awaited<ReturnType<typeof getRepositoryCandidateReviewData>> | null,
   promptsByItem: Map<string, FloorQueuePrompt[]>,
-  members: Array<{ userId: string; userName: string }>,
   conflicts: Awaited<ReturnType<typeof getMergeConflictCases>>,
 ): FloorReviewSnapshot | null {
   if (!candidate) return null;
@@ -282,8 +289,7 @@ function buildRunReview(
   if (candidateRuns.length === 0 && !candidate.pullRequestNumber) return null;
   const reviewRuns = (candidate.pullRequestNumber ? candidateRuns.filter((run) => run.status === "integrated") : candidateRuns)
     .filter((run) => run.rollbackStatus !== "completed");
-  const memberNames = new Map(members.map((member) => [member.userId, member.userName]));
-  const contributors = contributorsByPath(reviewRuns, promptsByItem, memberNames);
+  const contributors = contributorsByPath(reviewRuns, promptsByItem);
   const files = githubReview?.files.length ? githubReview.files.map((file) => ({
     id: file.id,
     path: file.path,
