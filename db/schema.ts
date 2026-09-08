@@ -623,12 +623,42 @@ export const repositoryCandidateFiles = sqliteTable(
     id: text("id").primaryKey(),
     candidateId: text("candidate_id").notNull().references(() => repositoryCandidates.id, { onDelete: "cascade" }),
     path: text("path").notNull(),
+    previousPath: text("previous_path"),
     additions: integer("additions").notNull(),
     deletions: integer("deletions").notNull(),
     changeKind: text("change_kind", { enum: ["add", "update", "delete"] }).notNull(),
     patchPreview: text("patch_preview").notNull(),
   },
   (table) => [uniqueIndex("idx_repository_candidate_files_path").on(table.candidateId, table.path)],
+);
+
+// Removing one reviewed file restores that path to the synchronized base in
+// a new candidate commit. The attempt remains durable audit history while the
+// candidate's integration_run_id is the shared external-mutation lease.
+export const candidateFileRemovals = sqliteTable(
+  "candidate_file_removals",
+  {
+    id: text("id").primaryKey(),
+    sessionId: text("session_id").notNull().references(() => sessions.id, { onDelete: "cascade" }),
+    candidateId: text("candidate_id").notNull().references(() => repositoryCandidates.id, { onDelete: "cascade" }),
+    path: text("path").notNull(),
+    previousPath: text("previous_path"),
+    expectedCandidateSha: text("expected_candidate_sha").notNull(),
+    baseSha: text("base_sha").notNull(),
+    removalCommitSha: text("removal_commit_sha"),
+    status: text("status", { enum: ["requested", "running", "completed", "failed"] }).notNull(),
+    failureReason: text("failure_reason"),
+    createdBy: text("created_by").notNull().references(() => users.id),
+    createdAt: integer("created_at").notNull(),
+    startedAt: integer("started_at"),
+    completedAt: integer("completed_at"),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [
+    index("idx_candidate_file_removals_session_created").on(table.sessionId, table.createdAt),
+    index("idx_candidate_file_removals_candidate_path").on(table.candidateId, table.path, table.createdAt),
+    check("candidate_file_removals_status_check", sql`${table.status} in ('requested', 'running', 'completed', 'failed')`),
+  ],
 );
 
 export const repositoryCandidateChecks = sqliteTable(

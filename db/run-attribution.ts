@@ -34,7 +34,10 @@ export async function getCandidateCommitAuthors(sessionId: string, candidateId: 
         ORDER BY p.created_at, p.id)) AS legacyAuthors
      FROM agent_runs r JOIN floor_queue_items q ON q.id = r.queue_item_id AND q.session_id = r.session_id
      WHERE r.session_id = ? AND r.candidate_id = ? AND r.status = 'integrated' AND r.kind IS NULL AND q.origin IS NULL
-       AND EXISTS (SELECT 1 FROM agent_run_files f WHERE f.run_id = r.id)
+       AND EXISTS (SELECT 1 FROM agent_run_files f WHERE f.run_id = r.id
+         AND NOT EXISTS (SELECT 1 FROM candidate_file_removals removal
+           WHERE removal.candidate_id = r.candidate_id AND removal.path = f.path
+             AND removal.status = 'completed' AND removal.completed_at >= r.integrated_at))
        AND NOT EXISTS (SELECT 1 FROM agent_run_rollbacks rb WHERE rb.run_id = r.id AND rb.status = 'completed')
      ORDER BY r.integrated_at, r.id`,
   ).bind(sessionId, candidateId).all<{ attribution: string | null; legacyAuthors: string }>();

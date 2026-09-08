@@ -262,17 +262,40 @@ export async function getLatestRepositoryReviewCandidate(sessionId: string, data
 }
 
 export async function getRepositoryCandidateReviewData(candidateId: string, database: D1DatabaseLike) {
-  const [files, checks] = await Promise.all([
+  const [files, checks, fileRemovals] = await Promise.all([
     database.prepare(
-      `SELECT id, path, additions, deletions, change_kind AS changeKind, patch_preview AS patchPreview
-       FROM repository_candidate_files WHERE candidate_id = ? ORDER BY path`,
-    ).bind(candidateId).all<{ id: string; path: string; additions: number; deletions: number; changeKind: "add" | "update" | "delete"; patchPreview: string }>(),
+      `SELECT f.id, f.path, f.previous_path AS previousPath, f.additions, f.deletions,
+              f.change_kind AS changeKind, f.patch_preview AS patchPreview,
+              removal.status AS removalStatus, removal.failure_reason AS removalFailureReason
+       FROM repository_candidate_files f
+       JOIN repository_candidates candidate ON candidate.id = f.candidate_id
+       LEFT JOIN candidate_file_removals removal ON removal.id = (
+         SELECT latest.id FROM candidate_file_removals latest
+         WHERE latest.candidate_id = f.candidate_id AND latest.path = f.path
+           AND latest.expected_candidate_sha = candidate.candidate_sha
+         ORDER BY latest.created_at DESC, latest.id DESC LIMIT 1
+       )
+       WHERE f.candidate_id = ? ORDER BY f.path`,
+    ).bind(candidateId).all<{
+      id: string; path: string; previousPath: string | null; additions: number; deletions: number;
+      changeKind: "add" | "update" | "delete"; patchPreview: string;
+      removalStatus: "requested" | "running" | "completed" | "failed" | null;
+      removalFailureReason: string | null;
+    }>(),
     database.prepare(
       `SELECT id, source_id AS sourceId, name, detail, state
        FROM repository_candidate_checks WHERE candidate_id = ? ORDER BY name, source_id`,
     ).bind(candidateId).all<{ id: string; sourceId: string; name: string; detail: string | null; state: "passed" | "waiting" | "failed" }>(),
+    database.prepare(
+      `SELECT path, MAX(completed_at) AS completedAt FROM candidate_file_removals
+       WHERE candidate_id = ? AND status = 'completed' GROUP BY path`,
+    ).bind(candidateId).all<{ path: string; completedAt: number }>(),
   ]);
-  return { files: files.results, checks: checks.results };
+  return {
+    files: files.results,
+    checks: checks.results,
+    fileRemovals: fileRemovals.results.map((removal) => ({ ...removal, completedAt: Number(removal.completedAt) })),
+  };
 }
 
 export async function reserveRepositoryCandidate(
@@ -642,9 +665,9 @@ export async function reconcileCandidateReview(
     database.prepare("DELETE FROM repository_candidate_files WHERE candidate_id = ?").bind(candidateId),
     database.prepare("DELETE FROM repository_candidate_checks WHERE candidate_id = ?").bind(candidateId),
     ...review.files.map((file) => database.prepare(
-      `INSERT INTO repository_candidate_files (id, candidate_id, path, additions, deletions, change_kind, patch_preview)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    ).bind(crypto.randomUUID(), candidateId, file.path, file.additions, file.deletions, file.changeKind, file.patchPreview)),
+      `INSERT INTO repository_candidate_files (id, candidate_id, path, previous_path, additions, deletions, change_kind, patch_preview)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).bind(crypto.randomUUID(), candidateId, file.path, file.previousPath, file.additions, file.deletions, file.changeKind, file.patchPreview)),
     ...review.checks.map((check) => database.prepare(
       `INSERT INTO repository_candidate_checks (id, candidate_id, source_id, name, detail, state)
        VALUES (?, ?, ?, ?, ?, ?)`,

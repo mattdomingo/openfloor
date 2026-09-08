@@ -42,6 +42,7 @@ export type QueueItemPauseInput = { paused: boolean };
 export type QueueItemTargetInput = { agentId: string };
 export type RepositoryConnectionInput = { repositoryId: string; accountInstallationId: string | null; baseBranch: string };
 export type RepositoryCandidateInput = { name: string; description: string };
+export type CandidateFileRemovalInput = { path: string; expectedCandidateSha: string };
 export type ProfileInput = { firstName: string; lastName: string; githubHandle: string | null };
 // Discriminated by kind: `secret` is what gets encrypted at rest, and
 // `fingerprintValue` is what the last-four fingerprint is taken from — the
@@ -347,6 +348,18 @@ export function parseRepositoryCandidateInput(value: unknown): RepositoryCandida
   const description = input.description.trim();
   if (!name || name.length > 100 || description.length > 2_000) return null;
   return { name, description };
+}
+
+export function parseCandidateFileRemovalInput(value: unknown): CandidateFileRemovalInput | null {
+  if (!value || typeof value !== "object") return null;
+  const input = value as Record<string, unknown>;
+  if (typeof input.path !== "string" || typeof input.expectedCandidateSha !== "string") return null;
+  const path = input.path;
+  const expectedCandidateSha = input.expectedCandidateSha.trim();
+  if (!path || path.length > 1_024 || path.startsWith("/") || /[\p{Cc}]/u.test(path)) return null;
+  if (path.split("/").some((segment) => segment === "" || segment === "." || segment === "..")) return null;
+  if (!/^[0-9a-f]{40}$/.test(expectedCandidateSha)) return null;
+  return { path, expectedCandidateSha };
 }
 
 // Shared by onboarding (POST /api/account/onboarding) and account settings

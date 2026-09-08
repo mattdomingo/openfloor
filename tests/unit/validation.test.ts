@@ -16,10 +16,28 @@ import {
   parseMergeLockInput,
   parseConflictInputRequest,
   parseConflictAnswersInput,
+  parseCandidateFileRemovalInput,
   parseEarlyAccessWaitlistInput,
   parseSessionCreateInput,
   parseSessionInput,
 } from "@/lib/validation";
+
+describe("candidate file removal validation", () => {
+  const sha = "a".repeat(40);
+
+  it("accepts a bounded relative repository path and exact SHA", () => {
+    expect(parseCandidateFileRemovalInput({ path: "src/review menu.tsx", expectedCandidateSha: `  ${sha}  ` }))
+      .toEqual({ path: "src/review menu.tsx", expectedCandidateSha: sha });
+  });
+
+  it("rejects traversal, absolute, control-character, oversized, and malformed inputs", () => {
+    for (const path of ["", "/src/a.ts", "src//a.ts", "src/./a.ts", "src/../a.ts", "src/a\n.ts", "x".repeat(1_025)]) {
+      expect(parseCandidateFileRemovalInput({ path, expectedCandidateSha: sha })).toBeNull();
+    }
+    expect(parseCandidateFileRemovalInput({ path: "src/a.ts", expectedCandidateSha: "not-a-sha" })).toBeNull();
+    expect(parseCandidateFileRemovalInput(null)).toBeNull();
+  });
+});
 
 describe("early-access waitlist validation", () => {
   it("normalizes names and email addresses", () => {

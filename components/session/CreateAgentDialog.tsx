@@ -145,7 +145,7 @@ export function CreateAgentDialog({
                     onChange={(value) => setCredentialKind(parseCredentialKind(value))}
                     options={[
                       { value: "default", label: "Owner's default" },
-                      
+
                       { value: "api_key", label: "API key" },
                     ]}
                   />

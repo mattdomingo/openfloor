@@ -955,6 +955,8 @@ Agent runtime posture is also tightened: Codex receives only an explicit safe SD
 
 ### 2026-09-03 — Truncate long given names; keep Review heads aligned; keep agent controls visible
 
+**Status:** Partially superseded by "Review file actions replace inline attribution" (2026-09-05): Review keeps aligned 56px heads, but file attribution now lives in the changed-file context menu instead of the middle diff header.
+
 **Decision:** `visiblePersonName` shortens only the given-name token past 14 characters; `PersonName` renders that text and shows the stored `First L.` value in `HoverTip`. D1 `display_name` stays full. Review's three `.review-pane-head` rows are a fixed `56px` like `.panel-head`, and expanded file attribution sits on that row beside the basename. Agent reply text is an in-flow clamped block above Pause/Stop. Folded queue groups tint from existing status tokens (`conflicted` attention, `failed` blocked, `answered` review, `integrated` running, `cancelled` waiting) with an inset spine. Reply-driven `.agent-grid` padding stays forbidden.
 
 **Rationale:** A long given name — often a pasted email — blew chips, "asked by" rows, and headings. Expanded attribution wrapped under the filename and made the center Review header taller than Files and Checks. Absolutely positioned replies covered the card controls. Folded queue sections were indistinguishable gray bars.
@@ -1082,6 +1084,14 @@ Preview v1 supports only one JavaScript app at the repository root with exactly 
 
 **Consequences:** Agent runs must not receive `CAP_NET_ADMIN` or the loopback setup shell. Exact-image tests cover npm, pnpm, Yarn, and Bun lifecycle suppression plus loopback HTTP with blocked outbound traffic. Enabling the gate still requires wildcard DNS/TLS, a preview Access application, and the documented acceptance runbook. Every later image-content change must bump the pool key again.
 
+### 2026-09-05 — Review file actions replace inline attribution
+
+**Decision:** Changed files in Review expose an accessible context menu through right-click, a visible action button, Context Menu key, or Shift+F10. **Change info** shows current prompt, software-agent, and human-user attribution in a dialog; **Copy path** and **Open on GitHub** provide file utilities. The middle diff no longer renders attribution or prompt-group banners. The session owner may also choose **Remove file changes**, which restores that current reviewed path to the candidate's synchronized base in one deterministic commit. Candidate-only additions are deleted, modified/deleted files are restored, and a GitHub rename restores its previous path as well as removing its current path.
+
+**Rationale:** Attribution is useful on demand but consumed the most valuable diff space for every file. Existing whole-prompt rollback cannot safely represent a file-level review decision when one run touched several paths or several runs touched one path. Restoring the selected path against the pinned base gives the action one precise, explainable meaning without rewriting prompt or run history.
+
+**Consequences:** Migration `0048_steep_kingpin.sql` additively creates `candidate_file_removals` and adds nullable `repository_candidate_files.previous_path`; old code ignores both, so application rollback is compatible and no data rewrite or contraction is required. The file-removal Workflow reuses `AGENT_RUN_WORKFLOW`, the candidate's `integration_run_id` lease, exact candidate/base SHA checks, dual-Sandbox deterministic reconstruction, authenticated force-with-lease publication, D1 revision, and `floor.changed`. Only the session owner may start it because a current file may combine several users' and agents' work. Attempts and original attribution remain durable. Contributions at or before a completed removal stop appearing as active for that path, while later same-path runs remain active. A prompt group with any separately removed file cannot use Queue, prompt, engineer, or agent rollback, avoiding a commit-level revert against a partially restored group. Failure before publication releases the lease and stays visible for retry; failure after GitHub advances keeps the lease for operator recovery. Rollback is a code revert after first disabling new file-removal requests; the additive table and column may remain until a separately authorized contraction.
+
 ### 2026-09-07 — Keep preview acceptance fixtures inside the execution namespace
 
 **Decision:** Place container preview fixtures under the existing `/tmp/openfloor` mount, close the loopback test server, and give the private tmpfs `/tmp` standard mode `1777`.
@@ -1197,3 +1207,12 @@ Preview v1 supports only one JavaScript app at the repository root with exactly 
 **Decision:** Regenerate the unapplied personal-billing migration as `0050_equal_nebula.sql` after #302's 0048 and #303's regenerated 0049. Preserve v2 conflict preparation/manual resolution without requiring model billing. AI resolution refuses legacy platform/subscription billing and retains source-agent use authority. Retained prompt details expose immutable engineer attribution and validated GitHub commit links.
 
 **Consequences:** All three PRs retain release as their base and merge in order #302, #303, #304 using Create a merge commit. Local sequential simulations prove this method; squash merging was tested and produces conflicts because it drops predecessor ancestry. Existing release migrations remain byte-identical. The cumulative gate includes record-preserving upgrades, provider isolation, engineer credit, conflict consensus, and browser acceptance.
+
+
+### 2026-09-08 — Preserve file actions after the personal billing stack
+
+**Decision:** Integrate #302, #303, #304, then #301 using Create a merge commit, all targeting release. Regenerate #301's unapplied migration 0048 as `0051_glorious_wendigo.sql` after the existing stack. This supersedes only the original file-removal migration number and extends the previously documented three-PR order.
+
+**Rationale:** The existing three-PR stack already reconciles attribution, consensus, personal billing, and history. Appending file removal preserves that ancestry and avoids rewriting three validated branches.
+
+**Consequences:** File context actions and owner-only expected-SHA removal remain intact. Change info displays verified engineer credit and commit links; prompt details retain their original run diffs and credit. Future squash credit includes an engineer only while at least one file from their run remains active. Removed-file rollback exclusions remain enforced. No provider fallback, legacy conflict decisions, or empty-review layout regressions are restored. Existing release and predecessor SQL migrations remain unchanged; application rollback keeps additive audit columns and disables new removals before reverting code.

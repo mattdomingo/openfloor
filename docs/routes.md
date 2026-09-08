@@ -20,6 +20,7 @@
 | `/api/...` | `/api/...` | Protected | Authenticated application interfaces. |
 | `/api/sessions/[id]/presence` | `/api/sessions/[id]/presence` | Protected/member-only | WebSocket upgrade. |
 | `/api/sessions/[id]/repository/preview` | `/api/sessions/[id]/repository/preview` | Protected/owner-only | Start, rebuild, or stop the session's shared exact-candidate app preview while the rollout gate is enabled. |
+| `/api/sessions/[id]/review/files/remove` | `/api/sessions/[id]/review/files/remove` | Protected/owner-only | Restore one current reviewed file to the synchronized candidate base through a durable expected-SHA workflow. |
 | `/runtime/preview/source` | `/runtime/preview/source` | Public/signed | Serve the exact candidate archive to one current preview generation through a short-lived operation token. |
 | `https://*.preview.opnflr.com/*` | `https://*.preview.dev.opnflr.com/*` | Protected/member-only | Proxy one active preview host after Access identity, current membership/admission, repository/candidate, and lease checks. Both environment gates are currently off. |
 | `/webhooks/github` | `/webhooks/github` | Public/signed | GitHub delivery boundary; verifies payload size and HMAC before acknowledging. |

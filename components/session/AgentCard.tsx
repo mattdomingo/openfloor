@@ -162,7 +162,7 @@ export const AgentSpotlight = memo(function AgentSpotlight({ agent, tone, sessio
             }}
             options={[
               { value: "default", label: "Owner's default" },
-              
+
               { value: "api_key", label: "API key" },
             ]}
           />

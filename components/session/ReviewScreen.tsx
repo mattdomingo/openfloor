@@ -1,7 +1,8 @@
 "use client";
 
 import { RunAttributionInfo } from "./RunAttributionInfo";
-import { memo, useEffect, useMemo, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, Fragment } from "react";
+import { memo, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, Fragment } from "react";
+import { createPortal } from "react-dom";
 import { LocalDateTime } from "@/components/LocalDateTime";
 import type { FloorMessage, FloorParticipant, FloorReviewSnapshot, RepositoryPreviewSnapshot, ReviewContribution, ReviewContributor, ReviewContributorFacet, SessionFile } from "@/lib/floor-types";
 import type { RepositoryTreeEntry } from "@/lib/github";
@@ -51,7 +52,7 @@ function mergeReadiness(review: FloorReviewSnapshot | null, blockers: string[]):
   return "blocked";
 }
 
-export const ReviewScreen = memo(function ReviewScreen({ sessionId, revision, review, preview, previewEnabled, repository, repositoryTree, selectedConflictCaseId, promptRequest, owner, busy, blockingRunId, onStartPreview, onStopPreview, onRequestRollback, onSync, onReady, onUnready, onMerge, onMergeLock, onDeleteBranch, onAbandon, onCancelRun, onConflictMutation, teamChat, onSendTeamMessage, participants, currentUserId, sessionFiles }: {
+export const ReviewScreen = memo(function ReviewScreen({ sessionId, revision, review, preview, previewEnabled, repository, repositoryTree, selectedConflictCaseId, promptRequest, owner, busy, blockingRunId, onStartPreview, onStopPreview, onRequestRollback, onRemoveFileChanges, onNotice, onSync, onReady, onUnready, onMerge, onMergeLock, onDeleteBranch, onAbandon, onCancelRun, onConflictMutation, teamChat, onSendTeamMessage, participants, currentUserId, sessionFiles }: {
   sessionId: string;
   revision: number;
   review: FloorReviewSnapshot | null;
@@ -67,6 +68,8 @@ export const ReviewScreen = memo(function ReviewScreen({ sessionId, revision, re
   onStartPreview: () => Promise<boolean>;
   onStopPreview: () => Promise<boolean>;
   onRequestRollback: (intent: RollbackIntent) => void;
+  onRemoveFileChanges: (path: string, expectedCandidateSha: string) => Promise<boolean>;
+  onNotice: (message: string) => void;
   onSync: (options?: { silent?: boolean }) => Promise<boolean>;
   onReady: () => Promise<void>;
   onUnready: () => Promise<void>;
@@ -99,6 +102,9 @@ export const ReviewScreen = memo(function ReviewScreen({ sessionId, revision, re
   const [engineerFilter, setEngineerFilter] = useState<string | null>(null);
   const [agentFilter, setAgentFilter] = useState<string | null>(null);
   const [selectedPromptRunId, setSelectedPromptRunId] = useState<string | null>(promptRequest?.runId ?? null);
+  const [fileMenu, setFileMenu] = useState<{ fileId: string; x: number; y: number; returnFocus: HTMLElement | null } | null>(null);
+  const [fileInfoId, setFileInfoId] = useState<string | null>(null);
+  const [fileRemovalId, setFileRemovalId] = useState<string | null>(null);
   const [expandedDirs, setExpandedDirs] = useState<ReadonlySet<string>>(new Set());
   const [mergeConfirmOpen, setMergeConfirmOpen] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
@@ -241,6 +247,23 @@ export const ReviewScreen = memo(function ReviewScreen({ sessionId, revision, re
     setSelection({ kind: "changed", id });
   }
 
+  function openFileMenu(fileId: string, x: number, y: number, returnFocus: HTMLElement | null) {
+    selectChanged(fileId);
+    setFileMenu({
+      fileId,
+      x: Math.max(8, Math.min(x, window.innerWidth - 224)),
+      y: Math.max(8, Math.min(y, window.innerHeight - 184)),
+      returnFocus,
+    });
+  }
+
+  function openFileMenuFromKeyboard(fileId: string, event: ReactKeyboardEvent<HTMLButtonElement>) {
+    if (event.key !== "ContextMenu" && !(event.shiftKey && event.key === "F10")) return;
+    event.preventDefault();
+    const rect = event.currentTarget.getBoundingClientRect();
+    openFileMenu(fileId, rect.left + 24, rect.top + 24, event.currentTarget);
+  }
+
   function selectRepoPath(path: string) {
     const changedMatch = review?.files.find((file) => file.path === path);
     if (changedMatch) {
@@ -306,7 +329,7 @@ export const ReviewScreen = memo(function ReviewScreen({ sessionId, revision, re
   // full-review left rail's 3-way Browse control — the list content itself
   // doesn't depend on how many options the toggle above it offers.
   const fileBrowseBody = activeTab === "changed" ? (
-    files.length === 0 ? <p className="review-empty">No changed files.</p> : <ul className="review-file-list">{files.map((file) => <li key={file.id}><button type="button" className="review-file" data-selected={selectedChangedFile?.id === file.id ? "true" : "false"} onClick={() => selectChanged(file.id)}><span className="file-copy" title={file.path}><strong>{file.path.split("/").pop()}</strong><span>{file.path}</span><FileAttribution contributors={file.contributors} /></span><span className="diff-stat"><i className="add">+{file.additions}</i><i className="del">−{file.deletions}</i></span></button></li>)}</ul>
+    files.length === 0 ? <p className="review-empty">No changed files.</p> : <ul className="review-file-list">{files.map((file) => <li key={file.id} className="review-file-row"><button type="button" className="review-file" data-selected={selectedChangedFile?.id === file.id ? "true" : "false"} onClick={() => selectChanged(file.id)} onContextMenu={(event: ReactMouseEvent<HTMLButtonElement>) => { event.preventDefault(); openFileMenu(file.id, event.clientX, event.clientY, event.currentTarget); }} onKeyDown={(event) => openFileMenuFromKeyboard(file.id, event)}><span className="file-copy" title={file.path}><strong>{file.path.split("/").pop()}</strong><span>{file.path}</span><FileAttribution contributors={file.contributors} /></span><span className="diff-stat"><i className="add">+{file.additions}</i><i className="del">−{file.deletions}</i></span></button><button type="button" className="review-file-menu-trigger" aria-label={`Actions for ${file.path}`} aria-haspopup="menu" aria-expanded={fileMenu?.fileId === file.id} onClick={(event) => { const rect = event.currentTarget.getBoundingClientRect(); openFileMenu(file.id, rect.right, rect.bottom, event.currentTarget); }}><Icon name="more" size={15} /></button></li>)}</ul>
   ) : (
     !repositoryBrowsable ? <p className="review-empty">No repository connected.</p> : repositoryTree.treeState === "loading" || repositoryTree.treeState === "idle" ? <p className="review-empty">Loading repository files…</p>
       : repositoryTree.treeState === "error" ? <p className="review-empty">The repository tree could not be loaded.</p>
@@ -319,7 +342,7 @@ export const ReviewScreen = memo(function ReviewScreen({ sessionId, revision, re
 
   const previewOption = previewEnabled ? [{ value: "preview" as const, label: "Preview" }] : [];
   const centerPane = selectedChangedFile ? (
-    <section className="review-pane review-diff" aria-label="Diff preview"><div className="review-pane-head"><h3 tabIndex={0} aria-label={selectedChangedFile.path} {...filePathTip.handlers}>{selectedChangedFile.path.split("/").pop()}</h3><FileAttribution contributors={selectedChangedFile.contributors} expanded /><HoverTip position={filePathTip.position}>{selectedChangedFile.path}</HoverTip></div><ContributionCards source={fileContributions} onOpen={(runId) => { setSelectedPromptRunId(runId); setContributionStatus("active"); setBrowseOverride("prompts"); }} onRollback={(runId) => onRequestRollback({ scope: "prompt", subjectId: runId })} />{selectedChangedFile.summary && <Markdown className="review-summary">{selectedChangedFile.summary}</Markdown>}{selectedChangedFile.diff.length > 0 ? <pre className="review-code" aria-label={`Diff preview for ${selectedChangedFile.path}`}>{selectedChangedFile.diff.map((line, index) => <span key={`${index}-${line.text}`} className="review-line" data-type={line.type}><i>{line.type === "add" ? "+" : line.type === "remove" ? "−" : " "}</i><code>{line.text}</code></span>)}</pre> : <p className="review-empty">No diff preview available.</p>}</section>
+    <section className="review-pane review-diff" aria-label="Diff preview"><div className="review-pane-head"><h3 tabIndex={0} aria-label={selectedChangedFile.path} {...filePathTip.handlers}>{selectedChangedFile.path.split("/").pop()}</h3><HoverTip position={filePathTip.position}>{selectedChangedFile.path}</HoverTip></div>{selectedChangedFile.summary && <Markdown className="review-summary">{selectedChangedFile.summary}</Markdown>}{selectedChangedFile.diff.length > 0 ? <pre className="review-code" aria-label={`Diff preview for ${selectedChangedFile.path}`}>{selectedChangedFile.diff.map((line, index) => <span key={`${index}-${line.text}`} className="review-line" data-type={line.type}><i>{line.type === "add" ? "+" : line.type === "remove" ? "−" : " "}</i><code>{line.text}</code></span>)}</pre> : <p className="review-empty">No diff preview available.</p>}</section>
   ) : selectedRepoPath ? (
     <section className="review-pane review-diff review-file-pane" aria-label="File preview"><div className="review-pane-head"><h3>{selectedRepoPath}</h3></div>{
       selectedRepoFileState === "idle" || selectedRepoFileState === "loading" ? <p className="review-empty">Loading file…</p>
@@ -447,6 +470,18 @@ export const ReviewScreen = memo(function ReviewScreen({ sessionId, revision, re
     {review && abandonConfirmOpen && <AbandonConfirmDialog branch={review?.branch} busy={busy} onClose={() => setAbandonConfirmOpen(false)} onConfirm={runAbandon} />}
     {blockingRunId && pendingAction && <IntegrationBlockedDialog retrying={retrying} onClose={() => setPendingAction(null)} onConfirm={cancelBlockingRunAndRetry} />}
     {conflictCenter && <ConflictCenterDialog sessionId={sessionId} conflicts={conflicts} initialCaseId={conflictCenter.caseId} owner={owner} currentUserId={currentUserId} busy={busy} onClose={() => setConflictCenter(null)} onMutation={onConflictMutation} />}
+    {review && fileMenu && (() => {
+      const file = review.files.find((item) => item.id === fileMenu.fileId);
+      return file ? <FileContextMenu file={file} position={fileMenu} returnFocus={fileMenu.returnFocus} repository={repository} review={review} owner={owner} disabled={busy || Boolean(review.integrationRunId)} onClose={() => setFileMenu(null)} onInfo={() => { setFileInfoId(file.id); setFileMenu(null); }} onRemove={() => { setFileRemovalId(file.id); setFileMenu(null); }} onNotice={onNotice} /> : null;
+    })()}
+    {review && fileInfoId && (() => {
+      const file = review.files.find((item) => item.id === fileInfoId);
+      return file ? <FileInfoDialog file={file} source={fileContributions} onClose={() => setFileInfoId(null)} onOpenPrompt={(runId) => { setFileInfoId(null); setAllPrompts(false); setSelectedPromptRunId(runId); setContributionStatus("active"); setBrowseOverride("prompts"); }} /> : null;
+    })()}
+    {review && fileRemovalId && (() => {
+      const file = review.files.find((item) => item.id === fileRemovalId);
+      return file && review.commitSha ? <FileRemovalConfirmDialog file={file} baseBranch={review.baseBranch} busy={busy} onClose={() => setFileRemovalId(null)} onConfirm={async () => { const ok = await onRemoveFileChanges(file.path, review.commitSha!); if (ok) { setFileRemovalId(null); onNotice(`Removing changes from ${file.path}`); } }} /> : null;
+    })()}
   </section>;
 });
 
@@ -498,6 +533,7 @@ export function PreviewBrowser({ preview }: { preview: RepositoryPreviewSnapshot
 
 type ContributionSource = ReturnType<typeof useReviewContributions>;
 type ContributionDetailSource = ReturnType<typeof useReviewContributionDetail>;
+type ReviewFile = FloorReviewSnapshot["files"][number];
 
 function contributionLabel(contribution: ReviewContribution) {
   if (contribution.rollbackStatus === "completed") return "Rolled back";
@@ -516,23 +552,109 @@ function EngineerNames({ contribution }: { contribution: ReviewContribution }) {
   return names.map((name, index) => <Fragment key={name}>{index > 0 ? ", " : ""}<PersonName name={name} /></Fragment>);
 }
 
-function ContributionCards({ source, onOpen, onRollback }: {
-  source: ContributionSource;
-  onOpen: (runId: string) => void;
-  onRollback: (runId: string) => void;
+function FileContextMenu({ file, position, returnFocus, repository, review, owner, disabled, onClose, onInfo, onRemove, onNotice }: {
+  file: ReviewFile;
+  position: { x: number; y: number };
+  returnFocus: HTMLElement | null;
+  repository: RepositoryConnection | null;
+  review: FloorReviewSnapshot;
+  owner: boolean;
+  disabled: boolean;
+  onClose: () => void;
+  onInfo: () => void;
+  onRemove: () => void;
+  onNotice: (message: string) => void;
 }) {
-  if (source.loading && source.items.length === 0) return <p className="review-empty">Loading prompt attribution…</p>;
-  if (source.error) return <p className="review-empty" role="alert">Prompt attribution could not be loaded.</p>;
-  if (source.items.length === 0) return <p className="review-empty">No active prompt attribution for this file.</p>;
-  return <div className="review-contribution-cards" aria-label="Prompt contributions">
-    {source.items.map((contribution) => <details key={contribution.runId} className="review-contribution-card">
-      <summary><span><strong>{contribution.agentName}</strong><small><EngineerNames contribution={contribution} /></small></span><span className="queue-chip" data-kind="status" data-status={contribution.rollbackStatus ?? "active"}>{contributionLabel(contribution)}</span></summary>
-      <RunAttributionInfo attribution={contribution.attribution} promptedBy={contribution.prompts.map((prompt) => ({ userId: prompt.authorUserId, name: prompt.authorName, deleted: Boolean(prompt.authorDeleted) }))} commitUrl={contribution.commitUrl} />
-      <p>{contributionPreview(contribution)}</p>
-      {contribution.rollbackStatus === "failed" && contribution.rollbackFailureReason && <p className="review-empty" role="alert">{contribution.rollbackFailureReason}</p>}
-      <div className="review-contribution-actions"><button type="button" className="button" data-size="sm" onClick={() => onOpen(contribution.runId)}>View prompt changes</button>{contribution.canRollback && <button type="button" className="button danger-button" data-size="sm" onClick={() => onRollback(contribution.runId)}>Remove changes</button>}</div>
-    </details>)}
-  </div>;
+  const menuRef = useRef<HTMLDivElement>(null);
+  function moveFocus(event: ReactKeyboardEvent<HTMLDivElement>) {
+    if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+    event.preventDefault();
+    const items = [...(menuRef.current?.querySelectorAll<HTMLElement>("[role=menuitem]:not(:disabled)") ?? [])];
+    if (items.length === 0) return;
+    const current = items.indexOf(document.activeElement as HTMLElement);
+    const next = event.key === "Home" ? 0 : event.key === "End" ? items.length - 1
+      : event.key === "ArrowDown" ? (current + 1) % items.length : (current - 1 + items.length) % items.length;
+    items[next]?.focus();
+  }
+  useEffect(() => {
+    menuRef.current?.querySelector<HTMLElement>("[role=menuitem]")?.focus();
+    const dismissPointer = (event: PointerEvent) => {
+      if (!menuRef.current?.contains(event.target as Node)) onClose();
+    };
+    const dismissKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    const dismissViewport = () => onClose();
+    window.addEventListener("pointerdown", dismissPointer);
+    window.addEventListener("keydown", dismissKey);
+    window.addEventListener("resize", dismissViewport);
+    window.addEventListener("scroll", dismissViewport, true);
+    return () => {
+      window.removeEventListener("pointerdown", dismissPointer);
+      window.removeEventListener("keydown", dismissKey);
+      window.removeEventListener("resize", dismissViewport);
+      window.removeEventListener("scroll", dismissViewport, true);
+      if (returnFocus?.isConnected) returnFocus.focus();
+    };
+  }, [onClose, returnFocus]);
+  const ref = file.changeKind === "delete" ? review.baseBranch : review.commitSha;
+  const githubUrl = repository && ref
+    ? `https://github.com/${repository.repositoryFullName}/blob/${encodeURIComponent(ref)}/${file.path.split("/").map(encodeURIComponent).join("/")}`
+    : null;
+  return createPortal(
+    <div ref={menuRef} className="review-file-context-menu" role="menu" aria-label={`Actions for ${file.path}`} style={{ left: position.x, top: position.y }} onKeyDown={moveFocus}>
+      <button type="button" role="menuitem" onClick={onInfo}><Icon name="info" size={15} />Change info</button>
+      <button type="button" role="menuitem" onClick={() => { void navigator.clipboard.writeText(file.path).then(() => onNotice("File path copied"), () => onNotice("File path could not be copied")); onClose(); }}><Icon name="copy" size={15} />Copy path</button>
+      {githubUrl && <a role="menuitem" href={githubUrl} target="_blank" rel="noreferrer" onClick={onClose}><Icon name="external" size={15} />Open on GitHub</a>}
+      <span className="review-file-context-separator" role="separator" />
+      <button type="button" role="menuitem" className="danger" disabled={!owner || disabled || review.status === "merged" || review.status === "abandoned" || !review.commitSha} title={!owner ? "Only the session owner can remove file changes" : undefined} onClick={onRemove}><Icon name="trash" size={15} />{owner ? "Remove file changes" : "Remove changes (owner only)"}</button>
+    </div>,
+    document.body,
+  );
+}
+
+function FileInfoDialog({ file, source, onClose, onOpenPrompt }: {
+  file: ReviewFile;
+  source: ContributionSource;
+  onClose: () => void;
+  onOpenPrompt: (runId: string) => void;
+}) {
+  const { dialogProps, dismiss } = useDialogDismiss(onClose);
+  const changeLabel = file.changeKind === "add" ? "Added" : file.changeKind === "delete" ? "Deleted" : file.previousPath ? "Renamed" : "Modified";
+  return <dialog {...dialogProps} className="dialog review-file-info-dialog" aria-labelledby="review-file-info-title">
+    <div className="dialog-head"><div><span className="label">Change info</span><h2 id="review-file-info-title">{file.path.split("/").pop()}</h2><p>{file.path}</p></div><button type="button" className="icon-button" aria-label="Close change info" onClick={dismiss}><Icon name="close" size={16} /></button></div>
+    <div className="review-file-info-summary"><span>{changeLabel}</span><span className="diff-stat"><i className="add">+{file.additions}</i><i className="del">−{file.deletions}</i></span>{file.previousPath && <small>Renamed from {file.previousPath}</small>}</div>
+    <div className="review-file-info-body">
+      {source.loading && source.items.length === 0 ? <p className="review-empty">Loading change sources…</p>
+        : source.error ? <p className="review-empty" role="alert">Change sources could not be loaded.</p>
+        : source.items.length === 0 ? <p className="review-empty">No active prompt attribution for this file.</p>
+        : <ul className="review-file-source-list">{source.items.map((contribution) => <li key={contribution.runId}><div><span className="label">Agent</span><strong>{contribution.agentName}</strong></div><RunAttributionInfo attribution={contribution.attribution} promptedBy={contribution.prompts.map((prompt) => ({ userId: prompt.authorUserId, name: prompt.authorName, deleted: Boolean(prompt.authorDeleted) }))} commitUrl={contribution.commitUrl} /><ol>{contribution.prompts.map((prompt) => <li key={prompt.id}><span><span className="label">User</span><PersonName name={prompt.authorName} /></span><p>{prompt.text}</p></li>)}</ol><button type="button" className="button" data-size="sm" onClick={() => onOpenPrompt(contribution.runId)}>View prompt changes</button></li>)}</ul>}
+      {file.removalStatus === "failed" && file.removalFailureReason && <p className="review-empty" role="alert">Last removal failed: {file.removalFailureReason}</p>}
+    </div>
+    <div className="dialog-foot"><button type="button" className="button" onClick={dismiss}>Close</button></div>
+  </dialog>;
+}
+
+function FileRemovalConfirmDialog({ file, baseBranch, busy, onClose, onConfirm }: {
+  file: ReviewFile;
+  baseBranch: string;
+  busy: boolean;
+  onClose: () => void;
+  onConfirm: () => Promise<void>;
+}) {
+  const { dialogProps, dismiss } = useDialogDismiss(onClose);
+  const effect = file.changeKind === "add"
+    ? "Added file will be deleted from candidate."
+    : file.changeKind === "delete"
+      ? `Deleted file will be restored from ${baseBranch}.`
+      : file.previousPath
+        ? `Rename will be undone and original path restored from ${baseBranch}.`
+        : `File will be restored to its ${baseBranch} version.`;
+  return <dialog {...dialogProps} className="dialog confirm-dialog" aria-labelledby="file-removal-title">
+    <div className="dialog-head"><div><span className="label">Review file</span><h2 id="file-removal-title">Remove changes from this file?</h2></div><button type="button" className="icon-button" aria-label="Close" onClick={dismiss} disabled={busy}><Icon name="close" size={16} /></button></div>
+    <div className="dialog-body"><p><code>{file.path}</code></p><p>{effect} Openfloor creates a new candidate commit; prompt, agent, and user history stays intact.</p></div>
+    <div className="dialog-foot"><button type="button" className="button" data-variant="quiet" onClick={dismiss} disabled={busy}>Cancel</button><button type="button" className="button danger-button" onClick={() => void onConfirm()} disabled={busy}>{busy ? "Removing…" : "Remove changes"}</button></div>
+  </dialog>;
 }
 
 function PromptContributionDetail({ detail, status, onRollback }: {

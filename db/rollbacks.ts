@@ -295,7 +295,12 @@ export async function createAgentRunRollback(
             (SELECT COUNT(*) FROM floor_queue_prompts p WHERE p.queue_item_id = r.queue_item_id) AS promptCount,
             (SELECT COUNT(*) FROM floor_queue_prompts p WHERE p.queue_item_id = r.queue_item_id AND p.author_user_id != ?) AS otherAuthorCount,
             (SELECT COUNT(*) FROM agent_run_rollbacks completed WHERE completed.run_id = r.id AND completed.status = 'completed') AS completedCount,
-            (SELECT COUNT(*) FROM agent_run_rollbacks active WHERE active.run_id = r.id AND active.status IN ('requested', 'running')) AS activeCount
+            (SELECT COUNT(*) FROM agent_run_rollbacks active WHERE active.run_id = r.id AND active.status IN ('requested', 'running')) AS activeCount,
+            (SELECT COUNT(*) FROM agent_run_files removed_file
+             JOIN candidate_file_removals removal
+               ON removal.candidate_id = r.candidate_id AND removal.path = removed_file.path
+              AND removal.status = 'completed' AND removal.completed_at >= r.integrated_at
+             WHERE removed_file.run_id = r.id) AS removedFileCount
      FROM agent_runs r
      JOIN floor_agents a ON a.id = r.agent_id
      JOIN repository_candidates c ON c.id = r.candidate_id
@@ -305,7 +310,7 @@ export async function createAgentRunRollback(
     id: string; status: string; integratedCandidateSha: string | null; queueItemId: string; agentOwnerUserId: string;
     candidateId: string; candidateStatus: string; candidateSha: string | null; remoteCandidateSha: string | null;
     integrationRunId: string | null; mergedAt: number | null; connectionStatus: string;
-    promptCount: number; otherAuthorCount: number; completedCount: number; activeCount: number;
+    promptCount: number; otherAuthorCount: number; completedCount: number; activeCount: number; removedFileCount: number;
   }>();
   if (!context) return null;
   const ownsEveryPrompt = Number(context.promptCount) > 0 && Number(context.otherAuthorCount) === 0;
@@ -315,6 +320,7 @@ export async function createAgentRunRollback(
   }
   if (Number(context.completedCount) > 0) throw new AgentRunConflictError("This prompt was already rolled back");
   if (Number(context.activeCount) > 0) throw new AgentRunConflictError("This prompt is already being rolled back");
+  if (Number(context.removedFileCount) > 0) throw new AgentRunConflictError("This prompt contains a file removed separately");
   if (context.candidateStatus !== "active" || context.mergedAt !== null) {
     throw new AgentRunConflictError("The candidate is no longer open for rollback");
   }

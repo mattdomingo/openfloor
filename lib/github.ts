@@ -31,7 +31,7 @@ export type GitHubPullRequestReview = {
   baseSha: string;
   mergeCommitSha: string | null;
   checksPassing: boolean;
-  files: Array<{ path: string; additions: number; deletions: number; changeKind: "add" | "update" | "delete"; patchPreview: string }>;
+  files: Array<{ path: string; previousPath: string | null; additions: number; deletions: number; changeKind: "add" | "update" | "delete"; patchPreview: string }>;
   checks: Array<{ sourceId: string; name: string; detail: string | null; state: "passed" | "waiting" | "failed" }>;
 };
 
@@ -416,7 +416,7 @@ export async function getPullRequestReview(
   let patchBytes = 0;
   for (let page = 1; page <= 3; page += 1) {
     const filesResponse = await githubFetch(`${root}/pulls/${pullRequestNumber}/files?per_page=100&page=${page}`, token);
-    const pageFiles = await filesResponse.json() as Array<{ filename?: string; status?: string; additions?: number; deletions?: number; patch?: string }>;
+    const pageFiles = await filesResponse.json() as Array<{ filename?: string; previous_filename?: string; status?: string; additions?: number; deletions?: number; patch?: string }>;
     for (const file of pageFiles) {
       if (!file.filename || files.length >= 250) throw new GitHubApiError("Pull request contains too many files for bounded review", 422);
       const remaining = Math.max(0, 1_000_000 - patchBytes);
@@ -424,6 +424,7 @@ export async function getPullRequestReview(
       patchBytes += new TextEncoder().encode(patchPreview).byteLength;
       files.push({
         path: file.filename,
+        previousPath: file.status === "renamed" && file.previous_filename ? file.previous_filename : null,
         additions: Number(file.additions ?? 0),
         deletions: Number(file.deletions ?? 0),
         changeKind: file.status === "added" ? "add" : file.status === "removed" ? "delete" : "update",
