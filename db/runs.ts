@@ -1,4 +1,4 @@
-import { readRunAttribution, type RunRequester } from "@/lib/run-attribution";
+import { githubCommitUrl, readRunAttribution, type RunRequester } from "@/lib/run-attribution";
 import { getQueueRunAttribution } from "./run-attribution";
 import type { AgentRun, AgentRunCheck, AgentRunFile, AgentRunStatus, RunActivityEvent } from "@/lib/floor-types";
 import { resolveRunModel, type CredentialProvider } from "@/lib/provider-credentials";
@@ -10,17 +10,17 @@ export class AgentRunConflictError extends Error {}
 export class AgentRunNotReadyError extends Error {}
 export class AgentRunIntegrationBusyError extends Error {}
 
-type RunRecord = Omit<AgentRun, "checks" | "files" | "attribution" | "promptedBy"> & { attributionJson: string | null; promptedByJson: string };
+type RunRecord = Omit<AgentRun, "checks" | "files" | "attribution" | "promptedBy"> & { attributionJson: string | null; promptedByJson: string; repositoryFullName: string | null };
 
 function publicRunRecord(row: RunRecord) {
-  const { attributionJson, promptedByJson, ...run } = row;
-  return { ...run, attribution: readRunAttribution(attributionJson), promptedBy: (JSON.parse(promptedByJson ?? "[]") as RunRequester[]).map((person) => ({ ...person, deleted: Boolean(person.deleted) })) };
+  const { attributionJson, promptedByJson, repositoryFullName, ...run } = row;
+  return { ...run, commitUrl: githubCommitUrl(repositoryFullName, run.runCommitSha), attribution: readRunAttribution(attributionJson), promptedBy: (JSON.parse(promptedByJson ?? "[]") as RunRequester[]).map((person) => ({ ...person, deleted: Boolean(person.deleted) })) };
 }
 type CheckRecord = Omit<AgentRunCheck, "hasLog"> & { logKey: string | null };
 type ScopedCheckRecord = CheckRecord & { runId: string };
 type ScopedFileRecord = AgentRunFile & { runId: string };
 
-const AGENT_RUN_SELECT = `SELECT r.id, r.attribution AS attributionJson,
+const AGENT_RUN_SELECT = `SELECT r.id, r.attribution AS attributionJson, repository.repository_full_name AS repositoryFullName,
         (SELECT json_group_array(json_object('userId', userId, 'name', name, 'deleted', deleted)) FROM (
           SELECT DISTINCT u.id AS userId, u.display_name AS name, u.deleted_at IS NOT NULL AS deleted
           FROM floor_queue_prompts p JOIN users u ON u.id = p.author_user_id
@@ -49,6 +49,8 @@ const AGENT_RUN_SELECT = `SELECT r.id, r.attribution AS attributionJson,
         rb.failure_reason AS rollbackFailureReason, rb.created_by AS rollbackBy,
         rb.created_at AS rollbackRequestedAt, rb.completed_at AS rollbackCompletedAt
  FROM agent_runs r JOIN floor_agents a ON a.id = r.agent_id
+ LEFT JOIN repository_candidates candidate ON candidate.id = r.candidate_id
+ LEFT JOIN repository_connections repository ON repository.id = candidate.connection_id
  LEFT JOIN agent_runs prior ON prior.id = r.resumed_from_run_id
  LEFT JOIN merge_conflict_attempts mca ON mca.run_id = r.id
  LEFT JOIN merge_conflict_cases source_case ON source_case.source_run_id = r.id

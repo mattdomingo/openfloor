@@ -101,4 +101,18 @@ describe("engineer verification and run identity", () => {
     expect(await getCandidateCommitAuthors(r.sessionId, r.candidateId, env.DB)).toEqual([]);
   });
 
+  it("applies the additive migration to populated legacy tables without cascading away authored work", async () => {
+    const r = await room();
+    await refreshUserGitHubInstallations(r.member.id, [], env.DB, proof);
+    const run = await createAgentRun(r.sessionId, r.queueItemId, r.owner.id, "task", env.DB);
+    const before = await env.DB.prepare("SELECT id, session_id, agent_id, queue_item_id FROM agent_runs WHERE id = ?").bind(run.id).first();
+    await env.DB.prepare("ALTER TABLE agent_runs DROP COLUMN attribution").run();
+    await env.DB.prepare("ALTER TABLE users DROP COLUMN verified_github").run();
+    const queries = JSON.parse(env.ATTRIBUTION_MIGRATION_QUERIES) as string[];
+    await env.DB.batch(queries.map((sql) => env.DB.prepare(sql)));
+    expect(await env.DB.prepare("SELECT id, session_id, agent_id, queue_item_id FROM agent_runs WHERE id = ?").bind(run.id).first()).toEqual(before);
+    expect((await getFloorSnapshot(r.sessionId, r.member.id, env.DB))?.queue[0].prompts[0].authorUserId).toBe(r.member.id);
+    expect((await getAgentRun(run.id, env.DB))?.attribution).toBeNull();
+  });
+
 });

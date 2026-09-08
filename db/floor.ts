@@ -235,7 +235,7 @@ async function readFloorSnapshot(sessionId: string, userId: string, database: D1
     latestPreflight,
     preview,
     runs,
-    review: buildRunReview(candidateRuns, reviewCandidate, candidateReview, promptsByItem, assignments.results, conflicts),
+    review: buildRunReview(candidateRuns, reviewCandidate, candidateReview, promptsByItem, conflicts),
   };
 }
 
@@ -243,14 +243,13 @@ async function readFloorSnapshot(sessionId: string, userId: string, database: D1
 function contributorsByPath(
   reviewRuns: AgentRun[],
   promptsByItem: Map<string, FloorQueuePrompt[]>,
-  memberNames: Map<string, string>,
 ): Map<string, ReviewContributor[]> {
   const byPath = new Map<string, ReviewContributor[]>();
   for (const run of reviewRuns) {
     const prompts = promptsByItem.get(run.queueItemId) ?? [];
-    const requestedBy = prompts.length > 0
-      ? [...new Map(prompts.map((prompt) => [prompt.authorUserId, { userId: prompt.authorUserId, userName: prompt.authorName }])).values()]
-      : [{ userId: run.createdBy, userName: memberNames.get(run.createdBy) ?? "Unknown" }];
+    const requestedBy = run.attribution?.kind === "system" ? [] : run.promptedBy
+      ? run.promptedBy.map((person) => ({ userId: person.userId, userName: person.name }))
+      : [...new Map(prompts.map((prompt) => [prompt.authorUserId, { userId: prompt.authorUserId, userName: prompt.authorName }])).values()];
     for (const file of run.files) {
       const contributors = byPath.get(file.path) ?? [];
       const existing = contributors.find((contributor) => contributor.agentId === run.agentId);
@@ -272,7 +271,6 @@ function buildRunReview(
   candidate: Awaited<ReturnType<typeof getLatestRepositoryReviewCandidate>>,
   githubReview: Awaited<ReturnType<typeof getRepositoryCandidateReviewData>> | null,
   promptsByItem: Map<string, FloorQueuePrompt[]>,
-  members: Array<{ userId: string; userName: string }>,
   conflicts: Awaited<ReturnType<typeof getMergeConflictCases>>,
 ): FloorReviewSnapshot | null {
   if (!candidate) return null;
@@ -280,8 +278,7 @@ function buildRunReview(
   if (candidateRuns.length === 0 && !candidate.pullRequestNumber) return null;
   const reviewRuns = (candidate.pullRequestNumber ? candidateRuns.filter((run) => run.status === "integrated") : candidateRuns)
     .filter((run) => run.rollbackStatus !== "completed");
-  const memberNames = new Map(members.map((member) => [member.userId, member.userName]));
-  const contributors = contributorsByPath(reviewRuns, promptsByItem, memberNames);
+  const contributors = contributorsByPath(reviewRuns, promptsByItem);
   const files = githubReview?.files.length ? githubReview.files.map((file) => ({
     id: file.id,
     path: file.path,

@@ -26,6 +26,7 @@ declare global {
       SESSION_PRESENCE: DurableObjectNamespace<SessionPresence>;
       TEST_MIGRATIONS: string;
       ACCOUNT_EMAIL_MERGE_QUERIES: string;
+      ATTRIBUTION_MIGRATION_QUERIES: string;
       AUTO_AGENT_DATA_MIGRATION_QUERIES: string;
       ACCOUNT_GITHUB_MIGRATION_QUERIES: string;
       AGENT_BILLING_QUARANTINE_QUERIES: string;

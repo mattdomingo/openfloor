@@ -157,3 +157,5 @@ GitHub repository refresh reuses `POST/PUT /api/account/github/device`. A succes
 GitHub connection responses include `verifiedGitHub` (personal ID, login, verification timestamp). Account responses expose the same nullable identity independently of the editable profile handle. Code run start/retry returns `409 { code: "github_verification_required", error }` when any original prompt author lacks proof; no paid run starts. Floor queue prompts expose a derived `githubVerified` boolean for waiting guidance.
 
 `AgentRun` adds nullable `attribution` (`kind`, ordered public GitHub authors) and `promptedBy` (user ID, current display name, deletion marker). These fields are included in floor snapshots and paginated history without extra per-run queries. They describe original prompters separately from `createdBy`, which remains the dispatcher audit.
+
+Runs and Review contributions expose a nullable validated `commitUrl`. Contributions include immutable `attribution` and current prompt-author deletion markers so History and Review can suppress deleted-user profile links while retaining public Git audit metadata.

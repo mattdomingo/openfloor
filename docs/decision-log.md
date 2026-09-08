@@ -1094,3 +1094,11 @@ Preview v1 supports only one JavaScript app at the repository root with exactly 
 **Rationale:** Prompt authors, rather than dispatchers, agent owners, or everyone present in a session, supplied the work's intent. A stable run snapshot makes publication retries reproduce the same SHA even if an account is renamed or reconnected.
 
 **Consequences:** Run list responses add parsed attribution and current prompt-author names in the existing run SELECT, preserving one run read plus two set-based file/check reads. Published public identity is retained as run audit on account deletion; account verification is cleared and user-facing names remain Deleted user. Baselines, integration merge identity, rollback reconstruction, bundle validation, transport credentials, and SHA leases are unchanged. Publisher/executor image generations advance to v5/v13. Application rollback keeps the additive columns and must drain new attributed publication attempts before rolling the publisher back, because an old publisher would calculate different run SHAs. Existing in-flight legacy runs retain bot authorship.
+
+### 2026-09-08 — Make engineer attribution visible in existing history and review
+
+**Decision:** Run History and Review contribution cards/details show original prompters, verified public GitHub identities, and links to recorded run commits. The shared presentation labels system feedback explicitly, explains legacy runs without recorded Git authorship, and suppresses deleted engineers' profile links. Review file contributors derive from retained run prompt history, including dismissed items, instead of substituting a dispatcher.
+
+**Rationale:** Git credit alone does not make it easy to locate an engineer's changes inside the coordination room. Reusing the existing History and Review surfaces avoids another competing activity dashboard.
+
+**Consequences:** Run and contribution responses add validated commit links and attribution without per-run read fan-out. Engineer filters, empty states, review authorization, and deleted-user display semantics remain intact. A two-user browser acceptance case starts with a legacy account lacking proof, verifies a per-item dispatch hold, reconnects through Settings, and checks retained engineer credit.

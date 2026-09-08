@@ -12,3 +12,8 @@ export function readRunAttribution(json: string | null | undefined): RunAttribut
       (value.kind === "system" && value.authors.length > 0)) throw new Error("Invalid stored run attribution");
   return value;
 }
+
+export function githubCommitUrl(repository: string | null | undefined, sha: string | null | undefined): string | null {
+  return repository && /^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/.test(repository) && sha && /^[0-9a-f]{40}$/.test(sha)
+    ? `https://github.com/${repository}/commit/${sha}` : null;
+}

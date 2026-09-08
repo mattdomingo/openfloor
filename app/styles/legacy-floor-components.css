@@ -5512,3 +5512,8 @@
 .conflict-answer-form { display: grid; gap: 9px; }
 .conflict-answer-form label { display: grid; gap: 5px; font-weight: 600; }
 .conflict-answer-form textarea { min-height: 72px; resize: vertical; }
+
+.run-attribution-info { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: baseline; overflow-wrap: anywhere; }
+.run-attribution-info p { margin: 0; }
+.run-attribution-info small { flex-basis: 100%; }
+.run-attribution-info a { text-decoration: underline; text-underline-offset: 3px; }

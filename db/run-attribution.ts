@@ -28,9 +28,10 @@ export async function getQueueRunAttribution(sessionId: string, queueItemId: str
 export async function getCandidateCommitAuthors(sessionId: string, candidateId: string, database = getDb()): Promise<RunAuthor[]> {
   const rows = await database.prepare(
     `SELECT r.attribution,
-       (SELECT json_group_array(json_object('userId', p.author_user_id, 'identity', u.verified_github))
+       (SELECT json_group_array(json_object('userId', userId, 'identity', identity)) FROM (
+        SELECT p.author_user_id AS userId, u.verified_github AS identity
         FROM floor_queue_prompts p JOIN users u ON u.id = p.author_user_id WHERE p.queue_item_id = r.queue_item_id
-        ORDER BY p.created_at, p.id) AS legacyAuthors
+        ORDER BY p.created_at, p.id)) AS legacyAuthors
      FROM agent_runs r JOIN floor_queue_items q ON q.id = r.queue_item_id AND q.session_id = r.session_id
      WHERE r.session_id = ? AND r.candidate_id = ? AND r.status = 'integrated' AND r.kind IS NULL AND q.origin IS NULL
        AND EXISTS (SELECT 1 FROM agent_run_files f WHERE f.run_id = r.id)
