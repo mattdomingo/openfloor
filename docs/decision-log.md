@@ -1072,8 +1072,8 @@ Preview v1 supports only one JavaScript app at the repository root with exactly 
 
 ### 2026-09-07 — Keep preview acceptance fixtures inside the execution namespace
 
-**Decision:** Place container preview fixtures under the existing `/tmp/openfloor` mount, correct the capability assertion escape, and close the loopback test server.
+**Decision:** Place container preview fixtures under the existing `/tmp/openfloor` mount, close the loopback test server, and give the private tmpfs `/tmp` standard mode `1777`.
 
-**Rationale:** The sync CI fixture was invisible inside the isolated namespace; later assertions also contained an escaped regular expression and a live server that prevented process completion.
+**Rationale:** The sync CI fixture was invisible inside the isolated namespace; later assertions also contained an escaped regular expression a live server that prevented process completion, and an unwritable private temporary directory that broke Yarn.
 
-**Consequences:** No runtime mounts, permissions, or product behavior change. Executor/publisher generations advance to `v13`/`v5` because the image includes these test scripts. Container acceptance continues to verify lifecycle suppression, private loopback, zero capabilities, and blocked outbound traffic.
+**Consequences:** No host mounts or privileges are added. Only the private tmpfs permission changes, restoring ordinary unprivileged temporary-file creation. Executor/publisher generations advance to `v13`/`v5` because the image includes these test scripts. Container acceptance continues to verify lifecycle suppression, private loopback, zero capabilities, and blocked outbound traffic.

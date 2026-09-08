@@ -25,7 +25,7 @@ export function sandboxArguments(command, environment = {}, {
 } = {}) {
   const args = ["--die-with-parent", "--unshare-pid", "--unshare-net", "--unshare-ipc", "--unshare-uts", "--new-session", "--clearenv"];
   for (const path of ["/usr", "/bin", "/lib", "/lib64"]) if (existsSync(path)) args.push("--ro-bind", path, path);
-  args.push("--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp", "--dir", "/run", "--dir", "/etc", "--dir", "/opt/openfloor", "--dir", "/workspace");
+  args.push("--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp", "--chmod", "1777", "/tmp", "--dir", "/run", "--dir", "/etc", "--dir", "/opt/openfloor", "--dir", "/workspace");
   for (const path of ["/etc/ssl", "/etc/ld.so.cache", "/etc/passwd", "/etc/group"]) if (existsSync(path)) args.push("--ro-bind", path, path);
   args.push("--ro-bind", "/opt/openfloor/node_modules", "/opt/openfloor/node_modules");
   for (const file of [...RUNTIME_FILES, ...extraRoFiles]) args.push("--ro-bind", `/opt/openfloor/${file}`, `/opt/openfloor/${file}`);

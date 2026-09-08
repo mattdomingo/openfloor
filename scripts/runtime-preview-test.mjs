@@ -34,7 +34,7 @@ for (const manager of ["npm", "pnpm", "yarn", "bun"]) {
     { HOME: "/tmp/openfloor/workspace-home" },
     { extraRoFiles: ["repository-preview.mjs"] },
   ), { encoding: "utf8", timeout: 60_000, env: { PATH: "/usr/local/bin:/usr/bin:/bin" } });
-  assert.equal(result.status, 0, result.stderr || result.error?.message);
+  assert.equal(result.status, 0, `${manager}: ${result.stdout} ${result.stderr || result.error?.message || ""}`);
   assert(!existsSync(`${fixture}/lifecycle-ran`));
   assert.match(readFileSync(`${fixture}/config.json`, "utf8"), new RegExp(`"packageManager":"${manager}"`));
 }
@@ -52,7 +52,7 @@ const loopback = spawnSync("/usr/bin/bwrap", sandboxArguments(
     import net from 'node:net';
     assert.equal(process.getuid(), 10002);
     const status = fs.readFileSync('/proc/self/status','utf8');
-    for (const capability of ['CapInh','CapPrm','CapEff','CapBnd','CapAmb']) assert.match(status, new RegExp(capability + ':\\s+0+'));
+    for (const capability of ['CapInh','CapPrm','CapEff','CapBnd','CapAmb']) assert.match(status, new RegExp(capability + ':\\\\s+0+'));
     await new Promise((resolve, reject) => {
       const server = http.createServer((_request, response) => response.end('preview-loopback'));
       server.listen(3456, '127.0.0.1', () => {

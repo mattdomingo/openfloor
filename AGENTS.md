@@ -700,4 +700,4 @@ Session creation uses the server-loaded quota summary to show a Plan & usage dia
 
 ### Preview isolation test fixtures (2026-09-07)
 
-Executor generation is `v13`, publisher `v5`, because the test scripts are included in the Sandbox image. Container preview fixtures live under `/tmp/openfloor`, which the execution namespace mounts. Tests must not broaden production mounts to reach host fixtures. The loopback test closes its server and verifies zero capabilities before checking blocked outbound connections.
+Executor generation is `v13`, publisher `v5`, because the test scripts are included in the Sandbox image. Container preview fixtures live under `/tmp/openfloor`, which the execution namespace mounts. Tests must not broaden production mounts to reach host fixtures. The private tmpfs `/tmp` uses standard mode `1777` so the unprivileged tools can create temporary files; no host temporary directory is exposed. The loopback test closes its server and verifies zero capabilities before checking blocked outbound connections.
