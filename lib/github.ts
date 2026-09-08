@@ -671,7 +671,7 @@ export async function squashMergePullRequest(
   const response = await fetch(`${API_ROOT}/repos/${encodeURIComponent(repository.owner)}/${encodeURIComponent(repository.name)}/pulls/${pullRequestNumber}/merge`, {
     method: "PUT",
     headers: { ...githubHeaders(token), "content-type": "application/json" },
-    body: JSON.stringify({ sha: expectedHeadSha, merge_method: "squash", ...(commitMessage ? { commit_message: commitMessage } : {}) }),
+    body: JSON.stringify({ sha: expectedHeadSha, merge_method: "squash", commit_message: commitMessage || "Changes coordinated through openfloor." }),
   });
   const body = await response.json() as { merged?: boolean; sha?: string; message?: string };
   if (!response.ok || !body.merged || !body.sha) throw new GitHubApiError(body.message ?? "GitHub rejected the squash merge", response.status || 409);

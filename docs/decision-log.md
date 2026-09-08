@@ -1102,3 +1102,11 @@ Preview v1 supports only one JavaScript app at the repository root with exactly 
 **Rationale:** Git credit alone does not make it easy to locate an engineer's changes inside the coordination room. Reusing the existing History and Review surfaces avoids another competing activity dashboard.
 
 **Consequences:** Run and contribution responses add validated commit links and attribution without per-run read fan-out. Engineer filters, empty states, review authorization, and deleted-user display semantics remain intact. A two-user browser acceptance case starts with a legacy account lacking proof, verifies a per-item dispatch hold, reconnects through Settings, and checks retained engineer credit.
+
+### 2026-09-08 — Explicit empty-contributor squash messages
+
+**Decision:** Squash merge always sends an explicit commit message. When no eligible engineers remain, it uses a neutral openfloor message without co-author trailers.
+
+**Rationale:** Omitting the message lets GitHub generate one from branch history and potentially restore credit for rolled-back contributions.
+
+**Consequences:** Empty contributor lists are intentional and never fall back to historical attribution. The GitHub client test asserts the outgoing request body; browser acceptance reads each session's actual PR number rather than assuming its shared test repository has no prior PRs.

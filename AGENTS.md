@@ -712,3 +712,5 @@ The trusted publisher uses immutable run attribution for the Git author (first o
 ### Engineer attribution presentation (2026-09-08)
 
 Run History and existing Review contribution details show original prompters, verified GitHub profile links, and the published run commit. Legacy rows remain explicit about missing Git author metadata, automated feedback is labeled as system-originated, and deleted engineers retain Deleted user presentation. File attribution uses run prompt history rather than falling back to the dispatcher when queue items are dismissed. Commit links are built only from validated repository names and recorded full SHAs. Existing engineer filters and query bounds remain intact.
+
+Squash publication always supplies an explicit commit body, including a neutral body when no eligible contributors remain. Never let GitHub regenerate co-author trailers from rolled-back or system-only history.
