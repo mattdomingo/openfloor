@@ -1,3 +1,5 @@
+import { canUseAgent } from "./agent-access";
+import { readGitHubIdentity } from "@/lib/github-identity";
 import type {
   AgentRun,
   FloorAgent,
@@ -12,7 +14,7 @@ import type {
 } from "@/lib/floor-types";
 import type { AgentInput, AgentSettingsInput, AssignmentInput, MessageInput, QueuePromptInput } from "@/lib/validation";
 import { normalizeAgentName } from "@/lib/validation";
-import { credentialKindsForProvider, PROVIDER_MODELS, type CredentialProvider } from "@/lib/provider-credentials";
+import { availableCredentialKinds, PROVIDER_MODELS, type CredentialProvider } from "@/lib/provider-credentials";
 import { getDb, type D1DatabaseLike } from "./index";
 import {
   getActiveRepositoryCandidate,
@@ -29,7 +31,7 @@ import { disabledRunProviders } from "@/lib/provider-rollout";
 import { env } from "cloudflare:workers";
 import { getRepositoryPreview } from "./previews";
 
-type AgentRecord = FloorAgent;
+type AgentRecord = FloorAgent & { ownerPresent: number };
 type AssignmentRecord = FloorAssignment;
 type MessageRecord = FloorMessage;
 type QueueRecord = Omit<FloorQueueItem, "prompts" | "rollback" | "answer"> & {
@@ -61,13 +63,13 @@ export async function getFloorSnapshot(
 async function readFloorSnapshot(sessionId: string, userId: string, database: D1DatabaseLike): Promise<FloorSnapshot> {
   const [session, providerResolution, agents, assignments, messages, files, queue, prompts, repository, activeCandidate, reviewCandidate, latestPreflight, preview, runs, conflicts] = await Promise.all([
     database.prepare(
-      `SELECT s.floor_revision AS revision, s.auto_dispatch AS autoDispatch,
+      `SELECT s.floor_revision AS revision, s.ended_at AS endedAt, s.auto_dispatch AS autoDispatch,
               s.auto_provision_agents AS autoProvisionAgents, s.auto_resolve_conflicts AS autoResolveConflicts,
               s.auto_inject_feedback AS autoInjectFeedback,
               (SELECT role FROM session_members WHERE session_id = s.id AND user_id = ? AND removed_at IS NULL) AS viewerRole
        FROM sessions s WHERE s.id = ?`,
-    ).bind(userId, sessionId).first<{ revision: number; autoDispatch: number; autoProvisionAgents: number; autoResolveConflicts: number; autoInjectFeedback: number; viewerRole: "owner" | "member" }>(),
-    resolveAutoAgentProvider(sessionId, database, disabledRunProviders()),
+    ).bind(userId, sessionId).first<{ revision: number; endedAt: number | null; autoDispatch: number; autoProvisionAgents: number; autoResolveConflicts: number; autoInjectFeedback: number; viewerRole: "owner" | "member" }>(),
+    resolveAutoAgentProvider(sessionId, database, disabledRunProviders(), userId),
     database.prepare(
       // Two extra joins for lifetime cost (Agent tile meter): `cost` sums
       // every priced run and flags a mixed reported/estimated history (an
@@ -79,11 +81,12 @@ async function readFloorSnapshot(sessionId: string, userId: string, database: D1
       // dropped agent). idx_agent_runs_agent_created covers both.
       `SELECT a.id, a.name, a.role, a.task, a.owner_user_id AS ownerUserId,
               owner.display_name AS ownerName, a.created_by AS createdByUserId,
-              a.state, a.kind, a.provider, a.model,
+              a.state, a.kind, a.provider, a.model, a.usage_scope AS usageScope,
               a.credential_kind AS credentialKind, a.paused_at AS pausedAt,
               a.created_at AS createdAt, a.updated_at AS updatedAt,
               cost.costMicroUsd AS costMicroUsd, cost.costSource AS costSource,
-              latest_run.billed_kind AS billedKind
+              latest_run.billed_kind AS billedKind,
+              EXISTS (SELECT 1 FROM session_members m WHERE m.session_id = a.session_id AND m.user_id = a.owner_user_id AND m.removed_at IS NULL) AS ownerPresent
        FROM floor_agents a
        JOIN users owner ON owner.id = a.owner_user_id
        LEFT JOIN (
@@ -162,13 +165,13 @@ async function readFloorSnapshot(sessionId: string, userId: string, database: D1
     ).bind(sessionId).all<QueueRecord>(),
     database.prepare(
       `SELECT p.id, p.queue_item_id AS queueItemId, p.author_user_id AS authorUserId,
-              author.display_name AS authorName, p.text, p.created_at AS createdAt
+              author.verified_github AS githubIdentity, author.display_name AS authorName, p.text, p.created_at AS createdAt
        FROM floor_queue_prompts p
        JOIN floor_queue_items q ON q.id = p.queue_item_id
        JOIN users author ON author.id = p.author_user_id
        WHERE q.session_id = ? AND q.dismissed_at IS NULL
        ORDER BY p.created_at, p.id`,
-    ).bind(sessionId).all<PromptRecord>(),
+    ).bind(sessionId).all<PromptRecord & { githubIdentity: string | null }>(),
     getRepositoryConnectionForMember(sessionId, userId, database),
     getActiveRepositoryCandidate(sessionId, database),
     getLatestRepositoryReviewCandidate(sessionId, database),
@@ -180,11 +183,19 @@ async function readFloorSnapshot(sessionId: string, userId: string, database: D1
     getMergeConflictCases(sessionId, database),
   ]);
 
+  for (const conflict of conflicts) {
+    if (!conflict.resolution) continue;
+    const authored = [...conflict.resolution.provenance.incoming, ...conflict.resolution.provenance.integrated,
+      ...(!conflict.resolution.snapshotId ? conflict.prompts : [])].some((prompt) => prompt.authorUserId === userId);
+    conflict.resolution.actions = { canPropose: session?.endedAt == null && (session?.viewerRole === "owner" || authored),
+      canOverride: session?.endedAt == null && session?.viewerRole === "owner" };
+  }
+
   const promptsByItem = new Map<string, FloorQueuePrompt[]>();
   for (const prompt of prompts.results) {
-    const { queueItemId, ...publicPrompt } = prompt;
+    const { queueItemId, githubIdentity, ...publicPrompt } = prompt;
     const list = promptsByItem.get(queueItemId) ?? [];
-    list.push(publicPrompt);
+    list.push({ ...publicPrompt, githubVerified: Boolean(readGitHubIdentity(githubIdentity)) });
     promptsByItem.set(queueItemId, list);
   }
 
@@ -199,7 +210,8 @@ async function readFloorSnapshot(sessionId: string, userId: string, database: D1
     autoAgentProviderState: providerResolution.state,
     autoResolveConflicts: Boolean(session?.autoResolveConflicts),
     autoInjectFeedback: Boolean(session?.autoInjectFeedback),
-    agents: agents.results,
+    personalAutoAgentsEnabled: providerResolution.personalEnabled,
+    agents: agents.results.map(({ ownerPresent, ...agent }) => ({ ...agent, canUse: Boolean(ownerPresent) && (agent.ownerUserId === userId || agent.usageScope === "session") })),
     assignments: assignments.results.map((assignment) => ({
       ...assignment,
       task: assignment.task ?? null,
@@ -243,7 +255,7 @@ async function readFloorSnapshot(sessionId: string, userId: string, database: D1
     latestPreflight,
     preview,
     runs,
-    review: buildRunReview(candidateRuns, reviewCandidate, candidateReview, promptsByItem, assignments.results, conflicts),
+    review: buildRunReview(candidateRuns, reviewCandidate, candidateReview, promptsByItem, conflicts),
   };
 }
 
@@ -251,15 +263,14 @@ async function readFloorSnapshot(sessionId: string, userId: string, database: D1
 function contributorsByPath(
   reviewRuns: AgentRun[],
   promptsByItem: Map<string, FloorQueuePrompt[]>,
-  memberNames: Map<string, string>,
   removalCutoffs: Map<string, number>,
 ): Map<string, ReviewContributor[]> {
   const byPath = new Map<string, ReviewContributor[]>();
   for (const run of reviewRuns) {
     const prompts = promptsByItem.get(run.queueItemId) ?? [];
-    const requestedBy = prompts.length > 0
-      ? [...new Map(prompts.map((prompt) => [prompt.authorUserId, { userId: prompt.authorUserId, userName: prompt.authorName }])).values()]
-      : [{ userId: run.createdBy, userName: memberNames.get(run.createdBy) ?? "Unknown" }];
+    const requestedBy = run.attribution?.kind === "system" ? [] : run.promptedBy
+      ? run.promptedBy.map((person) => ({ userId: person.userId, userName: person.name }))
+      : [...new Map(prompts.map((prompt) => [prompt.authorUserId, { userId: prompt.authorUserId, userName: prompt.authorName }])).values()];
     for (const file of run.files) {
       if ((run.integratedAt ?? 0) <= (removalCutoffs.get(file.path) ?? -1)) continue;
       const contributors = byPath.get(file.path) ?? [];
@@ -282,7 +293,6 @@ function buildRunReview(
   candidate: Awaited<ReturnType<typeof getLatestRepositoryReviewCandidate>>,
   githubReview: Awaited<ReturnType<typeof getRepositoryCandidateReviewData>> | null,
   promptsByItem: Map<string, FloorQueuePrompt[]>,
-  members: Array<{ userId: string; userName: string }>,
   conflicts: Awaited<ReturnType<typeof getMergeConflictCases>>,
 ): FloorReviewSnapshot | null {
   if (!candidate) return null;
@@ -290,9 +300,8 @@ function buildRunReview(
   if (candidateRuns.length === 0 && !candidate.pullRequestNumber) return null;
   const reviewRuns = (candidate.pullRequestNumber ? candidateRuns.filter((run) => run.status === "integrated") : candidateRuns)
     .filter((run) => run.rollbackStatus !== "completed");
-  const memberNames = new Map(members.map((member) => [member.userId, member.userName]));
   const removalCutoffs = new Map(githubReview?.fileRemovals.map((removal) => [removal.path, removal.completedAt]) ?? []);
-  const contributors = contributorsByPath(reviewRuns, promptsByItem, memberNames, removalCutoffs);
+  const contributors = contributorsByPath(reviewRuns, promptsByItem, removalCutoffs);
   const files = githubReview?.files.length ? githubReview.files.map((file) => ({
     id: file.id,
     path: file.path,
@@ -378,16 +387,17 @@ export async function createFloorAgent(
 ): Promise<FloorSnapshot | null> {
   if (!(await getActiveMembershipRole(sessionId, userId, database))) return null;
   if (input.ownerUserId && input.ownerUserId !== userId) throw new FloorTargetError("Agents can only be owned by the member who creates them.");
+  if (input.credentialKind === "oauth") throw new FloorTargetError("Subscription connections are unavailable.");
   const id = crypto.randomUUID();
   const now = Date.now();
   try {
     const results = await database.batch([
       database.prepare(
         `INSERT INTO floor_agents
-           (id, session_id, created_by, owner_user_id, name, name_key, role, task, state, provider, credential_kind, model, created_at, updated_at)
-         SELECT ?, ?, ?, ?, ?, ?, ?, ?, 'created', ?, ?, ?, ?, ?
+           (id, session_id, created_by, owner_user_id, name, name_key, role, task, state, provider, credential_kind, model, usage_scope, created_at, updated_at)
+         SELECT ?, ?, ?, ?, ?, ?, ?, ?, 'created', ?, ?, ?, ?, ?, ?
          WHERE EXISTS (SELECT 1 FROM sessions WHERE id = ? AND ended_at IS NULL)`,
-      ).bind(id, sessionId, userId, userId, input.name, input.nameKey, input.role, input.task, input.provider, input.credentialKind, input.model, now, now, sessionId),
+      ).bind(id, sessionId, userId, userId, input.name, input.nameKey, input.role, input.task, input.provider, input.credentialKind, input.model, input.usageScope ?? "private", now, now, sessionId),
       bumpFloorRevision(database, sessionId, now),
     ]);
     if (!(await activeBatchApplied(results, sessionId, userId, database))) return null;
@@ -446,19 +456,19 @@ async function provisionGeneratedAgent(
     ? ` AND id NOT IN (${unavailableAgentIds.map(() => "?").join(", ")})`
     : "";
   const active = await database.prepare(
-    `SELECT id, name FROM floor_agents WHERE session_id = ? AND kind = ? AND deprovisioned_at IS NULL${availabilityClause} ORDER BY created_at, id LIMIT 1`,
-  ).bind(sessionId, kind, ...unavailableAgentIds).first<{ id: string; name: string }>();
+    `SELECT id, name FROM floor_agents WHERE session_id = ? AND kind = ? AND owner_user_id = ? AND provider = ? AND credential_kind = 'api_key' AND paused_at IS NULL AND deprovisioned_at IS NULL${availabilityClause} ORDER BY created_at, id LIMIT 1`,
+  ).bind(sessionId, kind, ownerUserId, provider, ...unavailableAgentIds).first<{ id: string; name: string }>();
   if (active && kind === "answer") return { id: active.id, name: active.name, changed: false };
 
   const reusable = await database.prepare(
-    "SELECT id, name FROM floor_agents WHERE session_id = ? AND kind = ? AND deprovisioned_at IS NOT NULL ORDER BY deprovisioned_at, created_at, id LIMIT 1",
-  ).bind(sessionId, kind).first<{ id: string; name: string }>();
+    "SELECT id, name FROM floor_agents WHERE session_id = ? AND kind = ? AND owner_user_id = ? AND provider = ? AND credential_kind = 'api_key' AND paused_at IS NULL AND deprovisioned_at IS NOT NULL ORDER BY deprovisioned_at, created_at, id LIMIT 1",
+  ).bind(sessionId, kind, ownerUserId, provider).first<{ id: string; name: string }>();
   if (reusable) {
     const now = Date.now();
     const result = await database.prepare(
-      `UPDATE floor_agents SET owner_user_id = ?, provider = ?, task = ?, deprovisioned_at = NULL, idle_since = NULL, updated_at = ?
+      `UPDATE floor_agents SET task = ?, deprovisioned_at = NULL, idle_since = NULL, updated_at = ?
        WHERE id = ? AND session_id = ? AND deprovisioned_at IS NOT NULL`,
-    ).bind(ownerUserId, provider, task, now, reusable.id, sessionId).run();
+    ).bind(task, now, reusable.id, sessionId).run();
     if (Number(result.meta?.changes ?? 0) > 0) return { id: reusable.id, name: reusable.name, changed: true };
   }
 
@@ -471,8 +481,8 @@ async function provisionGeneratedAgent(
     try {
       const result = await database.prepare(
         `INSERT INTO floor_agents
-           (id, session_id, created_by, owner_user_id, name, name_key, role, task, state, provider, kind, created_at, updated_at)
-         SELECT ?, ?, ?, ?, ?, ?, ?, ?, 'created', ?, ?, ?, ?
+           (id, session_id, created_by, owner_user_id, name, name_key, role, task, state, provider, kind, credential_kind, created_at, updated_at)
+         SELECT ?, ?, ?, ?, ?, ?, ?, ?, 'created', ?, ?, 'api_key', ?, ?
          WHERE EXISTS (SELECT 1 FROM sessions WHERE id = ? AND ended_at IS NULL)`,
       ).bind(id, sessionId, ownerUserId, ownerUserId, name, normalizeAgentName(name), role, task, provider, kind, now, now, sessionId).run();
       if (Number(result.meta?.changes ?? 0) > 0) return { id, name, changed: true };
@@ -597,16 +607,16 @@ export async function updateFloorAgentSettings(
 ): Promise<FloorSnapshot | null> {
   if (!(await getActiveMembershipRole(sessionId, userId, database))) return null;
   const agent = await database.prepare(
-    "SELECT provider, owner_user_id AS ownerUserId FROM floor_agents WHERE id = ? AND session_id = ? AND kind IS NULL AND deprovisioned_at IS NULL",
-  ).bind(agentId, sessionId).first<{ provider: CredentialProvider; ownerUserId: string }>();
+    "SELECT provider, owner_user_id AS ownerUserId, usage_scope AS usageScope FROM floor_agents WHERE id = ? AND session_id = ? AND kind IS NULL AND deprovisioned_at IS NULL",
+  ).bind(agentId, sessionId).first<{ provider: CredentialProvider; ownerUserId: string; usageScope: string }>();
   if (!agent) throw new FloorTargetError("Only active, persistent agents can be edited.");
-  if ((patch.model !== undefined || patch.credentialKind !== undefined) && agent.ownerUserId !== userId) {
-    throw new FloorTargetError("Only this agent's owner can change its model or billing.");
+  if ((patch.model !== undefined || patch.credentialKind !== undefined || patch.usageScope !== undefined || agent.usageScope !== "session") && agent.ownerUserId !== userId) {
+    throw new FloorTargetError("Only this agent's owner can change its model, billing, sharing, or private task.");
   }
   if (patch.model !== undefined && patch.model !== null && !PROVIDER_MODELS[agent.provider].includes(patch.model)) {
     throw new FloorTargetError("That model is not available for this agent's provider.");
   }
-  if (patch.credentialKind !== undefined && patch.credentialKind !== null && !credentialKindsForProvider(agent.provider).includes(patch.credentialKind)) {
+  if (patch.credentialKind !== undefined && patch.credentialKind !== null && !availableCredentialKinds(agent.provider).includes(patch.credentialKind)) {
     throw new FloorTargetError("That billing option is not available for this agent's provider.");
   }
   if (patch.credentialKind !== undefined) {
@@ -618,6 +628,7 @@ export async function updateFloorAgentSettings(
   const now = Date.now();
   const sets: string[] = [];
   const binds: unknown[] = [];
+  if (patch.usageScope !== undefined) { sets.push("usage_scope = ?"); binds.push(patch.usageScope); }
   if (patch.task !== undefined) { sets.push("task = ?"); binds.push(patch.task); }
   if (patch.model !== undefined) { sets.push("model = ?"); binds.push(patch.model); }
   if (patch.credentialKind !== undefined) { sets.push("credential_kind = ?"); binds.push(patch.credentialKind); }
@@ -915,6 +926,7 @@ export async function createFloorQueueItem(
   if (input.agentId && !(await isSessionAgent(sessionId, input.agentId, database))) {
     throw new FloorTargetError("Queue target must belong to this session.");
   }
+  if (input.agentId && !await canUseAgent(sessionId, input.agentId, userId, database)) throw new FloorTargetError("This agent is private. Ask its owner to share it.");
   const last = await database.prepare(
     "SELECT COALESCE(MAX(position), 0) AS position FROM floor_queue_items WHERE session_id = ? AND dismissed_at IS NULL",
   ).bind(sessionId).first<{ position: number }>();
@@ -962,6 +974,8 @@ export async function reorderFloorQueue(
 async function canManageQueueItem(sessionId: string, userId: string, itemId: string, database: D1DatabaseLike): Promise<boolean> {
   const role = await getActiveMembershipRole(sessionId, userId, database);
   if (!role) return false;
+  const target = await database.prepare("SELECT agent_id AS agentId FROM floor_queue_items WHERE id = ? AND session_id = ?").bind(itemId, sessionId).first<{ agentId: string | null }>();
+  if (target?.agentId && !await canUseAgent(sessionId, target.agentId, userId, database)) return false;
   if (role === "owner") return true;
   const authors = await database.prepare(
     "SELECT DISTINCT author_user_id AS authorUserId FROM floor_queue_prompts WHERE queue_item_id = ?",
@@ -1032,6 +1046,7 @@ export async function setFloorQueueItemAgent(
   database = getDb(),
 ): Promise<FloorSnapshot | null> {
   if (!(await canManageQueueItem(sessionId, userId, itemId, database))) return null;
+  if (!await canUseAgent(sessionId, agentId, userId, database)) throw new FloorTargetError("This agent is private. Ask its owner to share it.");
   if (!(await isSessionAgent(sessionId, agentId, database))) {
     throw new FloorTargetError("Queue target must belong to this session.");
   }

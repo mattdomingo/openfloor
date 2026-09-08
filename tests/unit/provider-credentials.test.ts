@@ -139,7 +139,7 @@ describe("run credential resolution order", () => {
   });
 
   it("falls back to the server key only when the owner has none", () => {
-    expect(resolveRunCredentialSource({ ownerCredentialPresent: false, serverKeyPresent: true })).toEqual({ source: "server" });
+    expect(resolveRunCredentialSource({ ownerCredentialPresent: false, serverKeyPresent: true })).toEqual({ source: "none", reason: "no_credential" });
   });
 
   it("refuses when neither exists, saying which absence it is", () => {
@@ -218,7 +218,7 @@ describe("connected providers/kinds for the create-agent dialog", () => {
 
   it("intersects connected kinds with the kinds a provider actually accepts", () => {
     const credentials = [credential("anthropic", "api_key"), credential("anthropic", "oauth")];
-    expect(connectedKindsForProvider(credentials, "anthropic")).toEqual(["api_key", "oauth"]);
+    expect(connectedKindsForProvider(credentials, "anthropic")).toEqual(["api_key"]);
     expect(connectedKindsForProvider([credential("anthropic", "api_key")], "anthropic")).toEqual(["api_key"]);
   });
 
@@ -230,7 +230,7 @@ describe("connected providers/kinds for the create-agent dialog", () => {
     expect(connectedKindsForProvider(credentials, "gemini")).toEqual(["api_key"]);
     // openai now accepts both, so a real pair does surface for it.
     expect(connectedKindsForProvider([credential("openai", "api_key"), credential("openai", "oauth")], "openai"))
-      .toEqual(["api_key", "oauth"]);
+      .toEqual(["api_key"]);
   });
 
   it("returns nothing for a provider with no connected rows", () => {

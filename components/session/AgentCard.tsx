@@ -2,7 +2,7 @@
 
 import { memo, useEffect, useRef, useState } from "react";
 import type { AgentRun, FloorAgent, FloorAgentSettingsPatch } from "@/lib/floor-types";
-import { AGENT_PROVIDER_LABELS, credentialKindLabel, credentialKindsForProvider, MODEL_CONTEXT_TOKENS, parseCredentialKind, PROVIDER_MODELS } from "@/lib/provider-credentials";
+import { AGENT_PROVIDER_LABELS, credentialKindLabel, MODEL_CONTEXT_TOKENS, parseCredentialKind, PROVIDER_MODELS } from "@/lib/provider-credentials";
 import { BASE_PATH } from "@/components/basePath";
 import { LocalDateTime } from "@/components/LocalDateTime";
 import { Icon, PersonName, Spinner } from "./primitives";
@@ -62,7 +62,7 @@ export const AgentCard = memo(function AgentCard({ agent, tone, latestRun, activ
           {conflictStatus === "needs-input" && conflict && onOpenConflict && (
             <button type="button" className="agent-conflict-strip" onClick={(event) => { event.stopPropagation(); onOpenConflict(conflict.caseId); }}>
               <Icon name="alert" size={12} />
-              {conflict.status === "failed" ? "Automatic resolution failed — resolve it" : "Waiting on your answer"}
+              {conflict.status === "failed" ? "Automatic resolution failed — resolve it" : "Waiting for agreement"}
             </button>
           )}
           {controllable && (
@@ -113,7 +113,7 @@ export const AgentSpotlight = memo(function AgentSpotlight({ agent, tone, sessio
             <button type="button" className="agent-conflict-strip" onClick={() => onOpenConflict(conflict.caseId)}>
               <Icon name="alert" size={12} />
               {conflictStatus === "needs-input"
-                ? conflict.status === "failed" ? "Automatic resolution failed — resolve it in Review" : "Waiting on your answer — open Review"
+                ? conflict.status === "failed" ? "Automatic resolution failed — resolve it in Review" : "Waiting for agreement — open Review"
                 : "Resolving a merge conflict in Review"}
             </button>
           )}
@@ -126,7 +126,7 @@ export const AgentSpotlight = memo(function AgentSpotlight({ agent, tone, sessio
           )}
         </div>
       )}
-      <div className="spotlight-row"><span className="label">Task</span>{agent.kind ? <p className="agent-detail-line">{agent.task}</p> : <AgentTaskEditor key={`${agent.id}-${agent.updatedAt}`} agent={agent} onSave={(agentId, task) => onUpdateSettings(agentId, { task })} />}</div>
+      <div className="spotlight-row"><span className="label">Task</span>{agent.kind || (!agentOwner && agent.usageScope !== "session") ? <p className="agent-detail-line">{agent.task}</p> : <AgentTaskEditor key={`${agent.id}-${agent.updatedAt}`} agent={agent} onSave={(agentId, task) => onUpdateSettings(agentId, { task })} />}</div>
       {latestRun?.resumedFromAttempt != null && (
         <div className="spotlight-row"><span className="label">Thread</span><p className="agent-detail-line">{latestRun.providerThreadResumed === 0 ? `Could not resume attempt ${latestRun.resumedFromAttempt}; started a fresh thread` : `Resumed from attempt ${latestRun.resumedFromAttempt}`}</p></div>
       )}
@@ -150,7 +150,7 @@ export const AgentSpotlight = memo(function AgentSpotlight({ agent, tone, sessio
           />
         </div>
       )}
-      {!agent.kind && credentialKindsForProvider(agent.provider).length > 1 && (
+      {!agent.kind && agent.credentialKind === "oauth" && (
         <div className="spotlight-row"><span className="label">Billing</span>
           <SelectMenu
             label={`Billing for ${agent.name}`}
@@ -162,12 +162,16 @@ export const AgentSpotlight = memo(function AgentSpotlight({ agent, tone, sessio
             }}
             options={[
               { value: "default", label: "Owner's default" },
-              { value: "oauth", label: "Subscription" },
+
               { value: "api_key", label: "API key" },
             ]}
           />
         </div>
       )}
+      {!agent.kind && <div className="spotlight-row"><span className="label">Who can use this agent</span>
+        <SelectMenu label={`Who can use ${agent.name}`} value={agent.usageScope ?? "private"} disabled={!agentOwner} onChange={(value) => void onUpdateSettings(agent.id, { usageScope: value as "private" | "session" })} options={[{ value: "private", label: "Only me" }, { value: "session", label: "Everyone in this session" }]} />
+        <p className="agent-detail-line">Sharing lets teammates run this agent using its owner’s API key.</p>
+      </div>}
       {latestRun?.finalResponse && (
         <div className="spotlight-row"><span className="label">Response</span><div className="spotlight-response"><Markdown>{latestRun.finalResponse}</Markdown></div></div>
       )}

@@ -89,7 +89,7 @@ export const MentionComposer = memo(function MentionComposer({
   const suggestions = useMemo(() => {
     if (!mention || mention.start === dismissedAt) return [];
     const query = mention.query.toLocaleLowerCase("en-US");
-    return agents.filter((agent) => agent.name.toLocaleLowerCase("en-US").startsWith(query)).slice(0, 6);
+    return agents.filter((agent) => agent.canUse !== false && agent.name.toLocaleLowerCase("en-US").startsWith(query)).slice(0, 6);
   }, [agents, mention, dismissedAt]);
 
   // Reset keyboard selection whenever the mention token changes, without an

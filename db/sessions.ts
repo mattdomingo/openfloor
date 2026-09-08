@@ -1,3 +1,4 @@
+import { readGitHubIdentity } from "@/lib/github-identity";
 import { hashAccountEmail } from "@/lib/account-email-hash";
 import { displayNameFrom } from "@/lib/display-name";
 import type { AuthenticatedIdentity } from "@/lib/identity";
@@ -57,17 +58,17 @@ export type InvitePreview = {
 };
 
 const APP_USER_COLUMNS = `id, chatgpt_user_id AS providerUserId, email, display_name AS displayName,
-              first_name AS firstName, last_name AS lastName, github_handle AS githubHandle,
-              avatar_key AS avatarKey, onboarded_at AS onboardedAt, do_not_disturb AS doNotDisturb,
+              first_name AS firstName, last_name AS lastName, github_handle AS githubHandle, verified_github AS verifiedGitHub,
+              avatar_key AS avatarKey, onboarded_at AS onboardedAt, do_not_disturb AS doNotDisturb, default_api_provider AS defaultApiProvider,
               plan, plan_status AS planStatus, seat_limit AS seatLimit, created_at AS createdAt, updated_at AS updatedAt,
               deleted_at AS deletedAt, early_access_granted_at AS earlyAccessGrantedAt,
               early_access_revoked_at AS earlyAccessRevokedAt, early_access_grant_source AS earlyAccessGrantSource`;
 
 // D1 has no native boolean type, so RETURNING/SELECT come back with
 // doNotDisturb as 0/1 — normalize to a real boolean before handing out AppUser.
-type AppUserRow = Omit<AppUser, "doNotDisturb"> & { doNotDisturb: number };
+type AppUserRow = Omit<AppUser, "doNotDisturb" | "verifiedGitHub"> & { doNotDisturb: number; verifiedGitHub: string | null };
 function normalizeAppUser(row: AppUserRow): AppUser {
-  return { ...row, doNotDisturb: Boolean(row.doNotDisturb) };
+  return { ...row, verifiedGitHub: readGitHubIdentity(row.verifiedGitHub), doNotDisturb: Boolean(row.doNotDisturb) };
 }
 
 export async function upsertUser(identity: AuthenticatedIdentity, database = getDb()): Promise<AppUser> {
@@ -450,26 +451,6 @@ export async function getSessionMembers(
   return result.results.map((member) => ({ ...member, online: false }));
 }
 
-// Identity lines for the squash commit's Co-authored-by trailers: every
-// active member of the session, in join order so the trailer block is
-// deterministic. Email is the login address (users.email, always present);
-// GitHub links a co-author only when that address is on their account.
-export async function getSessionMemberIdentities(
-  sessionId: string,
-  database = getDb(),
-): Promise<{ displayName: string; email: string }[]> {
-  const result = await database
-    .prepare(
-      `SELECT u.display_name AS displayName, u.email
-       FROM session_members sm JOIN users u ON u.id = sm.user_id
-       WHERE sm.session_id = ? AND sm.removed_at IS NULL
-       ORDER BY sm.joined_at, u.id`,
-    )
-    .bind(sessionId)
-    .all<{ displayName: string; email: string }>();
-  return result.results;
-}
-
 // Owner-only audit view of who has been removed, so the soft delete this
 // backs (acceptInvite blocks these rows; restoreMember clears them) is
 // visible in the product rather than only in D1.
@@ -791,21 +772,10 @@ export async function leaveSession(
   const now = Date.now();
   await database.batch([
     database.prepare("DELETE FROM floor_assignments WHERE session_id = ? AND user_id = ?").bind(sessionId, userId),
-    // Keeps floor_agents.owner_user_id pointed at a real member: without
-    // this, a leaving agent owner strands the create-time invariant
-    // (db/floor.ts's createFloorAgent requires the owner be a member) and
-    // the snapshot still renders the agent because it joins users, not
-    // session_members.
-    database
-      .prepare(
-        `UPDATE floor_agents SET owner_user_id = (
-           SELECT user_id FROM session_members WHERE session_id = ? AND role = 'owner' AND removed_at IS NULL
-         ), updated_at = ?
-         WHERE session_id = ? AND owner_user_id = ?`,
-      )
-      .bind(sessionId, now, sessionId, userId),
+    // Retain the original payer and attribution. Membership guards block
+    // future spending once the owner leaves; ownership never transfers.
     database.prepare("DELETE FROM session_members WHERE session_id = ? AND user_id = ?").bind(sessionId, userId),
-    database.prepare("UPDATE sessions SET updated_at = ? WHERE id = ?").bind(now, sessionId),
+    database.prepare("UPDATE sessions SET updated_at = ?, floor_revision = floor_revision + 1 WHERE id = ?").bind(now, sessionId),
   ]);
   return "left";
 }
@@ -839,11 +809,7 @@ export async function removeMember(
       .prepare("UPDATE session_members SET removed_at = ?, removed_by = ? WHERE session_id = ? AND user_id = ? AND removed_at IS NULL")
       .bind(now, ownerId, sessionId, targetUserId),
     database.prepare("DELETE FROM floor_assignments WHERE session_id = ? AND user_id = ?").bind(sessionId, targetUserId),
-    // Their content (chat, queue prompts) stays as session history; only the
-    // agents they owned transfer, to the owner doing the removing.
-    database
-      .prepare("UPDATE floor_agents SET owner_user_id = ?, updated_at = ? WHERE session_id = ? AND owner_user_id = ?")
-      .bind(ownerId, now, sessionId, targetUserId),
+    // Preserve agent ownership and historical attribution on removal.
     database
       .prepare("UPDATE sessions SET updated_at = ?, floor_revision = floor_revision + 1 WHERE id = ?")
       .bind(now, sessionId),
@@ -1084,6 +1050,7 @@ export async function deleteAccount(
            first_name = NULL,
            last_name = NULL,
            github_handle = NULL,
+           verified_github = NULL,
            avatar_key = NULL,
            do_not_disturb = 0,
            plan_status = 'canceled',

@@ -1,5 +1,6 @@
 "use client";
 
+import { RunAttributionInfo } from "./RunAttributionInfo";
 import { memo, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, Fragment } from "react";
 import { createPortal } from "react-dom";
 import { LocalDateTime } from "@/components/LocalDateTime";
@@ -11,10 +12,11 @@ import { HoverTip, Icon, PersonName, SegmentedControl, useDialogDismiss, useHove
 import { Markdown } from "./Markdown";
 import { TeamChat } from "./TeamChat";
 import type { RollbackIntent } from "./RollbackImpactDialog";
+import { SessionPromptDetail, SessionPromptRail, useSessionPromptHistory } from "./SessionPromptHistory";
 import { useReviewContributionDetail, useReviewContributions } from "./useReviewContributions";
 import type { RepositorySource } from "./useRepositoryTree";
 import { ConflictCenterDialog } from "./ConflictCenterDialog";
-import type { ConflictChoice } from "@/lib/floor-types";
+import type { ConflictMutation } from "@/lib/conflict-resolution";
 
 type PendingAction = { type: "merge"; deleteCandidateBranch: boolean } | { type: "deleteBranch" } | { type: "abandon"; deleteBranch: boolean };
 type Selection = { kind: "changed"; id: string } | { kind: "repo"; path: string };
@@ -25,7 +27,8 @@ const DISCONNECTED_STATUSES = new Set(["disconnected", "revoked", "inaccessible"
 const REVIEW_RAIL_MIN = 250;
 const REVIEW_RAIL_MAX = 560;
 
-function mergeBlockers(review: FloorReviewSnapshot): string[] {
+function mergeBlockers(review: FloorReviewSnapshot | null): string[] {
+  if (!review) return ["No review available"];
   const pr = review.pullRequest;
   const blockers: string[] = [];
   if (review.mergeLockedAt) blockers.push("Locked by the session owner");
@@ -41,14 +44,15 @@ function mergeBlockers(review: FloorReviewSnapshot): string[] {
   return blockers;
 }
 
-function mergeReadiness(review: FloorReviewSnapshot, blockers: string[]): MergeReadiness {
+function mergeReadiness(review: FloorReviewSnapshot | null, blockers: string[]): MergeReadiness {
+  if (!review) return "waiting";
   if (review.mergeLockedAt) return "locked";
   if (blockers.length === 0) return "ready";
   if (review.pullRequest?.mergeable == null || review.githubChecksPassing == null || review.integrationRunId) return "waiting";
   return "blocked";
 }
 
-export const ReviewScreen = memo(function ReviewScreen({ sessionId, revision, review, preview, previewEnabled, repository, repositoryTree, selectedConflictCaseId, promptRequest, owner, busy, blockingRunId, onStartPreview, onStopPreview, onRequestRollback, onRemoveFileChanges, onNotice, onSync, onReady, onUnready, onMerge, onMergeLock, onDeleteBranch, onAbandon, onCancelRun, onResolveConflict, onAnswerConflict, onSubmitConflictSelections, teamChat, onSendTeamMessage, participants, currentUserId, sessionFiles }: {
+export const ReviewScreen = memo(function ReviewScreen({ sessionId, revision, review, preview, previewEnabled, repository, repositoryTree, selectedConflictCaseId, promptRequest, owner, busy, blockingRunId, onStartPreview, onStopPreview, onRequestRollback, onRemoveFileChanges, onNotice, onSync, onReady, onUnready, onMerge, onMergeLock, onDeleteBranch, onAbandon, onCancelRun, onConflictMutation, teamChat, onSendTeamMessage, participants, currentUserId, sessionFiles }: {
   sessionId: string;
   revision: number;
   review: FloorReviewSnapshot | null;
@@ -74,15 +78,18 @@ export const ReviewScreen = memo(function ReviewScreen({ sessionId, revision, re
   onDeleteBranch: () => Promise<boolean>;
   onAbandon: (deleteBranch: boolean) => Promise<boolean>;
   onCancelRun: (runId: string) => Promise<void>;
-  onResolveConflict: (caseId: string) => Promise<boolean>;
-  onAnswerConflict: (caseId: string, answers: Array<{ questionId: string; answer: string }>) => Promise<boolean>;
-  onSubmitConflictSelections: (caseId: string, snapshotRunId: string, selections: Array<{ path: string; hunkIndex: number; choice: ConflictChoice }>) => Promise<boolean>;
+  onConflictMutation: ConflictMutation;
   teamChat: FloorMessage[];
   sessionFiles: SessionFile[];
   onSendTeamMessage: (text: string, recipientUserId: string | null) => Promise<boolean>;
   participants: FloorParticipant[];
   currentUserId: string;
 }) {
+  const files = useMemo(() => review?.files ?? [], [review]);
+  const checks = review?.checks ?? [];
+  const warnings = review?.warnings ?? [];
+  const conflicts = review?.conflicts ?? [];
+  const [allPrompts, setAllPrompts] = useState(!promptRequest);
   const repositoryBrowsable = repository != null && !DISCONNECTED_STATUSES.has(repository.status);
   // ReviewScreen fully unmounts whenever Workspace switches back to
   // "workspace" (see the screen === "review" ? ... conditional there), so
@@ -142,6 +149,7 @@ export const ReviewScreen = memo(function ReviewScreen({ sessionId, revision, re
     if (promptRequest) {
       setBrowseOverride("prompts");
       setContributionStatus(promptRequest.status);
+      setAllPrompts(false);
       setSelectedPromptRunId(promptRequest.runId);
     }
   }
@@ -155,7 +163,7 @@ export const ReviewScreen = memo(function ReviewScreen({ sessionId, revision, re
     if (selectedConflictCaseId) setConflictCenter({ caseId: selectedConflictCaseId });
   }
 
-  const hasChangedFiles = Boolean(review && review.files.length > 0);
+  const hasChangedFiles = Boolean(review && files.length > 0);
   const openConflicts = review?.conflicts.filter((conflict) => conflict.status !== "resolved") ?? [];
   const conflictAttention: "action" | "working" | undefined = openConflicts.some((conflict) => conflict.status === "awaiting_input" || conflict.status === "failed")
     ? "action"
@@ -209,9 +217,9 @@ export const ReviewScreen = memo(function ReviewScreen({ sessionId, revision, re
   const selected = useMemo<Selection | null>(() => {
     if (selection?.kind === "changed" && review?.files.some((file) => file.id === selection.id)) return selection;
     if (selection?.kind === "repo") return selection;
-    if (review && review.files.length > 0) return { kind: "changed", id: review.files[0].id };
+    if (review && files.length > 0) return { kind: "changed", id: files[0].id };
     return null;
-  }, [selection, review]);
+  }, [selection, review, files]);
 
   const selectedChangedFile = selected?.kind === "changed" ? review?.files.find((file) => file.id === selected.id) ?? null : null;
   const selectedRepoPath = selected?.kind === "repo" ? selected.path : null;
@@ -226,8 +234,9 @@ export const ReviewScreen = memo(function ReviewScreen({ sessionId, revision, re
     status: contributionStatus,
     engineerId: engineerFilter,
     agentId: agentFilter,
-    enabled: browse === "prompts" && Boolean(review),
+    enabled: browse === "prompts" && !allPrompts && Boolean(review),
   });
+  const sessionPrompts = useSessionPromptHistory(sessionId, revision, browse === "prompts" && allPrompts, engineerFilter, agentFilter);
   const effectivePromptRunId = selectedPromptRunId && promptContributions.items.some((item) => item.runId === selectedPromptRunId)
     ? selectedPromptRunId
     : promptContributions.items[0]?.runId ?? null;
@@ -316,15 +325,13 @@ export const ReviewScreen = memo(function ReviewScreen({ sessionId, revision, re
     setPendingAction(null);
   }
 
-  const teamChatPane = <section className="review-pane review-team-chat" aria-label="Team chat"><div className="review-pane-head"><h3>Team chat</h3><span>{teamChat.filter((message) => message.recipientUserId === null).length}</span></div><TeamChat messages={teamChat} onSend={onSendTeamMessage} participants={participants} currentUserId={currentUserId} sessionId={sessionId} files={sessionFiles} /></section>;
-
   // Shared by the no-review branches' plain Changed/All pane below and the
   // full-review left rail's 3-way Browse control — the list content itself
   // doesn't depend on how many options the toggle above it offers.
-  const fileBrowseBody = activeTab === "changed" && review ? (
-    review.files.length === 0 ? <p className="review-empty">No changed files.</p> : <ul className="review-file-list">{review.files.map((file) => <li key={file.id} className="review-file-row"><button type="button" className="review-file" data-selected={selectedChangedFile?.id === file.id ? "true" : "false"} onClick={() => selectChanged(file.id)} onContextMenu={(event: ReactMouseEvent<HTMLButtonElement>) => { event.preventDefault(); openFileMenu(file.id, event.clientX, event.clientY, event.currentTarget); }} onKeyDown={(event) => openFileMenuFromKeyboard(file.id, event)}><span className="file-copy" title={file.path}><strong>{file.path.split("/").pop()}</strong><span>{file.path}</span><FileAttribution contributors={file.contributors} /></span><span className="diff-stat"><i className="add">+{file.additions}</i><i className="del">−{file.deletions}</i></span></button><button type="button" className="review-file-menu-trigger" aria-label={`Actions for ${file.path}`} aria-haspopup="menu" aria-expanded={fileMenu?.fileId === file.id} onClick={(event) => { const rect = event.currentTarget.getBoundingClientRect(); openFileMenu(file.id, rect.right, rect.bottom, event.currentTarget); }}><Icon name="more" size={15} /></button></li>)}</ul>
+  const fileBrowseBody = activeTab === "changed" ? (
+    files.length === 0 ? <p className="review-empty">No changed files.</p> : <ul className="review-file-list">{files.map((file) => <li key={file.id} className="review-file-row"><button type="button" className="review-file" data-selected={selectedChangedFile?.id === file.id ? "true" : "false"} onClick={() => selectChanged(file.id)} onContextMenu={(event: ReactMouseEvent<HTMLButtonElement>) => { event.preventDefault(); openFileMenu(file.id, event.clientX, event.clientY, event.currentTarget); }} onKeyDown={(event) => openFileMenuFromKeyboard(file.id, event)}><span className="file-copy" title={file.path}><strong>{file.path.split("/").pop()}</strong><span>{file.path}</span><FileAttribution contributors={file.contributors} /></span><span className="diff-stat"><i className="add">+{file.additions}</i><i className="del">−{file.deletions}</i></span></button><button type="button" className="review-file-menu-trigger" aria-label={`Actions for ${file.path}`} aria-haspopup="menu" aria-expanded={fileMenu?.fileId === file.id} onClick={(event) => { const rect = event.currentTarget.getBoundingClientRect(); openFileMenu(file.id, rect.right, rect.bottom, event.currentTarget); }}><Icon name="more" size={15} /></button></li>)}</ul>
   ) : (
-    repositoryTree.treeState === "loading" || repositoryTree.treeState === "idle" ? <p className="review-empty">Loading repository files…</p>
+    !repositoryBrowsable ? <p className="review-empty">No repository connected.</p> : repositoryTree.treeState === "loading" || repositoryTree.treeState === "idle" ? <p className="review-empty">Loading repository files…</p>
       : repositoryTree.treeState === "error" ? <p className="review-empty">The repository tree could not be loaded.</p>
       : fileTree.length === 0 ? <p className="review-empty">This repository has no files.</p>
       : <div className="review-tree" role="tree" aria-label="Repository files">
@@ -334,11 +341,6 @@ export const ReviewScreen = memo(function ReviewScreen({ sessionId, revision, re
   );
 
   const previewOption = previewEnabled ? [{ value: "preview" as const, label: "Preview" }] : [];
-  const filesPane = <aside className="review-pane" aria-label="Repository files">
-    {review ? <div className="review-pane-head"><SegmentedControl label="Files view" value={activeTab} onChange={setBrowseOverride} options={[{ value: "changed", label: `Changed (${review.files.length})` }, { value: "all", label: "All files" }]} /></div> : previewEnabled ? <div className="review-pane-head"><SegmentedControl label="Browse" value={browse === "preview" ? "preview" : "all"} onChange={setBrowseOverride} options={[{ value: "all", label: "All files" }, ...previewOption]} /></div> : <div className="review-pane-head"><h3>All files</h3></div>}
-    {fileBrowseBody}
-  </aside>;
-
   const centerPane = selectedChangedFile ? (
     <section className="review-pane review-diff" aria-label="Diff preview"><div className="review-pane-head"><h3 tabIndex={0} aria-label={selectedChangedFile.path} {...filePathTip.handlers}>{selectedChangedFile.path.split("/").pop()}</h3><HoverTip position={filePathTip.position}>{selectedChangedFile.path}</HoverTip></div>{selectedChangedFile.summary && <Markdown className="review-summary">{selectedChangedFile.summary}</Markdown>}{selectedChangedFile.diff.length > 0 ? <pre className="review-code" aria-label={`Diff preview for ${selectedChangedFile.path}`}>{selectedChangedFile.diff.map((line, index) => <span key={`${index}-${line.text}`} className="review-line" data-type={line.type}><i>{line.type === "add" ? "+" : line.type === "remove" ? "−" : " "}</i><code>{line.text}</code></span>)}</pre> : <p className="review-empty">No diff preview available.</p>}</section>
   ) : selectedRepoPath ? (
@@ -346,45 +348,26 @@ export const ReviewScreen = memo(function ReviewScreen({ sessionId, revision, re
       selectedRepoFileState === "idle" || selectedRepoFileState === "loading" ? <p className="review-empty">Loading file…</p>
         : selectedRepoFileState === "error" ? <p className="review-empty">This file could not be loaded.</p>
         : selectedRepoFile?.encoding === "text" ? <>{selectedRepoFile.truncated && <p className="review-summary">Showing the first {selectedRepoFile.text.split("\n").length.toLocaleString()} lines.</p>}<pre className="review-code" aria-label={`File preview for ${selectedRepoPath}`}>{selectedRepoFile.text.split("\n").map((text, index) => <span key={index} className="review-line" data-type="context"><i> </i><code>{text}</code></span>)}</pre></>
-        : selectedRepoFile?.encoding === "too_large" ? <p className="review-empty">This file is too large to preview.</p>
+        : selectedRepoFile?.encoding === "too_large" ? <p className="review-empty">This file is too large to preview?.</p>
         : <p className="review-empty">This file is binary and can’t be previewed.</p>
     }</section>
   ) : (
-    <section className="review-pane review-diff" aria-label="Diff preview"><div className="review-empty-state"><Icon name="branch" size={22} /><h2>No review available</h2><p>Files, checks, warnings, and approval controls will appear only after a connected agent backend creates a real review candidate.</p></div></section>
+    <section className="review-pane review-diff" aria-label="Diff preview"><div className="review-pane-head"><h3>Diff preview</h3></div><div className="review-empty-state"><Icon name="branch" size={22} /><h2>No review available</h2><p>Select a file or prompt to inspect its changes.</p></div></section>
   );
 
-  if (previewEnabled && browse === "preview" && !review) {
-    return <section className="review-screen" aria-label="Review preview">
-      <div className="review-grid" style={reviewGridStyle}>
-        <aside className="review-pane review-preview-lifecycle"><div className="review-pane-head"><SegmentedControl label="Browse" value="preview" onChange={setBrowseOverride} options={[{ value: "all", label: "All files" }, ...previewOption]} /></div><PreviewLifecycle preview={preview} owner={owner} busy={busy} onStart={onStartPreview} onStop={onStopPreview} /></aside>
-        <PreviewBrowser preview={preview} />
-        <aside className="review-side">{teamChatPane}</aside>
-      </div>
-    </section>;
-  }
-
-  if (!review) {
-    if (!repositoryBrowsable) {
-      return <section className="review-screen" aria-label="Review"><div className="review-empty-state"><Icon name="branch" size={22} /><h2>No review available</h2><p>Files, checks, warnings, and approval controls will appear only after a connected agent backend creates a real review candidate.</p></div>{teamChatPane}</section>;
-    }
-    return <section className="review-screen" aria-label="Review candidate" data-resizing={resizing ? "true" : "false"}>
-      <div className="review-grid" style={reviewGridStyle}>{filesPane}{centerPane}<aside className="review-side">{teamChatPane}</aside>{reviewResizeHandles}</div>
-    </section>;
-  }
-
-  const additions = review.files.reduce((total, file) => total + file.additions, 0);
-  const deletions = review.files.reduce((total, file) => total + file.deletions, 0);
+  const additions = files.reduce((total, file) => total + file.additions, 0);
+  const deletions = files.reduce((total, file) => total + file.deletions, 0);
   const blockers = mergeBlockers(review);
   const canMerge = blockers.length === 0;
   const readiness = mergeReadiness(review, blockers);
-  const mergeTipText = canMerge ? `Ready to squash merge into ${review.baseBranch}` : blockers.join("\n");
+  const mergeTipText = canMerge ? `Ready to squash merge into ${review?.baseBranch}` : blockers.join("\n");
   const conflictTipText = openConflicts.length === 0
     ? "No open conflicts"
     : conflictAttention === "action"
       ? `${openConflicts.length} conflict${openConflicts.length === 1 ? "" : "s"} need input`
       : `${openConflicts.length} conflict${openConflicts.length === 1 ? "" : "s"} being resolved`;
-  const isMerged = review.status === "merged";
-  const isAbandoned = review.status === "abandoned";
+  const isMerged = review?.status === "merged";
+  const isAbandoned = review?.status === "abandoned";
 
   // Browsing prompts swaps the left rail's list and the center pane for
   // prompt-attribution equivalents; the right rail (Status/Chat, plus
@@ -392,20 +375,20 @@ export const ReviewScreen = memo(function ReviewScreen({ sessionId, revision, re
   // this fixes is that switching to Prompts used to replace the whole grid,
   // taking conflicts/checks/chat with it.
   const leftPane = <aside className="review-pane" aria-label={browse === "prompts" ? "Prompt groups" : browse === "preview" ? "App preview status" : "Repository files"}>
-    <div className="review-pane-head"><SegmentedControl label="Browse" value={browse} onChange={setBrowseOverride} options={[{ value: "changed", label: `Changed (${review.files.length})` }, { value: "all", label: "All files" }, { value: "prompts", label: "Prompts" }, ...previewOption]} /></div>
+    <div className="review-pane-head"><SegmentedControl label="Browse" value={browse} onChange={setBrowseOverride} options={[{ value: "changed", label: `Changed (${files.length})` }, { value: "all", label: "All files" }, { value: "prompts", label: "Prompts" }, ...previewOption]} /></div>
     {browse === "preview" ? <PreviewLifecycle preview={preview} owner={owner} busy={busy} onStart={onStartPreview} onStop={onStopPreview} /> : browse === "prompts" ? <>
-      <div className="review-pane-head"><SegmentedControl label="Prompt status" value={contributionStatus} onChange={setContributionStatus} options={[{ value: "active", label: "Active" }, { value: "rolled_back", label: "History" }]} /></div>
+      <div className="review-pane-head"><SegmentedControl label="Prompt status" value={allPrompts ? "all" : contributionStatus} onChange={(value) => { setAllPrompts(value === "all"); if (value !== "all") setContributionStatus(value); }} options={[{ value: "all", label: "All" }, { value: "active", label: "Active" }, { value: "rolled_back", label: "History" }]} /></div>
       {(engineerFilter || agentFilter) && <div className="review-filter-summary"><span>Filtered contributions</span><button type="button" className="button" data-size="sm" onClick={() => { setEngineerFilter(null); setAgentFilter(null); }}>Clear</button></div>}
-      {promptContributions.loading && promptContributions.items.length === 0 ? <p className="review-empty">Loading prompts…</p>
+      {allPrompts ? <SessionPromptRail history={sessionPrompts} /> : promptContributions.loading && promptContributions.items.length === 0 ? <p className="review-empty">Loading prompts…</p>
         : promptContributions.error ? <p className="review-empty" role="alert">{promptContributions.error}</p>
         : promptContributions.items.length === 0 ? <p className="review-empty">{contributionStatus === "active" ? "No active prompt changes match these filters." : "No rolled-back prompt groups match these filters."}</p>
         : <ul className="review-prompt-list">{promptContributions.items.map((contribution) => <li key={contribution.runId}><button type="button" className="review-prompt-item" data-selected={effectivePromptRunId === contribution.runId ? "true" : "false"} onClick={() => setSelectedPromptRunId(contribution.runId)}><strong>{contribution.prompts.length === 1 ? contribution.prompts[0].authorName : `${contribution.prompts.length} merged prompts`}</strong><span className="review-prompt-preview">{contributionPreview(contribution)}</span><small>{contribution.agentName} · {contribution.files.length} file{contribution.files.length === 1 ? "" : "s"} · {contributionLabel(contribution)}</small></button></li>)}</ul>}
-      {promptContributions.nextCursor && <div className="review-load-more"><button type="button" className="button" disabled={promptContributions.loading} onClick={() => void promptContributions.loadMore()}>{promptContributions.loading ? "Loading…" : "Load more"}</button></div>}
+      {!allPrompts && promptContributions.nextCursor && <div className="review-load-more"><button type="button" className="button" disabled={promptContributions.loading} onClick={() => void promptContributions.loadMore()}>{promptContributions.loading ? "Loading…" : "Load more"}</button></div>}
     </> : fileBrowseBody}
   </aside>;
 
   const mainCenterPane = browse === "preview" ? <PreviewBrowser preview={preview} /> : browse === "prompts"
-    ? <PromptContributionDetail detail={promptDetail} status={contributionStatus} onRollback={onRequestRollback} />
+    ? allPrompts ? <SessionPromptDetail sessionId={sessionId} promptId={sessionPrompts.selectedId} revision={revision} /> : <PromptContributionDetail detail={promptDetail} status={contributionStatus} onRollback={onRequestRollback} />
     : centerPane;
 
   const inspectorTabs: Array<{ value: InspectorTab; label: string }> = [
@@ -418,36 +401,39 @@ export const ReviewScreen = memo(function ReviewScreen({ sessionId, revision, re
     <div className="review-pane-head"><SegmentedControl label="Panel" value={rightTab} onChange={setRightTabOverride} options={inspectorTabs} /></div>
     <div className="review-inspector-body" data-tab={rightTab}>
       {rightTab === "status" && <>
-        {review.warnings.length === 0 && review.checks.length === 0
-          ? <p className="review-empty review-status-empty"><Icon name="check" size={14} />No reported issues</p>
+        {warnings.length === 0 && checks.length === 0
+          ? <p className="review-empty review-status-empty"><Icon name="check" size={14} />No checks available</p>
           : <>
-              {review.warnings.length > 0 && <section aria-label="Integration warnings"><div className="review-pane-head"><h3>Issues</h3><span>{review.warnings.length}</span></div><ul className="review-warning-list">{review.warnings.map((warning) => <li key={warning.id} data-severity={warning.severity}><strong>{warning.title}</strong><p>{warning.detail}</p></li>)}</ul></section>}
-              {review.checks.length > 0 && <section aria-label="Checks"><div className="review-pane-head"><h3>Checks</h3><span>{review.checks.length}</span></div><ul className="review-check-list">{review.checks.map((check) => <li key={check.id}><span className="check-mark" aria-label={check.state}>{check.state === "passed" ? "✓" : check.state === "failed" ? "!" : "…"}</span><div><strong>{check.name}</strong>{check.detail && <span>{check.detail}</span>}</div></li>)}</ul></section>}
+              {warnings.length > 0 && <section aria-label="Integration warnings"><div className="review-pane-head"><h3>Issues</h3><span>{warnings.length}</span></div><ul className="review-warning-list">{warnings.map((warning) => <li key={warning.id} data-severity={warning.severity}><strong>{warning.title}</strong><p>{warning.detail}</p></li>)}</ul></section>}
+              {checks.length > 0 && <section aria-label="Checks"><div className="review-pane-head"><h3>Checks</h3><span>{checks.length}</span></div><ul className="review-check-list">{checks.map((check) => <li key={check.id}><span className="check-mark" aria-label={check.state}>{check.state === "passed" ? "✓" : check.state === "failed" ? "!" : "…"}</span><div><strong>{check.name}</strong>{check.detail && <span>{check.detail}</span>}</div></li>)}</ul></section>}
             </>}
-        {(isMerged || isAbandoned) && <section aria-label="Branch cleanup"><div className="review-pane-head"><h3>Branch cleanup</h3><span>{review.cleanupStatus ?? "pending"}</span></div><p className="review-empty">{isAbandoned && !review.cleanupStatus ? "This candidate was abandoned without attempting to delete its branch." : review.cleanupStatus === "complete" ? "Recorded candidate and run branches were deleted after exact-SHA verification." : "Any branch that did not match its recorded SHA was preserved."}</p>{owner && !review.branchDeletedAt && <div className="review-actions"><button type="button" className="button danger-button" disabled={busy || retrying} onClick={() => isMerged ? setDeleteConfirmOpen(true) : void runAbandon(true)}>Delete candidate branch</button></div>}</section>}
+        {(isMerged || isAbandoned) && <section aria-label="Branch cleanup"><div className="review-pane-head"><h3>Branch cleanup</h3><span>{review?.cleanupStatus ?? "pending"}</span></div><p className="review-empty">{isAbandoned && !review?.cleanupStatus ? "This candidate was abandoned without attempting to delete its branch." : review?.cleanupStatus === "complete" ? "Recorded candidate and run branches were deleted after exact-SHA verification." : "Any branch that did not match its recorded SHA was preserved."}</p>{owner && !review?.branchDeletedAt && <div className="review-actions"><button type="button" className="button danger-button" disabled={busy || retrying} onClick={() => isMerged ? setDeleteConfirmOpen(true) : void runAbandon(true)}>Delete candidate branch</button></div>}</section>}
       </>}
       {rightTab === "chat" && <div className="review-inspector-chat" aria-label="Team chat"><div className="review-pane-head"><h3>Team chat</h3><span>{teamChat.filter((message) => message.recipientUserId === null).length}</span></div><TeamChat messages={teamChat} onSend={onSendTeamMessage} participants={participants} currentUserId={currentUserId} sessionId={sessionId} files={sessionFiles} /></div>}
-      {rightTab === "contributors" && <>
+      {rightTab === "contributors" && (allPrompts ? <>
+        <div className="review-pane-head"><h3>Engineers</h3></div>{sessionPrompts.engineers.map((person) => <button type="button" className="button" key={person.id} aria-pressed={engineerFilter === person.id} onClick={() => setEngineerFilter(engineerFilter === person.id ? null : person.id)}>{person.name}</button>)}
+        <div className="review-pane-head"><h3>Agents</h3></div>{sessionPrompts.agents.map((agent) => <button type="button" className="button" key={agent.id} aria-pressed={agentFilter === agent.id} onClick={() => setAgentFilter(agentFilter === agent.id ? null : agent.id)}>{agent.name}</button>)}
+      </> : <>
         <ContributorList title="Engineers" facets={promptContributions.engineers} selectedId={engineerFilter} owner={owner && contributionStatus === "active"} scope="engineer" onFilter={setEngineerFilter} onRollback={onRequestRollback} />
         <ContributorList title="Agents" facets={promptContributions.agents} selectedId={agentFilter} owner={owner && contributionStatus === "active"} scope="agent" onFilter={setAgentFilter} onRollback={onRequestRollback} />
-      </>}
+      </>)}
     </div>
   </div>;
 
   return <section className="review-screen" aria-label="Review candidate" data-resizing={resizing ? "true" : "false"}>
     <header className="review-hero review-command-bar">
       <div className="review-candidate-context">
-        <div className="review-branch-path" tabIndex={0} aria-label={`${review.branch} into ${review.baseBranch}`} {...branchTip.handlers}>
+        <div className="review-branch-path" tabIndex={0} aria-label={review ? `${review.branch} into ${review.baseBranch}` : "No review candidate"} {...branchTip.handlers}>
           <Icon name="branch" size={16} />
-          <strong>{review.branch}</strong>
+          <strong>{review?.branch ?? "No review candidate"}</strong>
           <Icon name="arrowRight" size={13} className="review-branch-arrow" />
-          <span>{review.baseBranch}</span>
+          <span>{review?.baseBranch}</span>
         </div>
         <div className="review-compact-meta">
-          {review.pullRequest && <a className="review-pr-link" href={review.pullRequest.url} target="_blank" rel="noreferrer" aria-label={`${review.pullRequest.draft ? "Draft " : ""}pull request ${review.pullRequest.number} on GitHub`}>PR #{review.pullRequest.number}<Icon name="external" size={12} /></a>}
+          {review?.pullRequest && <a className="review-pr-link" href={review?.pullRequest.url} target="_blank" rel="noreferrer" aria-label={`${review?.pullRequest.draft ? "Draft " : ""}pull request ${review?.pullRequest.number} on GitHub`}>PR #{review?.pullRequest.number}<Icon name="external" size={12} /></a>}
           <span className="review-diff-stat" aria-label={`${additions} additions and ${deletions} deletions`}><i className="add">+{additions}</i><i className="del">−{deletions}</i></span>
         </div>
-        <HoverTip position={branchTip.position} wrap>{review.commitSha ? `Candidate SHA\n${review.commitSha}` : "Candidate has not been committed"}</HoverTip>
+        <HoverTip position={branchTip.position} wrap>{review?.commitSha ? `Candidate SHA\n${review?.commitSha}` : "Candidate has not been committed"}</HoverTip>
       </div>
       <div className="review-actions review-command-actions">
         <button type="button" className="button conflicts-button" data-size="sm" data-attention={conflictAttention} onClick={() => setConflictCenter({ caseId: null })} {...conflictTip.handlers}>
@@ -456,42 +442,43 @@ export const ReviewScreen = memo(function ReviewScreen({ sessionId, revision, re
           {openConflicts.length > 0 && <strong className="review-action-count">{openConflicts.length}</strong>}
         </button>
         {owner && !isMerged && !isAbandoned && <>
-          {review.pullRequest && review.status === "draft" && <button type="button" className="button" disabled={busy} onClick={() => setReadyConfirmOpen(true)}>Ready for review</button>}
-          {review.pullRequest && review.status === "ready" && <button type="button" className="button" disabled={busy} onClick={() => setUnreadyConfirmOpen(true)}>Mark as not ready</button>}
-          {review.pullRequest && <button type="button" className="button review-icon-action" data-size="sm" disabled={busy} aria-label="Refresh GitHub status" onClick={() => void onSync()} {...refreshTip.handlers}><Icon name="refresh" size={15} /></button>}
-          {review.pullRequest && <button type="button" className="button review-icon-action" data-size="sm" disabled={busy} aria-label={review.mergeLockedAt ? "Unlock squash merge" : "Lock squash merge"} aria-pressed={Boolean(review.mergeLockedAt)} onClick={() => void onMergeLock(!review.mergeLockedAt)} {...lockTip.handlers}><Icon name={review.mergeLockedAt ? "lock" : "unlock"} size={15} /></button>}
-          {review.pullRequest && <>
+          {!review && <><button type="button" className="button" disabled title="No review candidate">Ready for review</button><button type="button" className="button" disabled title="No review candidate" aria-label="Refresh GitHub status"><Icon name="refresh" /></button><button type="button" className="button" disabled title="No review candidate" aria-label="Lock squash merge"><Icon name="lock" /></button><button type="button" className="button" disabled title="No review candidate">Squash merge</button></>}
+          {review?.pullRequest && review?.status === "draft" && <button type="button" className="button" disabled={busy} onClick={() => setReadyConfirmOpen(true)}>Ready for review</button>}
+          {review?.pullRequest && review?.status === "ready" && <button type="button" className="button" disabled={busy} onClick={() => setUnreadyConfirmOpen(true)}>Mark as not ready</button>}
+          {review?.pullRequest && <button type="button" className="button review-icon-action" data-size="sm" disabled={busy} aria-label="Refresh GitHub status" onClick={() => void onSync()} {...refreshTip.handlers}><Icon name="refresh" size={15} /></button>}
+          {review?.pullRequest && <button type="button" className="button review-icon-action" data-size="sm" disabled={busy} aria-label={review?.mergeLockedAt ? "Unlock squash merge" : "Lock squash merge"} aria-pressed={Boolean(review?.mergeLockedAt)} onClick={() => void onMergeLock(!review?.mergeLockedAt)} {...lockTip.handlers}><Icon name={review?.mergeLockedAt ? "lock" : "unlock"} size={15} /></button>}
+          {review?.pullRequest && <>
             <button type="button" className="button primary-button review-merge-button" data-state={readiness} aria-disabled={busy || !canMerge} aria-describedby={`${sessionId}-merge-readiness`} onClick={() => { if (!busy && canMerge) setMergeConfirmOpen(true); }} {...mergeTip.handlers}>
               <Icon name={readiness === "ready" ? "check" : readiness === "locked" ? "lock" : readiness === "waiting" ? "clock" : "alert"} size={14} />
               Squash merge
             </button>
             <span id={`${sessionId}-merge-readiness`} className="sr-only">{mergeTipText}</span>
           </>}
-          <button type="button" className="button danger-button" disabled={busy} title={review.integrationRunId ? "The candidate is still being updated" : "Retire this candidate without merging"} onClick={() => setAbandonConfirmOpen(true)}>Abandon candidate</button>
+          <button type="button" className="button danger-button" disabled={busy || !review} title={review?.integrationRunId ? "The candidate is still being updated" : "Retire this candidate without merging"} onClick={() => setAbandonConfirmOpen(true)}>Abandon candidate</button>
         </>}
       </div>
       <HoverTip position={conflictTip.position}>{conflictTipText}</HoverTip>
       <HoverTip position={refreshTip.position}>Refresh GitHub status</HoverTip>
-      <HoverTip position={lockTip.position}>{review.mergeLockedAt ? "Unlock squash merge" : "Lock squash merge"}</HoverTip>
+      <HoverTip position={lockTip.position}>{review?.mergeLockedAt ? "Unlock squash merge" : "Lock squash merge"}</HoverTip>
       <HoverTip position={mergeTip.position} wrap>{mergeTipText}</HoverTip>
     </header>
     <div className="review-grid" style={reviewGridStyle}>{leftPane}{mainCenterPane}<aside className="review-side">{rightPane}</aside>{reviewResizeHandles}</div>
     {readyConfirmOpen && <ReadyConfirmDialog busy={busy} onClose={() => setReadyConfirmOpen(false)} onConfirm={runReady} />}
     {unreadyConfirmOpen && <UnreadyConfirmDialog busy={busy} onClose={() => setUnreadyConfirmOpen(false)} onConfirm={runUnready} />}
     {mergeConfirmOpen && <MergeConfirmDialog busy={busy} onClose={() => setMergeConfirmOpen(false)} onConfirm={runMerge} />}
-    {deleteConfirmOpen && <DeleteBranchConfirmDialog branch={review.branch} busy={busy} onClose={() => setDeleteConfirmOpen(false)} onConfirm={runDeleteBranch} />}
-    {abandonConfirmOpen && <AbandonConfirmDialog branch={review.branch} busy={busy} onClose={() => setAbandonConfirmOpen(false)} onConfirm={runAbandon} />}
+    {review && deleteConfirmOpen && <DeleteBranchConfirmDialog branch={review?.branch} busy={busy} onClose={() => setDeleteConfirmOpen(false)} onConfirm={runDeleteBranch} />}
+    {review && abandonConfirmOpen && <AbandonConfirmDialog branch={review?.branch} busy={busy} onClose={() => setAbandonConfirmOpen(false)} onConfirm={runAbandon} />}
     {blockingRunId && pendingAction && <IntegrationBlockedDialog retrying={retrying} onClose={() => setPendingAction(null)} onConfirm={cancelBlockingRunAndRetry} />}
-    {conflictCenter && <ConflictCenterDialog sessionId={sessionId} conflicts={review.conflicts} initialCaseId={conflictCenter.caseId} owner={owner} currentUserId={currentUserId} busy={busy} onClose={() => setConflictCenter(null)} onResolve={onResolveConflict} onAnswer={onAnswerConflict} onSubmitSelections={onSubmitConflictSelections} />}
-    {fileMenu && (() => {
+    {conflictCenter && <ConflictCenterDialog sessionId={sessionId} conflicts={conflicts} initialCaseId={conflictCenter.caseId} owner={owner} currentUserId={currentUserId} busy={busy} onClose={() => setConflictCenter(null)} onMutation={onConflictMutation} />}
+    {review && fileMenu && (() => {
       const file = review.files.find((item) => item.id === fileMenu.fileId);
       return file ? <FileContextMenu file={file} position={fileMenu} returnFocus={fileMenu.returnFocus} repository={repository} review={review} owner={owner} disabled={busy || Boolean(review.integrationRunId)} onClose={() => setFileMenu(null)} onInfo={() => { setFileInfoId(file.id); setFileMenu(null); }} onRemove={() => { setFileRemovalId(file.id); setFileMenu(null); }} onNotice={onNotice} /> : null;
     })()}
-    {fileInfoId && (() => {
+    {review && fileInfoId && (() => {
       const file = review.files.find((item) => item.id === fileInfoId);
-      return file ? <FileInfoDialog file={file} source={fileContributions} onClose={() => setFileInfoId(null)} onOpenPrompt={(runId) => { setFileInfoId(null); setSelectedPromptRunId(runId); setContributionStatus("active"); setBrowseOverride("prompts"); }} /> : null;
+      return file ? <FileInfoDialog file={file} source={fileContributions} onClose={() => setFileInfoId(null)} onOpenPrompt={(runId) => { setFileInfoId(null); setAllPrompts(false); setSelectedPromptRunId(runId); setContributionStatus("active"); setBrowseOverride("prompts"); }} /> : null;
     })()}
-    {fileRemovalId && (() => {
+    {review && fileRemovalId && (() => {
       const file = review.files.find((item) => item.id === fileRemovalId);
       return file && review.commitSha ? <FileRemovalConfirmDialog file={file} baseBranch={review.baseBranch} busy={busy} onClose={() => setFileRemovalId(null)} onConfirm={async () => { const ok = await onRemoveFileChanges(file.path, review.commitSha!); if (ok) { setFileRemovalId(null); onNotice(`Removing changes from ${file.path}`); } }} /> : null;
     })()}
@@ -560,6 +547,7 @@ function contributionPreview(contribution: ReviewContribution) {
 }
 
 function EngineerNames({ contribution }: { contribution: ReviewContribution }) {
+  if (contribution.attribution?.kind === "system") return <>Automated feedback</>;
   const names = [...new Set(contribution.prompts.map((prompt) => prompt.authorName))];
   return names.map((name, index) => <Fragment key={name}>{index > 0 ? ", " : ""}<PersonName name={name} /></Fragment>);
 }
@@ -640,7 +628,7 @@ function FileInfoDialog({ file, source, onClose, onOpenPrompt }: {
       {source.loading && source.items.length === 0 ? <p className="review-empty">Loading change sources…</p>
         : source.error ? <p className="review-empty" role="alert">Change sources could not be loaded.</p>
         : source.items.length === 0 ? <p className="review-empty">No active prompt attribution for this file.</p>
-        : <ul className="review-file-source-list">{source.items.map((contribution) => <li key={contribution.runId}><div><span className="label">Agent</span><strong>{contribution.agentName}</strong></div><ol>{contribution.prompts.map((prompt) => <li key={prompt.id}><span><span className="label">User</span><PersonName name={prompt.authorName} /></span><p>{prompt.text}</p></li>)}</ol><button type="button" className="button" data-size="sm" onClick={() => onOpenPrompt(contribution.runId)}>View prompt changes</button></li>)}</ul>}
+        : <ul className="review-file-source-list">{source.items.map((contribution) => <li key={contribution.runId}><div><span className="label">Agent</span><strong>{contribution.agentName}</strong></div><RunAttributionInfo attribution={contribution.attribution} promptedBy={contribution.prompts.map((prompt) => ({ userId: prompt.authorUserId, name: prompt.authorName, deleted: Boolean(prompt.authorDeleted) }))} commitUrl={contribution.commitUrl} /><ol>{contribution.prompts.map((prompt) => <li key={prompt.id}><span><span className="label">User</span><PersonName name={prompt.authorName} /></span><p>{prompt.text}</p></li>)}</ol><button type="button" className="button" data-size="sm" onClick={() => onOpenPrompt(contribution.runId)}>View prompt changes</button></li>)}</ul>}
       {file.removalStatus === "failed" && file.removalFailureReason && <p className="review-empty" role="alert">Last removal failed: {file.removalFailureReason}</p>}
     </div>
     <div className="dialog-foot"><button type="button" className="button" onClick={dismiss}>Close</button></div>
@@ -681,6 +669,7 @@ function PromptContributionDetail({ detail, status, onRollback }: {
   return <section className="review-pane review-prompt-detail" aria-label="Prompt contribution detail">
     <div className="review-pane-head"><div><h3>{contribution.prompts.length === 1 ? "Prompt changes" : `${contribution.prompts.length} merged prompts`}</h3><small>{contribution.agentName} · <EngineerNames contribution={contribution} /></small></div><span className="queue-chip" data-kind="status" data-status={contribution.rollbackStatus ?? "active"}>{contributionLabel(contribution)}</span></div>
     <div className="review-prompt-detail-body">
+      <RunAttributionInfo attribution={contribution.attribution} promptedBy={contribution.prompts.map((prompt) => ({ userId: prompt.authorUserId, name: prompt.authorName, deleted: Boolean(prompt.authorDeleted) }))} commitUrl={contribution.commitUrl} />
       <ol className="review-prompt-copy">{contribution.prompts.map((prompt) => <li key={prompt.id}><strong><PersonName name={prompt.authorName} /></strong><p>{prompt.text}</p><small><LocalDateTime timestamp={prompt.createdAt} /></small></li>)}</ol>
       {contribution.rollbackStatus === "failed" && contribution.rollbackFailureReason && <p className="review-empty" role="alert">{contribution.rollbackFailureReason}</p>}
       {status === "active" && contribution.canRollback && <div className="review-prompt-detail-actions"><button type="button" className="button danger-button" onClick={() => onRollback({ scope: "prompt", subjectId: contribution.runId })}>Remove changes</button></div>}
@@ -763,7 +752,7 @@ function RepositoryTreeBranch({ nodes, depth, expandedDirs, onToggleDir, selecte
 }
 
 function requesterNames(requestedBy: ReviewContributor["requestedBy"]) {
-  if (requestedBy.length === 0) return "someone";
+  if (requestedBy.length === 0) return "no recorded human prompter";
   const shown = requestedBy.length <= 2 ? requestedBy : requestedBy.slice(0, 1);
   return <>{shown.map((requester, index) => <Fragment key={requester.userId}>{index > 0 ? ", " : ""}<PersonName name={requester.userName} /></Fragment>)}{requestedBy.length > 2 && ` +${requestedBy.length - 1}`}</>;
 }

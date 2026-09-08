@@ -15,7 +15,7 @@ export function usePersistentFloorData(sessionId: string, initialFloor: FloorSna
   const [error, setError] = useState<string | null>(null);
   const [blockingRunId, setBlockingRunId] = useState<string | null>(null);
 
-  const request = useCallback(async (path: string, method: string, body?: unknown) => {
+  const request = useCallback(async (path: string, method: string, body?: unknown, reportError?: (message: string) => void) => {
     setBusy(true);
     setError(null);
     setBlockingRunId(null);
@@ -26,7 +26,7 @@ export function usePersistentFloorData(sessionId: string, initialFloor: FloorSna
         body: body === undefined ? undefined : JSON.stringify(body),
         cache: "no-store",
       });
-      if (response.status === 404) {
+      if (response.status === 404 && !path.startsWith("/conflicts/")) {
         onMissing();
         return null;
       }
@@ -44,14 +44,15 @@ export function usePersistentFloorData(sessionId: string, initialFloor: FloorSna
         result = null;
       }
       if (!response.ok || !result?.floor) {
-        setError(result?.error ?? `The floor returned an unexpected error (${response.status}).`);
+        const message = result?.error ?? `The floor returned an unexpected error (${response.status}).`;
+        if (reportError) reportError(message); else setError(message);
         setBlockingRunId(result?.runId ?? null);
         return null;
       }
-      setFloor(result.floor);
+      setFloor((current) => result.floor!.revision >= current.revision ? result.floor! : current);
       return result.floor;
     } catch {
-      setError("The floor could not be reached.");
+      if (reportError) reportError("The floor could not be reached. Retry when connected."); else setError("The floor could not be reached.");
       return null;
     } finally {
       setBusy(false);
@@ -149,18 +150,25 @@ export function usePersistentFloorData(sessionId: string, initialFloor: FloorSna
     request("/routing", "PATCH", { autoDispatch }), [request]);
   const setAutoProvisionAgents = useCallback((autoProvisionAgents: boolean) =>
     request("/routing", "PATCH", { autoProvisionAgents }), [request]);
-  const setAutoAgentProvider = useCallback((autoAgentProvider: import("@/lib/provider-credentials").CredentialProvider | null) =>
-    request("/routing", "PATCH", { autoAgentProvider }), [request]);
+  const setPersonalAutoAgents = useCallback((autoAgentsEnabled: boolean) => request("/membership", "PATCH", { autoAgentsEnabled }), [request]);
+  const setAutoAgentProvider = useCallback(async (autoAgentProvider: import("@/lib/provider-credentials").CredentialProvider | null) => {
+    try {
+      const response = await fetch(`${BASE_PATH}/api/account/settings`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ defaultApiProvider: autoAgentProvider }) });
+      if (!response.ok) { const body = await response.json() as { error?: string }; setError(body.error ?? "Unable to save default API key."); return false; }
+      await refresh();
+      return true;
+    } catch { setError("Unable to save default API key."); return false; }
+  }, [refresh]);
   const setAutoResolveConflicts = useCallback((autoResolveConflicts: boolean) =>
     request("/routing", "PATCH", { autoResolveConflicts }), [request]);
   const setAutoInjectFeedback = useCallback((autoInjectFeedback: boolean) =>
     request("/routing", "PATCH", { autoInjectFeedback }), [request]);
-  const resolveConflict = useCallback((caseId: string) =>
-    request(`/conflicts/${encodeURIComponent(caseId)}/resolve`, "POST"), [request]);
-  const answerConflict = useCallback((caseId: string, answers: Array<{ questionId: string; answer: string }>) =>
-    request(`/conflicts/${encodeURIComponent(caseId)}/answers`, "POST", { answers }), [request]);
-  const submitConflictSelections = useCallback((caseId: string, snapshotRunId: string, selections: Array<{ path: string; hunkIndex: number; choice: import("@/lib/floor-types").ConflictChoice }>) =>
-    request(`/conflicts/${encodeURIComponent(caseId)}/selections`, "POST", { snapshotRunId, selections }), [request]);
+  const mutateConflict: import("@/lib/conflict-resolution").ConflictMutation = useCallback(async (caseId, action, input) => {
+    let error: string | undefined;
+    const result = await request(action === "reload" ? "/floor" : `/conflicts/${encodeURIComponent(caseId)}/${action}`,
+      action === "reload" ? "GET" : "POST", input, (message) => { error = message; });
+    return { ok: Boolean(result), ...(error ? { error } : {}) };
+  }, [request]);
   const cancelRun = useCallback((runId: string) =>
     request(`/runs/${encodeURIComponent(runId)}/cancel`, "POST"), [request]);
   const discardRun = useCallback((runId: string) =>
@@ -242,12 +250,11 @@ export function usePersistentFloorData(sessionId: string, initialFloor: FloorSna
     deleteQueueItem,
     setAutoDispatch,
     setAutoProvisionAgents,
+    setPersonalAutoAgents,
     setAutoAgentProvider,
     setAutoResolveConflicts,
     setAutoInjectFeedback,
-    resolveConflict,
-    answerConflict,
-    submitConflictSelections,
+    mutateConflict,
     cancelRun,
     discardRun,
     rollbackRun,
@@ -290,12 +297,11 @@ export function usePersistentFloorData(sessionId: string, initialFloor: FloorSna
     deleteQueueItem,
     setAutoDispatch,
     setAutoProvisionAgents,
+    setPersonalAutoAgents,
     setAutoAgentProvider,
     setAutoResolveConflicts,
     setAutoInjectFeedback,
-    resolveConflict,
-    answerConflict,
-    submitConflictSelections,
+    mutateConflict,
     cancelRun,
     discardRun,
     rollbackRun,

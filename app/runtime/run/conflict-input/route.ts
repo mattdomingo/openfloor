@@ -1,11 +1,13 @@
+import { recordConflictAssessment } from "@/db/conflict-decisions";
 import { requestConflictInput } from "@/db/conflicts";
 import { getRunGatewayContext } from "@/db/runs";
 import { notifyFloorChanged } from "@/lib/presence-server";
 import { verifyRunGatewayToken } from "@/lib/runtime-token";
-import { parseConflictInputRequest } from "@/lib/validation";
+import { parseConflictInputRequest, parseConflictAssessment } from "@/lib/validation";
+import { readJson } from "@/lib/floor-api";
 import { env } from "cloudflare:workers";
 
-const MAX_BODY_BYTES = 16 * 1024;
+const MAX_BODY_BYTES = 256 * 1024;
 
 export async function POST(request: Request) {
   const secret = (env as unknown as { RUNTIME_GATEWAY_SECRET?: string }).RUNTIME_GATEWAY_SECRET;
@@ -19,15 +21,17 @@ export async function POST(request: Request) {
     || !["provisioning", "running", "checking"].includes(context.status)) {
     return new Response("Not found", { status: 404 });
   }
-  const declared = Number(request.headers.get("content-length") ?? 0);
-  if (declared > MAX_BODY_BYTES) return new Response("Payload too large", { status: 413 });
-  const raw = await request.arrayBuffer();
-  if (raw.byteLength === 0 || raw.byteLength > MAX_BODY_BYTES) return new Response("Payload too large", { status: 413 });
-  let body: unknown;
-  try {
-    body = JSON.parse(new TextDecoder().decode(raw));
-  } catch {
-    return new Response("Invalid payload", { status: 400 });
+  const body = await readJson(request, MAX_BODY_BYTES);
+  if (!body) return new Response("Invalid or oversized payload", { status: 400 });
+  const assessment = parseConflictAssessment(body);
+  if (assessment) {
+    const recorded = await recordConflictAssessment(claims.runId, assessment);
+    if (!recorded) return Response.json({ error: "The report must cover both intents and current approvals. Request human input if evidence is incomplete." }, { status: 409 });
+    if (assessment.outcome !== "compatible") {
+      const waiting = await requestConflictInput(claims.runId, assessment.explanation, []);
+      if (waiting) await notifyFloorChanged(waiting.sessionId, waiting.revision, ["queue", "runs", "review"]);
+    }
+    return Response.json({ accepted: true }, { status: 202 });
   }
   const input = parseConflictInputRequest(body);
   if (!input) return Response.json({ error: "Provide a bounded explanation and one to three questions." }, { status: 400 });

@@ -196,3 +196,11 @@ describe("groupQueueItems", () => {
     expect(groups.find((group) => group.id === "live")!.items.map((item) => item.id)).toEqual(["mine"]);
   });
 });
+
+
+it("keeps a prepared conflict actionable even after the run leaves the snapshot window", () => {
+  const item = makeItem({ status: "blocked" });
+  const conflict = { status: "awaiting_input" } as import("@/lib/floor-types").MergeConflictCase;
+  expect(queueItemGroup(item, makeRun({ status: "ready", completion: "no_changes", purpose: "conflict_resolution" }), conflict)).toBe("conflicted");
+  expect(queueItemGroup(item, null, conflict)).toBe("conflicted");
+});

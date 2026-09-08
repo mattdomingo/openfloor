@@ -1,3 +1,5 @@
+> Historical implementation plan. The 2026-09-08 personal-billing decision supersedes server-key fallback and subscription enablement described below. Current execution accepts personal API keys only; see AGENTS.md and the API contracts.
+
 # Task: add Kimi (Moonshot), Grok (xAI), and Gemini (Google) as agent-run providers in openfloor
 
 You are working in the openfloor repo, branching off `main`. Read `AGENTS.md` first — it is the authoritative spec and its "Mandatory maintenance rule" (AGENTS.md:7) applies to every commit in this change. `docs/claude-provider-prompt.md` is the precedent brief; this task extends what that milestone built.

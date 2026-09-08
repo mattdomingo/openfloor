@@ -17,6 +17,7 @@ async function routingRoom(suffix: string, autoDispatch = true, autoProvisionAge
   const member = await upsertUser(identity(`${suffix}-member`, "Member Example"), env.DB);
   const created = await createSession(owner.id, { title: `Routing ${suffix}`, objective: null }, env.DB);
   await acceptInvite(created.inviteId, member.id, env.DB);
+  for (const user of [owner, member]) await env.DB.prepare("INSERT INTO user_provider_credentials (user_id, provider, kind, ciphertext, fingerprint, created_at, updated_at) VALUES (?, 'openai', 'api_key', 'test-only-ciphertext', 'test', 1, 1)").bind(user.id).run();
   // Sessions now default to auto_dispatch = 1 (db/sessions.ts createSession),
   // so the "off" case has to explicitly turn it back off rather than relying
   // on the old false default.
@@ -26,7 +27,7 @@ async function routingRoom(suffix: string, autoDispatch = true, autoProvisionAge
 }
 
 async function addAgent(sessionId: string, ownerUserId: string, name: string, role: string, task: string) {
-  const input = parseAgentInput({ name, role, task, ownerUserId });
+  const input = parseAgentInput({ usageScope: "session", name, role, task, ownerUserId });
   if (!input) throw new Error("Invalid test agent");
   const floor = await createFloorAgent(sessionId, ownerUserId, input, env.DB);
   const agent = floor?.agents.find((candidate) => candidate.name === name);
@@ -156,8 +157,8 @@ describe("agent router tick", () => {
     expect(candidates).toHaveLength(2);
     expect(candidates.find((candidate) => candidate.agentId === backendId)?.overlap).toBe(2);
 
-    // Dispatch followed assignment; item is running and the stub was invoked as the owner.
-    expect(stub.calls).toEqual([{ queueItemId: itemId, userId: room.owner.id }]);
+    // Dispatch follows assignment using the prompt author.
+    expect(stub.calls).toEqual([{ queueItemId: itemId, userId: room.member.id }]);
     expect(recorded.find((decision) => decision.decision === "dispatched")).toBeTruthy();
 
     // Second tick is idempotent: nothing queued remains, nothing new happens.
@@ -399,8 +400,33 @@ describe("agent router tick", () => {
     expect((await queueItem(okItemId))?.status).toBe("running");
   });
 
+  it("skips unverified authors and keeps dispatching while scheduling verification retries", async () => {
+    const room = await routingRoom("github-verification");
+    const overBudgetAgentId = await addAgent(room.sessionId, room.owner.id, "OverBudget", "Researcher", "Research the domain model");
+    const okAgentId = await addAgent(room.sessionId, room.owner.id, "Ok", "Engineer", "Implement backend changes");
+    const first = await createFloorQueueItem(room.sessionId, room.owner.id, { prompt: "Over-budget work item", agentId: overBudgetAgentId }, env.DB);
+    const overBudgetItemId = first?.queue.find((item) => item.agentId === overBudgetAgentId)?.id;
+    const second = await createFloorQueueItem(room.sessionId, room.owner.id, { prompt: "Ok work item", agentId: okAgentId }, env.DB);
+    const okItemId = second?.queue.find((item) => item.agentId === okAgentId)?.id;
+    if (!overBudgetItemId || !okItemId) throw new Error("Queue items were not created");
+
+    const stub = startRunStub([{ ok: false, kind: "github_verification_required", message: "GitHub verification required for Engineer." }]);
+    const outcome = await runRoutingTick(room.sessionId, "enqueue", stub.deps, env.DB);
+    expect(outcome.held).toBe(true);
+    expect(stub.calls.map((call) => call.queueItemId)).toEqual([overBudgetItemId, okItemId]);
+    const recorded = await decisions(room.sessionId);
+    const skipped = recorded.find((decision) => decision.queueItemId === overBudgetItemId);
+    expect(skipped?.decision).toBe("skipped");
+    expect(skipped?.reason).toContain("GitHub verification");
+    expect(recorded.find((decision) => decision.queueItemId === okItemId)?.decision).toBe("dispatched");
+    expect((await queueItem(overBudgetItemId))?.status).toBe("queued");
+    expect((await queueItem(okItemId))?.status).toBe("running");
+  });
+
   it("dispatches gated providers normally once the gate opens", async () => {
     const room = await routingRoom("mixed-open");
+    await env.DB.prepare(`INSERT INTO user_provider_credentials (user_id, provider, kind, ciphertext, fingerprint, created_at, updated_at) VALUES (?, 'anthropic', 'api_key', 'test', 'test', ?, ?)`)
+      .bind(room.owner.id, Date.now(), Date.now()).run();
     const claudeAgentId = await addAgent(room.sessionId, room.owner.id, "Claude", "Researcher", "Research the domain model");
     await env.DB.prepare("UPDATE floor_agents SET provider = 'anthropic' WHERE id = ?").bind(claudeAgentId).run();
     const floor = await createFloorQueueItem(room.sessionId, room.owner.id, { prompt: "Claude work item", agentId: claudeAgentId }, env.DB);
@@ -498,7 +524,7 @@ describe("agent router tick", () => {
     const now = Date.now();
     for (const provider of ["openai", "anthropic"] as const) {
       await env.DB.prepare(
-        `INSERT INTO user_provider_credentials (user_id, provider, kind, ciphertext, fingerprint, created_at, updated_at)
+        `INSERT OR REPLACE INTO user_provider_credentials (user_id, provider, kind, ciphertext, fingerprint, created_at, updated_at)
          VALUES (?, ?, 'api_key', ?, 'test', ?, ?)`,
       ).bind(room.owner.id, provider, `cipher-${provider}`, now, now).run();
     }
@@ -509,12 +535,12 @@ describe("agent router tick", () => {
     expect((await queueItem(itemId))?.agentId).toBeNull();
     expect((await decisions(room.sessionId)).at(-1)?.reason).toBe("Choose a default generated-agent provider");
 
-    await setSessionRoutingSettings(room.sessionId, room.owner.id, { autoAgentProvider: "anthropic" }, env.DB);
+    await env.DB.prepare("UPDATE users SET default_api_provider = ? WHERE id = ?").bind("anthropic", room.owner.id).run();
     const gated = await runRoutingTick(room.sessionId, "toggle", { ...startRunStub().deps, disabledProviders: new Set(["anthropic", "openai"]) }, env.DB);
     expect(gated.held).toBe(true);
     expect((await queueItem(itemId))?.agentId).toBeNull();
 
-    await setSessionRoutingSettings(room.sessionId, room.owner.id, { autoAgentProvider: "openai" }, env.DB);
+    await env.DB.prepare("UPDATE users SET default_api_provider = ? WHERE id = ?").bind("openai", room.owner.id).run();
     await runRoutingTick(room.sessionId, "toggle", startRunStub().deps, env.DB);
     const generated = await env.DB.prepare("SELECT provider FROM floor_agents WHERE id = ?")
       .bind((await queueItem(itemId))!.agentId).first<{ provider: string }>();
@@ -756,4 +782,51 @@ describe("classifyPrompt", () => {
   it("treats a very long prompt the same as a normal one (no special-casing on length)", () => {
     expect(classifyPrompt(`fix ${"the bug ".repeat(2000)}`)).toBe("task");
   });
+});
+
+describe("personal automation isolation", () => {
+  it("holds a member without a key while dispatching the eligible teammate", async () => {
+    const room = await routingRoom("personal-missing");
+    await env.DB.prepare("DELETE FROM user_provider_credentials WHERE user_id = ?").bind(room.member.id).run();
+    const missing = await createFloorQueueItem(room.sessionId, room.member.id, { prompt: "Implement my private work", agentId: null }, env.DB);
+    const missingId = missing!.queue[0].id;
+    const eligible = await createFloorQueueItem(room.sessionId, room.owner.id, { prompt: "Implement my eligible work", agentId: null }, env.DB);
+    const eligibleId = eligible!.queue.find((item) => item.id !== missingId)!.id;
+    const stub = startRunStub();
+    await runRoutingTick(room.sessionId, "enqueue", stub.deps, env.DB);
+    expect(stub.calls.map((call) => call.queueItemId)).toEqual([eligibleId]);
+    expect((await queueItem(missingId))?.agentId).toBeNull();
+    const agent = await env.DB.prepare("SELECT owner_user_id AS owner FROM floor_agents WHERE id = ?").bind((await queueItem(eligibleId))!.agentId).first<{ owner: string }>();
+    expect(agent?.owner).toBe(room.owner.id);
+  });
+
+  it("uses personal defaults and never substitutes for an unavailable explicit default", async () => {
+    const { resolveAutoAgentProvider } = await import("@/db/provider-credentials");
+    const room = await routingRoom("personal-defaults");
+    await env.DB.prepare("UPDATE users SET default_api_provider = 'anthropic' WHERE id = ?").bind(room.member.id).run();
+    expect((await resolveAutoAgentProvider(room.sessionId, env.DB, new Set(), room.member.id)).state).toBe("default_unavailable");
+    expect((await resolveAutoAgentProvider(room.sessionId, env.DB, new Set(), room.owner.id)).effectiveProvider).toBe("openai");
+    await env.DB.prepare("INSERT INTO user_provider_credentials (user_id, provider, kind, ciphertext, fingerprint, created_at, updated_at) VALUES (?, 'anthropic', 'api_key', 'test', 'test', 1, 1)").bind(room.member.id).run();
+    expect((await resolveAutoAgentProvider(room.sessionId, env.DB, new Set(), room.member.id)).effectiveProvider).toBe("anthropic");
+    await env.DB.prepare("UPDATE session_members SET auto_agents_enabled = 0 WHERE user_id = ? AND session_id = ?").bind(room.member.id, room.sessionId).run();
+    expect((await resolveAutoAgentProvider(room.sessionId, env.DB, new Set(), room.member.id)).state).toBe("personal_disabled");
+    expect((await resolveAutoAgentProvider(room.sessionId, env.DB, new Set(), room.owner.id)).effectiveProvider).toBe("openai");
+  });
+});
+
+it("reassigns untouched generated work after a personal default changes without changing old agent ownership", async () => {
+  const { ensureAnswerAgent } = await import("@/db/floor");
+  const room = await routingRoom("changed-personal-default");
+  const old = await ensureAnswerAgent(room.sessionId, room.member.id, "openai", env.DB);
+  const floor = await createFloorQueueItem(room.sessionId, room.member.id, { prompt: "What is this repository?", agentId: null }, env.DB);
+  const itemId = floor!.queue[0].id;
+  await env.DB.prepare("UPDATE floor_queue_items SET agent_id = ?, assigned_by = 'router' WHERE id = ?").bind(old.id, itemId).run();
+  await env.DB.prepare("INSERT INTO user_provider_credentials (user_id, provider, kind, ciphertext, fingerprint, created_at, updated_at) VALUES (?, 'anthropic', 'api_key', 'test', 'test', 1, 1)").bind(room.member.id).run();
+  await env.DB.prepare("UPDATE users SET default_api_provider = 'anthropic' WHERE id = ?").bind(room.member.id).run();
+  const stub = startRunStub();
+  await runRoutingTick(room.sessionId, "toggle", stub.deps, env.DB);
+  const assigned = (await queueItem(itemId))!.agentId;
+  expect(assigned).not.toBe(old.id);
+  expect(await env.DB.prepare("SELECT owner_user_id AS owner, provider FROM floor_agents WHERE id = ?").bind(assigned).first()).toEqual({ owner: room.member.id, provider: "anthropic" });
+  expect(await env.DB.prepare("SELECT owner_user_id AS owner, provider FROM floor_agents WHERE id = ?").bind(old.id).first()).toEqual({ owner: room.member.id, provider: "openai" });
 });

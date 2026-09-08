@@ -54,6 +54,7 @@ export function CreateAgentDialog({
   // null = "the owner's default" (api_key when connected). Offered only for
   // providers with more than one connected credential kind; switching provider
   // resets it so a kind can never outlive a provider that does not accept it.
+  const [usageScope, setUsageScope] = useState<"private" | "session">("private");
   const [credentialKind, setCredentialKind] = useState<CredentialKind | null>(null);
   // null = "the provider's default". Re-keys off the provider exactly like
   // Billing above, so a model id can never be posted to another provider.
@@ -67,7 +68,7 @@ export function CreateAgentDialog({
     event.preventDefault();
     if (!ready || submitting || !provider) return;
     setSubmitting(true);
-    const created = await onCreate({ name, role: "Engineer", task, ownerUserId: currentUserId, provider, credentialKind, model });
+    const created = await onCreate({ name, role: "Engineer", task, ownerUserId: currentUserId, provider, credentialKind, model, usageScope });
     setSubmitting(false);
     if (created) dismiss();
   }
@@ -144,7 +145,7 @@ export function CreateAgentDialog({
                     onChange={(value) => setCredentialKind(parseCredentialKind(value))}
                     options={[
                       { value: "default", label: "Owner's default" },
-                      { value: "oauth", label: "Subscription" },
+
                       { value: "api_key", label: "API key" },
                     ]}
                   />
@@ -152,6 +153,11 @@ export function CreateAgentDialog({
               )}
             </>
           )}
+        </div>
+        <div className="dialog-body">
+          <span className="label">Who can use this agent</span>
+          <SelectMenu label="Who can use this agent" value={usageScope} onChange={(value) => setUsageScope(value as "private" | "session")} options={[{ value: "private", label: "Only me" }, { value: "session", label: "Everyone in this session" }]} />
+          <p className="form-note">Sharing lets teammates run this agent using your API key.</p>
         </div>
         <div className="dialog-foot">
           <button type="button" className="button" data-variant="quiet" onClick={dismiss}>Cancel</button>

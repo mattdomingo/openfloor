@@ -1,35 +1,18 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 
-/* A step-through tutorial that spotlights real UI (ENG-17). Each step names a
-   selector; the bubble sits beside the live element with a highlight ring
-   around it, so the tour teaches the actual controls rather than screenshots.
-   Steps advance only when the user clicks the highlighted element itself —
-   doing the thing is the Next button. Portaled to <body> for the same reason
-   HoverTip is (ancestor backdrop-filter/transform would break position:
-   fixed).
-
-   Whether it has been seen is per-device localStorage, the same deliberate
-   choice as the theme (AGENTS.md "UI state that is intentionally local"): the
-   tour auto-opens once per storageKey and never again after Skip/Done. A
-   missing anchor (e.g. a control the current role doesn't render) centers the
-   bubble instead of crashing the step.
-
-   A step with `isSatisfied` gates on doing the thing instead of merely
-   clicking the anchor — filling a field, picking an option, connecting a
-   credential. Clicking such a step's anchor no longer advances it (the click
-   still reaches the real control normally); once `isSatisfied()` is true,
-   Enter advances instead. `isSatisfied` is a plain DOM check, matching
-   `selector`, since controlled inputs keep the DOM node's `.value` in sync
-   with what's rendered — no need to thread React state out of the form.
-
-   `placement: "side"` opts an anchor into beside-instead-of-below bubble
-   placement — for an anchor whose own interaction (e.g. an open dropdown)
-   occupies the space directly below it, where the default placement would
-   otherwise sit on top of it. */
-export type TourStep = { selector: string; title: string; body: string; isSatisfied?: () => boolean; placement?: "side" };
+// Tour progress is local to this device. Recovery steps restore the actual
+// screen before advancing; form steps never simulate a successful mutation.
+export type TourStep = {
+  selector: string; title: string; body: string;
+  isSatisfied?: () => boolean;
+  placement?: "side";
+  onNext?: () => void;
+  waitForAction?: boolean;
+  clickSelector?: string;
+};
 
 function subscribeStorage(callback: () => void) {
   window.addEventListener("storage", callback);
@@ -60,7 +43,7 @@ function clipToScrollableAncestor(rect: DOMRect, element: Element): DOMRect | nu
   return rect;
 }
 
-export function GuidedTour({ storageKey, steps }: { storageKey: string; steps: TourStep[] }) {
+export function GuidedTour({ storageKey, steps, recover }: { storageKey: string; steps: TourStep[]; recover?: (index: number) => TourStep | null }) {
   // Same store idiom as ThemeToggle: the server snapshot says "dismissed" so
   // SSR renders nothing, and the first client render opens the tour only when
   // the key is absent. Storage unavailable (private mode) reads as dismissed.
@@ -81,81 +64,60 @@ export function GuidedTour({ storageKey, steps }: { storageKey: string; steps: T
   const [satisfied, setSatisfied] = useState(false);
   const bubbleRef = useRef<HTMLDivElement>(null);
 
-  const step = !dismissed && !closed ? steps[index] : null;
+  const recovery = recover?.(index);
+  const step = !dismissed && !closed ? recovery ?? steps[index] : null;
   const last = index === steps.length - 1;
 
-  const finish = () => {
+  const finish = useCallback(() => {
     try {
       localStorage.setItem(storageKey, "done");
     } catch {
       // Without storage the dismissal only lasts this page view.
     }
     setClosed(true);
-  };
+  }, [storageKey]);
 
-  // The tour advances only when the user clicks the element it is pointing
-  // at — doing the thing is the Next button. Capture phase so the advance
-  // happens even when the anchor's own handler stops propagation. A gated
-  // step (isSatisfied) skips this entirely: the click still reaches the real
-  // control, it just isn't the tour's advance gesture — Enter is, below.
-  useEffect(() => {
-    if (!step || step.isSatisfied) return;
-    const onClick = (event: MouseEvent) => {
-      const anchor = document.querySelector(step.selector);
-      if (!anchor || !(event.target instanceof Node) || !anchor.contains(event.target)) return;
-      if (last) {
-        try {
-          localStorage.setItem(storageKey, "done");
-        } catch {
-          // Without storage the dismissal only lasts this page view.
-        }
-        setClosed(true);
-      } else {
-        setIndex((current) => current + 1);
-      }
-    };
-    document.addEventListener("click", onClick, true);
-    return () => document.removeEventListener("click", onClick, true);
-  }, [step, last, storageKey]);
+  const advance = useCallback((clicked = false) => {
+    if (!step || (step.isSatisfied && !step.isSatisfied())) return;
+    if (!clicked) step.onNext?.();
+    if (recovery || step.waitForAction) return;
+    if (last) finish(); else setIndex((current) => current + 1);
+  }, [step, recovery, last, finish]);
 
-  // Typing, selecting, or connecting a credential changes an input's .value
-  // or a data-* attribute — neither fires the MutationObserver below, so a
-  // gated step's "done yet?" hint is driven by a light poll instead.
   useEffect(() => {
-    const check = () => setSatisfied(Boolean(step?.isSatisfied?.()));
+    const check = () => setSatisfied(!step?.isSatisfied || step.isSatisfied());
     check();
     if (!step?.isSatisfied) return;
     const interval = window.setInterval(check, 200);
     return () => window.clearInterval(interval);
   }, [step]);
 
-  // Enter is the gated step's advance gesture. Always preventDefault on
-  // Enter while gated — that's what stops the browser's native implicit
-  // form-submit from firing early while the tour is walking the form — but
-  // never stopPropagation, so SelectMenu's own Enter-to-choose-an-option
-  // handling on an open dropdown keeps working. isSatisfied is re-checked
-  // directly here rather than trusting the polled state, which can lag by
-  // up to one interval tick.
   useEffect(() => {
-    if (!step?.isSatisfied) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Enter") return;
-      event.preventDefault();
-      if (!step.isSatisfied?.()) return;
-      if (last) {
-        try {
-          localStorage.setItem(storageKey, "done");
-        } catch {
-          // Without storage the dismissal only lasts this page view.
-        }
-        setClosed(true);
-      } else {
-        setIndex((current) => current + 1);
-      }
+    if (!step) return;
+    const onClick = (event: MouseEvent) => {
+      const anchor = document.querySelector(step.clickSelector ?? step.selector);
+      if (!anchor || !(event.target instanceof Node) || !anchor.contains(event.target)) return;
+      if (!step.isSatisfied) advance(true);
     };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Enter" || !step.isSatisfied || step.waitForAction) return;
+      // Let an open listbox select its option before advancing the tour.
+      if (document.querySelector('[role="listbox"]')) return;
+      event.preventDefault();
+      advance();
+    };
+    const onComplete = (event: Event) => {
+      if ((event as CustomEvent<string>).detail === storageKey) finish();
+    };
+    document.addEventListener("click", onClick, true);
     document.addEventListener("keydown", onKeyDown, true);
-    return () => document.removeEventListener("keydown", onKeyDown, true);
-  }, [step, last, storageKey]);
+    window.addEventListener("openfloor:tour-complete", onComplete);
+    return () => {
+      document.removeEventListener("click", onClick, true);
+      document.removeEventListener("keydown", onKeyDown, true);
+      window.removeEventListener("openfloor:tour-complete", onComplete);
+    };
+  }, [step, advance, storageKey, finish]);
 
   useLayoutEffect(() => {
     if (!step) return;
@@ -230,18 +192,12 @@ export function GuidedTour({ storageKey, steps }: { storageKey: string; steps: T
       <div className="tour-bubble" role="dialog" aria-label={step.title} tabIndex={-1} ref={bubbleRef} style={style}>
         <strong>{step.title}</strong>
         <p>{step.body}</p>
-        {step.isSatisfied ? (satisfied && <p className="tour-hint">Press Enter to continue.</p>) : (rect && <p className="tour-hint">Click the highlighted area to continue.</p>)}
+        <p className="tour-hint">{recovery ? "Return to the highlighted control to continue." : step.waitForAction ? "Complete this action to finish the tutorial." : step.isSatisfied && !satisfied ? "Complete this step to continue." : "Click Next or use the highlighted control."}</p>
         <div className="tour-controls">
           <span className="tour-count">{index + 1} of {steps.length}</span>
-          <button type="button" className="button" data-variant="quiet" data-size="sm" onClick={finish}>Skip</button>
-          {/* Only a missing anchor (a control this role doesn't render) gets a
-              button to move on — otherwise clicking the real element is the
-              only way forward. */}
-          {!rect && (
-            <button type="button" className="button" data-variant="primary" data-size="sm" onClick={() => (last ? finish() : setIndex(index + 1))}>
-              {last ? "Done" : "Next"}
-            </button>
-          )}
+          <button type="button" className="button" data-variant="primary" data-size="sm" disabled={!rect || (Boolean(step.isSatisfied) && !satisfied)} onClick={() => advance()}>
+            {last && !recovery ? (step.waitForAction ? "Create session" : "Done") : "Next"}
+          </button>
         </div>
       </div>
     </div>,

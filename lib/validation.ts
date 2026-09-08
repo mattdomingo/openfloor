@@ -1,5 +1,5 @@
 import {
-  credentialKindsForProvider,
+  availableCredentialKinds,
   parseCredentialKind,
   parseCredentialProvider,
   PROVIDER_MODELS,
@@ -12,6 +12,7 @@ export type SessionInput = { title: string; objective: string | null };
 export type SessionCreateInput = SessionInput & { accountInstallationId: string; repositoryId: string; candidateName: string | null };
 export type ObjectiveInput = { objective: string | null };
 export type AgentInput = {
+  usageScope?: "private" | "session";
   name: string;
   nameKey: string;
   role: string;
@@ -25,7 +26,7 @@ export type AgentInput = {
 // `credentialKind` distinguish ABSENT (leave the field alone) from explicit
 // null (reset to the default) — collapsing the two would make the Billing
 // control unable to return to "Owner's default".
-export type AgentSettingsInput = { task?: string; model?: string | null; credentialKind?: CredentialKind | null };
+export type AgentSettingsInput = { usageScope?: "private" | "session"; task?: string; model?: string | null; credentialKind?: CredentialKind | null };
 export type AgentPauseInput = { paused: boolean };
 export type AssignmentInput = { task: string | null };
 export type MessageInput = { text: string; recipientUserId: string | null; attachmentIds?: string[] };
@@ -131,7 +132,7 @@ export function parseAgentInput(value: unknown): AgentInput | null {
   let credentialKind: CredentialKind | null = null;
   if (input.credentialKind !== undefined && input.credentialKind !== null) {
     const kind = parseCredentialKind(input.credentialKind);
-    if (!kind || !credentialKindsForProvider(provider).includes(kind)) return null;
+    if (!kind || !availableCredentialKinds(provider).includes(kind)) return null;
     credentialKind = kind;
   }
   // Optional model, valid only among the provider's closed allowlist so an
@@ -142,7 +143,8 @@ export function parseAgentInput(value: unknown): AgentInput | null {
     if (typeof input.model !== "string" || !PROVIDER_MODELS[provider].includes(input.model)) return null;
     model = input.model;
   }
-  return { name, nameKey: normalizeAgentName(name), role, task, ownerUserId, provider, credentialKind, model };
+  if (input.usageScope !== undefined && input.usageScope !== "private" && input.usageScope !== "session") return null;
+  return { usageScope: input.usageScope as "private" | "session" | undefined, name, nameKey: normalizeAgentName(name), role, task, ownerUserId, provider, credentialKind, model };
 }
 
 // Generalizes the old parseAgentTaskInput: at least one key must be present,
@@ -155,6 +157,10 @@ export function parseAgentSettingsInput(value: unknown): AgentSettingsInput | nu
   if (!value || typeof value !== "object") return null;
   const input = value as Record<string, unknown>;
   const patch: AgentSettingsInput = {};
+  if (input.usageScope !== undefined) {
+    if (input.usageScope !== "private" && input.usageScope !== "session") return null;
+    patch.usageScope = input.usageScope;
+  }
   if (input.task !== undefined) {
     if (typeof input.task !== "string") return null;
     const task = input.task.trim();
@@ -166,10 +172,10 @@ export function parseAgentSettingsInput(value: unknown): AgentSettingsInput | nu
     patch.model = input.model;
   }
   if (input.credentialKind !== undefined) {
-    if (input.credentialKind !== null && parseCredentialKind(input.credentialKind) === null) return null;
+    if (input.credentialKind !== null && input.credentialKind !== "api_key") return null;
     patch.credentialKind = input.credentialKind === null ? null : parseCredentialKind(input.credentialKind);
   }
-  if (patch.task === undefined && patch.model === undefined && patch.credentialKind === undefined) return null;
+  if (patch.task === undefined && patch.model === undefined && patch.credentialKind === undefined && patch.usageScope === undefined) return null;
   return patch;
 }
 
@@ -281,7 +287,7 @@ export function parseConflictSelectionsInput(value: unknown): ConflictSelections
     if (typeof selection.choice !== "string" || !CONFLICT_CHOICES.has(selection.choice)) return null;
     parsed.push({ path: selection.path, hunkIndex: selection.hunkIndex, choice: selection.choice as ConflictSelectionsInput["selections"][number]["choice"] });
   }
-  const keys = new Set(parsed.map((selection) => `${selection.path} ${selection.hunkIndex}`));
+  const keys = new Set(parsed.map((selection) => `${selection.path}\0${selection.hunkIndex}`));
   if (keys.size !== parsed.length) return null;
   return { snapshotRunId: input.snapshotRunId.trim(), selections: parsed };
 }
@@ -416,7 +422,7 @@ export function parseCredentialLimitInput(value: unknown): CredentialLimitInput 
   if (!value || typeof value !== "object") return null;
   const input = value as { kind?: unknown; monthlyLimitUsd?: unknown };
   const kind = parseCredentialKind(input.kind);
-  if (!kind) return null;
+  if (!kind || kind !== "api_key") return null;
   if (input.monthlyLimitUsd === null) return { kind, monthlyLimitUsd: null };
   if (typeof input.monthlyLimitUsd !== "number" || !Number.isFinite(input.monthlyLimitUsd)) return null;
   if (input.monthlyLimitUsd < 0 || input.monthlyLimitUsd > MAX_MONTHLY_LIMIT_USD) return null;
@@ -441,4 +447,52 @@ function parseIdList(value: unknown, key: string, minimum: number): { itemIds: s
   const itemIds = ids.map((id) => (id as string).trim());
   if (new Set(itemIds).size !== itemIds.length) return null;
   return { itemIds };
+}
+
+
+export function parseConflictProposalInput(value: unknown): { revision: number; snapshotId: string; payload: import("./conflict-resolution").ConflictProposalPayload } | null {
+  if (!value || typeof value !== "object") return null;
+  const input = value as Record<string, unknown>;
+  if (!Number.isSafeInteger(input.revision) || Number(input.revision) < 0 || typeof input.snapshotId !== "string" || !input.snapshotId || input.snapshotId.length > 100) return null;
+  if (typeof input.instruction === "string" && input.instruction.trim() && input.instruction.length <= 6000) {
+    return { revision: Number(input.revision), snapshotId: input.snapshotId, payload: { kind: "intent", instruction: input.instruction.trim() } };
+  }
+  if (!Array.isArray(input.selections) || input.selections.length < 1 || input.selections.length > 5000) return null;
+  const selections: import("./conflict-resolution").ManualConflictSelection[] = [];
+  let contentBytes = 0;
+  for (const item of input.selections) {
+    if (!item || typeof item !== "object") return null;
+    const selection = item as Record<string, unknown>;
+    if (typeof selection.path !== "string" || !selection.path || selection.path.length > 1000 || selection.path.includes("\0")
+      || selection.path.startsWith("/") || selection.path.split("/").some((part) => !part || part === ".." || part === ".git")
+      || !Number.isSafeInteger(selection.hunkIndex) || Number(selection.hunkIndex) < -1
+      || !["ours", "theirs", "both", "edited"].includes(String(selection.choice))) return null;
+    if (selection.choice === "edited") {
+      if (selection.hunkIndex !== -1 || typeof selection.content !== "string") return null;
+      contentBytes += new TextEncoder().encode(selection.content).length;
+      if (contentBytes > 2_000_000) return null;
+    } else if (selection.content !== undefined) return null;
+    selections.push({ path: selection.path, hunkIndex: Number(selection.hunkIndex), choice: selection.choice as import("./conflict-resolution").ManualConflictSelection["choice"], ...(selection.choice === "edited" ? { content: selection.content as string } : {}) });
+  }
+  if (new Set(selections.map((selection) => JSON.stringify([selection.path, selection.hunkIndex]))).size !== selections.length) return null;
+  return { revision: Number(input.revision), snapshotId: input.snapshotId, payload: { kind: "manual", selections } };
+}
+
+export function parseConflictVoteInput(value: unknown): { revision: number; proposalId: string; action: "approve" | "reject" | "override"; reason?: string } | null {
+  if (!value || typeof value !== "object") return null;
+  const input = value as Record<string, unknown>;
+  if (!Number.isSafeInteger(input.revision) || Number(input.revision) < 0 || typeof input.proposalId !== "string" || !input.proposalId || input.proposalId.length > 100
+    || !["approve", "reject", "override"].includes(String(input.action))) return null;
+  const reason = typeof input.reason === "string" ? input.reason.trim() : "";
+  if (reason.length > 2000 || input.action === "override" && !reason) return null;
+  return { revision: Number(input.revision), proposalId: input.proposalId, action: input.action as "approve" | "reject" | "override", ...(reason ? { reason } : {}) };
+}
+
+export function parseConflictAssessment(value: unknown): import("./conflict-resolution").ConflictAssessment | null {
+  if (!value || typeof value !== "object") return null;
+  const input = value as Record<string, unknown>;
+  if (!["compatible", "decision_required", "blocked"].includes(String(input.outcome)) || typeof input.explanation !== "string" || !input.explanation.trim() || input.explanation.length > 4000
+    || !Array.isArray(input.preservedPromptIds) || input.preservedPromptIds.length > 500 || input.preservedPromptIds.some((id) => typeof id !== "string" || !id || id.length > 100)
+    || !Array.isArray(input.evidence) || input.evidence.length < 1 || input.evidence.length > 20 || input.evidence.some((item) => typeof item !== "string" || !item.trim() || item.length > 1000)) return null;
+  return { outcome: input.outcome as "compatible" | "decision_required" | "blocked", explanation: input.explanation.trim(), preservedPromptIds: [...new Set(input.preservedPromptIds)] as string[], evidence: input.evidence as string[] };
 }

@@ -67,6 +67,7 @@ export type PresenceEvent =
   | { type: "error"; code: string };
 
 export type AppUser = {
+  verifiedGitHub?: import("./github-identity").GitHubIdentity | null;
   id: string;
   providerUserId: string;
   email: string;
@@ -77,6 +78,7 @@ export type AppUser = {
   avatarKey: string | null;
   onboardedAt: number | null;
   doNotDisturb: boolean;
+  defaultApiProvider?: CredentialProvider | null;
   plan: Plan;
   planStatus: PlanStatus;
   seatLimit: number | null;

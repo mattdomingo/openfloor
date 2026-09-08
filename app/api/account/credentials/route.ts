@@ -5,5 +5,5 @@ export async function GET() {
   const user = await requireApiUser();
   if (isApiError(user)) return user;
   const credentials = await listProviderCredentials(user.id);
-  return Response.json({ credentials });
+  return Response.json({ credentials, defaultApiProvider: user.defaultApiProvider ?? null });
 }

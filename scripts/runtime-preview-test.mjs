@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, rmSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { sandboxArguments } from "./runtime-sandbox.mjs";
 
-const scratch = "/tmp/openfloor-preview-isolation";
+const scratch = "/tmp/openfloor/preview-isolation";
 rmSync(scratch, { recursive: true, force: true });
 mkdirSync(scratch, { recursive: true });
 
@@ -34,7 +34,7 @@ for (const manager of ["npm", "pnpm", "yarn", "bun"]) {
     { HOME: "/tmp/openfloor/workspace-home" },
     { extraRoFiles: ["repository-preview.mjs"] },
   ), { encoding: "utf8", timeout: 60_000, env: { PATH: "/usr/local/bin:/usr/bin:/bin" } });
-  assert.equal(result.status, 0, result.stderr || result.error?.message);
+  assert.equal(result.status, 0, `${manager}: ${result.stdout} ${result.stderr || result.error?.message || ""}`);
   assert(!existsSync(`${fixture}/lifecycle-ran`));
   assert.match(readFileSync(`${fixture}/config.json`, "utf8"), new RegExp(`"packageManager":"${manager}"`));
 }
@@ -62,9 +62,9 @@ const loopback = spawnSync("/usr/bin/bwrap", sandboxArguments(
           response.on('end', () => {
             assert.equal(body, 'preview-loopback');
             const remote = net.connect({ host: '1.1.1.1', port: 443 });
-            remote.on('connect', () => { remote.destroy(); reject(new Error('Preview escaped')); });
-            remote.on('error', resolve);
-            remote.setTimeout(1000, () => { remote.destroy(); resolve(); });
+            remote.on('connect', () => { remote.destroy(); server.close(); reject(new Error('Preview escaped')); });
+            remote.on('error', () => server.close(resolve));
+            remote.setTimeout(1000, () => { remote.destroy(); server.close(resolve); });
           });
         }).on('error', reject);
       });

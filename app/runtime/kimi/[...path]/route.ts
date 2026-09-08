@@ -24,7 +24,6 @@ export async function POST(request: Request, { params }: { params: Promise<{ pat
     provider: "kimi",
     upstreamBase: "https://api.moonshot.ai/anthropic/v1",
     oauthUpstreamBase: "https://api.kimi.com/coding/v1",
-    serverKeyBinding: "MOONSHOT_API_KEY",
     buildAuthHeaders: (secret, kind): Record<string, string> =>
       kind === "oauth" ? { "x-api-key": secret } : { authorization: `Bearer ${secret}` },
     allowedPaths: ALLOWED_PATHS,

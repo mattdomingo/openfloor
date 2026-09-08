@@ -11,8 +11,10 @@ export const users = sqliteTable(
     firstName: text("first_name"),
     lastName: text("last_name"),
     githubHandle: text("github_handle"),
+    verifiedGitHub: text("verified_github"),
     avatarKey: text("avatar_key"),
     onboardedAt: integer("onboarded_at"),
+    defaultApiProvider: text("default_api_provider"),
     doNotDisturb: integer("do_not_disturb", { mode: "boolean" }).notNull().default(false),
     // The purchased tier. Only meaningful while planStatus is "active" — see
     // effectivePlan() in lib/plans.ts, which is what every limit check
@@ -229,6 +231,7 @@ export const sessionMembers = sqliteTable(
     userId: text("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
+    autoAgentsEnabled: integer("auto_agents_enabled", { mode: "boolean" }).notNull().default(true),
     role: text("role", { enum: ["owner", "member"] }).notNull(),
     joinedAt: integer("joined_at").notNull(),
     archivedAt: integer("archived_at"),
@@ -278,6 +281,7 @@ export const floorAgents = sqliteTable(
     sessionId: text("session_id").notNull().references(() => sessions.id, { onDelete: "cascade" }),
     createdBy: text("created_by").notNull().references(() => users.id),
     ownerUserId: text("owner_user_id").notNull().references(() => users.id),
+    usageScope: text("usage_scope", { enum: ["private", "session"] }).notNull().default("private"),
     name: text("name").notNull(),
     nameKey: text("name_key").notNull(),
     role: text("role").notNull(),
@@ -784,6 +788,7 @@ export const agentRuns = sqliteTable(
   "agent_runs",
   {
     id: text("id").primaryKey(),
+    attribution: text("attribution"),
     sessionId: text("session_id").notNull().references(() => sessions.id, { onDelete: "cascade" }),
     queueItemId: text("queue_item_id").notNull().references(() => floorQueueItems.id),
     agentId: text("agent_id").notNull().references(() => floorAgents.id),
@@ -1036,6 +1041,13 @@ export const mergeConflictCases = sqliteTable(
     sessionId: text("session_id").notNull().references(() => sessions.id, { onDelete: "cascade" }),
     sourceRunId: text("source_run_id").notNull().references(() => agentRuns.id),
     latestSourceRunId: text("latest_source_run_id").notNull().references(() => agentRuns.id),
+    revision: integer("revision").notNull().default(0),
+    trigger: text("trigger", { enum: ["git", "overlap"] }).notNull().default("git"),
+    mode: text("mode", { enum: ["prepare", "ai", "manual"] }).notNull().default("prepare"),
+    snapshotId: text("snapshot_id"),
+    proposalId: text("proposal_id"),
+    waitingReason: text("waiting_reason"),
+    mutationId: text("mutation_id"),
     currentResolverRunId: text("current_resolver_run_id").references(() => agentRuns.id, { onDelete: "set null" }),
     status: text("status", { enum: ["pending", "resolving", "awaiting_input", "resolved", "failed"] }).notNull(),
     explanation: text("explanation"),
@@ -1061,6 +1073,11 @@ export const mergeConflictAttempts = sqliteTable(
     caseId: text("case_id").notNull().references(() => mergeConflictCases.id, { onDelete: "cascade" }),
     runId: text("run_id").notNull().references(() => agentRuns.id, { onDelete: "cascade" }),
     launchKind: text("launch_kind", { enum: ["automatic", "manual", "answer"] }).notNull(),
+    executionMode: text("execution_mode", { enum: ["prepare", "ai", "manual"] }).notNull().default("ai"),
+    snapshotId: text("snapshot_id"),
+    proposalId: text("proposal_id"),
+    sourceRunId: text("source_run_id"),
+    assessment: text("assessment"),
     createdAt: integer("created_at").notNull(),
   },
   (table) => [
@@ -1257,3 +1274,38 @@ export const userProviderCredentials = sqliteTable(
   },
   (table) => [primaryKey({ columns: [table.userId, table.provider, table.kind] })],
 );
+
+
+// Snapshot and proposal identities are immutable. Case pointers are soft references
+// to avoid a table recreation or cyclic deletion cascade during additive rollout.
+export const mergeConflictSnapshots = sqliteTable("merge_conflict_snapshots", {
+  id: text("id").primaryKey(),
+  caseId: text("case_id").notNull().references(() => mergeConflictCases.id, { onDelete: "cascade" }),
+  runId: text("run_id").notNull().references(() => agentRuns.id, { onDelete: "cascade" }),
+  sourceRunId: text("source_run_id").notNull(),
+  candidateSha: text("candidate_sha").notNull(),
+  sourceCommitSha: text("source_commit_sha").notNull(),
+  manifestKey: text("manifest_key").notNull(),
+  provenance: text("provenance").notNull(),
+  createdAt: integer("created_at").notNull(),
+}, (table) => [uniqueIndex("idx_conflict_snapshots_run").on(table.runId), index("idx_conflict_snapshots_case").on(table.caseId, table.createdAt)]);
+
+export const mergeConflictProposals = sqliteTable("merge_conflict_proposals", {
+  id: text("id").primaryKey(),
+  caseId: text("case_id").notNull().references(() => mergeConflictCases.id, { onDelete: "cascade" }),
+  snapshotId: text("snapshot_id").notNull().references(() => mergeConflictSnapshots.id, { onDelete: "cascade" }),
+  kind: text("kind", { enum: ["intent", "manual"] }).notNull(),
+  payload: text("payload").notNull(),
+  createdBy: text("created_by").references(() => users.id, { onDelete: "set null" }),
+  createdAt: integer("created_at").notNull(),
+}, (table) => [index("idx_conflict_proposals_case").on(table.caseId, table.createdAt)]);
+
+export const mergeConflictVotes = sqliteTable("merge_conflict_votes", {
+  id: text("id").primaryKey(),
+  proposalId: text("proposal_id").notNull().references(() => mergeConflictProposals.id, { onDelete: "cascade" }),
+  userId: text("user_id").references(() => users.id, { onDelete: "set null" }),
+  action: text("action", { enum: ["approve", "reject", "override"] }).notNull(),
+  reason: text("reason"),
+  caseRevision: integer("case_revision").notNull(),
+  createdAt: integer("created_at").notNull(),
+}, (table) => [index("idx_conflict_votes_proposal").on(table.proposalId, table.createdAt)]);

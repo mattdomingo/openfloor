@@ -8,8 +8,8 @@ import {
 } from "@/lib/chatgpt-auth";
 import {
   credentialAadContext,
+  availableCredentialKinds,
   credentialKindLabel,
-  credentialKindsForProvider,
   providerLabel,
   resolveRunCredentialSource,
   type CredentialKind,
@@ -93,7 +93,8 @@ export async function setProviderCredentialLimit(
 export type AutoAgentProviderResolution = {
   configuredProvider: CredentialProvider | null;
   effectiveProvider: CredentialProvider | null;
-  state: "selected" | "single_connected" | "openai_fallback" | "selection_required";
+  state: "selected" | "single_connected" | "missing_key" | "selection_required" | "personal_disabled" | "default_unavailable";
+  personalEnabled: boolean;
 };
 
 /** Resolve generated-agent provider policy without exposing credential data. */
@@ -101,33 +102,24 @@ export async function resolveAutoAgentProvider(
   sessionId: string,
   database: D1DatabaseLike = getDb(),
   disabledProviders: ReadonlySet<CredentialProvider> = new Set(),
+  userId?: string,
 ): Promise<AutoAgentProviderResolution> {
-  const session = await database.prepare(
-    `SELECT s.auto_agent_provider AS configuredProvider, owner.user_id AS ownerUserId
-     FROM sessions s
-     JOIN session_members owner ON owner.session_id = s.id AND owner.role = 'owner' AND owner.removed_at IS NULL
-     WHERE s.id = ?`,
-  ).bind(sessionId).first<{ configuredProvider: CredentialProvider | null; ownerUserId: string }>();
-  if (!session) return { configuredProvider: null, effectiveProvider: null, state: "selection_required" };
-  // DISTINCT because a provider can hold two rows since credential kinds
-  // became first-class (api_key + oauth) — one provider with both kinds is
-  // still ONE connected provider, not a "selection required" pair.
-  const credentials = await database.prepare(
-    "SELECT DISTINCT provider FROM user_provider_credentials WHERE user_id = ? ORDER BY provider",
-  ).bind(session.ownerUserId).all<{ provider: CredentialProvider }>();
-  const enabledCredentials = credentials.results
-    .map((credential) => credential.provider)
-    .filter((provider) => !disabledProviders.has(provider));
-  if (session.configuredProvider && enabledCredentials.includes(session.configuredProvider)) {
-    return { configuredProvider: session.configuredProvider, effectiveProvider: session.configuredProvider, state: "selected" };
-  }
-  if (enabledCredentials.length === 0) {
-    return { configuredProvider: null, effectiveProvider: "openai", state: "openai_fallback" };
-  }
-  if (enabledCredentials.length === 1) {
-    return { configuredProvider: null, effectiveProvider: enabledCredentials[0], state: "single_connected" };
-  }
-  return { configuredProvider: null, effectiveProvider: null, state: "selection_required" };
+  const member = await database.prepare(
+    `SELECT u.default_api_provider AS configuredProvider, sm.user_id AS userId, sm.auto_agents_enabled AS enabled
+     FROM session_members sm JOIN users u ON u.id = sm.user_id
+     WHERE sm.session_id = ? AND sm.removed_at IS NULL AND (? IS NULL AND sm.role = 'owner' OR sm.user_id = ?)`,
+  ).bind(sessionId, userId ?? null, userId ?? null).first<{ configuredProvider: CredentialProvider | null; userId: string; enabled: number }>();
+  const result = { configuredProvider: member?.configuredProvider ?? null, effectiveProvider: null, personalEnabled: Boolean(member?.enabled) };
+  if (!member?.enabled) return { ...result, state: "personal_disabled" };
+  const credentials = await database.prepare("SELECT provider FROM user_provider_credentials WHERE user_id = ? AND kind = 'api_key'")
+    .bind(member.userId).all<{ provider: CredentialProvider }>();
+  const enabled = credentials.results.map((row) => row.provider).filter((provider) => !disabledProviders.has(provider));
+  if (member.configuredProvider) return enabled.includes(member.configuredProvider)
+    ? { ...result, effectiveProvider: member.configuredProvider, state: "selected" }
+    : { ...result, state: "default_unavailable" };
+  if (enabled.length === 0) return { ...result, state: "missing_key" };
+  if (enabled.length === 1) return { ...result, effectiveProvider: enabled[0], state: "single_connected" };
+  return { ...result, state: "selection_required" };
 }
 
 export async function upsertProviderCredential(
@@ -170,22 +162,10 @@ export async function deleteProviderCredential(
   return (result.meta?.changes ?? 0) > 0;
 }
 
-// Run-time resolution input: the run's agent owner's stored credential for
-// one provider. Billing follows whoever owns the agent (the "Owner" chosen in
-// the create-agent dialog), not the session owner — the person whose name is
-// on the agent is the person whose key pays for its runs. removeMember
-// transfers a removed member's agents to the removing owner, so billing
-// follows the transfer; the removed_at guard here is defense-in-depth for
-// any path that leaves a removed user owning an agent — such a key is never
-// billed (null result, ladder falls to the server key / refusal).
-//
-// The agent's credential_kind narrows the join: a named kind matches only its
-// own row; null prefers api_key and otherwise takes whatever single row
-// exists. `requestedKind` comes back even when no row matched, so callers can
-// tell "owner has nothing" (server fallback allowed) from "owner has nothing
-// OF THE KIND THIS AGENT ASKED FOR" (refuse — never bill a payer the agent
-// did not name). The ciphertext stays server-side; callers decrypt with the
-// kind-aware AAD (credentialAadContext) and never return it.
+// Resolve only the original agent owner's API key while that owner remains
+// a member. Leaving or removal preserves ownership and blocks future spending.
+// requestedKind survives a missing credential so subscriptions refuse clearly.
+// Ciphertext stays server-side and decrypts with kind-aware AAD.
 export async function getRunAgentOwnerCredential(
   runId: string,
   provider: CredentialProvider,
@@ -199,14 +179,17 @@ export async function getRunAgentOwnerCredential(
 } | null> {
   return await database
     .prepare(
-      `SELECT fa.owner_user_id AS ownerUserId, fa.credential_kind AS requestedKind,
+      `SELECT fa.owner_user_id AS ownerUserId,
+              CASE WHEN mca.run_id IS NOT NULL THEN source.billed_kind ELSE fa.credential_kind END AS requestedKind,
               c.kind AS kind, c.ciphertext AS ciphertext, c.updated_at AS updatedAt
        FROM agent_runs r
        JOIN floor_agents fa ON fa.id = r.agent_id
+       LEFT JOIN merge_conflict_attempts mca ON mca.run_id = r.id
+       LEFT JOIN agent_runs source ON source.id = mca.source_run_id
        JOIN session_members sm ON sm.session_id = r.session_id AND sm.user_id = fa.owner_user_id AND sm.removed_at IS NULL
        LEFT JOIN user_provider_credentials c
-         ON c.user_id = fa.owner_user_id AND c.provider = ?
-        AND (fa.credential_kind IS NULL OR c.kind = fa.credential_kind)
+         ON c.user_id = fa.owner_user_id AND c.provider = ? AND c.kind = 'api_key'
+        AND ((mca.run_id IS NULL AND fa.credential_kind IS NULL) OR c.kind = CASE WHEN mca.run_id IS NOT NULL THEN source.billed_kind ELSE fa.credential_kind END)
        WHERE r.id = ?
        ORDER BY CASE WHEN c.kind = 'api_key' THEN 0 ELSE 1 END
        LIMIT 1`,
@@ -219,30 +202,35 @@ export async function getRunAgentOwnerCredential(
 // gateway can run the D6 conditional-update critical section against the exact
 // row it just read. Server resolutions have no row to rotate.
 export type ResolvedRunSecret =
-  | { ok: true; source: "owner" | "server"; kind: CredentialKind; secret: string; ownerUserId?: string; updatedAt?: number }
+  | { ok: true; source: "owner"; kind: CredentialKind; secret: string; ownerUserId?: string; updatedAt?: number }
   | { ok: false; message: string };
 
 // The one implementation of the per-run credential ladder, shared by every
 // gateway route (anthropic-compat, openai, gemini) so a fix to this
 // security-sensitive resolution never has to land N times. Decisions live in
 // the pure resolveRunCredentialSource; this adds the D1 read, the
-// kind-vs-provider enforcement, and the AAD-bound decrypt. Server fallback is
-// always api_key by construction — bindings are plain strings, and openfloor
-// never operates a subscription seat on anyone else's behalf.
+// kind-vs-provider enforcement, and the AAD-bound decrypt. Platform secrets
+// are ignored; legacy subscription records cannot authorize execution.
 export async function resolveRunProviderSecret(
   runId: string,
   provider: CredentialProvider,
-  options: { serverKey: string | undefined; encryptionKey: string | undefined },
+  options: { serverKey?: string; encryptionKey: string | undefined },
   database: D1DatabaseLike = getDb(),
 ): Promise<ResolvedRunSecret> {
+  const pinned = await database.prepare(`SELECT source.billed_kind AS kind FROM merge_conflict_attempts a
+    JOIN agent_runs source ON source.id = a.source_run_id WHERE a.run_id = ?`).bind(runId).first<{ kind: string | null }>();
+  if (pinned?.kind === "server") return { ok: false, message: "The original run used an unavailable platform key. Use manual resolution." };
+  if (pinned && !pinned.kind) return { ok: false, message: "The original run's billing source is unknown. Use manual resolution." };
   const owner = await getRunAgentOwnerCredential(runId, provider, database);
+  if (owner?.requestedKind === "oauth") return { ok: false, message: "Subscription connections are unavailable. Select a connected API key in the agent settings." };
+  if (pinned && !owner?.ciphertext) return { ok: false, message: "The original run's connected credential is unavailable. Reconnect it or use manual resolution." };
   const resolution = resolveRunCredentialSource({
     ownerCredentialPresent: Boolean(owner?.ciphertext),
     serverKeyPresent: Boolean(options.serverKey),
     missingSelectedKind: Boolean(owner && owner.ciphertext === null && owner.requestedKind !== null),
   });
   if (resolution.source === "owner" && owner?.ciphertext && owner.kind) {
-    if (!credentialKindsForProvider(provider).includes(owner.kind)) {
+    if (!availableCredentialKinds(provider).includes(owner.kind)) {
       // A hand-written row of a kind this provider does not accept must never
       // reach the vendor — and must not fall through to the server key either
       // (that would silently switch payer).
@@ -265,14 +253,10 @@ export async function resolveRunProviderSecret(
       ...(owner.updatedAt === null ? {} : { updatedAt: owner.updatedAt }),
     };
   }
-  if (resolution.source === "server" && options.serverKey) {
-    await recordBilledKind(runId, "server", database);
-    return { ok: true, source: "server", kind: "api_key", secret: options.serverKey };
-  }
   if (resolution.source === "none" && resolution.reason === "missing_selected_kind" && owner?.requestedKind) {
     return {
       ok: false,
-      message: `This agent is set to use your ${providerLabel(provider)} ${owner.requestedKind === "oauth" ? "subscription" : "API key"}, which is not connected. Connect it in Settings or change the agent.`,
+      message: `This agent is set to use your ${providerLabel(provider)} API key, which is not connected. Connect it in Settings or change the agent.`,
     };
   }
   return { ok: false, message: `No ${providerLabel(provider)} credential is available for this run.` };

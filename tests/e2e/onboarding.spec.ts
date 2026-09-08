@@ -51,7 +51,7 @@ test("a direct user keeps profile state across steps and completes Free onboardi
   // one-page create dialog, which the tour then walks field by field.
   const tour = page.getByRole("dialog", { name: "Your sessions" });
   await expect(tour).toBeVisible();
-  await expect(tour.getByRole("button", { name: "Next" })).toHaveCount(0);
+  await expect(tour.getByRole("button", { name: "Next" })).toBeVisible();
   await page.getByRole("button", { name: /^Active/ }).click();
   await expect(page.getByRole("dialog", { name: "Start a session" })).toBeVisible();
   await page.getByRole("button", { name: "New session" }).click();
@@ -69,7 +69,7 @@ test("a direct user keeps profile state across steps and completes Free onboardi
   await page.keyboard.press("Enter");
 
   await expect(page.getByRole("dialog", { name: "Say what done looks like" })).toBeVisible();
-  await page.getByLabel(/Goal/).fill("Ship the tour");
+  // Goal is optional; Next must work without filling it.
   await page.keyboard.press("Enter");
 
   await expect(page.getByRole("dialog", { name: "Pick the repository" })).toBeVisible();
@@ -86,8 +86,8 @@ test("a direct user keeps profile state across steps and completes Free onboardi
 
   await expect(page.getByRole("dialog", { name: "Create the session" })).toBeVisible();
   await expect(page.locator(".tour-count")).toHaveText("8 of 8");
-  await expect(page.getByRole("button", { name: "Create session" })).toBeVisible();
-  await page.getByRole("button", { name: "Create session" }).click();
+  await expect(page.getByRole("dialog", { name: "Create the session" }).getByRole("button", { name: "Create session" })).toBeVisible();
+  await page.getByRole("dialog", { name: "Create the session" }).getByRole("button", { name: "Create session" }).click();
 
   // The final click both ends the home tour and creates the session for
   // real — same do-it-to-advance rule as the New session tile above. Landing

@@ -8,7 +8,7 @@ const MAX_REQUEST_BYTES = 10 * 1024 * 1024;
 const OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses";
 
 export async function POST(request: Request, { params }: { params: Promise<{ path: string[] }> }) {
-  const bindings = env as unknown as { RUNTIME_GATEWAY_SECRET?: string; OPENAI_API_KEY?: string; CREDENTIAL_ENCRYPTION_KEY?: string };
+  const bindings = env as unknown as { RUNTIME_GATEWAY_SECRET?: string; CREDENTIAL_ENCRYPTION_KEY?: string };
   const token = request.headers.get("authorization")?.match(/^Bearer (.+)$/)?.[1];
   if (!token || !bindings.RUNTIME_GATEWAY_SECRET) return new Response("Not found", { status: 404 });
   const claims = await verifyRunGatewayToken(token, bindings.RUNTIME_GATEWAY_SECRET, "openai");
@@ -40,7 +40,6 @@ export async function POST(request: Request, { params }: { params: Promise<{ pat
   // else refuse. A present-but-unreadable owner credential and a named-but-
   // unconnected kind both refuse rather than silently billing another payer.
   const resolved = await resolveRunProviderSecret(claims.runId, "openai", {
-    serverKey: bindings.OPENAI_API_KEY,
     encryptionKey: bindings.CREDENTIAL_ENCRYPTION_KEY,
   });
   if (!resolved.ok) return new Response(resolved.message, { status: 503 });

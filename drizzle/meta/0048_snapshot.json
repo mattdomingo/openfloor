@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "ec3a832a-3f93-4b4d-94c7-e8f1003a9828",
+  "id": "288c5a4f-aa69-4a9c-b3ff-44b1d626cd47",
   "prevId": "2c9d7e81-6a14-4b0f-9c3e-8f1a2b4d6e70",
   "tables": {
     "agent_run_artifacts": {
@@ -834,6 +834,13 @@
           "notNull": true,
           "autoincrement": false
         },
+        "attribution": {
+          "name": "attribution",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "session_id": {
           "name": "session_id",
           "type": "text",
@@ -1285,184 +1292,6 @@
         "agent_runs_status_check": {
           "name": "agent_runs_status_check",
           "value": "\"agent_runs\".\"status\" in ('provisioning', 'running', 'checking', 'ready', 'publishing', 'published', 'integrating', 'integrated', 'conflicted', 'failed', 'cancel_requested', 'cancelled')"
-        }
-      }
-    },
-    "candidate_file_removals": {
-      "name": "candidate_file_removals",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "session_id": {
-          "name": "session_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "candidate_id": {
-          "name": "candidate_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "path": {
-          "name": "path",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "previous_path": {
-          "name": "previous_path",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "expected_candidate_sha": {
-          "name": "expected_candidate_sha",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "base_sha": {
-          "name": "base_sha",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "removal_commit_sha": {
-          "name": "removal_commit_sha",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "status": {
-          "name": "status",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "failure_reason": {
-          "name": "failure_reason",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "created_by": {
-          "name": "created_by",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "started_at": {
-          "name": "started_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "completed_at": {
-          "name": "completed_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "idx_candidate_file_removals_session_created": {
-          "name": "idx_candidate_file_removals_session_created",
-          "columns": [
-            "session_id",
-            "created_at"
-          ],
-          "isUnique": false
-        },
-        "idx_candidate_file_removals_candidate_path": {
-          "name": "idx_candidate_file_removals_candidate_path",
-          "columns": [
-            "candidate_id",
-            "path",
-            "created_at"
-          ],
-          "isUnique": false
-        }
-      },
-      "foreignKeys": {
-        "candidate_file_removals_session_id_sessions_id_fk": {
-          "name": "candidate_file_removals_session_id_sessions_id_fk",
-          "tableFrom": "candidate_file_removals",
-          "tableTo": "sessions",
-          "columnsFrom": [
-            "session_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "candidate_file_removals_candidate_id_repository_candidates_id_fk": {
-          "name": "candidate_file_removals_candidate_id_repository_candidates_id_fk",
-          "tableFrom": "candidate_file_removals",
-          "tableTo": "repository_candidates",
-          "columnsFrom": [
-            "candidate_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "candidate_file_removals_created_by_users_id_fk": {
-          "name": "candidate_file_removals_created_by_users_id_fk",
-          "tableFrom": "candidate_file_removals",
-          "tableTo": "users",
-          "columnsFrom": [
-            "created_by"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {
-        "candidate_file_removals_status_check": {
-          "name": "candidate_file_removals_status_check",
-          "value": "\"candidate_file_removals\".\"status\" in ('requested', 'running', 'completed', 'failed')"
         }
       }
     },
@@ -3220,13 +3049,6 @@
           "type": "text",
           "primaryKey": false,
           "notNull": true,
-          "autoincrement": false
-        },
-        "previous_path": {
-          "name": "previous_path",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
           "autoincrement": false
         },
         "additions": {
@@ -6003,6 +5825,13 @@
         },
         "github_handle": {
           "name": "github_handle",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "verified_github": {
+          "name": "verified_github",
           "type": "text",
           "primaryKey": false,
           "notNull": false,

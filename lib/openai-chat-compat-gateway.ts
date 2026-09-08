@@ -25,7 +25,6 @@ export type OpenAiChatCompatGatewayConfig = {
   upstreamBase: string;
   // Worker secret binding name for the server-side fallback key (read by
   // name — cloudflare-env.d.ts deliberately doesn't declare provider keys).
-  serverKeyBinding: string;
   // Normalized (leading "v1/" stripped) paths the CLI is allowed to reach.
   allowedPaths: ReadonlySet<string>;
 };
@@ -60,7 +59,6 @@ export async function handleOpenAiChatCompatProxy(
   // else refuse — a present-but-unreadable owner credential and a named-but-
   // unconnected kind both refuse rather than switching payer.
   const resolved = await resolveRunProviderSecret(claims.runId, config.provider, {
-    serverKey: bindings[config.serverKeyBinding],
     encryptionKey: bindings.CREDENTIAL_ENCRYPTION_KEY,
   });
   if (!resolved.ok) return new Response(resolved.message, { status: 503 });
