@@ -137,6 +137,14 @@ describe("durable merge conflicts", () => {
     expect(await env.DB.prepare("SELECT status FROM agent_runs WHERE id = ?").bind(cancelled.runId).first()).toEqual({ status: "cancel_requested" });
   });
 
+  it("inherits immutable source engineer attribution in resolver runs", async () => {
+    const r = await seed("attribution-inheritance");
+    const attribution = JSON.stringify({ kind: "human", authors: [{ userId: r.member.id, githubId: "123", login: "engineer" }] });
+    await env.DB.prepare("UPDATE agent_runs SET attribution = ? WHERE id = ?").bind(attribution, r.sourceRunId).run();
+    const resolver = await createConflictResolverRun(r.caseId, "automatic", env.DB);
+    expect(resolver).not.toBeNull();
+    expect(await env.DB.prepare("SELECT attribution FROM agent_runs WHERE id = ?").bind(resolver!.runId).first()).toEqual({ attribution });
+  });
   it("defaults automation on, records one idempotent case, and preserves omitted routing settings", async () => {
     const room = await seed("defaults");
     const floor = await getFloorSnapshot(room.sessionId, room.member.id, env.DB);

@@ -1223,6 +1223,7 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
           OPENFLOOR_COMMIT_DATE: new Date(context.createdAt).toISOString(),
           OPENFLOOR_RUN_ID: runId,
           OPENFLOOR_COMMIT_MESSAGE: runCommitMessage(context.prompts[0]?.text, runId),
+          OPENFLOOR_COMMIT_AUTHORS: JSON.stringify(context.attribution?.authors.map((author) => ({ id: author.githubId, login: author.login })) ?? null),
         } },
       );
       if (!download.success) throw new Error(`Trusted bundle publication failed: ${download.stderr.slice(-1_000)}`);

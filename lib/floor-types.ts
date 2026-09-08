@@ -96,6 +96,7 @@ export type FloorMessage = {
 };
 
 export type FloorQueuePrompt = {
+  githubVerified?: boolean;
   id: string;
   authorUserId: string;
   authorName: string;
@@ -192,6 +193,9 @@ export type AgentRunFile = {
 };
 
 export type AgentRun = {
+  commitUrl?: string | null;
+  attribution?: import("./run-attribution").RunAttribution | null;
+  promptedBy?: import("./run-attribution").RunRequester[];
   id: string;
   queueItemId: string;
   agentId: string;
@@ -337,6 +341,7 @@ export type ReviewContributor = {
 };
 
 export type ReviewContributionPrompt = {
+  authorDeleted?: boolean;
   id: string;
   authorUserId: string;
   authorName: string;
@@ -355,6 +360,8 @@ export type ReviewContributionFile = {
 };
 
 export type ReviewContribution = {
+  attribution?: import("./run-attribution").RunAttribution | null;
+  commitUrl?: string | null;
   runId: string;
   queueItemId: string;
   agentId: string;

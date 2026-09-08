@@ -1,8 +1,8 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "1ff62dc6-fd4b-42dd-93ec-5e305d8d3e28",
-  "prevId": "058f7879-f253-4691-92f7-825fce61d480",
+  "id": "36d6cd69-3c84-4fcf-9cb4-772e53b72131",
+  "prevId": "288c5a4f-aa69-4a9c-b3ff-44b1d626cd47",
   "tables": {
     "agent_run_artifacts": {
       "name": "agent_run_artifacts",
@@ -832,6 +832,13 @@
           "type": "text",
           "primaryKey": true,
           "notNull": true,
+          "autoincrement": false
+        },
+        "attribution": {
+          "name": "attribution",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
           "autoincrement": false
         },
         "session_id": {
@@ -6225,6 +6232,13 @@
         },
         "github_handle": {
           "name": "github_handle",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "verified_github": {
+          "name": "verified_github",
           "type": "text",
           "primaryKey": false,
           "notNull": false,

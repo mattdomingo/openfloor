@@ -1,3 +1,4 @@
+import { readGitHubIdentity } from "@/lib/github-identity";
 import type {
   AgentRun,
   FloorAgent,
@@ -154,13 +155,13 @@ async function readFloorSnapshot(sessionId: string, userId: string, database: D1
     ).bind(sessionId).all<QueueRecord>(),
     database.prepare(
       `SELECT p.id, p.queue_item_id AS queueItemId, p.author_user_id AS authorUserId,
-              author.display_name AS authorName, p.text, p.created_at AS createdAt
+              author.verified_github AS githubIdentity, author.display_name AS authorName, p.text, p.created_at AS createdAt
        FROM floor_queue_prompts p
        JOIN floor_queue_items q ON q.id = p.queue_item_id
        JOIN users author ON author.id = p.author_user_id
        WHERE q.session_id = ? AND q.dismissed_at IS NULL
        ORDER BY p.created_at, p.id`,
-    ).bind(sessionId).all<PromptRecord>(),
+    ).bind(sessionId).all<PromptRecord & { githubIdentity: string | null }>(),
     getRepositoryConnectionForMember(sessionId, userId, database),
     getActiveRepositoryCandidate(sessionId, database),
     getLatestRepositoryReviewCandidate(sessionId, database),
@@ -182,9 +183,9 @@ async function readFloorSnapshot(sessionId: string, userId: string, database: D1
 
   const promptsByItem = new Map<string, FloorQueuePrompt[]>();
   for (const prompt of prompts.results) {
-    const { queueItemId, ...publicPrompt } = prompt;
+    const { queueItemId, githubIdentity, ...publicPrompt } = prompt;
     const list = promptsByItem.get(queueItemId) ?? [];
-    list.push(publicPrompt);
+    list.push({ ...publicPrompt, githubVerified: Boolean(readGitHubIdentity(githubIdentity)) });
     promptsByItem.set(queueItemId, list);
   }
 
@@ -242,7 +243,7 @@ async function readFloorSnapshot(sessionId: string, userId: string, database: D1
     latestPreflight,
     preview,
     runs,
-    review: buildRunReview(candidateRuns, reviewCandidate, candidateReview, promptsByItem, assignments.results, conflicts),
+    review: buildRunReview(candidateRuns, reviewCandidate, candidateReview, promptsByItem, conflicts),
   };
 }
 
@@ -250,14 +251,13 @@ async function readFloorSnapshot(sessionId: string, userId: string, database: D1
 function contributorsByPath(
   reviewRuns: AgentRun[],
   promptsByItem: Map<string, FloorQueuePrompt[]>,
-  memberNames: Map<string, string>,
 ): Map<string, ReviewContributor[]> {
   const byPath = new Map<string, ReviewContributor[]>();
   for (const run of reviewRuns) {
     const prompts = promptsByItem.get(run.queueItemId) ?? [];
-    const requestedBy = prompts.length > 0
-      ? [...new Map(prompts.map((prompt) => [prompt.authorUserId, { userId: prompt.authorUserId, userName: prompt.authorName }])).values()]
-      : [{ userId: run.createdBy, userName: memberNames.get(run.createdBy) ?? "Unknown" }];
+    const requestedBy = run.attribution?.kind === "system" ? [] : run.promptedBy
+      ? run.promptedBy.map((person) => ({ userId: person.userId, userName: person.name }))
+      : [...new Map(prompts.map((prompt) => [prompt.authorUserId, { userId: prompt.authorUserId, userName: prompt.authorName }])).values()];
     for (const file of run.files) {
       const contributors = byPath.get(file.path) ?? [];
       const existing = contributors.find((contributor) => contributor.agentId === run.agentId);
@@ -279,7 +279,6 @@ function buildRunReview(
   candidate: Awaited<ReturnType<typeof getLatestRepositoryReviewCandidate>>,
   githubReview: Awaited<ReturnType<typeof getRepositoryCandidateReviewData>> | null,
   promptsByItem: Map<string, FloorQueuePrompt[]>,
-  members: Array<{ userId: string; userName: string }>,
   conflicts: Awaited<ReturnType<typeof getMergeConflictCases>>,
 ): FloorReviewSnapshot | null {
   if (!candidate) return null;
@@ -287,8 +286,7 @@ function buildRunReview(
   if (candidateRuns.length === 0 && !candidate.pullRequestNumber) return null;
   const reviewRuns = (candidate.pullRequestNumber ? candidateRuns.filter((run) => run.status === "integrated") : candidateRuns)
     .filter((run) => run.rollbackStatus !== "completed");
-  const memberNames = new Map(members.map((member) => [member.userId, member.userName]));
-  const contributors = contributorsByPath(reviewRuns, promptsByItem, memberNames);
+  const contributors = contributorsByPath(reviewRuns, promptsByItem);
   const files = githubReview?.files.length ? githubReview.files.map((file) => ({
     id: file.id,
     path: file.path,

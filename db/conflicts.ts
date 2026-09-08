@@ -316,7 +316,7 @@ export async function createConflictResolverRun(
     `SELECT mc.session_id AS sessionId, mc.status, mc.resume_requested AS resumeRequested,
             mc.automatic_attempts AS automaticAttempts, s.auto_resolve_conflicts AS autoResolve,
             mc.mode, mc.snapshot_id AS snapshotId, mc.proposal_id AS proposalId, mc.revision, mc.latest_source_run_id AS sourceRunId,
-            source.queue_item_id AS queueItemId, source.agent_id AS agentId, source.model,
+            source.queue_item_id AS queueItemId, source.agent_id AS agentId, source.model, source.attribution,
             rc.status AS connectionStatus,
             c.id AS candidateId, c.candidate_sha AS candidateSha, c.remote_candidate_sha AS remoteCandidateSha,
             owner.user_id AS ownerId
@@ -330,7 +330,7 @@ export async function createConflictResolverRun(
   ).bind(caseId).first<{
     sessionId: string; status: string; resumeRequested: number; automaticAttempts: number; autoResolve: number;
     mode: ConflictMode; snapshotId: string | null; proposalId: string | null; revision: number; sourceRunId: string;
-    queueItemId: string; agentId: string; model: string; connectionStatus: string;
+    attribution: string | null; queueItemId: string; agentId: string; model: string; connectionStatus: string;
     candidateId: string; candidateSha: string; remoteCandidateSha: string; ownerId: string;
   }>();
   if (!context || context.connectionStatus !== "ready" || context.candidateSha !== context.remoteCandidateSha) return null;
@@ -355,11 +355,11 @@ export async function createConflictResolverRun(
       database.prepare(
         `INSERT INTO agent_runs
          (id, session_id, queue_item_id, agent_id, candidate_id, candidate_sha, run_branch, attempt, status, model,
-          workflow_instance_id, sandbox_id, created_by, created_at, updated_at)
-         SELECT ?, ?, ?, ?, ?, ?, ?, ?, 'provisioning', ?, ?, ?, ?, ?, ?
+          workflow_instance_id, sandbox_id, created_by, created_at, updated_at, attribution)
+         SELECT ?, ?, ?, ?, ?, ?, ?, ?, 'provisioning', ?, ?, ?, ?, ?, ?, ?
          WHERE EXISTS (SELECT 1 FROM merge_conflict_cases WHERE id = ? AND revision = ? AND current_resolver_run_id IS NULL AND status IN ('pending', 'failed'))`,
       ).bind(runId, context.sessionId, context.queueItemId, context.agentId, context.candidateId, context.candidateSha,
-        runBranch, attempt, context.model, runId, `run-${runId}`, context.ownerId, now, now, caseId, context.revision),
+        runBranch, attempt, context.model, runId, `run-${runId}`, context.ownerId, now, now, context.attribution, caseId, context.revision),
       database.prepare(
         `INSERT INTO merge_conflict_attempts (id, case_id, run_id, launch_kind, execution_mode, snapshot_id, proposal_id, source_run_id, created_at)
          SELECT ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM agent_runs WHERE id = ?)`,

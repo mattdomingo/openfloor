@@ -1,5 +1,6 @@
 "use client";
 
+import { RunAttributionInfo } from "./RunAttributionInfo";
 import { memo, useEffect, useMemo, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, Fragment } from "react";
 import { LocalDateTime } from "@/components/LocalDateTime";
 import type { FloorMessage, FloorParticipant, FloorReviewSnapshot, RepositoryPreviewSnapshot, ReviewContribution, ReviewContributor, ReviewContributorFacet, SessionFile } from "@/lib/floor-types";
@@ -522,6 +523,7 @@ function contributionPreview(contribution: ReviewContribution) {
 }
 
 function EngineerNames({ contribution }: { contribution: ReviewContribution }) {
+  if (contribution.attribution?.kind === "system") return <>Automated feedback</>;
   const names = [...new Set(contribution.prompts.map((prompt) => prompt.authorName))];
   return names.map((name, index) => <Fragment key={name}>{index > 0 ? ", " : ""}<PersonName name={name} /></Fragment>);
 }
@@ -537,6 +539,7 @@ function ContributionCards({ source, onOpen, onRollback }: {
   return <div className="review-contribution-cards" aria-label="Prompt contributions">
     {source.items.map((contribution) => <details key={contribution.runId} className="review-contribution-card">
       <summary><span><strong>{contribution.agentName}</strong><small><EngineerNames contribution={contribution} /></small></span><span className="queue-chip" data-kind="status" data-status={contribution.rollbackStatus ?? "active"}>{contributionLabel(contribution)}</span></summary>
+      <RunAttributionInfo attribution={contribution.attribution} promptedBy={contribution.prompts.map((prompt) => ({ userId: prompt.authorUserId, name: prompt.authorName, deleted: Boolean(prompt.authorDeleted) }))} commitUrl={contribution.commitUrl} />
       <p>{contributionPreview(contribution)}</p>
       {contribution.rollbackStatus === "failed" && contribution.rollbackFailureReason && <p className="review-empty" role="alert">{contribution.rollbackFailureReason}</p>}
       <div className="review-contribution-actions"><button type="button" className="button" data-size="sm" onClick={() => onOpen(contribution.runId)}>View prompt changes</button>{contribution.canRollback && <button type="button" className="button danger-button" data-size="sm" onClick={() => onRollback(contribution.runId)}>Remove changes</button>}</div>
@@ -556,6 +559,7 @@ function PromptContributionDetail({ detail, status, onRollback }: {
   return <section className="review-pane review-prompt-detail" aria-label="Prompt contribution detail">
     <div className="review-pane-head"><div><h3>{contribution.prompts.length === 1 ? "Prompt changes" : `${contribution.prompts.length} merged prompts`}</h3><small>{contribution.agentName} · <EngineerNames contribution={contribution} /></small></div><span className="queue-chip" data-kind="status" data-status={contribution.rollbackStatus ?? "active"}>{contributionLabel(contribution)}</span></div>
     <div className="review-prompt-detail-body">
+      <RunAttributionInfo attribution={contribution.attribution} promptedBy={contribution.prompts.map((prompt) => ({ userId: prompt.authorUserId, name: prompt.authorName, deleted: Boolean(prompt.authorDeleted) }))} commitUrl={contribution.commitUrl} />
       <ol className="review-prompt-copy">{contribution.prompts.map((prompt) => <li key={prompt.id}><strong><PersonName name={prompt.authorName} /></strong><p>{prompt.text}</p><small><LocalDateTime timestamp={prompt.createdAt} /></small></li>)}</ol>
       {contribution.rollbackStatus === "failed" && contribution.rollbackFailureReason && <p className="review-empty" role="alert">{contribution.rollbackFailureReason}</p>}
       {status === "active" && contribution.canRollback && <div className="review-prompt-detail-actions"><button type="button" className="button danger-button" onClick={() => onRollback({ scope: "prompt", subjectId: contribution.runId })}>Remove changes</button></div>}
@@ -638,7 +642,7 @@ function RepositoryTreeBranch({ nodes, depth, expandedDirs, onToggleDir, selecte
 }
 
 function requesterNames(requestedBy: ReviewContributor["requestedBy"]) {
-  if (requestedBy.length === 0) return "someone";
+  if (requestedBy.length === 0) return "no recorded human prompter";
   const shown = requestedBy.length <= 2 ? requestedBy : requestedBy.slice(0, 1);
   return <>{shown.map((requester, index) => <Fragment key={requester.userId}>{index > 0 ? ", " : ""}<PersonName name={requester.userName} /></Fragment>)}{requestedBy.length > 2 && ` +${requestedBy.length - 1}`}</>;
 }

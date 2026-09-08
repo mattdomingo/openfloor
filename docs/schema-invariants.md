@@ -6,6 +6,8 @@
 
 #### `users`
 
+- `verified_github` stores only authenticated personal GitHub ID, login, and verification timestamp as nullable JSON. It is independent from typed profile handles and installation permissions. Account deletion clears it; connection refresh replaces it only after successful proof.
+
 - Internal UUID primary key.
 - Unique stable provider identity in legacy-named `chatgpt_user_id`.
 - Email updates on authentication (`upsertUser`). `display_name`, `first_name`, `last_name`, `github_handle`, and `avatar_key` are owned by onboarding and account settings, not the IdP — `upsertUser` never touches them.
@@ -258,3 +260,5 @@ Deliberately left alone: `usage_months` rows survive (see that table's own no-FK
 - A queue item contains one or more authored prompts.
 - Merging moves prompts into the surviving same-target item, preserving every prompt, author, and creation time.
 - Ordering mutations submit the exact set of current item IDs. A stale or incomplete order returns a conflict instead of silently dropping records.
+
+Run attribution: nullable `agent_runs.attribution` captures original prompt authors and their verified public GitHub IDs/logins when a run is created. It is immutable per run; legacy rows remain null. Migration 0048 adds columns without rebuilding users or runs.

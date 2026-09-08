@@ -1,3 +1,5 @@
+import { verifyGitHubProfile } from "@/lib/github-identity";
+import { notifyGitHubVerification } from "@/lib/github-verification";
 // GitHub device-flow connect, for clients where a browser redirect round trip
 // is awkward (the desktop app) and as the primary connect UX everywhere:
 // POST starts the flow (the UI shows the user code and opens
@@ -83,7 +85,10 @@ export async function PUT(request: Request) {
       await getInstallationAccount(config, config.testData.installationId),
       config.testData.repositories.map((repository) => repository.id),
     );
-    return Response.json({ connected: true, installations: await listUserGitHubInstallations(user.id) });
+    const identity = { id: String(parseInt(user.id.replace(/-/g, "").slice(0, 10), 16)), login: `test-${user.id.slice(0, 8)}`, verifiedAt: Date.now() };
+    await refreshUserGitHubInstallations(user.id, [], undefined, identity);
+    await notifyGitHubVerification(user.id);
+    return Response.json({ verifiedGitHub: identity, githubUser: { login: identity.login, name: null }, connected: true, installations: await listUserGitHubInstallations(user.id) });
   }
 
   if (!config.clientId) {
@@ -126,10 +131,6 @@ export async function PUT(request: Request) {
     if (payload.installations.length < 100) break;
     if (page >= 10) return Response.json({ error: "GitHub returned too many installations to refresh safely" }, { status: 502 });
   }
-  const profileResponse = await fetch("https://api.github.com/user", { headers: githubHeaders });
-  const profile = profileResponse.ok
-    ? await profileResponse.json().catch(() => null) as { login?: string; name?: string | null } | null
-    : null;
   const verified = [];
   for (const installation of found) {
     const repoScope = await listUserInstallationRepositoryIds(token.access_token, String(installation.id));
@@ -139,11 +140,17 @@ export async function PUT(request: Request) {
       type: installation.account?.type ?? "User",
     }, repoScope });
   }
-  await refreshUserGitHubInstallations(user.id, verified);
+  let profile;
+  try { profile = await verifyGitHubProfile(token.access_token); }
+  catch { return Response.json({ error: "GitHub identity could not be verified. Existing connections were preserved." }, { status: 502 }); }
+  const { identity } = profile;
+  await refreshUserGitHubInstallations(user.id, verified, undefined, identity);
+  await notifyGitHubVerification(user.id);
   return Response.json({
     connected: true,
     installed: found.length > 0,
+    verifiedGitHub: identity,
     installations: await listUserGitHubInstallations(user.id),
-    githubUser: profile?.login ? { login: profile.login, name: profile.name ?? null } : null,
+    githubUser: { login: identity.login, name: profile.name },
   });
 }

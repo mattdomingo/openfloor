@@ -1,3 +1,5 @@
+import { verifyGitHubProfile, type GitHubIdentity } from "@/lib/github-identity";
+import { notifyGitHubVerification } from "@/lib/github-verification";
 import { BASE_PATH } from "@/components/basePath";
 import { getGitHubAppConfig } from "@/db";
 import { consumeGitHubAccountConnectionState } from "@/db/github-installations";
@@ -15,7 +17,7 @@ async function installerRepoScope(
   config: { clientId?: string; clientSecret?: string },
   code: string,
   installationId: string,
-): Promise<string[] | null> {
+): Promise<{ repoScope: string[]; identity: GitHubIdentity } | null> {
   const response = await fetch("https://github.com/login/oauth/access_token", {
     method: "POST",
     headers: { accept: "application/json", "content-type": "application/json" },
@@ -23,7 +25,9 @@ async function installerRepoScope(
   });
   const token = await response.json().catch(() => null) as { access_token?: string } | null;
   if (!token?.access_token) return null;
-  return listUserInstallationRepositoryIds(token.access_token, installationId);
+  const repoScope = await listUserInstallationRepositoryIds(token.access_token, installationId);
+  if (!repoScope?.length) return null;
+  return { repoScope, identity: (await verifyGitHubProfile(token.access_token)).identity };
 }
 
 export async function GET(request: Request) {
@@ -55,11 +59,15 @@ export async function GET(request: Request) {
   // and gets its full fixture scope.
   const code = url.searchParams.get("code");
   let repoScope: string[] = [];
+  let identity: GitHubIdentity | undefined;
   try {
     if (config.testData) {
       repoScope = config.testData.repositories.map((repository) => repository.id);
+      identity = { id: String(parseInt(user.id.replace(/-/g, "").slice(0, 10), 16)), login: `test-${user.id.slice(0, 8)}`, verifiedAt: Date.now() };
     } else if (code && config.clientId && config.clientSecret) {
-      repoScope = await installerRepoScope(config, code, installationId) ?? [];
+      const proof = await installerRepoScope(config, code, installationId);
+      repoScope = proof?.repoScope ?? [];
+      identity = proof?.identity;
     }
   } catch {
     const consumed = await consumeGitHubAccountConnectionState(stateId, user.id, installationId, null, []);
@@ -78,8 +86,9 @@ export async function GET(request: Request) {
       throw error;
     }
   }
-  const consumed = await consumeGitHubAccountConnectionState(stateId, user.id, installationId, account, repoScope);
+  const consumed = await consumeGitHubAccountConnectionState(stateId, user.id, installationId, account, repoScope, undefined, identity);
   if (!consumed) return Response.json({ error: "GitHub setup has expired or was already used" }, { status: 400 });
+  if (identity && verified) await notifyGitHubVerification(user.id);
   const returnUrl = consumed.purpose === "onboarding"
     ? new URL(`${BASE_PATH}/onboarding`, request.url)
     : new URL(consumed.returnTo, request.url);

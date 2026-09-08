@@ -30,7 +30,7 @@ Queue, agent cards, and Review open one conflict center. Preparation does not ma
 
 ## Migration and rollback
 
-Migrations `0048_sparkling_patch.sql` and `0049_rare_bulldozer.sql` only add columns, indexes, and tables. No existing table or checked enum is recreated. Existing run, question, selection, and prompt history is retained. Old API payloads receive `409` and must refresh; they cannot bypass consensus. Existing open cases prepare a fresh v2 snapshot before using decisions.
+Migration `0049_living_vapor.sql`, applied after engineer-attribution migration `0048_tearful_centennial.sql`, only add columns, indexes, and tables. No existing table or checked enum is recreated. Existing run, question, selection, and prompt history is retained. Old API payloads receive `409` and must refresh; they cannot bypass consensus. Existing open cases prepare a fresh v2 snapshot before using decisions.
 
 Apply migrations before deploying this code. Keep the added schema on rollback. If application rollback to the old handler is required, disable agent execution first and stop active resolution Workflows; the old handler must not execute v2 proposals. Restore the v2 handler before reenabling conflict execution. Do not delete audit rows or reverse additive migrations to roll back the UI.
 

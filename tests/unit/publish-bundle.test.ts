@@ -15,7 +15,7 @@ it("uses GitHub App installation tokens as the Git HTTPS password", () => {
 });
 
 describe("trusted Git bundle publisher", () => {
-  it.each(["local", "authenticated HTTP"])("publishes on the pinned parent after the candidate advances over %s", async (transport) => {
+  it.each(["local", "authenticated HTTP", "engineer authors"])("publishes on the pinned parent after the candidate advances over %s", async (transport) => {
     const root = mkdtempSync(join(tmpdir(), "openfloor-bundle-test-"));
     let server: Awaited<ReturnType<typeof authenticatedGitServer>> | undefined;
     try {
@@ -69,9 +69,10 @@ describe("trusted Git bundle publisher", () => {
       expect(git(["-C", source, "rev-parse", "HEAD"]).trim()).not.toBe(candidateSha);
       const result = join(root, "result.json");
       if (transport === "authenticated HTTP") server = await authenticatedGitServer(root, "test");
-      await promisify(execFile)("node", [resolve("scripts/publish-bundle.mjs")], { env: {
+      const publishEnv = {
         ...process.env,
         GIT_TERMINAL_PROMPT: "0",
+        OPENFLOOR_COMMIT_AUTHORS: transport === "engineer authors" ? JSON.stringify([{ id: "123", login: "Ada" }, { id: "456", login: "Grace" }]) : "null",
         OPENFLOOR_PUBLISH_ROOT: join(root, "publisher"), OPENFLOOR_BUNDLE_PATH: bundle,
         OPENFLOOR_REPOSITORY_URL: server?.url ?? remote, OPENFLOOR_GITHUB_TOKEN: "test",
         OPENFLOOR_CANDIDATE_BRANCH: "candidate", OPENFLOOR_CANDIDATE_SHA: candidateSha,
@@ -79,10 +80,18 @@ describe("trusted Git bundle publisher", () => {
         OPENFLOOR_RESULT_PATH: result, OPENFLOOR_COMMIT_DATE: "2026-08-19T01:00:00Z",
         OPENFLOOR_RUN_ID: "12345678-1234-1234-1234-123456789abc",
         OPENFLOOR_COMMIT_MESSAGE: "Update base content\n\nOpenfloor-Run: 12345678-1234-1234-1234-123456789abc\n",
-      } });
+      };
+      await promisify(execFile)("node", [resolve("scripts/publish-bundle.mjs")], { env: publishEnv });
       const published = JSON.parse(readFileSync(result, "utf8")) as { publishedCommit: string; paths: string[] };
       expect(published.paths).toEqual(["src/base.txt"]);
-      expect(git(["--git-dir", remote, "show", "-s", "--format=%B", published.publishedCommit]).trim()).toBe("Update base content\n\nOpenfloor-Run: 12345678-1234-1234-1234-123456789abc");
+      const trailers = transport === "engineer authors" ? "\nCo-authored-by: Grace <456+Grace@users.noreply.github.com>" : "";
+      expect(git(["--git-dir", remote, "show", "-s", "--format=%B", published.publishedCommit]).trim()).toBe(`Update base content\n\nOpenfloor-Run: 12345678-1234-1234-1234-123456789abc${trailers}`);
+      expect(git(["--git-dir", remote, "show", "-s", "--format=%an <%ae>|%cn <%ce>", published.publishedCommit]).trim()).toBe(`${transport === "engineer authors" ? "Ada <123+Ada@users.noreply.github.com>" : "openfloor agent <runtime@opnflr.com>"}|openfloor agent <runtime@opnflr.com>`);
+      await promisify(execFile)("node", [resolve("scripts/publish-bundle.mjs")], { env: publishEnv });
+      expect(JSON.parse(readFileSync(result, "utf8")).publishedCommit).toBe(published.publishedCommit);
+      expect(git(["--git-dir", remote, "show", `${published.publishedCommit}:src/base.txt`])).toBe(git(["-C", agent, "show", "HEAD:src/base.txt"]));
+      await expect(promisify(execFile)("node", [resolve("scripts/publish-bundle.mjs")], { env: { ...publishEnv, OPENFLOOR_COMMIT_AUTHORS: JSON.stringify([{ id: "123", login: "Ada\nCo-authored-by: Forged" }]) } })).rejects.toThrow("Invalid commit authors");
+      expect(git(["--git-dir", remote, "rev-parse", `refs/heads/${branch}`]).trim()).toBe(published.publishedCommit);
       expect(git(["--git-dir", remote, "rev-parse", `refs/heads/${branch}`]).trim()).toBe(published.publishedCommit);
       expect(git(["--git-dir", remote, "show", "-s", "--format=%P", published.publishedCommit]).trim()).toBe(candidateSha);
       if (server) {

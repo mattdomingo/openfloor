@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "058f7879-f253-4691-92f7-825fce61d480",
+  "id": "288c5a4f-aa69-4a9c-b3ff-44b1d626cd47",
   "prevId": "2c9d7e81-6a14-4b0f-9c3e-8f1a2b4d6e70",
   "tables": {
     "agent_run_artifacts": {
@@ -832,6 +832,13 @@
           "type": "text",
           "primaryKey": true,
           "notNull": true,
+          "autoincrement": false
+        },
+        "attribution": {
+          "name": "attribution",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
           "autoincrement": false
         },
         "session_id": {
@@ -2371,42 +2378,6 @@
           "notNull": true,
           "autoincrement": false
         },
-        "execution_mode": {
-          "name": "execution_mode",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "'ai'"
-        },
-        "snapshot_id": {
-          "name": "snapshot_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "proposal_id": {
-          "name": "proposal_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "source_run_id": {
-          "name": "source_run_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "assessment": {
-          "name": "assessment",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
         "created_at": {
           "name": "created_at",
           "type": "integer",
@@ -2498,51 +2469,6 @@
           "type": "text",
           "primaryKey": false,
           "notNull": true,
-          "autoincrement": false
-        },
-        "revision": {
-          "name": "revision",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": 0
-        },
-        "trigger": {
-          "name": "trigger",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "'git'"
-        },
-        "mode": {
-          "name": "mode",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "'prepare'"
-        },
-        "snapshot_id": {
-          "name": "snapshot_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "proposal_id": {
-          "name": "proposal_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "waiting_reason": {
-          "name": "waiting_reason",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
           "autoincrement": false
         },
         "current_resolver_run_id": {
@@ -2699,114 +2625,6 @@
           "value": "\"merge_conflict_cases\".\"status\" in ('pending', 'resolving', 'awaiting_input', 'resolved', 'failed')"
         }
       }
-    },
-    "merge_conflict_proposals": {
-      "name": "merge_conflict_proposals",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "case_id": {
-          "name": "case_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "snapshot_id": {
-          "name": "snapshot_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "kind": {
-          "name": "kind",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "payload": {
-          "name": "payload",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "created_by": {
-          "name": "created_by",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "idx_conflict_proposals_case": {
-          "name": "idx_conflict_proposals_case",
-          "columns": [
-            "case_id",
-            "created_at"
-          ],
-          "isUnique": false
-        }
-      },
-      "foreignKeys": {
-        "merge_conflict_proposals_case_id_merge_conflict_cases_id_fk": {
-          "name": "merge_conflict_proposals_case_id_merge_conflict_cases_id_fk",
-          "tableFrom": "merge_conflict_proposals",
-          "tableTo": "merge_conflict_cases",
-          "columnsFrom": [
-            "case_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "merge_conflict_proposals_snapshot_id_merge_conflict_snapshots_id_fk": {
-          "name": "merge_conflict_proposals_snapshot_id_merge_conflict_snapshots_id_fk",
-          "tableFrom": "merge_conflict_proposals",
-          "tableTo": "merge_conflict_snapshots",
-          "columnsFrom": [
-            "snapshot_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "merge_conflict_proposals_created_by_users_id_fk": {
-          "name": "merge_conflict_proposals_created_by_users_id_fk",
-          "tableFrom": "merge_conflict_proposals",
-          "tableTo": "users",
-          "columnsFrom": [
-            "created_by"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "set null",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {}
     },
     "merge_conflict_questions": {
       "name": "merge_conflict_questions",
@@ -3050,217 +2868,6 @@
           "tableTo": "users",
           "columnsFrom": [
             "selected_by"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "set null",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
-    "merge_conflict_snapshots": {
-      "name": "merge_conflict_snapshots",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "case_id": {
-          "name": "case_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "run_id": {
-          "name": "run_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "source_run_id": {
-          "name": "source_run_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "candidate_sha": {
-          "name": "candidate_sha",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "source_commit_sha": {
-          "name": "source_commit_sha",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "manifest_key": {
-          "name": "manifest_key",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "provenance": {
-          "name": "provenance",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "idx_conflict_snapshots_run": {
-          "name": "idx_conflict_snapshots_run",
-          "columns": [
-            "run_id"
-          ],
-          "isUnique": true
-        },
-        "idx_conflict_snapshots_case": {
-          "name": "idx_conflict_snapshots_case",
-          "columns": [
-            "case_id",
-            "created_at"
-          ],
-          "isUnique": false
-        }
-      },
-      "foreignKeys": {
-        "merge_conflict_snapshots_case_id_merge_conflict_cases_id_fk": {
-          "name": "merge_conflict_snapshots_case_id_merge_conflict_cases_id_fk",
-          "tableFrom": "merge_conflict_snapshots",
-          "tableTo": "merge_conflict_cases",
-          "columnsFrom": [
-            "case_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "merge_conflict_snapshots_run_id_agent_runs_id_fk": {
-          "name": "merge_conflict_snapshots_run_id_agent_runs_id_fk",
-          "tableFrom": "merge_conflict_snapshots",
-          "tableTo": "agent_runs",
-          "columnsFrom": [
-            "run_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
-    "merge_conflict_votes": {
-      "name": "merge_conflict_votes",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "proposal_id": {
-          "name": "proposal_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "user_id": {
-          "name": "user_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "action": {
-          "name": "action",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "reason": {
-          "name": "reason",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "case_revision": {
-          "name": "case_revision",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "idx_conflict_votes_proposal": {
-          "name": "idx_conflict_votes_proposal",
-          "columns": [
-            "proposal_id",
-            "created_at"
-          ],
-          "isUnique": false
-        }
-      },
-      "foreignKeys": {
-        "merge_conflict_votes_proposal_id_merge_conflict_proposals_id_fk": {
-          "name": "merge_conflict_votes_proposal_id_merge_conflict_proposals_id_fk",
-          "tableFrom": "merge_conflict_votes",
-          "tableTo": "merge_conflict_proposals",
-          "columnsFrom": [
-            "proposal_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "merge_conflict_votes_user_id_users_id_fk": {
-          "name": "merge_conflict_votes_user_id_users_id_fk",
-          "tableFrom": "merge_conflict_votes",
-          "tableTo": "users",
-          "columnsFrom": [
-            "user_id"
           ],
           "columnsTo": [
             "id"
@@ -6218,6 +5825,13 @@
         },
         "github_handle": {
           "name": "github_handle",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "verified_github": {
+          "name": "verified_github",
           "type": "text",
           "primaryKey": false,
           "notNull": false,

@@ -1,3 +1,4 @@
+import { githubCommitUrl, readRunAttribution } from "@/lib/run-attribution";
 import type {
   AgentRunRollbackScope,
   AgentRunRollbackStatus,
@@ -16,6 +17,9 @@ const DEFAULT_PAGE_SIZE = 25;
 const MAX_PAGE_SIZE = 100;
 
 type ContributionRow = {
+  attributionJson: string | null;
+  runCommitSha: string | null;
+  repositoryFullName: string | null;
   runId: string;
   queueItemId: string;
   agentId: string;
@@ -76,12 +80,12 @@ async function activeCandidate(sessionId: string, database: D1DatabaseLike): Pro
 
 async function promptsFor(queueItemId: string, database: D1DatabaseLike): Promise<ReviewContributionPrompt[]> {
   const result = await database.prepare(
-    `SELECT p.id, p.author_user_id AS authorUserId, u.display_name AS authorName,
+    `SELECT p.id, p.author_user_id AS authorUserId, u.display_name AS authorName, u.deleted_at IS NOT NULL AS authorDeleted,
             p.text, p.created_at AS createdAt
      FROM floor_queue_prompts p JOIN users u ON u.id = p.author_user_id
      WHERE p.queue_item_id = ? ORDER BY p.created_at, p.id`,
   ).bind(queueItemId).all<ReviewContributionPrompt>();
-  return result.results.map((prompt) => ({ ...prompt, createdAt: Number(prompt.createdAt) }));
+  return result.results.map((prompt) => ({ ...prompt, authorDeleted: Boolean(prompt.authorDeleted), createdAt: Number(prompt.createdAt) }));
 }
 
 async function filesFor(runId: string, includeDiff: boolean, database: D1DatabaseLike): Promise<ReviewContributionFile[]> {
@@ -109,8 +113,11 @@ async function hydrateContribution(
     filesFor(row.runId, includeDiff, database),
   ]);
   const authoredEveryPrompt = prompts.length > 0 && prompts.every((prompt) => prompt.authorUserId === userId);
+  const { attributionJson, runCommitSha, repositoryFullName, ...contribution } = row;
   return {
-    ...row,
+    ...contribution,
+    attribution: readRunAttribution(attributionJson),
+    commitUrl: githubCommitUrl(repositoryFullName, runCommitSha),
     integratedAt: Number(row.integratedAt),
     prompts,
     files,
@@ -120,11 +127,13 @@ async function hydrateContribution(
 }
 
 function contributionSelect(where: string): string {
-  return `SELECT r.id AS runId, r.queue_item_id AS queueItemId, r.agent_id AS agentId,
+  return `SELECT r.attribution AS attributionJson, r.run_commit_sha AS runCommitSha, repository.repository_full_name AS repositoryFullName, r.id AS runId, r.queue_item_id AS queueItemId, r.agent_id AS agentId,
                  a.name AS agentName, a.owner_user_id AS agentOwnerUserId,
                  r.integrated_at AS integratedAt,
                  latest.status AS rollbackStatus, latest.failure_reason AS rollbackFailureReason
           FROM agent_runs r JOIN floor_agents a ON a.id = r.agent_id
+          LEFT JOIN repository_candidates candidate ON candidate.id = r.candidate_id
+          LEFT JOIN repository_connections repository ON repository.id = candidate.connection_id
           LEFT JOIN agent_run_rollbacks latest ON latest.id = (
             SELECT attempt.id FROM agent_run_rollbacks attempt
             WHERE attempt.run_id = r.id ORDER BY attempt.created_at DESC, attempt.id DESC LIMIT 1

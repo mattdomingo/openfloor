@@ -400,7 +400,9 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await expect(owner.locator(".review-gate")).toHaveCount(0);
   await expect(owner.locator(".review-diff .review-pane-head h3")).toHaveText("agent-change.ts");
   await expect(owner.getByText("export const implemented = true;", { exact: true })).toBeVisible();
-  await expect(owner.getByRole("link", { name: /Draft pull request 1/ })).toHaveAttribute("href", /\/pull\/1$/);
+  const mergeFloor = await (await owner.request.get(`/api/sessions/${new URL(owner.url()).pathname.split("/")[2]}/floor`)).json();
+  const pullRequestNumber = mergeFloor.floor.review.pullRequest.number as number;
+  await expect(owner.getByRole("link", { name: new RegExp(`Draft pull request ${pullRequestNumber}`) })).toHaveAttribute("href", new RegExp(`/pull/${pullRequestNumber}$`));
 
   // The changed file is still reachable through the repository browser, and
   // selecting it there shows its diff, not the raw candidate-head content.
@@ -424,7 +426,7 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await expect(secondPublishedItem.locator("code.queue-run-branch")).toHaveCount(1);
   await owner.getByRole("button", { name: /Review/ }).first().click();
   await expect(owner.getByText("second-change.ts", { exact: true })).toBeVisible();
-  await expect(owner.getByRole("link", { name: /Draft pull request 1/ })).toHaveCount(1);
+  await expect(owner.getByRole("link", { name: new RegExp(`Draft pull request ${pullRequestNumber}`) })).toHaveCount(1);
   await owner.getByRole("button", { name: "Workspace" }).click();
 
   // A non-owner engineer can roll back the integrated change produced from
@@ -697,11 +699,11 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   // Wait for the dialog to actually unmount — otherwise the next unscoped
   // "Ready for review" click can resolve to both the hero and dialog buttons.
   await expect(owner.getByRole("dialog", { name: "Mark this pull request ready for review?" })).toHaveCount(0);
-  await expect(owner.getByRole("link", { name: /Draft pull request 1 on GitHub/ })).toBeVisible();
+  await expect(owner.getByRole("link", { name: new RegExp(`Draft pull request ${pullRequestNumber} on GitHub`) })).toBeVisible();
   await owner.getByRole("button", { name: "Ready for review" }).click();
   await owner.getByRole("dialog", { name: "Mark this pull request ready for review?" })
     .getByRole("button", { name: "Ready for review" }).click();
-  await expect(owner.getByRole("link", { name: /pull request 1 on GitHub/ })).toBeVisible();
+  await expect(owner.getByRole("link", { name: new RegExp(`pull request ${pullRequestNumber} on GitHub`) })).toBeVisible();
   const squashMerge = owner.getByRole("button", { name: "Squash merge", exact: true });
   await expect(squashMerge).toHaveAttribute("data-state", "ready");
   await expect(squashMerge).toHaveAttribute("aria-disabled", "false");
@@ -712,7 +714,7 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
   await owner.getByRole("button", { name: "Mark as not ready" }).click();
   await owner.getByRole("dialog", { name: "Convert this pull request back to a draft?" })
     .getByRole("button", { name: "Mark as not ready" }).click();
-  await expect(owner.getByRole("link", { name: /Draft pull request 1 on GitHub/ })).toBeVisible();
+  await expect(owner.getByRole("link", { name: new RegExp(`Draft pull request ${pullRequestNumber} on GitHub`) })).toBeVisible();
   await owner.getByRole("button", { name: "Ready for review" }).click();
   await owner.getByRole("dialog", { name: "Mark this pull request ready for review?" })
     .getByRole("button", { name: "Ready for review" }).click();

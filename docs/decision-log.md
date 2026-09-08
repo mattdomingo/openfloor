@@ -681,6 +681,8 @@ Separately, the lobby's `SessionSetupDialog`/`setupRequested`/`?setup=1` are del
 
 ### 2026-08-26 — Session members are co-authors of the squash commit (ENG-65)
 
+**Status:** Partially superseded by “Credit original engineers in Git commits” (2026-09-08): contributor selection, verified noreply identity, and run authorship replace member-wide login-email credit; the default squash title remains unchanged.
+
 **Decision:** The owner's squash merge sends a `commit_message` of `Co-authored-by: <display name> <email>` trailers — one per active session member, join-ordered, deduped by email, names flattened to trailer-safe single lines (`coauthorTrailers` in `lib/github.ts`, fed by `getSessionMemberIdentities` in `db/sessions.ts`). The squash commit is the only commit that ever reaches the base branch, so trailers there credit the whole team without touching the publisher, the sandbox image, or the byte-identical rollback reconstruction. Run-branch and candidate-integration commits stay bot-authored; the merge-commit message path truncates at 250 chars and must not carry trailers.
 
 **Rationale:** Emails are the login addresses D1 already holds; GitHub links a co-author when the address is on their account and shows the literal line otherwise. `users.github_handle` is self-typed and unverified, so it is deliberately not used.
@@ -1131,3 +1133,43 @@ Preview v1 supports only one JavaScript app at the repository root with exactly 
 **Rationale:** A vote changes agreement, not the proposal being implemented; replaying a vote must not bypass the bounded model-spending policy.
 
 **Consequences:** An exhausted proposal remains stopped with an actionable reason. A revised proposal or refreshed snapshot starts a new budget, while exact manual application remains independent of AI attempts.
+### 2026-09-08 — Verify prompt authors before code execution
+
+**Decision:** Both GitHub account connection flows read the authenticated personal `/user` identity and atomically persist its numeric ID, login, and verification timestamp with verified installation access. `users.verified_github` is nullable JSON, separate from the self-entered `github_handle`; GitHub tokens and private email addresses are never retained for attribution. Settings exposes the verified account and reuses connection refresh for existing users. Account deletion clears this field.
+
+**Rationale:** Installation access can belong to an organization and does not identify the engineer who prompted work. A typed handle cannot establish GitHub authorship.
+
+**Consequences:** Migration `0048_tearful_centennial.sql` adds nullable columns to users and runs without rebuilding either table. New human-authored code runs require all original prompt authors to verify before execution and capture ordered, deduplicated public Git identity in `agent_runs.attribution`. Manual start/retry returns `409` with `github_verification_required`; automatic dispatch skips only the affected item and schedules a retry. Verification notifies affected floors and wakes their routers. Replies remain available, and system-originated feedback does not inherit the owner's bookkeeping identity. Existing rows remain compatible. Application rollback leaves the additive columns in place.
+
+### 2026-09-08 — Credit original engineers in Git commits
+
+**Decision:** The trusted publisher validates immutable run-author GitHub IDs/logins and creates engineer-authored commits with openfloor as committer. Additional unique engineers receive co-author trailers. Git author names are verified logins and emails are GitHub ID-based noreply addresses. Conflict resolvers inherit the source run snapshot. System feedback remains bot-authored. Final squash uses all active integrated candidate contributions, not current membership or the floor's latest 20 runs, excluding completed rollbacks and noncontributors. Legacy contributors may receive future squash credit once verified, without rewriting old commits.
+
+**Rationale:** Prompt authors, rather than dispatchers, agent owners, or everyone present in a session, supplied the work's intent. A stable run snapshot makes publication retries reproduce the same SHA even if an account is renamed or reconnected.
+
+**Consequences:** Run list responses add parsed attribution and current prompt-author names in the existing run SELECT, preserving one run read plus two set-based file/check reads. Published public identity is retained as run audit on account deletion; account verification is cleared and user-facing names remain Deleted user. Baselines, integration merge identity, rollback reconstruction, bundle validation, transport credentials, and SHA leases are unchanged. Publisher/executor image generations advance to v6/v14, after the release runtime fixes used v5/v13. Application rollback keeps the additive columns and must drain new attributed publication attempts before rolling the publisher back, because an old publisher would calculate different run SHAs. Existing in-flight legacy runs retain bot authorship.
+
+### 2026-09-08 — Make engineer attribution visible in existing history and review
+
+**Decision:** Run History and Review contribution cards/details show original prompters, verified public GitHub identities, and links to recorded run commits. The shared presentation labels system feedback explicitly, explains legacy runs without recorded Git authorship, and suppresses deleted engineers' profile links. Review file contributors derive from retained run prompt history, including dismissed items, instead of substituting a dispatcher.
+
+**Rationale:** Git credit alone does not make it easy to locate an engineer's changes inside the coordination room. Reusing the existing History and Review surfaces avoids another competing activity dashboard.
+
+**Consequences:** Run and contribution responses add validated commit links and attribution without per-run read fan-out. Engineer filters, empty states, review authorization, and deleted-user display semantics remain intact. A two-user browser acceptance case starts with a legacy account lacking proof, verifies a per-item dispatch hold, reconnects through Settings, and checks retained engineer credit.
+
+### 2026-09-08 — Explicit empty-contributor squash messages
+
+**Decision:** Squash merge always sends an explicit commit message. When no eligible engineers remain, it uses a neutral openfloor message without co-author trailers.
+
+**Rationale:** Omitting the message lets GitHub generate one from branch history and potentially restore credit for rolled-back contributions.
+
+**Consequences:** Empty contributor lists are intentional and never fall back to historical attribution. The GitHub client test asserts the outgoing request body; browser acceptance reads each session's actual PR number rather than assuming its shared test repository has no prior PRs.
+
+
+### 2026-09-08 — Stack attribution before conflict resolution v2
+
+**Decision:** Deliver #302, #303, then #304, keeping each PR based on release and retaining predecessor commits. Resolver attempts inherit immutable source engineer attribution alongside v2 conflict revision guards. Regenerate the unapplied v2 schema as `0049_living_vapor.sql` after attribution migration 0048; no already-applied migration changes.
+
+**Rationale:** Attribution and conflict resolution touch the same run-creation and migration boundaries. An explicit predecessor sequence prevents conflicting metadata and preserves authorship across resolver attempts.
+
+**Consequences:** Validate both the reconciled #303 head and the cumulative #304 result, including runtime isolation. Sequential merges must preserve all three feature sets without migration table recreation.

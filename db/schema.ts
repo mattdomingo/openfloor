@@ -11,6 +11,7 @@ export const users = sqliteTable(
     firstName: text("first_name"),
     lastName: text("last_name"),
     githubHandle: text("github_handle"),
+    verifiedGitHub: text("verified_github"),
     avatarKey: text("avatar_key"),
     onboardedAt: integer("onboarded_at"),
     doNotDisturb: integer("do_not_disturb", { mode: "boolean" }).notNull().default(false),
@@ -754,6 +755,7 @@ export const agentRuns = sqliteTable(
   "agent_runs",
   {
     id: text("id").primaryKey(),
+    attribution: text("attribution"),
     sessionId: text("session_id").notNull().references(() => sessions.id, { onDelete: "cascade" }),
     queueItemId: text("queue_item_id").notNull().references(() => floorQueueItems.id),
     agentId: text("agent_id").notNull().references(() => floorAgents.id),

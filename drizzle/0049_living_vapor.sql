@@ -51,4 +51,5 @@ ALTER TABLE `merge_conflict_cases` ADD `trigger` text DEFAULT 'git' NOT NULL;-->
 ALTER TABLE `merge_conflict_cases` ADD `mode` text DEFAULT 'prepare' NOT NULL;--> statement-breakpoint
 ALTER TABLE `merge_conflict_cases` ADD `snapshot_id` text;--> statement-breakpoint
 ALTER TABLE `merge_conflict_cases` ADD `proposal_id` text;--> statement-breakpoint
-ALTER TABLE `merge_conflict_cases` ADD `waiting_reason` text;
+ALTER TABLE `merge_conflict_cases` ADD `waiting_reason` text;--> statement-breakpoint
+ALTER TABLE `merge_conflict_cases` ADD `mutation_id` text;

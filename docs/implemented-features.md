@@ -76,3 +76,11 @@
 - Manual agent lifecycle controls: any session member can Pause or Stop a persistent agent/generated worker; only its recorded owner can Resume it, and only persistent agents can be deleted. Pause blocks future dispatch while the current run finishes. Stop also pauses, and cancels the current run only for a session-owner caller; the non-owner UI discloses that distinction. Owner-only **Pause all / Stop all** includes persistent agents and workers; **Resume all** affects only caller-owned agents. Concierge is excluded. See the `floor_agents` invariant and 2026-08-29 security-audit decision.
 
 - Durable private-R2 cleanup: manual session deletion, account deletion, and the 30-day retention purge enqueue session file/run artifact/session-store/preflight/conflict/avatar prefixes before D1 rows disappear. Scheduled sweeps paginate, retry independently, defer live source sessions so they cannot starve later jobs, and retain a first empty scan for 24 hours before final confirmation and job removal.
+
+### Engineer attribution
+
+- Both GitHub connection flows verify and store the personal account used for Git credit, independently of typed handles and organization installations. Existing users refresh verification in Settings.
+- Human-authored code runs wait for every prompter's verification before execution; eligible teammates continue, and read-only replies remain available.
+- Published run commits use the first original engineer as author, other engineers as co-authors, and openfloor as committer. Only verified GitHub noreply addresses are used. Resolver attempts inherit immutable source attribution.
+- Final squash credits active candidate contributors, including departed members and older runs, and excludes completed rollbacks, system feedback, and noncontributors. Empty contributor lists receive an explicit neutral message.
+- History and existing Review surfaces show original prompters, verified profile links, and recorded commit links. Legacy runs and deleted engineers are labeled honestly; published history is never rewritten.

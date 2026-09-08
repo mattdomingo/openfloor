@@ -2,7 +2,10 @@ import { describe, expect, it } from "vitest";
 import { coauthorTrailers } from "@/lib/github";
 
 describe("coauthorTrailers", () => {
-  it("credits every member once, in order", () => {
+  it("rejects trailer injection through email", () => {
+    expect(coauthorTrailers([{ displayName: "X", email: "x@example.com>\nCo-authored-by: Fake <f@example.com" }])).toBeNull();
+  });
+  it("credits each contributor once, in order", () => {
     expect(coauthorTrailers([
       { displayName: "Ada Lovelace", email: "ada@example.com" },
       { displayName: "Grace Hopper", email: "grace@example.com" },

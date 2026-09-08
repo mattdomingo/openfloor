@@ -720,3 +720,22 @@ Waiting-for-input finalization atomically releases the resolver, advances the ca
 The shared conflict center keeps manual content in the dialog’s scroll area at mobile widths. Browser acceptance submits the complete edited result at 390px width, then checks shared agreement and integration. Queue destinations derive unresolved cases independently of the latest-20 run history.
 
 Repeated votes on the same immutable proposal never replenish its two AI attempts. Queueing derives the consumed budget from attempt history; every launch kind enforces the bound. A revised proposal or refreshed snapshot defines a new decision budget.
+This fixture change advanced executor generation to `v13` and publisher to `v5`, because the test scripts are included in the Sandbox image. Container preview fixtures live under `/tmp/openfloor`, which the execution namespace mounts. Tests must not broaden production mounts to reach host fixtures. The private tmpfs `/tmp` uses standard mode `1777` so the unprivileged tools can create temporary files; no host temporary directory is exposed. The loopback test closes its server and verifies zero capabilities before checking blocked outbound connections.
+### Verified engineer identity (2026-09-08)
+
+GitHub account connection stores the authenticated personal GitHub ID, login, and verification timestamp in nullable `users.verified_github`, separately from unverified `github_handle` and installation-owner metadata. Never use typed handles or login emails for commit credit. New human-authored code runs require every prompt author to verify before execution; Settings connection refresh supplies proof for existing users. Missing proof returns `github_verification_required` and leaves the queue item waiting while automatic dispatch continues other eligible items. Replies remain available. Run creation captures ordered public identities in nullable `agent_runs.attribution`; null denotes a legacy run. System-originated feedback has no human Git author. These are additive columns, never table recreations. Account deletion clears account verification.
+
+### Git commit credit (2026-09-08)
+
+The trusted publisher uses immutable run attribution for the Git author (first original prompter in chronological order) and additional `Co-authored-by` trailers; openfloor remains committer. Only verified GitHub `<id>+<login>@users.noreply.github.com` addresses are emitted. Neither an agent's bundle metadata nor the dispatcher selects identities. Resolver runs inherit source attribution; legacy runs retain their bot identity. Final squash credits verified authors of active integrated candidate contributions, including departed members and work older than the latest-20 floor window, and excludes completed rollbacks, system feedback, and noncontributors. Public run snapshots include attribution and current prompt-author names without exposing login emails. Account deletion retains immutable public Git metadata as audit and uses the existing Deleted user presentation. Publisher/executor image generations are v6/v14; baseline commits and rollback reconstruction identities are unchanged.
+
+### Engineer attribution presentation (2026-09-08)
+
+Run History and existing Review contribution details show original prompters, verified GitHub profile links, and the published run commit. Legacy rows remain explicit about missing Git author metadata, automated feedback is labeled as system-originated, and deleted engineers retain Deleted user presentation. File attribution uses run prompt history rather than falling back to the dispatcher when queue items are dismissed. Commit links are built only from validated repository names and recorded full SHAs. Existing engineer filters and query bounds remain intact.
+
+Squash publication always supplies an explicit commit body, including a neutral body when no eligible contributors remain. Never let GitHub regenerate co-author trailers from rolled-back or system-only history.
+
+
+### Compatible attribution and conflict delivery
+
+Merge engineer attribution (#302) before conflict resolution v2 (#303). Conflict resolver attempts copy immutable source-run attribution while retaining v2 revision leases, consensus, snapshot, cancellation, and source-billing behavior. The unapplied v2 schema is generated after attribution as `0049_living_vapor.sql`; existing migrations through release remain unchanged. Session usability and personal billing (#304) follow both.
