@@ -1,3 +1,4 @@
+import { commitAuthors } from "./commit-authors.mjs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import { githubGitAuthorization } from "./github-git-auth.mjs";
@@ -15,9 +16,10 @@ const runBranch = process.env.OPENFLOOR_RUN_BRANCH;
 const resultPath = process.env.OPENFLOOR_RESULT_PATH;
 const expectedPaths = JSON.parse(process.env.OPENFLOOR_EXPECTED_PATHS);
 const auth = githubGitAuthorization(token);
+const authors = commitAuthors(process.env.OPENFLOOR_COMMIT_AUTHORS);
 const fixedIdentity = {
-  GIT_AUTHOR_NAME: "openfloor agent",
-  GIT_AUTHOR_EMAIL: "runtime@opnflr.com",
+  GIT_AUTHOR_NAME: authors[0]?.name ?? "openfloor agent",
+  GIT_AUTHOR_EMAIL: authors[0]?.email ?? "runtime@opnflr.com",
   GIT_COMMITTER_NAME: "openfloor agent",
   GIT_COMMITTER_EMAIL: "runtime@opnflr.com",
 };
@@ -80,11 +82,13 @@ for (const line of sizeLines) {
 }
 
 const resultTree = git(["rev-parse", `${localCommit}^{tree}`], repository).trim();
+const message = process.env.OPENFLOOR_COMMIT_MESSAGE || `openfloor run ${process.env.OPENFLOOR_RUN_ID.slice(0, 8)}\n`;
+const coauthors = authors.slice(1).map((author) => `Co-authored-by: ${author.name} <${author.email}>`).join("\n");
 const publishedCommit = git(["commit-tree", resultTree, "-p", candidateSha], repository, {
   ...fixedIdentity,
   GIT_AUTHOR_DATE: process.env.OPENFLOOR_COMMIT_DATE,
   GIT_COMMITTER_DATE: process.env.OPENFLOOR_COMMIT_DATE,
-}, process.env.OPENFLOOR_COMMIT_MESSAGE || `openfloor run ${process.env.OPENFLOOR_RUN_ID.slice(0, 8)}\n`).trim();
+}, coauthors ? `${message.trimEnd()}\n${coauthors}\n` : message).trim();
 const remote = git(["ls-remote", "--heads", "origin", expectedRef], repository).trim();
 if (remote) {
   if (remote.split(/\s+/, 1)[0] !== publishedCommit) throw new Error("Run branch already exists at an unexpected commit");

@@ -92,3 +92,5 @@ The Playwright test uses two authenticated browser contexts and verifies the rea
 - Reload persistence, disconnect/reconnect, leave, and roster updates work.
 
 When adding a collaborative feature, prefer extending this two-context flow over testing only one browser.
+
+Engineer attribution coverage includes authenticated GitHub identity validation, one-use callback binding, multi-author execution gates, source-inherited resolver identity, deterministic real-Git publication, candidate-wide squash credit, account deletion, a populated-schema migration transition, and two-user browser verification/restart/history flows. The isolated E2E server seeds one explicitly legacy account without GitHub proof; production never imports that fixture.

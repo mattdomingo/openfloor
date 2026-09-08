@@ -93,6 +93,12 @@ if (migration.status !== 0) {
   process.exit(migration.status ?? 1);
 }
 
+const legacySeed = spawnSync("npx", ["wrangler", "d1", "execute", "DB", "--local", "--config", wranglerConfig, "--persist-to", statePath, "--file", "tests/e2e/legacy-engineer.sql"], { stdio: "inherit" });
+if (legacySeed.status !== 0) {
+  rmSync(statePath, { recursive: true, force: true });
+  process.exit(legacySeed.status ?? 1);
+}
+
 const build = spawnSync("npx", ["vinext", "build"], { stdio: "inherit", env: e2eEnv });
 
 if (build.status !== 0) {

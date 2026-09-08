@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { generateKeyPairSync } from "node:crypto";
 import {
   createRepositoryBranch,
@@ -18,6 +18,19 @@ import {
 import { githubGitAuthorization } from "@/lib/github-git-auth";
 
 describe("GitHub App client", () => {
+  it("overrides GitHub's default squash body even when no contributors remain", async () => {
+    const { privateKey } = generateKeyPairSync("rsa", {
+      modulusLength: 2048, privateKeyEncoding: { type: "pkcs8", format: "pem" }, publicKeyEncoding: { type: "spki", format: "pem" },
+    });
+    const fetcher = vi.fn().mockResolvedValueOnce(Response.json({ token: "test-only" }))
+      .mockResolvedValueOnce(Response.json({ merged: true, sha: "b".repeat(40) }));
+    vi.stubGlobal("fetch", fetcher);
+    try {
+      await squashMergePullRequest({ appId: "empty-credit", slug: "test", privateKey, stateSecret: "test", webhookSecret: "test", testData: null }, "123", { id: "456", nodeId: "node", owner: "org", name: "repo", fullName: "org/repo", private: true, defaultBranch: "main" }, 1, "a".repeat(40), null);
+      expect(JSON.parse(fetcher.mock.calls[1][1].body)).toEqual({ sha: "a".repeat(40), merge_method: "squash", commit_message: "Changes coordinated through openfloor." });
+    } finally { vi.unstubAllGlobals(); }
+  });
+
   it("encodes installation tokens for Git-over-HTTPS basic authentication", () => {
     expect(githubGitAuthorization("ghs_example-token")).toBe(
       `Authorization: Basic ${btoa("x-access-token:ghs_example-token")}`,

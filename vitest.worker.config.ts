@@ -49,6 +49,7 @@ export default defineConfig({
           RUNTIME_GATEWAY_SECRET: "worker-test-runtime-gateway-secret",
           CREDENTIAL_ENCRYPTION_KEY: "worker-test-credential-encryption-key",
           TEST_MIGRATIONS: JSON.stringify(migrations),
+          ATTRIBUTION_MIGRATION_QUERIES: JSON.stringify(migrations.find((migration) => migration.name === "0048_tearful_centennial.sql")!.queries),
           ACCOUNT_EMAIL_MERGE_QUERIES: JSON.stringify(accountEmailMergeMigration.queries),
           AUTO_AGENT_DATA_MIGRATION_QUERIES: JSON.stringify(autoAgentDataQueries),
           ACCOUNT_GITHUB_MIGRATION_QUERIES: JSON.stringify(accountGitHubMigration.queries),

@@ -1,3 +1,4 @@
+import { GitHubVerificationRequiredError } from "@/db/run-attribution";
 import {
   AgentRunConflictError,
   AgentRunNotReadyError,
@@ -84,7 +85,7 @@ type TestAgentRunData = {
 
 export type StartRunResult =
   | { ok: true; runId: string }
-  | { ok: false; kind: "disabled" | "not_ready" | "conflict" | "quota_exhausted" | "budget_exhausted"; message: string };
+  | { ok: false; kind: "disabled" | "not_ready" | "conflict" | "quota_exhausted" | "budget_exhausted" | "github_verification_required"; message: string };
 
 // Providers whose runs cannot start right now, from the rollout gates. The
 // router passes this into runRoutingTick so gated items are SKIPPED during
@@ -162,6 +163,7 @@ export async function startQueueItemRun(sessionId: string, queueItemId: string, 
     }
     return { ok: true, runId: run.id };
   } catch (error) {
+    if (error instanceof GitHubVerificationRequiredError) return { ok: false, kind: "github_verification_required", message: error.message };
     if (error instanceof AgentRunNotReadyError) return { ok: false, kind: "not_ready", message: error.message };
     if (error instanceof AgentRunConflictError) return { ok: false, kind: "conflict", message: error.message };
     throw error;

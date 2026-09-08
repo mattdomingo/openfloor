@@ -22,6 +22,7 @@ COPY --chmod=0444 scripts/gemini-proxy-preload.mjs /opt/openfloor/gemini-proxy-p
 COPY --chmod=0444 scripts/qwen-runner.mjs /opt/openfloor/qwen-runner.mjs
 COPY --chmod=0444 scripts/openfloor-mcp.mjs /opt/openfloor/openfloor-mcp.mjs
 COPY --chmod=0444 scripts/publish-bundle.mjs /opt/openfloor/publish-bundle.mjs
+COPY --chmod=0444 scripts/commit-authors.mjs /opt/openfloor/commit-authors.mjs
 COPY --chmod=0444 scripts/github-git-auth.mjs /opt/openfloor/github-git-auth.mjs
 COPY --chmod=0444 scripts/cleanup-branches.mjs /opt/openfloor/cleanup-branches.mjs
 COPY --chmod=0444 scripts/repository-preview.mjs /opt/openfloor/repository-preview.mjs
