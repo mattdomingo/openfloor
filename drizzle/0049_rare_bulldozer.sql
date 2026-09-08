@@ -1,0 +1,1 @@
+ALTER TABLE `merge_conflict_cases` ADD `mutation_id` text;

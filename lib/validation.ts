@@ -280,7 +280,7 @@ export function parseConflictSelectionsInput(value: unknown): ConflictSelections
     if (typeof selection.choice !== "string" || !CONFLICT_CHOICES.has(selection.choice)) return null;
     parsed.push({ path: selection.path, hunkIndex: selection.hunkIndex, choice: selection.choice as ConflictSelectionsInput["selections"][number]["choice"] });
   }
-  const keys = new Set(parsed.map((selection) => `${selection.path} ${selection.hunkIndex}`));
+  const keys = new Set(parsed.map((selection) => `${selection.path}\0${selection.hunkIndex}`));
   if (keys.size !== parsed.length) return null;
   return { snapshotRunId: input.snapshotRunId.trim(), selections: parsed };
 }
@@ -428,4 +428,52 @@ function parseIdList(value: unknown, key: string, minimum: number): { itemIds: s
   const itemIds = ids.map((id) => (id as string).trim());
   if (new Set(itemIds).size !== itemIds.length) return null;
   return { itemIds };
+}
+
+
+export function parseConflictProposalInput(value: unknown): { revision: number; snapshotId: string; payload: import("./conflict-resolution").ConflictProposalPayload } | null {
+  if (!value || typeof value !== "object") return null;
+  const input = value as Record<string, unknown>;
+  if (!Number.isSafeInteger(input.revision) || Number(input.revision) < 0 || typeof input.snapshotId !== "string" || !input.snapshotId || input.snapshotId.length > 100) return null;
+  if (typeof input.instruction === "string" && input.instruction.trim() && input.instruction.length <= 6000) {
+    return { revision: Number(input.revision), snapshotId: input.snapshotId, payload: { kind: "intent", instruction: input.instruction.trim() } };
+  }
+  if (!Array.isArray(input.selections) || input.selections.length < 1 || input.selections.length > 5000) return null;
+  const selections: import("./conflict-resolution").ManualConflictSelection[] = [];
+  let contentBytes = 0;
+  for (const item of input.selections) {
+    if (!item || typeof item !== "object") return null;
+    const selection = item as Record<string, unknown>;
+    if (typeof selection.path !== "string" || !selection.path || selection.path.length > 1000 || selection.path.includes("\0")
+      || selection.path.startsWith("/") || selection.path.split("/").some((part) => !part || part === ".." || part === ".git")
+      || !Number.isSafeInteger(selection.hunkIndex) || Number(selection.hunkIndex) < -1
+      || !["ours", "theirs", "both", "edited"].includes(String(selection.choice))) return null;
+    if (selection.choice === "edited") {
+      if (selection.hunkIndex !== -1 || typeof selection.content !== "string") return null;
+      contentBytes += new TextEncoder().encode(selection.content).length;
+      if (contentBytes > 2_000_000) return null;
+    } else if (selection.content !== undefined) return null;
+    selections.push({ path: selection.path, hunkIndex: Number(selection.hunkIndex), choice: selection.choice as import("./conflict-resolution").ManualConflictSelection["choice"], ...(selection.choice === "edited" ? { content: selection.content as string } : {}) });
+  }
+  if (new Set(selections.map((selection) => JSON.stringify([selection.path, selection.hunkIndex]))).size !== selections.length) return null;
+  return { revision: Number(input.revision), snapshotId: input.snapshotId, payload: { kind: "manual", selections } };
+}
+
+export function parseConflictVoteInput(value: unknown): { revision: number; proposalId: string; action: "approve" | "reject" | "override"; reason?: string } | null {
+  if (!value || typeof value !== "object") return null;
+  const input = value as Record<string, unknown>;
+  if (!Number.isSafeInteger(input.revision) || Number(input.revision) < 0 || typeof input.proposalId !== "string" || !input.proposalId || input.proposalId.length > 100
+    || !["approve", "reject", "override"].includes(String(input.action))) return null;
+  const reason = typeof input.reason === "string" ? input.reason.trim() : "";
+  if (reason.length > 2000 || input.action === "override" && !reason) return null;
+  return { revision: Number(input.revision), proposalId: input.proposalId, action: input.action as "approve" | "reject" | "override", ...(reason ? { reason } : {}) };
+}
+
+export function parseConflictAssessment(value: unknown): import("./conflict-resolution").ConflictAssessment | null {
+  if (!value || typeof value !== "object") return null;
+  const input = value as Record<string, unknown>;
+  if (!["compatible", "decision_required", "blocked"].includes(String(input.outcome)) || typeof input.explanation !== "string" || !input.explanation.trim() || input.explanation.length > 4000
+    || !Array.isArray(input.preservedPromptIds) || input.preservedPromptIds.length > 500 || input.preservedPromptIds.some((id) => typeof id !== "string" || !id || id.length > 100)
+    || !Array.isArray(input.evidence) || input.evidence.length < 1 || input.evidence.length > 20 || input.evidence.some((item) => typeof item !== "string" || !item.trim() || item.length > 1000)) return null;
+  return { outcome: input.outcome as "compatible" | "decision_required" | "blocked", explanation: input.explanation.trim(), preservedPromptIds: [...new Set(input.preservedPromptIds)] as string[], evidence: input.evidence as string[] };
 }

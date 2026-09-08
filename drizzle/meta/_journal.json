@@ -337,6 +337,20 @@
       "when": 1788564697676,
       "tag": "0046_sad_the_phantom",
       "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "6",
+      "when": 1788839436240,
+      "tag": "0048_sparkling_patch",
+      "breakpoints": true
+    },
+    {
+      "idx": 49,
+      "version": "6",
+      "when": 1788839616894,
+      "tag": "0049_rare_bulldozer",
+      "breakpoints": true
     }
   ]
 }

@@ -264,6 +264,7 @@ export type MergeConflictQuestion = {
 };
 
 export type MergeConflictCase = {
+  resolution: import("./conflict-resolution").ConflictResolution | null;
   id: string;
   status: MergeConflictStatus;
   sourceRunId: string;
