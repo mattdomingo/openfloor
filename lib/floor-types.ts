@@ -96,6 +96,7 @@ export type FloorMessage = {
 };
 
 export type FloorQueuePrompt = {
+  githubVerified?: boolean;
   id: string;
   authorUserId: string;
   authorName: string;

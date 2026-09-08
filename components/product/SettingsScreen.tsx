@@ -132,7 +132,7 @@ export function SettingsScreen({ user: initialUser, usage, billing, credentials,
           <div className="settings-panel tab-panel" key={section}>
             {section === "profile" && <ProfileSection user={user} onSaved={setUser} />}
             {section === "plan" && <PlanSection usage={usage} billing={billing} modelUsage={modelUsage} billingNotice={billingNotice} originPath={originPath} />}
-            {section === "connections" && <ConnectionsSection enabledProviders={enabledProviders} initialCredentials={credentials} initialGithubInstallations={githubInstallations} />}
+            {section === "connections" && <ConnectionsSection initialIdentity={user.verifiedGitHub ?? null} enabledProviders={enabledProviders} initialCredentials={credentials} initialGithubInstallations={githubInstallations} />}
             {section === "preferences" && <PreferencesSection user={user} />}
             {section === "danger" && <DangerZoneSection />}
           </div>
@@ -408,8 +408,9 @@ function PlanSection({ usage, billing, modelUsage, billingNotice, originPath }: 
   );
 }
 
-function ConnectionsSection({ initialCredentials, initialGithubInstallations, enabledProviders }: { enabledProviders: CredentialProvider[]; initialCredentials: ProviderCredentialSummary[]; initialGithubInstallations: UserGitHubInstallationSummary[] }) {
+function ConnectionsSection({ initialIdentity, initialCredentials, initialGithubInstallations, enabledProviders }: { initialIdentity: import("@/lib/github-identity").GitHubIdentity | null; enabledProviders: CredentialProvider[]; initialCredentials: ProviderCredentialSummary[]; initialGithubInstallations: UserGitHubInstallationSummary[] }) {
   const [installations, setInstallations] = useState(initialGithubInstallations);
+  const [verifiedLogin, setVerifiedLogin] = useState(initialIdentity?.login ?? null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -453,7 +454,7 @@ function ConnectionsSection({ initialCredentials, initialGithubInstallations, en
       <ul className="settings-category-list">
         <li className="settings-category-row">
           <span className="settings-category-name">GitHub</span>
-          <span className="settings-category-detail">Connected installations supply repositories when creating sessions. After changing repository access on GitHub, refresh to verify your updated permissions. Removing access affects future selection only; existing session connections remain intact.</span>
+          <span className="settings-category-detail">Git commits credit your verified personal GitHub account using its private noreply address. Connected installations supply repositories when creating sessions. After changing repository access on GitHub, refresh to verify your updated permissions. Removing access affects future selection only; existing session connections remain intact.</span>
           {installations.length > 0 && (
             <ul className="settings-github-installations">
               {installations.map((installation) => (
@@ -466,6 +467,7 @@ function ConnectionsSection({ initialCredentials, initialGithubInstallations, en
             </ul>
           )}
           <div className="settings-github-actions">
+          <p>{verifiedLogin ? <>GitHub credit: <a href={`https://github.com/${verifiedLogin}`} target="_blank" rel="noreferrer">@{verifiedLogin}</a></> : "Verify your GitHub account before code prompts can run."}</p>
           {installations.length > 0 && <button className="button" disabled={busy != null} onClick={connectGitHub}>Refresh repository access</button>}
           {/* Always offered — a second personal account or organization can
               be connected at any time, not just before the first one. */}
@@ -478,6 +480,7 @@ function ConnectionsSection({ initialCredentials, initialGithubInstallations, en
         <GitHubDeviceDialog
           purpose="settings"
           returnTo={`${BASE_PATH}/home/settings?section=connections`}
+          onIdentity={(identity) => setVerifiedLogin(identity.login)}
           onConnected={setInstallations}
           onClose={() => setDeviceDialogOpen(false)}
         />

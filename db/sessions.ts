@@ -1,3 +1,4 @@
+import { readGitHubIdentity } from "@/lib/github-identity";
 import { hashAccountEmail } from "@/lib/account-email-hash";
 import { displayNameFrom } from "@/lib/display-name";
 import type { AuthenticatedIdentity } from "@/lib/identity";
@@ -57,7 +58,7 @@ export type InvitePreview = {
 };
 
 const APP_USER_COLUMNS = `id, chatgpt_user_id AS providerUserId, email, display_name AS displayName,
-              first_name AS firstName, last_name AS lastName, github_handle AS githubHandle,
+              first_name AS firstName, last_name AS lastName, github_handle AS githubHandle, verified_github AS verifiedGitHub,
               avatar_key AS avatarKey, onboarded_at AS onboardedAt, do_not_disturb AS doNotDisturb,
               plan, plan_status AS planStatus, seat_limit AS seatLimit, created_at AS createdAt, updated_at AS updatedAt,
               deleted_at AS deletedAt, early_access_granted_at AS earlyAccessGrantedAt,
@@ -65,9 +66,9 @@ const APP_USER_COLUMNS = `id, chatgpt_user_id AS providerUserId, email, display_
 
 // D1 has no native boolean type, so RETURNING/SELECT come back with
 // doNotDisturb as 0/1 — normalize to a real boolean before handing out AppUser.
-type AppUserRow = Omit<AppUser, "doNotDisturb"> & { doNotDisturb: number };
+type AppUserRow = Omit<AppUser, "doNotDisturb" | "verifiedGitHub"> & { doNotDisturb: number; verifiedGitHub: string | null };
 function normalizeAppUser(row: AppUserRow): AppUser {
-  return { ...row, doNotDisturb: Boolean(row.doNotDisturb) };
+  return { ...row, verifiedGitHub: readGitHubIdentity(row.verifiedGitHub), doNotDisturb: Boolean(row.doNotDisturb) };
 }
 
 export async function upsertUser(identity: AuthenticatedIdentity, database = getDb()): Promise<AppUser> {
@@ -1084,6 +1085,7 @@ export async function deleteAccount(
            first_name = NULL,
            last_name = NULL,
            github_handle = NULL,
+           verified_github = NULL,
            avatar_key = NULL,
            do_not_disturb = 0,
            plan_status = 'canceled',

@@ -1,5 +1,7 @@
 "use client";
 
+import { BASE_PATH } from "@/components/basePath";
+
 import { memo, useMemo, useState, type DragEvent, type MouseEvent as ReactMouseEvent } from "react";
 import type { AgentRun, FloorAgent, FloorQueueItem } from "@/lib/floor-types";
 import { LocalDateTime } from "@/components/LocalDateTime";
@@ -132,6 +134,7 @@ export const PromptQueue = memo(function PromptQueue({ chrome, items, runs, agen
       onDragLeave={draggableItem ? (event: DragEvent<HTMLLIElement>) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragOverId((current) => current === item.id ? null : current); } : undefined}
       onDrop={draggableItem ? () => { setDragOverId(null); onItemDrop(item.id); } : undefined}>
       <div className="queue-item-head"><span className="queue-identity">{draggableItem && <span className="queue-grip" title="Drag to reorder" aria-hidden="true"><Icon name="grip" /></span>}<span className="queue-position" aria-label={`Queue position ${item.position}`}>#{item.position}</span><span className="queue-chip" data-kind="author">{item.prompts.length > 1 ? `${item.prompts.length} prompts` : first ? <PersonName name={first.authorName} /> : null}</span>{item.agentId && agents.some((agent) => agent.id === item.agentId) ? <button type="button" className="queue-chip queue-chip-button" data-kind={item.assignedBy === "router" ? "agent-auto" : "agent"} title={item.assignedBy === "router" ? item.assignedReason ?? "Assigned automatically" : "Open this agent"} onClick={() => onFocusAgent(item.agentId!)}>{item.agentName ?? "Unassigned"}{item.assignedBy === "router" && " · auto"}</button> : retargetable ? <AgentTargetMenu value={null} agents={agents} allowAuto={false} onChange={(agentId) => { if (agentId) void onSetAgent(item.id, agentId); }} /> : <span className="queue-chip" data-kind="agent">{item.agentName ?? "Unassigned"}</span>}</span>{item.intent === "question" && <span className="queue-chip" data-kind="intent">Question</span>}{item.intent === "noise" && <span className="queue-chip" data-kind="intent">Not a task</span>}{first && <span className="queue-time"><LocalDateTime timestamp={first.createdAt} /></span>}</div>
+      {item.status === "queued" && !item.origin && item.intent !== "question" && item.intent !== "noise" && item.prompts.some((prompt) => prompt.githubVerified === false) && <p className="form-error">Waiting for GitHub verification: {[...new Set(item.prompts.filter((prompt) => prompt.githubVerified === false).map((prompt) => prompt.authorName))].join(", ")}. <a href={`${BASE_PATH}/home/settings?section=connections`}>Verify in Settings</a></p>}
       {editing ? <form className="queue-edit-form" onSubmit={(event) => { event.preventDefault(); const text = draftText.trim(); if (!text || !first) return; void onEditPrompt(item.id, first.id, text).then((ok) => { if (ok) setEditingId(null); }); }}>
         <textarea className="queue-edit-textarea" value={draftText} onChange={(event) => setDraftText(event.target.value)} maxLength={4000} autoFocus />
         <div className="queue-edit-actions">

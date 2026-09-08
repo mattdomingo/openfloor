@@ -1,3 +1,4 @@
+import { getQueueRunAttribution } from "./run-attribution";
 import type { AgentRun, AgentRunCheck, AgentRunFile, AgentRunStatus, RunActivityEvent } from "@/lib/floor-types";
 import { resolveRunModel, type CredentialProvider } from "@/lib/provider-credentials";
 import { pickResumeSource, type ResumeCandidateRow } from "@/lib/run-resume";
@@ -176,6 +177,7 @@ export async function createAgentRun(sessionId: string, queueItemId: string, use
     throw new AgentRunNotReadyError("Synchronize a ready, unmodified candidate before starting an agent run");
   }
   const effectiveKind: "task" | "reply" = context.agentKind === "answer" ? "reply" : kind;
+  const attribution = await getQueueRunAttribution(sessionId, queueItemId, effectiveKind !== "reply", database);
   if (context.agentDeprovisionedAt !== null && context.agentKind) {
     await database.prepare(
       "UPDATE floor_agents SET deprovisioned_at = NULL, idle_since = NULL, updated_at = ? WHERE id = ? AND session_id = ? AND kind IN ('answer', 'worker')",
@@ -211,10 +213,10 @@ export async function createAgentRun(sessionId: string, queueItemId: string, use
       database.prepare(
         `INSERT INTO agent_runs
          (id, session_id, queue_item_id, agent_id, candidate_id, candidate_sha, run_branch, attempt, status, model, kind,
-          resumed_from_run_id, workflow_instance_id, sandbox_id, created_by, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'provisioning', ?, ?, ?, ?, ?, ?, ?, ?)`,
+          resumed_from_run_id, workflow_instance_id, sandbox_id, created_by, created_at, updated_at, attribution)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'provisioning', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).bind(id, sessionId, queueItemId, context.agentId, context.candidateId, context.candidateSha, runBranch, attempt,
-        model, effectiveKind === "reply" ? "reply" : null, resumeSource?.id ?? null, id, `run-${id}`, userId, now, now),
+        model, effectiveKind === "reply" ? "reply" : null, resumeSource?.id ?? null, id, `run-${id}`, userId, now, now, JSON.stringify(attribution)),
       database.prepare("UPDATE floor_queue_items SET status = 'running', updated_at = ? WHERE id = ? AND session_id = ? AND status = 'queued'")
         .bind(now, queueItemId, sessionId),
       database.prepare("UPDATE sessions SET floor_revision = floor_revision + 1, updated_at = ? WHERE id = ?").bind(now, sessionId),

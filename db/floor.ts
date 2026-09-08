@@ -1,3 +1,4 @@
+import { readGitHubIdentity } from "@/lib/github-identity";
 import type {
   AgentRun,
   FloorAgent,
@@ -154,13 +155,13 @@ async function readFloorSnapshot(sessionId: string, userId: string, database: D1
     ).bind(sessionId).all<QueueRecord>(),
     database.prepare(
       `SELECT p.id, p.queue_item_id AS queueItemId, p.author_user_id AS authorUserId,
-              author.display_name AS authorName, p.text, p.created_at AS createdAt
+              author.verified_github AS githubIdentity, author.display_name AS authorName, p.text, p.created_at AS createdAt
        FROM floor_queue_prompts p
        JOIN floor_queue_items q ON q.id = p.queue_item_id
        JOIN users author ON author.id = p.author_user_id
        WHERE q.session_id = ? AND q.dismissed_at IS NULL
        ORDER BY p.created_at, p.id`,
-    ).bind(sessionId).all<PromptRecord>(),
+    ).bind(sessionId).all<PromptRecord & { githubIdentity: string | null }>(),
     getRepositoryConnectionForMember(sessionId, userId, database),
     getActiveRepositoryCandidate(sessionId, database),
     getLatestRepositoryReviewCandidate(sessionId, database),
@@ -174,9 +175,9 @@ async function readFloorSnapshot(sessionId: string, userId: string, database: D1
 
   const promptsByItem = new Map<string, FloorQueuePrompt[]>();
   for (const prompt of prompts.results) {
-    const { queueItemId, ...publicPrompt } = prompt;
+    const { queueItemId, githubIdentity, ...publicPrompt } = prompt;
     const list = promptsByItem.get(queueItemId) ?? [];
-    list.push(publicPrompt);
+    list.push({ ...publicPrompt, githubVerified: Boolean(readGitHubIdentity(githubIdentity)) });
     promptsByItem.set(queueItemId, list);
   }
 

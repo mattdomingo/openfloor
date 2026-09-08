@@ -1,3 +1,4 @@
+import { parseGitHubIdentity, type GitHubIdentity } from "@/lib/github-identity";
 import type {
   AccountGitHubRepositoryOption,
   UserGitHubInstallationSummary,
@@ -40,6 +41,7 @@ export async function consumeGitHubAccountConnectionState(
   account: { login: string; type: string } | null,
   repoScope: string[],
   database = getDb(),
+  identity?: GitHubIdentity,
 ): Promise<{ purpose: GitHubAccountConnectionPurpose; returnTo: string } | null> {
   const now = Date.now();
   const statements = [];
@@ -57,6 +59,13 @@ export async function consumeGitHubAccountConnectionState(
          repo_scope = excluded.repo_scope,
          updated_at = excluded.updated_at`,
     ).bind(crypto.randomUUID(), installationId, account.login, account.type, JSON.stringify(repoScope), now, now, stateId, userId, now));
+  }
+  if (identity && account && repoScope.length > 0) {
+    if (!parseGitHubIdentity(identity)) throw new Error("Invalid verified GitHub identity");
+    statements.push(database.prepare(
+      `UPDATE users SET verified_github = ? WHERE id = ? AND deleted_at IS NULL
+       AND EXISTS (SELECT 1 FROM github_account_connection_states WHERE id = ? AND user_id = ? AND used_at IS NULL AND expires_at > ?)`,
+    ).bind(JSON.stringify(identity), userId, stateId, userId, now));
   }
   statements.push(database.prepare(
     `UPDATE github_account_connection_states SET used_at = ?
@@ -93,13 +102,15 @@ export async function refreshUserGitHubInstallations(
   userId: string,
   installations: Array<{ id: string; account: { login: string; type: string }; repoScope: string[] }>,
   database = getDb(),
+  identity?: GitHubIdentity,
 ): Promise<void> {
-  if (installations.length === 0) return;
+  if (identity && !parseGitHubIdentity(identity)) throw new Error("Invalid verified GitHub identity");
+  if (installations.length === 0 && !identity) return;
   const now = Date.now();
-  await database.batch(installations.map((installation) => installation.repoScope.length > 0
+  await database.batch([...(identity ? [database.prepare("UPDATE users SET verified_github = ? WHERE id = ? AND deleted_at IS NULL").bind(JSON.stringify(identity), userId)] : []), ...installations.map((installation) => installation.repoScope.length > 0
     ? installationLinkStatement(userId, installation.id, installation.account, installation.repoScope, now, database)
     : database.prepare("UPDATE user_github_installations SET repo_scope = '[]', updated_at = ? WHERE user_id = ? AND installation_id = ?")
-      .bind(now, userId, installation.id)));
+      .bind(now, userId, installation.id))]);
 }
 
 function installationLinkStatement(userId: string, installationId: string, account: { login: string; type: string }, repoScope: string[], now: number, database: D1DatabaseLike) {
