@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, rmSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { sandboxArguments } from "./runtime-sandbox.mjs";
 
-const scratch = "/tmp/openfloor-preview-isolation";
+const scratch = "/tmp/openfloor/preview-isolation";
 rmSync(scratch, { recursive: true, force: true });
 mkdirSync(scratch, { recursive: true });
 
@@ -52,7 +52,7 @@ const loopback = spawnSync("/usr/bin/bwrap", sandboxArguments(
     import net from 'node:net';
     assert.equal(process.getuid(), 10002);
     const status = fs.readFileSync('/proc/self/status','utf8');
-    for (const capability of ['CapInh','CapPrm','CapEff','CapBnd','CapAmb']) assert.match(status, new RegExp(capability + ':\\\\s+0+'));
+    for (const capability of ['CapInh','CapPrm','CapEff','CapBnd','CapAmb']) assert.match(status, new RegExp(capability + ':\\s+0+'));
     await new Promise((resolve, reject) => {
       const server = http.createServer((_request, response) => response.end('preview-loopback'));
       server.listen(3456, '127.0.0.1', () => {
@@ -62,9 +62,9 @@ const loopback = spawnSync("/usr/bin/bwrap", sandboxArguments(
           response.on('end', () => {
             assert.equal(body, 'preview-loopback');
             const remote = net.connect({ host: '1.1.1.1', port: 443 });
-            remote.on('connect', () => { remote.destroy(); reject(new Error('Preview escaped')); });
-            remote.on('error', resolve);
-            remote.setTimeout(1000, () => { remote.destroy(); resolve(); });
+            remote.on('connect', () => { remote.destroy(); server.close(); reject(new Error('Preview escaped')); });
+            remote.on('error', () => server.close(resolve));
+            remote.setTimeout(1000, () => { remote.destroy(); server.close(resolve); });
           });
         }).on('error', reject);
       });
