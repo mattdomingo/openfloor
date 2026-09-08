@@ -1,11 +1,11 @@
 import { parseAgentInput } from "@/lib/validation";
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
-import { acceptInvite, createSession, upsertUser, updateProfile } from "@/db/sessions";
+import { acceptInvite, createSession, deleteAccount, upsertUser, updateProfile } from "@/db/sessions";
 import { createFloorAgent, createFloorQueueItem, getFloorSnapshot } from "@/db/floor";
 import { activateRepositoryCandidate, reserveRepositoryCandidate, saveRepositoryConnection } from "@/db/repositories";
-import { createAgentRun } from "@/db/runs";
-import { getQueueRunAttribution } from "@/db/run-attribution";
+import { createAgentRun, getAgentRun, getAgentRunHistoryForMember } from "@/db/runs";
+import { getQueueRunAttribution, getCandidateCommitAuthors } from "@/db/run-attribution";
 import { consumeGitHubAccountConnectionState, createGitHubAccountConnectionState, refreshUserGitHubInstallations } from "@/db/github-installations";
 
 const proof = { id: "123", login: "engineer", verifiedAt: 1 };
@@ -45,7 +45,13 @@ describe("engineer verification and run identity", () => {
     const run = await createAgentRun(r.sessionId, r.queueItemId, r.owner.id, "task", env.DB);
     const stored = await env.DB.prepare("SELECT attribution FROM agent_runs WHERE id = ?").bind(run.id).first<{ attribution: string }>();
     expect(JSON.parse(stored!.attribution)).toEqual({ kind: "human", authors: [{ userId: r.member.id, githubId: "123", login: "engineer" }] });
+    expect(run.attribution?.authors[0].githubId).toBe("123");
+    expect(run.promptedBy).toEqual([{ userId: r.member.id, name: "Engineer", deleted: false }]);
     await refreshUserGitHubInstallations(r.member.id, [], env.DB, { ...proof, login: "renamed" });
+    expect(await env.DB.prepare("SELECT attribution FROM agent_runs WHERE id = ?").bind(run.id).first()).toEqual(stored);
+    expect(await deleteAccount(r.member.id, env.DB)).toEqual({ deleted: true });
+    expect(await env.DB.prepare("SELECT verified_github FROM users WHERE id = ?").bind(r.member.id).first()).toEqual({ verified_github: null });
+    expect((await getAgentRun(run.id, env.DB))?.promptedBy).toEqual([{ userId: r.member.id, name: "Deleted user", deleted: true }]);
     expect(await env.DB.prepare("SELECT attribution FROM agent_runs WHERE id = ?").bind(run.id).first()).toEqual(stored);
   });
 
@@ -73,4 +79,26 @@ describe("engineer verification and run identity", () => {
     expect(JSON.parse(user!.identity)).toEqual(proof);
     await expect(refreshUserGitHubInstallations(r.member.id, [], env.DB, { ...proof, login: "evil\ntrailer" })).rejects.toThrow("Invalid verified");
   });
+  it("credits the whole active candidate beyond 20 runs, excluding removed work, system feedback and noncontributors", async () => {
+    const r = await room();
+    await refreshUserGitHubInstallations(r.member.id, [], env.DB, proof);
+    const run = await createAgentRun(r.sessionId, r.queueItemId, r.owner.id, "task", env.DB);
+    await env.DB.prepare("UPDATE agent_runs SET status = 'integrated', integrated_at = 1 WHERE id = ?").bind(run.id).run();
+    await env.DB.prepare("INSERT INTO agent_run_files (id, run_id, path, change_kind, additions, deletions, diff_preview, created_at) VALUES (?, ?, 'file.ts', 'add', 1, 0, '+hello', 1)").bind(crypto.randomUUID(), run.id).run();
+    for (let i = 0; i < 22; i++) {
+      await env.DB.prepare(`INSERT INTO agent_runs (id, session_id, queue_item_id, agent_id, candidate_id, candidate_sha, attempt, status, model, sandbox_id, created_by, created_at, updated_at)
+        SELECT ?, session_id, queue_item_id, agent_id, candidate_id, candidate_sha, ?, 'failed', model, sandbox_id, created_by, created_at + ?, updated_at FROM agent_runs WHERE id = ?`)
+        .bind(crypto.randomUUID(), i + 2, i + 1, run.id).run();
+    }
+    await env.DB.prepare("UPDATE session_members SET removed_at = 1 WHERE session_id = ? AND user_id = ?").bind(r.sessionId, r.member.id).run();
+    expect((await getAgentRunHistoryForMember(r.sessionId, r.owner.id, null, env.DB))?.runs).toHaveLength(20);
+    expect(await getCandidateCommitAuthors(r.sessionId, r.candidateId, env.DB)).toEqual([{ userId: r.member.id, githubId: "123", login: "engineer" }]);
+    expect(await getCandidateCommitAuthors("another-session", r.candidateId, env.DB)).toEqual([]);
+    await env.DB.prepare("UPDATE agent_runs SET attribution = NULL WHERE id = ?").bind(run.id).run();
+    expect((await getAgentRun(run.id, env.DB))?.attribution).toBeNull();
+    expect((await getCandidateCommitAuthors(r.sessionId, r.candidateId, env.DB))[0].githubId).toBe("123");
+    await env.DB.prepare("INSERT INTO agent_run_rollbacks (id, run_id, session_id, candidate_id, status, expected_candidate_sha, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, 'completed', ?, ?, 1, 1)").bind(crypto.randomUUID(), run.id, r.sessionId, r.candidateId, "a".repeat(40), r.owner.id).run();
+    expect(await getCandidateCommitAuthors(r.sessionId, r.candidateId, env.DB)).toEqual([]);
+  });
+
 });

@@ -628,8 +628,8 @@ export async function convertPullRequestToDraft(
   }
 }
 
-// The squash commit's message body: one Co-authored-by trailer per session
-// member (ENG-65), so GitHub credits the whole team on the merged commit.
+// The squash commit's message body: one Co-authored-by trailer per
+// contributor, so GitHub credits the engineers behind the merged changes.
 // Deduped by email, name flattened to one trailer-safe line. Null when there
 // is nobody to credit — the caller then leaves GitHub's default message.
 export function coauthorTrailers(members: { displayName: string; email: string }[]): string | null {
@@ -637,8 +637,8 @@ export function coauthorTrailers(members: { displayName: string; email: string }
   const lines: string[] = [];
   for (const member of members) {
     const email = member.email.trim();
-    if (!email || seen.has(email)) continue;
-    seen.add(email);
+    if (!/^[^\s<>@]+@[^\s<>@]+$/.test(email) || seen.has(email.toLowerCase())) continue;
+    seen.add(email.toLowerCase());
     const name = member.displayName.replace(/[<>\r\n]+/g, " ").replace(/\s+/g, " ").trim() || email;
     lines.push(`Co-authored-by: ${name} <${email}>`);
   }

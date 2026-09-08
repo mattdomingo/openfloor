@@ -1,6 +1,6 @@
 import { getDb } from "./index";
 import { readGitHubIdentity } from "@/lib/github-identity";
-import type { RunAttribution } from "@/lib/run-attribution";
+import { readRunAttribution, type RunAuthor, type RunAttribution } from "@/lib/run-attribution";
 
 export class GitHubVerificationRequiredError extends Error {}
 
@@ -22,4 +22,29 @@ export async function getQueueRunAttribution(sessionId: string, queueItemId: str
     if (identity && !authors.has(identity.id)) authors.set(identity.id, { userId: row.userId, githubId: identity.id, login: identity.login });
   }
   return { kind: "human", authors: [...authors.values()] };
+}
+
+/** Entire candidate audit, independent of the floor's latest-20 window and live membership. */
+export async function getCandidateCommitAuthors(sessionId: string, candidateId: string, database = getDb()): Promise<RunAuthor[]> {
+  const rows = await database.prepare(
+    `SELECT r.attribution,
+       (SELECT json_group_array(json_object('userId', p.author_user_id, 'identity', u.verified_github))
+        FROM floor_queue_prompts p JOIN users u ON u.id = p.author_user_id WHERE p.queue_item_id = r.queue_item_id
+        ORDER BY p.created_at, p.id) AS legacyAuthors
+     FROM agent_runs r JOIN floor_queue_items q ON q.id = r.queue_item_id AND q.session_id = r.session_id
+     WHERE r.session_id = ? AND r.candidate_id = ? AND r.status = 'integrated' AND r.kind IS NULL AND q.origin IS NULL
+       AND EXISTS (SELECT 1 FROM agent_run_files f WHERE f.run_id = r.id)
+       AND NOT EXISTS (SELECT 1 FROM agent_run_rollbacks rb WHERE rb.run_id = r.id AND rb.status = 'completed')
+     ORDER BY r.integrated_at, r.id`,
+  ).bind(sessionId, candidateId).all<{ attribution: string | null; legacyAuthors: string }>();
+  const authors = new Map<string, RunAuthor>();
+  for (const row of rows.results) {
+    const snapshot = readRunAttribution(row.attribution);
+    const legacy = snapshot ? [] : (JSON.parse(row.legacyAuthors) as Array<{ userId: string; identity: string | null }>).flatMap((person) => {
+      const identity = readGitHubIdentity(person.identity);
+      return identity ? [{ userId: person.userId, githubId: identity.id, login: identity.login }] : [];
+    });
+    for (const author of snapshot?.authors ?? legacy) if (!authors.has(author.githubId)) authors.set(author.githubId, author);
+  }
+  return [...authors.values()];
 }

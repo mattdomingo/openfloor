@@ -193,6 +193,8 @@ export type AgentRunFile = {
 };
 
 export type AgentRun = {
+  attribution?: import("./run-attribution").RunAttribution | null;
+  promptedBy?: import("./run-attribution").RunRequester[];
   id: string;
   queueItemId: string;
   agentId: string;

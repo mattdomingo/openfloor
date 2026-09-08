@@ -451,26 +451,6 @@ export async function getSessionMembers(
   return result.results.map((member) => ({ ...member, online: false }));
 }
 
-// Identity lines for the squash commit's Co-authored-by trailers: every
-// active member of the session, in join order so the trailer block is
-// deterministic. Email is the login address (users.email, always present);
-// GitHub links a co-author only when that address is on their account.
-export async function getSessionMemberIdentities(
-  sessionId: string,
-  database = getDb(),
-): Promise<{ displayName: string; email: string }[]> {
-  const result = await database
-    .prepare(
-      `SELECT u.display_name AS displayName, u.email
-       FROM session_members sm JOIN users u ON u.id = sm.user_id
-       WHERE sm.session_id = ? AND sm.removed_at IS NULL
-       ORDER BY sm.joined_at, u.id`,
-    )
-    .bind(sessionId)
-    .all<{ displayName: string; email: string }>();
-  return result.results;
-}
-
 // Owner-only audit view of who has been removed, so the soft delete this
 // backs (acceptInvite blocks these rows; restoreMember clears them) is
 // visible in the product rather than only in D1.

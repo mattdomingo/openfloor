@@ -1,3 +1,4 @@
+import { readRunAttribution, type RunRequester } from "@/lib/run-attribution";
 import { getQueueRunAttribution } from "./run-attribution";
 import type { AgentRun, AgentRunCheck, AgentRunFile, AgentRunStatus, RunActivityEvent } from "@/lib/floor-types";
 import { resolveRunModel, type CredentialProvider } from "@/lib/provider-credentials";
@@ -9,12 +10,22 @@ export class AgentRunConflictError extends Error {}
 export class AgentRunNotReadyError extends Error {}
 export class AgentRunIntegrationBusyError extends Error {}
 
-type RunRecord = Omit<AgentRun, "checks" | "files">;
+type RunRecord = Omit<AgentRun, "checks" | "files" | "attribution" | "promptedBy"> & { attributionJson: string | null; promptedByJson: string };
+
+function publicRunRecord(row: RunRecord) {
+  const { attributionJson, promptedByJson, ...run } = row;
+  return { ...run, attribution: readRunAttribution(attributionJson), promptedBy: (JSON.parse(promptedByJson ?? "[]") as RunRequester[]).map((person) => ({ ...person, deleted: Boolean(person.deleted) })) };
+}
 type CheckRecord = Omit<AgentRunCheck, "hasLog"> & { logKey: string | null };
 type ScopedCheckRecord = CheckRecord & { runId: string };
 type ScopedFileRecord = AgentRunFile & { runId: string };
 
-const AGENT_RUN_SELECT = `SELECT r.id, r.queue_item_id AS queueItemId, r.agent_id AS agentId, a.name AS agentName, a.kind AS agentKind,
+const AGENT_RUN_SELECT = `SELECT r.id, r.attribution AS attributionJson,
+        (SELECT json_group_array(json_object('userId', userId, 'name', name, 'deleted', deleted)) FROM (
+          SELECT DISTINCT u.id AS userId, u.display_name AS name, u.deleted_at IS NOT NULL AS deleted
+          FROM floor_queue_prompts p JOIN users u ON u.id = p.author_user_id
+          WHERE p.queue_item_id = r.queue_item_id ORDER BY p.created_at, p.id
+        )) AS promptedByJson, r.queue_item_id AS queueItemId, r.agent_id AS agentId, a.name AS agentName, a.kind AS agentKind,
         r.candidate_id AS candidateId, r.candidate_sha AS candidateSha, r.attempt, r.status, r.kind, r.completion,
         r.run_branch AS runBranch, r.local_commit_sha AS localCommitSha,
         r.run_commit_sha AS runCommitSha, r.remote_run_sha AS remoteRunSha,
@@ -117,7 +128,7 @@ async function getAgentRunsByScope(scope: RunListScope, database: D1DatabaseLike
     filesByRun.set(runId, values);
   }
   return rows.results.map((run) => ({
-    ...run,
+    ...publicRunRecord(run),
     attempt: Number(run.attempt),
     checks: checksByRun.get(run.id) ?? [],
     files: filesByRun.get(run.id) ?? [],
@@ -234,12 +245,12 @@ export async function getAgentRun(runId: string, database = getDb()): Promise<Ag
     `${AGENT_RUN_SELECT} WHERE r.id = ?`,
   ).bind(runId).first<RunRecord>();
   if (!row) return null;
-  return { ...row, attempt: Number(row.attempt), checks: await getRunChecks(runId, database), files: await getRunFiles(runId, database) };
+  return { ...publicRunRecord(row), attempt: Number(row.attempt), checks: await getRunChecks(runId, database), files: await getRunFiles(runId, database) };
 }
 
 export async function getRunExecutionContext(runId: string, database = getDb()) {
   const run = await database.prepare(
-    `SELECT r.id, r.session_id AS sessionId, r.queue_item_id AS queueItemId, r.agent_id AS agentId,
+    `SELECT r.id, r.attribution AS attributionJson, r.session_id AS sessionId, r.queue_item_id AS queueItemId, r.agent_id AS agentId,
             r.candidate_sha AS candidateSha, r.attempt, r.status, r.kind, r.completion, r.sandbox_id AS sandboxId,
             r.run_branch AS runBranch, r.bundle_key AS bundleKey, r.bundle_size_bytes AS bundleSizeBytes,
             r.local_commit_sha AS localCommitSha,
@@ -264,7 +275,7 @@ export async function getRunExecutionContext(runId: string, database = getDb()) 
      LEFT JOIN agent_run_artifacts store ON store.run_id = prior.id AND store.kind = 'session_store'
      WHERE r.id = ?`,
   ).bind(runId).first<{
-    id: string; sessionId: string; queueItemId: string; agentId: string; candidateSha: string; attempt: number; status: AgentRunStatus;
+    attributionJson: string | null; id: string; sessionId: string; queueItemId: string; agentId: string; candidateSha: string; attempt: number; status: AgentRunStatus;
     kind: "reply" | null; completion: "no_changes" | null;
     runBranch: string | null; bundleKey: string | null; bundleSizeBytes: number | null; localCommitSha: string | null; createdAt: number;
     sandboxId: string; sandboxProcessId: string | null; model: string; sessionTitle: string; objective: string | null;
@@ -282,6 +293,7 @@ export async function getRunExecutionContext(runId: string, database = getDb()) 
     .bind(runId).all<{ id: string; position: number; command: string }>();
   return {
     ...run,
+    attribution: readRunAttribution(run.attributionJson),
     resumedFromAttempt: run.resumedFromAttempt === null ? null : Number(run.resumedFromAttempt),
     prompts: prompts.results,
     checks: checks.results.map((check) => ({ ...check, position: Number(check.position) })),

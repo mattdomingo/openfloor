@@ -1,3 +1,5 @@
+import { getCandidateCommitAuthors } from "@/db/run-attribution";
+import { githubCommitEmail } from "@/lib/github-identity";
 import { getGitHubAppConfig } from "@/db";
 import { getFloorSnapshot } from "@/db/floor";
 import {
@@ -6,7 +8,7 @@ import {
   markCandidateMerged,
   reconcileCandidateReview,
 } from "@/db/repositories";
-import { endSession, getSessionMemberIdentities } from "@/db/sessions";
+import { endSession } from "@/db/sessions";
 import { coauthorTrailers, getPullRequestReview, GitHubApiError, squashMergePullRequest } from "@/lib/github";
 import { notifyFloorChanged, notifySessionEnded } from "@/lib/presence-server";
 import { deleteVerifiedBranches, type CleanupTarget } from "@/lib/repository-cleanup";
@@ -61,7 +63,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       if (!review.checksPassing) return Response.json({ error: "GitHub checks are not passing" }, { status: 409 });
       // Everyone in the session becomes a co-author of the squash commit —
       // the one commit that reaches the base branch (ENG-65).
-      const trailers = coauthorTrailers(await getSessionMemberIdentities(sessionId));
+      const trailers = coauthorTrailers((await getCandidateCommitAuthors(sessionId, context.candidateId)).map((author) => ({ displayName: author.login, email: githubCommitEmail({ id: author.githubId, login: author.login }) })));
       mergeCommitSha = (await squashMergePullRequest(config, context.installationId, repository, context.pullRequestNumber, context.candidateSha, trailers)).sha;
       review = await getPullRequestReview(config, context.installationId, repository, context.pullRequestNumber);
       await reconcileCandidateReview(sessionId, context.candidateId, review);
