@@ -14,16 +14,21 @@ export async function canUseAgent(sessionId: string, agentId: string, userId: st
 export async function queueAgentAccessError(sessionId: string, queueItemId: string, database: D1DatabaseLike = getDb()): Promise<string | null> {
   const row = await database.prepare(`SELECT a.owner_user_id AS ownerId, a.usage_scope AS scope, a.credential_kind AS kind,
       q.origin, q.source_run_id AS sourceRunId,
+      EXISTS (SELECT 1 FROM agent_runs source JOIN floor_queue_prompts p ON p.queue_item_id = source.queue_item_id WHERE source.id = q.source_run_id AND source.session_id = q.session_id AND p.author_user_id <> a.owner_user_id) AS sourceOtherAuthors,
       EXISTS (SELECT 1 FROM agent_runs source WHERE source.id = q.source_run_id AND source.session_id = q.session_id AND source.agent_id = a.id) AS validSource,
       EXISTS (SELECT 1 FROM session_members m WHERE m.session_id = a.session_id AND m.user_id = a.owner_user_id AND m.removed_at IS NULL) AS ownerPresent,
       EXISTS (SELECT 1 FROM floor_queue_prompts p WHERE p.queue_item_id = q.id) AS hasPrompts,
       EXISTS (SELECT 1 FROM floor_queue_prompts p WHERE p.queue_item_id = q.id AND p.author_user_id <> a.owner_user_id) AS otherAuthors
     FROM floor_queue_items q JOIN floor_agents a ON a.id = q.agent_id AND a.session_id = q.session_id
     WHERE q.session_id = ? AND q.id = ? AND q.dismissed_at IS NULL`)
-    .bind(sessionId, queueItemId).first<{ ownerId: string; scope: string; kind: string | null; origin: string | null; sourceRunId: string | null; validSource: number; ownerPresent: number; hasPrompts: number; otherAuthors: number }>();
+    .bind(sessionId, queueItemId).first<{ ownerId: string; scope: string; kind: string | null; origin: string | null; sourceRunId: string | null; validSource: number; sourceOtherAuthors: number; ownerPresent: number; hasPrompts: number; otherAuthors: number }>();
   if (!row || !row.ownerPresent) return "The agent owner is no longer in this session.";
   if (row.kind === "oauth") return "Subscription connections are unavailable. The agent owner must select a connected API key.";
-  if (row.origin) return row.validSource ? null : "System feedback must retain its source agent.";
+  if (row.origin) {
+    if (!row.validSource) return "System feedback must retain its source agent.";
+    if (row.scope !== "session" && row.sourceOtherAuthors) return "The source agent is private. Its owner must share it before teammate feedback can run.";
+    return null;
+  }
   if (!row.hasPrompts || (row.scope !== "session" && row.otherAuthors)) return "This agent is private. Ask its owner to share it with the session.";
   return null;
 }

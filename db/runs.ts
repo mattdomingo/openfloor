@@ -228,8 +228,12 @@ export async function createAgentRun(sessionId: string, queueItemId: string, use
            AND (a.credential_kind IS NULL OR a.credential_kind = 'api_key')
            AND EXISTS (SELECT 1 FROM session_members m WHERE m.session_id = q.session_id AND m.user_id = a.owner_user_id AND m.removed_at IS NULL)
            AND EXISTS (SELECT 1 FROM session_members m WHERE m.session_id = q.session_id AND m.user_id = ? AND m.removed_at IS NULL)
-           AND (a.usage_scope = 'session' OR NOT EXISTS (SELECT 1 FROM floor_queue_prompts p WHERE p.queue_item_id = q.id AND p.author_user_id <> a.owner_user_id)
-             OR (q.origin IS NOT NULL AND EXISTS (SELECT 1 FROM agent_runs source WHERE source.id = q.source_run_id AND source.session_id = q.session_id AND source.agent_id = a.id)))`,
+           AND (
+             (q.origin IS NULL AND EXISTS (SELECT 1 FROM floor_queue_prompts p WHERE p.queue_item_id = q.id)
+               AND (a.usage_scope = 'session' OR NOT EXISTS (SELECT 1 FROM floor_queue_prompts p WHERE p.queue_item_id = q.id AND p.author_user_id <> a.owner_user_id)))
+             OR (q.origin IS NOT NULL AND EXISTS (
+               SELECT 1 FROM agent_runs source WHERE source.id = q.source_run_id AND source.session_id = q.session_id AND source.agent_id = a.id
+                 AND (a.usage_scope = 'session' OR NOT EXISTS (SELECT 1 FROM floor_queue_prompts p WHERE p.queue_item_id = source.queue_item_id AND p.author_user_id <> a.owner_user_id)))))`,
       ).bind(id, sessionId, queueItemId, context.agentId, context.candidateId, context.candidateSha, runBranch, attempt,
         model, effectiveKind === "reply" ? "reply" : null, resumeSource?.id ?? null, id, `run-${id}`, userId, now, now, queueItemId, sessionId, context.agentId, userId, userId),
       database.prepare("UPDATE floor_queue_items SET status = 'running', updated_at = ? WHERE id = ? AND session_id = ? AND status = 'queued' AND EXISTS (SELECT 1 FROM agent_runs WHERE id = ?)")

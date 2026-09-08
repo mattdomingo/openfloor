@@ -96,7 +96,8 @@ export const PromptQueue = memo(function PromptQueue({ chrome, items, runs, agen
       : rollbackStatus ?? (run?.discardedAt ? "discarded" : run ? runStatusToken(run) : item.status);
     const editing = editingId === item.id;
     const mine = item.prompts.length > 0 && item.prompts.every((prompt) => prompt.authorUserId === currentUserId);
-    const manageable = (owner || mine) && item.prompts.length === 1;
+    const targetUsable = !item.agentId || agents.find((agent) => agent.id === item.agentId)?.canUse !== false;
+    const manageable = targetUsable && (owner || mine) && item.prompts.length === 1;
     const editable = manageable && (item.status === "queued" || item.status === "paused");
     const pausable = manageable && item.status === "queued";
     const resumable = manageable && ["paused", "failed", "cancelled"].includes(item.status);

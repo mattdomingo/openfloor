@@ -51,7 +51,7 @@ const AllAgentsButton = memo(function AllAgentsButton({ active, onClick }: { act
   );
 });
 
-export const AgentFloor = memo(function AgentFloor({ chrome, sessionId, agents, runs, activity, selected, onSelect, agentLayout, onAgentLayout, onCreateAgent, onUpdateSettings, onPauseAgent, onStopAgent, onDeleteAgent, onPauseAllAgents, onResumeAllAgents, onStopAllAgents, agentControlsBusy, queue, currentUserId, enabledProviders, providerCredentials, owner, personalAutoAgentsEnabled, onPersonalAutoAgents, autoProvisionAgents, autoAgentProvider, effectiveAutoAgentProvider, autoAgentProviderState, onAutoProvisionAgents, onAutoAgentProvider, conflictsByAgentId, onOpenConflict }: {
+export const AgentFloor = memo(function AgentFloor({ chrome, sessionId, agents, runs, activity, selected, onSelect, agentLayout, onAgentLayout, onCreateAgent, onUpdateSettings, onPauseAgent, onStopAgent, onDeleteAgent, onPauseAllAgents, onResumeAllAgents, onStopAllAgents, agentControlsBusy, queue, currentUserId, enabledProviders, providerCredentials, owner, personalAutoAgentsEnabled, onPersonalAutoAgents, autoDispatch, autoProvisionAgents, autoAgentProvider, effectiveAutoAgentProvider, autoAgentProviderState, onAutoProvisionAgents, onAutoAgentProvider, conflictsByAgentId, onOpenConflict }: {
   chrome: PanelChrome;
   sessionId: string;
   agents: FloorAgent[];
@@ -80,6 +80,7 @@ export const AgentFloor = memo(function AgentFloor({ chrome, sessionId, agents, 
   enabledProviders: CredentialProvider[];
   providerCredentials: ProviderCredentialSummary[];
   owner: boolean;
+  autoDispatch: boolean;
   autoProvisionAgents: boolean;
   personalAutoAgentsEnabled: boolean;
   onPersonalAutoAgents: (enabled: boolean) => Promise<boolean>;
@@ -181,6 +182,7 @@ export const AgentFloor = memo(function AgentFloor({ chrome, sessionId, agents, 
       )}
       <button type="button" className="chip" aria-label="My auto agents" aria-pressed={personalAutoAgentsEnabled} onClick={() => void onPersonalAutoAgents(!personalAutoAgentsEnabled)}>My auto agents</button>
       {(autoAgentProviderState === "missing_key" || autoAgentProviderState === "default_unavailable") && <span className="auto-agent-note" data-tone="attention" role="status">Auto agents unavailable — connect an API key in Settings.</span>}
+      {(!autoDispatch || !autoProvisionAgents) && <span className="auto-agent-note">The session owner has disabled {autoDispatch ? "automatic agent creation" : "automatic dispatch"}.</span>}
       {!personalAutoAgentsEnabled && <span className="auto-agent-note">Your auto agents are off.</span>}
       {autoAgentProviderState === "selection_required" && <span className="auto-agent-note" data-tone="attention">Choose a default provider</span>}
       <button ref={createButtonRef} type="button" className="chip chip-create" onClick={() => setCreating(true)}><Icon name="plus" size={11} />New agent</button>

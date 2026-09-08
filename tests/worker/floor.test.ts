@@ -509,6 +509,10 @@ describe("personal agent spending authority and retained prompts", () => {
     await updateFloorAgentSettings(room.sessionId, room.owner.id, agent.id, { usageScope: "private" }, env.DB);
     const { queueAgentAccessError } = await import("@/db/agent-access");
     expect(await queueAgentAccessError(room.sessionId, itemId, env.DB)).toContain("private");
+    const feedback = await createFloorQueueItem(room.sessionId, room.owner.id, { prompt: "System feedback", agentId: agent.id }, env.DB);
+    const feedbackId = feedback!.queue.find((item) => item.id !== itemId)!.id;
+    await env.DB.prepare("UPDATE floor_queue_items SET origin = 'review_comments', source_run_id = ? WHERE id = ?").bind(runId, feedbackId).run();
+    expect(await queueAgentAccessError(room.sessionId, feedbackId, env.DB)).toContain("source agent is private");
     expect(await env.DB.prepare("SELECT status FROM agent_runs WHERE id = ?").bind(runId).first()).toEqual({ status: "running" });
     await pauseFloorAgent(room.sessionId, room.member.id, agent.id, true, env.DB);
     expect((await getFloorSnapshot(room.sessionId, room.owner.id, env.DB))!.agents[0].pausedAt).not.toBeNull();
