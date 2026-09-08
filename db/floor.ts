@@ -61,12 +61,12 @@ export async function getFloorSnapshot(
 async function readFloorSnapshot(sessionId: string, userId: string, database: D1DatabaseLike): Promise<FloorSnapshot> {
   const [session, providerResolution, agents, assignments, messages, files, queue, prompts, repository, activeCandidate, reviewCandidate, latestPreflight, preview, runs, conflicts] = await Promise.all([
     database.prepare(
-      `SELECT s.floor_revision AS revision, s.auto_dispatch AS autoDispatch,
+      `SELECT s.floor_revision AS revision, s.ended_at AS endedAt, s.auto_dispatch AS autoDispatch,
               s.auto_provision_agents AS autoProvisionAgents, s.auto_resolve_conflicts AS autoResolveConflicts,
               s.auto_inject_feedback AS autoInjectFeedback,
               (SELECT role FROM session_members WHERE session_id = s.id AND user_id = ? AND removed_at IS NULL) AS viewerRole
        FROM sessions s WHERE s.id = ?`,
-    ).bind(userId, sessionId).first<{ revision: number; autoDispatch: number; autoProvisionAgents: number; autoResolveConflicts: number; autoInjectFeedback: number; viewerRole: "owner" | "member" }>(),
+    ).bind(userId, sessionId).first<{ revision: number; endedAt: number | null; autoDispatch: number; autoProvisionAgents: number; autoResolveConflicts: number; autoInjectFeedback: number; viewerRole: "owner" | "member" }>(),
     resolveAutoAgentProvider(sessionId, database, disabledRunProviders()),
     database.prepare(
       // Two extra joins for lifetime cost (Agent tile meter): `cost` sums
@@ -172,6 +172,14 @@ async function readFloorSnapshot(sessionId: string, userId: string, database: D1
     getAgentRuns(sessionId, database),
     getMergeConflictCases(sessionId, database),
   ]);
+
+  for (const conflict of conflicts) {
+    if (!conflict.resolution) continue;
+    const authored = [...conflict.resolution.provenance.incoming, ...conflict.resolution.provenance.integrated,
+      ...(!conflict.resolution.snapshotId ? conflict.prompts : [])].some((prompt) => prompt.authorUserId === userId);
+    conflict.resolution.actions = { canPropose: session?.endedAt == null && (session?.viewerRole === "owner" || authored),
+      canOverride: session?.endedAt == null && session?.viewerRole === "owner" };
+  }
 
   const promptsByItem = new Map<string, FloorQueuePrompt[]>();
   for (const prompt of prompts.results) {

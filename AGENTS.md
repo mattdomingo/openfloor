@@ -101,7 +101,7 @@ Production code must not seed, fabricate, or animate agents, prompts, messages, 
 
 openfloor has three intentionally separate state classes:
 
-1. **D1-authoritative application state**: users, early-access grants/revocations and waitlist records, Stripe entitlement projections, sessions, memberships, invites, objective, routing settings, agents, assignments, messages, queue items, queue prompts, ordering, candidate merge locks, repository-preview leases, agent-run rollback groups/attempts, merge-conflict cases/attempts/questions, durable private-storage and Sandbox cleanup intents, and floor revision. The early-access Google Sheet is an operations mirror only; Stripe remains authoritative for the external subscription lifecycle; D1 owns the product-facing projection.
+1. **D1-authoritative application state**: users, early-access grants/revocations and waitlist records, Stripe entitlement projections, sessions, memberships, invites, objective, routing settings, agents, assignments, messages, queue items, queue prompts, ordering, candidate merge locks, repository-preview leases, agent-run rollback groups/attempts, merge-conflict cases/attempts/questions/snapshots/proposals/votes, durable private-storage and Sandbox cleanup intents, and floor revision. The early-access Google Sheet is an operations mirror only; Stripe remains authoritative for the external subscription lifecycle; D1 owns the product-facing projection.
 2. **Durable Object-coordinated ephemeral state**: online connections and teammate prompt drafts. This state is realtime but is not D1 history.
 3. **Local UI state**: selected tabs, panel order and size, collapsed or expanded panels, queue filters, menus, dialogs, the current onboarding step and its unsaved profile/plan inputs, and the local visibility choice for teammate drafts.
 
@@ -700,6 +700,26 @@ Session creation uses the server-loaded quota summary to show a Plan & usage dia
 
 ### Preview isolation test fixtures (2026-09-07)
 
+Executor generation is `v14`, publisher `v6`, because the test scripts are included in the Sandbox image. Container preview fixtures live under `/tmp/openfloor`, which the execution namespace mounts. Tests must not broaden production mounts to reach host fixtures. The private tmpfs `/tmp` uses standard mode `1777` so the unprivileged tools can create temporary files; no host temporary directory is exposed. The loopback test closes its server and verifies zero capabilities before checking blocked outbound connections.
+
+### Conflict decision safety (2026-09-07)
+
+Conflict snapshot access binds the case to the requested session before owner authorization. Rejected or stale selections change neither saved choices nor floor revision. Manual application requires the exact candidate and complete unchanged snapshot content; truncated previews are never application input. A manual application failure stops for human review without an automatic model fallback. Git checkout failures must never be interpreted as a request to delete a file.
+
+
+### Conflict resolution v2
+
+D1 owns immutable, version-bound snapshots, proposals, and append-only approvals/rejections/owner overrides. Both incoming and affected integrated prompt authors have decision rights; all distinct active authors approve the same proposal. Missing attribution or departed authors requires a reasoned owner override. Legacy answers/selections are audit only. Rejected CAS writes change nothing.
+
+The trusted integrator checks rename-aware overlapping paths before merging, including clean textual merges. Preparation and exact manual application are independent of provider credentials/budget and never fall back to AI. Two AI attempts are allowed per snapshot/approved proposal. Keep provider/model/actual payer pinned to the original source. Do not hold the candidate lock during execution or deliberation. Revalidate decisions before trusted publication, prove ancestry, and use an expected-SHA candidate lease; changed candidates invalidate approvals. Only verified integration or justified exact-candidate no-change completion resolves a case. Live Workflow status and current-attempt guards prevent stale callbacks or cancellation from restarting work.
+
+Queue, agent cards, and Review share the conflict center; a prepared snapshot does not complete the source prompt. Display pagination/truncation must never supply application content. See [docs/conflict-resolution.md](docs/conflict-resolution.md) for schema transition, recovery, limitations, and disposable-repository acceptance. The exact-container gate now exercises native conflict capture/application in the production namespace.
+
+Waiting-for-input finalization atomically releases the resolver, advances the case/floor revisions, and records one event. Workflow replay and cancellation cannot duplicate or overwrite that transition. Worker tests bind isolated R2 storage to exercise missing/malformed immutable snapshot recovery as well as D1 decisions.
+
+The shared conflict center keeps manual content in the dialog’s scroll area at mobile widths. Browser acceptance submits the complete edited result at 390px width, then checks shared agreement and integration. Queue destinations derive unresolved cases independently of the latest-20 run history.
+
+Repeated votes on the same immutable proposal never replenish its two AI attempts. Queueing derives the consumed budget from attempt history; every launch kind enforces the bound. A revised proposal or refreshed snapshot defines a new decision budget.
 This fixture change advanced executor generation to `v13` and publisher to `v5`, because the test scripts are included in the Sandbox image. Container preview fixtures live under `/tmp/openfloor`, which the execution namespace mounts. Tests must not broaden production mounts to reach host fixtures. The private tmpfs `/tmp` uses standard mode `1777` so the unprivileged tools can create temporary files; no host temporary directory is exposed. The loopback test closes its server and verifies zero capabilities before checking blocked outbound connections.
 ### Verified engineer identity (2026-09-08)
 
@@ -714,3 +734,8 @@ The trusted publisher uses immutable run attribution for the Git author (first o
 Run History and existing Review contribution details show original prompters, verified GitHub profile links, and the published run commit. Legacy rows remain explicit about missing Git author metadata, automated feedback is labeled as system-originated, and deleted engineers retain Deleted user presentation. File attribution uses run prompt history rather than falling back to the dispatcher when queue items are dismissed. Commit links are built only from validated repository names and recorded full SHAs. Existing engineer filters and query bounds remain intact.
 
 Squash publication always supplies an explicit commit body, including a neutral body when no eligible contributors remain. Never let GitHub regenerate co-author trailers from rolled-back or system-only history.
+
+
+### Compatible attribution and conflict delivery
+
+Merge engineer attribution (#302) before conflict resolution v2 (#303). Conflict resolver attempts copy immutable source-run attribution while retaining v2 revision leases, consensus, snapshot, cancellation, and source-billing behavior. The unapplied v2 schema is generated after attribution as `0049_living_vapor.sql`; existing migrations through release remain unchanged. Session usability and personal billing (#304) follow both.

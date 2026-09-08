@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
-const RUNTIME_FILES = ["codex-runner.mjs", "claude-runner.mjs", "gemini-runner.mjs", "qwen-runner.mjs", "gemini-proxy-preload.mjs", "openfloor-mcp.mjs", "runtime-bridge.mjs"];
+const RUNTIME_FILES = ["codex-runner.mjs", "claude-runner.mjs", "gemini-runner.mjs", "qwen-runner.mjs", "gemini-proxy-preload.mjs", "openfloor-mcp.mjs", "runtime-bridge.mjs", "conflict-workspace.ts", "conflict-hunks.ts"];
 
 /** @type {string[]} */
 const SETPRIV = ["/usr/bin/setpriv", "--reuid=10002", "--regid=10001", "--clear-groups", "--no-new-privs", "--inh-caps=-all", "--ambient-caps=-all", "--bounding-set=-all", "--"];

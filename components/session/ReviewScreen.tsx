@@ -14,7 +14,7 @@ import type { RollbackIntent } from "./RollbackImpactDialog";
 import { useReviewContributionDetail, useReviewContributions } from "./useReviewContributions";
 import type { RepositorySource } from "./useRepositoryTree";
 import { ConflictCenterDialog } from "./ConflictCenterDialog";
-import type { ConflictChoice } from "@/lib/floor-types";
+import type { ConflictMutation } from "@/lib/conflict-resolution";
 
 type PendingAction = { type: "merge"; deleteCandidateBranch: boolean } | { type: "deleteBranch" } | { type: "abandon"; deleteBranch: boolean };
 type Selection = { kind: "changed"; id: string } | { kind: "repo"; path: string };
@@ -48,7 +48,7 @@ function mergeReadiness(review: FloorReviewSnapshot, blockers: string[]): MergeR
   return "blocked";
 }
 
-export const ReviewScreen = memo(function ReviewScreen({ sessionId, revision, review, preview, previewEnabled, repository, repositoryTree, selectedConflictCaseId, promptRequest, owner, busy, blockingRunId, onStartPreview, onStopPreview, onRequestRollback, onSync, onReady, onUnready, onMerge, onMergeLock, onDeleteBranch, onAbandon, onCancelRun, onResolveConflict, onAnswerConflict, onSubmitConflictSelections, teamChat, onSendTeamMessage, participants, currentUserId, sessionFiles }: {
+export const ReviewScreen = memo(function ReviewScreen({ sessionId, revision, review, preview, previewEnabled, repository, repositoryTree, selectedConflictCaseId, promptRequest, owner, busy, blockingRunId, onStartPreview, onStopPreview, onRequestRollback, onSync, onReady, onUnready, onMerge, onMergeLock, onDeleteBranch, onAbandon, onCancelRun, onConflictMutation, teamChat, onSendTeamMessage, participants, currentUserId, sessionFiles }: {
   sessionId: string;
   revision: number;
   review: FloorReviewSnapshot | null;
@@ -72,9 +72,7 @@ export const ReviewScreen = memo(function ReviewScreen({ sessionId, revision, re
   onDeleteBranch: () => Promise<boolean>;
   onAbandon: (deleteBranch: boolean) => Promise<boolean>;
   onCancelRun: (runId: string) => Promise<void>;
-  onResolveConflict: (caseId: string) => Promise<boolean>;
-  onAnswerConflict: (caseId: string, answers: Array<{ questionId: string; answer: string }>) => Promise<boolean>;
-  onSubmitConflictSelections: (caseId: string, snapshotRunId: string, selections: Array<{ path: string; hunkIndex: number; choice: ConflictChoice }>) => Promise<boolean>;
+  onConflictMutation: ConflictMutation;
   teamChat: FloorMessage[];
   sessionFiles: SessionFile[];
   onSendTeamMessage: (text: string, recipientUserId: string | null) => Promise<boolean>;
@@ -460,7 +458,7 @@ export const ReviewScreen = memo(function ReviewScreen({ sessionId, revision, re
     {deleteConfirmOpen && <DeleteBranchConfirmDialog branch={review.branch} busy={busy} onClose={() => setDeleteConfirmOpen(false)} onConfirm={runDeleteBranch} />}
     {abandonConfirmOpen && <AbandonConfirmDialog branch={review.branch} busy={busy} onClose={() => setAbandonConfirmOpen(false)} onConfirm={runAbandon} />}
     {blockingRunId && pendingAction && <IntegrationBlockedDialog retrying={retrying} onClose={() => setPendingAction(null)} onConfirm={cancelBlockingRunAndRetry} />}
-    {conflictCenter && <ConflictCenterDialog sessionId={sessionId} conflicts={review.conflicts} initialCaseId={conflictCenter.caseId} owner={owner} currentUserId={currentUserId} busy={busy} onClose={() => setConflictCenter(null)} onResolve={onResolveConflict} onAnswer={onAnswerConflict} onSubmitSelections={onSubmitConflictSelections} />}
+    {conflictCenter && <ConflictCenterDialog sessionId={sessionId} conflicts={review.conflicts} initialCaseId={conflictCenter.caseId} owner={owner} currentUserId={currentUserId} busy={busy} onClose={() => setConflictCenter(null)} onMutation={onConflictMutation} />}
   </section>;
 });
 

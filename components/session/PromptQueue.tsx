@@ -15,7 +15,9 @@ import { QueueOrderMenu } from "./QueueOrderMenu";
 
 const scopeOptions: { value: QueueScope; label: string }[] = [{ value: "mine", label: "You" }, { value: "team", label: "Team" }];
 
-export const PromptQueue = memo(function PromptQueue({ chrome, items, runs, agents, owner, runEnabled, busy, autoDispatch, onAutoDispatch, autoResolveConflicts, onAutoResolveConflicts, autoInjectFeedback, onAutoInjectFeedback, browserConflictAlerts, onBrowserConflictAlerts, onRun, onCancel, onDiscard, onRollback, onRetry, onEditPrompt, onPause, onDelete, onSetAgent, currentUserId, scope, onScope, orderMode, onOrderMode, draggedItemId, onItemDragStart, onItemDragEnd, onItemDrop, onFocusAgent, onOpenReview }: {
+export const PromptQueue = memo(function PromptQueue({ chrome, items, runs, agents, owner, runEnabled, busy, autoDispatch, onAutoDispatch, autoResolveConflicts, onAutoResolveConflicts, autoInjectFeedback, onAutoInjectFeedback, browserConflictAlerts, onBrowserConflictAlerts, onRun, onCancel, onDiscard, onRollback, onRetry, onEditPrompt, onPause, onDelete, onSetAgent, currentUserId, scope, onScope, orderMode, onOrderMode, draggedItemId, onItemDragStart, onItemDragEnd, onItemDrop, onFocusAgent, onOpenReview, conflicts, onOpenConflict }: {
+  conflicts: import("@/lib/floor-types").MergeConflictCase[];
+  onOpenConflict: (caseId: string) => void;
   chrome: PanelChrome;
   items: FloorQueueItem[];
   runs: AgentRun[];
@@ -70,7 +72,8 @@ export const PromptQueue = memo(function PromptQueue({ chrome, items, runs, agen
     return map;
   }, [runs]);
 
-  const groups = useMemo(() => groupQueueItems(items, runsByQueueItemId, scope, currentUserId), [items, runsByQueueItemId, scope, currentUserId]);
+  const conflictsByQueue = useMemo(() => new Map(conflicts.filter((item) => item.status !== "resolved").map((item) => [item.queueItemId, item])), [conflicts]);
+  const groups = useMemo(() => groupQueueItems(items, runsByQueueItemId, scope, currentUserId, conflictsByQueue), [items, runsByQueueItemId, scope, currentUserId, conflictsByQueue]);
   const liveGroup = groups[0];
   const totalVisible = groups.reduce((count, group) => count + group.items.length, 0);
   // Section expand state is local-only (resets on reload). Conflicted starts
@@ -86,6 +89,7 @@ export const PromptQueue = memo(function PromptQueue({ chrome, items, runs, agen
     const long = item.prompts.length > 3 || item.prompts.some((prompt) => prompt.text.length > 110);
     const first = item.prompts[0];
     const run = runsByQueueItemId.get(item.id);
+    const conflict = conflictsByQueue.get(item.id);
     const cancellable = run && ["provisioning", "running", "checking", "cancel_requested"].includes(run.status);
     // A resumed prompt goes back to "queued"/"paused" immediately, but its last
     // run row (if any) can still carry a stale failed/cancelled status — the
@@ -93,7 +97,7 @@ export const PromptQueue = memo(function PromptQueue({ chrome, items, runs, agen
     const rollbackStatus = item.rollback?.status === "requested" || item.rollback?.status === "running" ? "rolling_back"
       : item.rollback?.status === "completed" ? "rolled_back"
       : item.rollback?.status === "failed" ? "rollback_failed" : null;
-    const statusValue = item.status === "queued" || item.status === "paused"
+    const statusValue = conflict ? conflict.status === "resolving" ? "resolving" : conflict.status === "pending" ? "conflicted" : "needs_decision" : item.status === "queued" || item.status === "paused"
       ? item.status
       : rollbackStatus ?? (run?.discardedAt ? "discarded" : run ? runStatusToken(run) : item.status);
     const editing = editingId === item.id;
@@ -108,13 +112,14 @@ export const PromptQueue = memo(function PromptQueue({ chrome, items, runs, agen
     // with target "Auto" in that state has no path to a Run button at all.
     const retargetable = manageable && item.status === "queued" && !item.agentId && agents.length > 0;
     const rollbackAllowed = item.rollback?.canStart === true;
-    const requestedDestination = editing ? null : queueItemDestination(item, run);
+    const requestedDestination = editing ? null : conflict ? { kind: "conflict" as const, caseId: conflict.id } : queueItemDestination(item, run);
     const destination = requestedDestination?.kind === "agent" && !agents.some((agent) => agent.id === requestedDestination.agentId)
       ? { kind: "detail" as const } : requestedDestination;
     const detailShown = destination?.kind === "detail" && detailOpen[item.id] === true;
     function activateDestination() {
       if (!destination) return;
-      if (destination.kind === "agent") onFocusAgent(destination.agentId);
+      if (destination.kind === "conflict") onOpenConflict(destination.caseId);
+      else if (destination.kind === "agent") onFocusAgent(destination.agentId);
       else if (destination.kind === "review") onOpenReview(destination.runId, destination.status);
       else setDetailOpen((current) => ({ ...current, [item.id]: !current[item.id] }));
     }

@@ -19,7 +19,6 @@ import {
   markRunRunning,
   markRunPublishing,
   markRunIntegrationConflicted,
-  releaseRunIntegration,
   recordRunPublicationFailure,
   recordRunArtifact,
   recordRunUsage,
@@ -31,7 +30,7 @@ import {
 import { claimPoolSandbox, releasePoolSandbox, retirePoolSandbox } from "../db/sandbox-pool";
 import { getSessionContext, getSessionSharedFiles, viewerFromRunContext } from "../db/session-context";
 import { getGitHubAppConfig } from "../db";
-import { createDraftPullRequest, createInstallationToken, getPullRequestReview, getRepositoryRefSha, GitHubApiError, mergeRepositoryBranch } from "../lib/github";
+import { createDraftPullRequest, createInstallationToken, getPullRequestReview, getRepositoryRefSha } from "../lib/github";
 import type { AgentRunFile } from "../lib/floor-types";
 import type { GitHubRepositoryOption } from "../lib/session-types";
 import { renderSessionContext, SESSION_FILE_MOUNT, sessionFilePath } from "../lib/session-context";
@@ -48,17 +47,17 @@ import { notifyFloorChanged } from "../lib/presence-server";
 import { pokeSessionRouter } from "../lib/router-server";
 import { signRunGatewayToken } from "../lib/runtime-token";
 import { renderConflictResolverPrompt } from "../lib/conflict-resolver-prompt";
-import { applyConflictSelections, type ConflictChoice, type ConflictSnapshotFileRaw } from "../lib/conflict-hunks";
+import type { ConflictManifest } from "../lib/conflict-workspace";
+import type { ConflictProposalPayload } from "../lib/conflict-resolution";
+import { recordPreparedConflict, finishConflictPreparation, refreshConflictSnapshot, getConflictResolutionViews, conflictExecutionAuthorized, finishConflictWithoutChanges } from "../db/conflict-decisions";
 import { reconcileCandidateReview } from "../db/repositories";
 import {
   advanceConflictAfterFailure,
   finishResolverAwaitingInput,
   getConflictRunContext,
-  getConflictSelectionsForCase,
   getMergeConflictCases,
   isConflictInputRequested,
   markConflictResolved,
-  recordConflictPaths,
   recordIntegrationConflict,
 } from "../db/conflicts";
 import {
@@ -95,69 +94,6 @@ type Params =
 const MAX_LOG_BYTES = 500_000;
 const MAX_DIFF_BYTES = 2_000_000;
 const MAX_FILES = 100;
-// A resolver attempt's conflict_snapshot artifact — the raw base/ours/theirs/
-// merged bodies the manual resolver dialog parses into hunks. Capped well
-// below recordConflictPaths' 100-path list: a snapshot holds real file
-// content (up to 4 bodies per file), not just paths. Paths beyond the cap
-// stay in the case's ordinary conflictPaths list (still shown, just not
-// editable in the dialog — see ConflictSnapshot.omittedPaths).
-const MAX_SNAPSHOT_FILES = 40;
-const MAX_SNAPSHOT_BYTES = 3_000_000;
-// The capture script itself bounds each base/ours/theirs/merged body to 16
-// KiB (see CONFLICT_SNAPSHOT_SCRIPT) — kept out of the script string so both
-// ends of that contract are visible from one file.
-const MAX_SNAPSHOT_FIELD_BYTES = 16_384;
-// Runs inside the run sandbox against the just-merged /workspace/repository,
-// right after the three-way merge leaves conflict markers and index stages
-// 1/2/3 for every unmerged path. Reading it with plain git plumbing (rather
-// than the ours/theirs archives fetched earlier) keeps this exactly aligned
-// with what the resolver agent itself sees, and needs no new tooling in
-// Dockerfile.sandbox beyond the Node already installed there for the
-// runners. Binary detection uses `git diff --numstat`, which reports "-" for
-// binary paths; a binary conflict gets no captured content, just its kind —
-// the manual dialog offers "keep ours" / "keep theirs" for those without a
-// text diff.
-const CONFLICT_SNAPSHOT_SCRIPT = `
-import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
-const MAX_FIELD_BYTES = ${MAX_SNAPSHOT_FIELD_BYTES};
-const paths = JSON.parse(readFileSync("/tmp/openfloor/conflict-paths.json", "utf8"));
-function bound(buf) {
-  const truncated = buf.length > MAX_FIELD_BYTES;
-  return { content: buf.slice(0, MAX_FIELD_BYTES).toString("utf8"), truncated };
-}
-function showStage(path, stage) {
-  try { return bound(execFileSync("git", ["show", ":" + stage + ":" + path], { maxBuffer: 8 * 1024 * 1024 })); }
-  catch { return null; }
-}
-function isBinaryPath(path) {
-  try {
-    const out = execFileSync("git", ["diff", "--numstat", "-z", "HEAD", "--", path]).toString("utf8");
-    return out.split("\\t")[0] === "-";
-  } catch { return false; }
-}
-const files = [];
-for (const path of paths) {
-  if (isBinaryPath(path)) { files.push({ path, kind: "binary", merged: null, base: null, ours: null, theirs: null, truncated: false }); continue; }
-  const base = showStage(path, 1);
-  const ours = showStage(path, 2);
-  const theirs = showStage(path, 3);
-  let merged = null;
-  let mergedTruncated = false;
-  try {
-    const boundedMerged = bound(readFileSync(path));
-    merged = boundedMerged.content;
-    mergedTruncated = boundedMerged.truncated;
-  } catch { merged = null; }
-  const kind = !ours ? "delete_modify" : !theirs ? "modify_delete" : "content";
-  files.push({
-    path, kind,
-    merged, base: base ? base.content : null, ours: ours ? ours.content : null, theirs: theirs ? theirs.content : null,
-    truncated: mergedTruncated || Boolean(base && base.truncated) || Boolean(ours && ours.truncated) || Boolean(theirs && theirs.truncated),
-  });
-}
-process.stdout.write(JSON.stringify({ files }));
-`;
 function executeWorkspace(sandbox: Sandbox, command: string, options: NonNullable<Parameters<Sandbox["exec"]>[1]> = {}) {
   const quoted = `'${command.replace(/'/g, "'\\''")}'`;
   return sandbox.exec(`node /opt/openfloor/runtime-sandbox.mjs /bin/bash -c ${quoted}`, options);
@@ -197,11 +133,10 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
     if (event.payload.action === "rollback_group") {
       return this.rollback(runId, event.payload.rollbackGroupId, step, true);
     }
-    const context = await step.do("load run", async () => {
-      const value = await getRunExecutionContext(runId, this.env.DB);
-      if (!value) throw new Error("Agent run no longer exists");
-      return value;
-    });
+    // Workflow step results are cached. Status must be read live on re-entry
+    // so a completed or cancelled run never starts another execution.
+    const context = await getRunExecutionContext(runId, this.env.DB);
+    if (!context) throw new NonRetryableError("Agent run no longer exists");
     // The run sandbox comes from the warm pool and is claimed only on the
     // fresh-run path (resume paths never touch it); see the claim step below.
     let pooled: { id: string; sandbox: ReturnType<typeof getSandbox<Sandbox>> } | null = null;
@@ -214,7 +149,7 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
     let finalStatus: "ready" | "failed" | "cancelled" = "failed";
     let summary = "Agent run failed before the agent completed.";
     try {
-      if (context.status === "published") return await this.integrate(runId, step);
+      if (context.status === "published" || context.status === "integrating") return await this.integrate(runId, step, publisher);
       if (isAgentRunWorkflowTerminal(context)) return { status: context.status };
       if (context.status === "publishing") {
         if (!context.bundleKey || !context.localCommitSha || context.files.length === 0) {
@@ -223,7 +158,7 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
         const published = await this.publishBundle(runId, context, context.files, { localCommitSha: context.localCommitSha }, publisher, step);
         const completion = await finishRunPublished(runId, published.commitSha, published.remoteSha, this.env.DB);
         if (completion) await notifyFloorChanged(completion.sessionId, completion.revision, ["queue", "runs", "review"]);
-        return await this.integrate(runId, step);
+        return await this.integrate(runId, step, publisher);
       }
       if (await isRunCancellationRequested(runId, this.env.DB)) {
         finalStatus = "cancelled";
@@ -249,7 +184,7 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
       // OPENFLOOR_SKILLS is the same snapshot — a second D1 read there could
       // observe a skill imported mid-provisioning and enable a name whose
       // SKILL.md was never written.
-      const { materializedSkills: skillNames, manualApplied, manualApplySummary, resumeThreadId } = await step.do("prepare exact workspace", { retries: { limit: 2, delay: "5 seconds", backoff: "exponential" }, timeout: "5 minutes" }, async () => {
+      const { materializedSkills: skillNames, manualApplied, manualApplySummary, resumeThreadId, preparedConflict } = await step.do("prepare exact workspace", { retries: { limit: 2, delay: "5 seconds", backoff: "exponential" }, timeout: "5 minutes" }, async () => {
         const sourceToken = await signRunGatewayToken({
           runId, sessionId: context.sessionId, repositoryId: context.repositoryId,
           candidateSha: context.candidateSha, operation: "source",
@@ -271,7 +206,6 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
         );
         if (!result.success) throw new Error(`Candidate workspace preparation failed with exit code ${result.exitCode}`);
         let conflictPaths: string[] = [];
-        let snapshotFiles: ConflictSnapshotFileRaw[] = [];
         let manualApplied = false;
         let manualApplySummary: string | null = null;
         if (context.conflictCaseId) {
@@ -299,99 +233,68 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
              git -C /workspace/repository reset -q --hard "$OPENFLOOR_LATEST" &&
              set +e; git -C /workspace/repository merge --no-commit --no-ff refs/heads/openfloor-source-result >/tmp/openfloor/merge.log 2>&1; OPENFLOOR_MERGE_STATUS=$?; set -e;
              test "$OPENFLOOR_MERGE_STATUS" -le 1 &&
-             git -C /workspace/repository diff --name-only --diff-filter=U`,
+             git -C /workspace/repository diff --name-only --diff-filter=U -z`,
             { timeout: 4 * 60 * 1000, env: {
               OPENFLOOR_CONFLICT_SOURCE_TOKEN: conflictSourceToken,
               OPENFLOOR_CONFLICT_SOURCE_URL: `${this.env.OPENFLOOR_RUNTIME_ORIGIN}/runtime/run/conflict-source`,
             } },
           );
           if (!merge.success) throw new Error(`Conflict workspace reconstruction failed with exit code ${merge.exitCode}`);
-          conflictPaths = merge.stdout.split("\n").map((path) => path.trim()).filter(Boolean);
-          await recordConflictPaths(runId, conflictPaths, this.env.DB);
-          // Read any recorded human selections against whatever snapshot is
-          // current BEFORE this attempt captures its own — getConflictSelectionsForCase
-          // resolves "current" as the newest conflict_snapshot artifact for
-          // the case, and this run is about to write one of its own below.
-          // Calling it after that write would make it resolve to this run's
-          // own brand-new (and necessarily selection-less) snapshot instead
-          // of the prior attempt's snapshot the human actually chose
-          // ours/theirs/both against, silently discarding their decision.
-          const record = await getConflictSelectionsForCase(context.conflictCaseId, this.env.DB);
-          // Captured on every attempt (automatic or manual) so a manual
-          // resolution is available the moment automation fails, without
-          // needing a fresh sandbox — see AGENTS.md's Merge Resolver section.
+          conflictPaths = merge.stdout.split("\0").filter(Boolean);
+          const conflictContext = await getConflictRunContext(runId, this.env.DB);
+          if (!conflictContext) throw new NonRetryableError("Conflict source is unavailable");
+          const extraPaths = [...new Set([...conflictContext.conflictPaths, ...conflictPaths])];
+          const identity = await sandbox.exec(`mkdir -p ${RUN_PROVIDER_HOME} && chown -R openfloor-workspace:openfloor-shared /workspace/repository /tmp/openfloor && chmod 0700 ${RUN_PROVIDER_HOME}`, { timeout: 60_000 });
+          if (!identity.success) throw new Error("Conflict runtime identity is unavailable");
           await sandbox.exec("chown -R openfloor-workspace:openfloor-shared /workspace/repository /tmp/openfloor", { timeout: 60_000 });
-          const snapshotPaths = conflictPaths.slice(0, MAX_SNAPSHOT_FILES);
-          if (snapshotPaths.length > 0) {
-            await sandbox.writeFile("/tmp/openfloor/conflict-paths.json", JSON.stringify(snapshotPaths));
-            await sandbox.writeFile("/tmp/openfloor/snapshot.mjs", CONFLICT_SNAPSHOT_SCRIPT);
-            const captured = await executeWorkspace(sandbox, "node /tmp/openfloor/snapshot.mjs", { cwd: "/workspace/repository", timeout: 2 * 60 * 1000 });
-            if (captured.success) {
-              try {
-                const parsed = JSON.parse(captured.stdout) as { files: ConflictSnapshotFileRaw[] };
-                snapshotFiles = parsed.files;
-                const snapshotJson = JSON.stringify(parsed).slice(0, MAX_SNAPSHOT_BYTES);
-                const snapshotKey = `conflicts/${context.conflictCaseId}/${runId}/snapshot.json`;
-                await this.env.PREFLIGHT_LOGS.put(snapshotKey, snapshotJson, { httpMetadata: { contentType: "application/json; charset=utf-8" } });
-                await recordRunArtifact(runId, "conflict_snapshot", snapshotKey, "application/json; charset=utf-8", snapshotJson.length, this.env.DB);
-              } catch {
-                // A malformed capture is non-fatal: this attempt just has no
-                // manual-resolution fallback available yet; the automatic
-                // resolver agent still runs exactly as it always has.
-              }
+          await sandbox.writeFile("/tmp/openfloor/conflict-extra.json", JSON.stringify(extraPaths));
+          const captured = await executeWorkspace(sandbox,
+            "node --experimental-strip-types /opt/openfloor/conflict-workspace.ts capture /workspace/repository /tmp/openfloor/conflict /tmp/openfloor/conflict-extra.json",
+            { timeout: 2 * 60 * 1000 });
+          if (!captured.success) throw new NonRetryableError(`Conflict preparation failed: ${captured.stderr.slice(-1000)}`);
+          const manifest = JSON.parse(captured.stdout) as ConflictManifest;
+          if (manifest.version !== 2 || !Array.isArray(manifest.files) || manifest.files.length > 1000
+              || manifest.files.some((file) => !/^\d+\.json$/.test(file.file))) throw new NonRetryableError("Invalid conflict manifest");
+          conflictPaths = manifest.files.map((file) => file.path);
+          const mode = context.conflictMode ?? "prepare";
+          if (mode === "prepare") {
+            const prefix = `conflicts/${context.conflictCaseId}/${runId}/v2`;
+            for (const file of manifest.files) {
+              const read = await sandbox.exec(`node /opt/openfloor/read-run-artifact.mjs /tmp/openfloor/conflict/${file.file} 16000000`, { timeout: 60_000 });
+              if (!read.success) throw new NonRetryableError("Conflict file could not be captured completely");
+              await this.env.PREFLIGHT_LOGS.put(`${prefix}/${file.file}`, read.stdout, { httpMetadata: { contentType: "application/json" } });
             }
+            const manifestKey = `${prefix}/manifest.json`;
+            const encoded = JSON.stringify(manifest);
+            await this.env.PREFLIGHT_LOGS.put(manifestKey, encoded, { httpMetadata: { contentType: "application/json" } });
+            await recordRunArtifact(runId, "conflict_snapshot", manifestKey, "application/json", encoded.length, this.env.DB);
+            const prepared = await recordPreparedConflict({ runId, manifestKey, paths: conflictPaths }, this.env.DB);
+            if (!prepared) throw new NonRetryableError("Candidate changed during conflict preparation. Current versions will be prepared again.");
+            return { materializedSkills: [] as string[], conflictPaths, manualApplied: false, manualApplySummary: null, resumeThreadId: null, preparedConflict: true };
           }
-          // A prior human decision (merge_conflict_selections, fetched above
-          // before this attempt's own snapshot capture) applies only when it
-          // covers every currently-conflicted path against THIS attempt's
-          // own fresh hunk parse. Any mismatch — a path the capture couldn't
-          // reach, a hunk count that no longer lines up because the
-          // candidate moved between the snapshot and this retry — falls back
-          // to running the resolver agent normally rather than guessing
-          // which of the human's choices still apply.
-          if (record && conflictPaths.length > 0 && conflictPaths.every((path) => snapshotFiles.some((file) => file.path === path))) {
-            const decisionsByPath = new Map<string, Array<{ hunkIndex: number; choice: ConflictChoice }>>();
-            for (const selection of record.selections) {
-              const list = decisionsByPath.get(selection.path) ?? [];
-              list.push({ hunkIndex: selection.hunkIndex, choice: selection.choice });
-              decisionsByPath.set(selection.path, list);
-            }
-            const resolvedContent = new Map<string, string>();
-            const fileLevelChoices = new Map<string, "ours" | "theirs">();
-            let mismatch = false;
-            for (const path of conflictPaths) {
-              const raw = snapshotFiles.find((file) => file.path === path)!;
-              const decisions = decisionsByPath.get(path);
-              if (!decisions || decisions.length === 0) { mismatch = true; break; }
-              if (raw.kind === "content") {
-                if (raw.merged === null) { mismatch = true; break; }
-                try {
-                  resolvedContent.set(path, applyConflictSelections(raw.merged, new Map(decisions.map((decision) => [decision.hunkIndex, decision.choice]))));
-                } catch { mismatch = true; break; }
-              } else {
-                if (decisions.length !== 1 || decisions[0].choice === "both") { mismatch = true; break; }
-                fileLevelChoices.set(path, decisions[0].choice);
-              }
-            }
-            if (!mismatch) {
-              for (const [path, content] of resolvedContent) {
-                await sandbox.writeFile("/tmp/openfloor/manual-file.json", JSON.stringify({ path, content }));
-                const written = await executeWorkspace(sandbox, `node -e 'const fs = require("node:fs"); const file = JSON.parse(fs.readFileSync("/tmp/openfloor/manual-file.json", "utf8")); fs.writeFileSync(file.path, file.content)'`, { timeout: 30_000 });
-                if (!written.success) throw new Error("Could not apply the selected conflict content");
-              }
-              for (const [path, choice] of fileLevelChoices) {
-                const quoted = `'${path.replace(/'/g, "'\\''")}'`;
-                await executeWorkspace(sandbox,
-                  `git checkout --${choice} -- ${quoted} 2>/dev/null && git add -- ${quoted} || git rm -f -q -- ${quoted}`,
-                  { cwd: "/workspace/repository", timeout: 30_000 },
-                );
-              }
-              const staged = await executeWorkspace(sandbox, "git -c core.hooksPath=/dev/null add -A", { cwd: "/workspace/repository", timeout: 60_000 });
-              if (staged.success) {
-                manualApplied = true;
-                manualApplySummary = `Applied ${record.selections.length} human selection${record.selections.length === 1 ? "" : "s"} across ${conflictPaths.length} file${conflictPaths.length === 1 ? "" : "s"} — no model call was made.`;
-              }
-            }
+          const snapshot = await this.env.DB.prepare("SELECT manifest_key AS manifestKey, candidate_sha AS candidateSha FROM merge_conflict_snapshots WHERE id = ? AND case_id = ?")
+            .bind(context.conflictSnapshotId, context.conflictCaseId).first<{ manifestKey: string; candidateSha: string }>();
+          const stored = snapshot ? await this.env.PREFLIGHT_LOGS.get(snapshot.manifestKey) : null;
+          const expected = stored ? await new Response(stored.body).json() as ConflictManifest : null;
+          if (!snapshot || snapshot.candidateSha !== context.candidateSha || !expected || JSON.stringify(expected) !== JSON.stringify(manifest)) {
+            await refreshConflictSnapshot(context.sessionId, context.conflictCaseId, runId, this.env.DB);
+            throw new NonRetryableError("Conflict versions changed. Previous decisions require fresh approval.");
+          }
+          const resolution = (await getConflictResolutionViews(context.sessionId, this.env.DB)).get(context.conflictCaseId);
+          if (context.conflictProposalId && (resolution?.proposal?.id !== context.conflictProposalId || !resolution.proposal.approved)) {
+            throw new NonRetryableError("The proposal no longer has the required author approvals.");
+          }
+          if (mode === "manual") {
+            const payload = resolution?.proposal?.payload as ConflictProposalPayload | undefined;
+            if (payload?.kind !== "manual") throw new NonRetryableError("An approved manual proposal is required");
+            await sandbox.writeFile("/tmp/openfloor/conflict-selections.json", JSON.stringify(payload.selections));
+            const applied = await executeWorkspace(sandbox,
+              "node --experimental-strip-types /opt/openfloor/conflict-workspace.ts apply /workspace/repository /tmp/openfloor/conflict /tmp/openfloor/conflict-selections.json",
+              { timeout: 2 * 60 * 1000 });
+            if (!applied.success) throw new NonRetryableError(`Manual application failed without AI fallback: ${applied.stderr.slice(-1000)}`);
+            manualApplied = true;
+            manualApplySummary = "Applied the exact result approved by the affected authors. No model call was made.";
+            return { materializedSkills: [] as string[], conflictPaths, manualApplied, manualApplySummary, resumeThreadId: null, preparedConflict: false };
           }
         }
         // Thread resume: restore the prior attempt's provider session store
@@ -501,9 +404,16 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
           { timeout: 60_000 },
         );
         if (!prepared.success) throw new Error(`Agent runtime preparation failed with exit code ${prepared.exitCode}`);
-        return { materializedSkills, conflictPaths, manualApplied, manualApplySummary, resumeThreadId };
+        return { materializedSkills, conflictPaths, manualApplied, manualApplySummary, resumeThreadId, preparedConflict: false };
       });
 
+      if (preparedConflict) {
+        if (await isRunCancellationRequested(runId, this.env.DB)) return await this.complete(runId, "cancelled", "Conflict preparation cancelled.");
+        await step.do("finish conflict preparation", async () => finishConflictPreparation(runId, this.env.DB));
+        await this.notify(runId);
+        await pokeSessionRouter(context.sessionId, "run_completed");
+        return { status: "prepared" };
+      }
       const processId = `codex-${runId}`;
       let codexResult: ReturnType<typeof parseRunResult>;
       if (manualApplied) {
@@ -702,6 +612,10 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
       if (processResult.exitCode !== 0 || !codexResult.ok) throw new Error(codexResult.error || `The agent process exited with code ${processResult.exitCode}`);
       }
       if (context.conflictCaseId) {
+        if (!manualApplied) {
+          const report = await this.env.DB.prepare("SELECT assessment FROM merge_conflict_attempts WHERE run_id = ?").bind(runId).first<{ assessment: string | null }>();
+          if (!report?.assessment || JSON.parse(report.assessment).outcome !== "compatible") throw new NonRetryableError("AI did not record a compatible result with evidence for both features. Review or propose a manual resolution.");
+        }
         const verified = await executeWorkspace(sandbox,
           "git -c core.hooksPath=/dev/null add -A && test -z \"$(git ls-files -u)\" && git diff --cached --check && git reset -q refs/heads/openfloor-base",
           { cwd: "/workspace/repository", timeout: 60_000 },
@@ -731,6 +645,34 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
 
       await markRunChecking(runId, codexResult.threadId, codexResult.finalResponse, this.env.DB);
       await this.notify(runId);
+
+      if (context.conflictCaseId) {
+        for (const check of context.checks) {
+          const passed = await step.do(`validate resolution ${check.position}`, { retries: { limit: 0, delay: "1 second" }, timeout: "11 minutes" }, async () => {
+            if (await isRunCancellationRequested(runId, this.env.DB)) throw new NonRetryableError("Resolution validation cancelled");
+            const startedAt = Date.now();
+            await this.env.DB.prepare("UPDATE agent_run_checks SET status = 'running', started_at = ?, updated_at = ? WHERE id = ?").bind(startedAt, startedAt, check.id).run();
+            const before = await executeWorkspace(sandbox, "git add -A && git write-tree", { cwd: "/workspace/repository", timeout: 60_000 });
+            if (!before.success) throw new Error("Resolution tree cannot be validated");
+            let success = false; let exitCode: number | null = null; let output = "";
+            try {
+              const execution = await executeWorkspace(sandbox, check.command, { cwd: "/workspace/repository", timeout: 10 * 60_000 });
+              success = execution.success; exitCode = execution.exitCode;
+              output = `${execution.stdout}\n${execution.stderr}`.slice(-MAX_LOG_BYTES);
+              const after = await executeWorkspace(sandbox, "git add -A && git write-tree", { cwd: "/workspace/repository", timeout: 60_000 });
+              if (!after.success || after.stdout.trim() !== before.stdout.trim()) { success = false; output += "\nValidation modified the proposed result. Review a new proposal before publishing."; }
+            } catch (error) { output = error instanceof Error ? error.message : "Validation failed"; }
+            const logKey = `runs/${runId}/checks/${check.position}.log`;
+            await this.env.PREFLIGHT_LOGS.put(logKey, output, { httpMetadata: { contentType: "text/plain; charset=utf-8" } });
+            const now = Date.now();
+            await this.env.DB.prepare(`UPDATE agent_run_checks SET status = ?, exit_code = ?, duration_ms = ?, output_excerpt = ?, log_key = ?, completed_at = ?, updated_at = ? WHERE id = ?`)
+              .bind(success ? "passed" : "failed", exitCode, now - startedAt, output.slice(-4000), logKey, now, now, check.id).run();
+            await this.notify(runId);
+            return success;
+          });
+          if (!passed) throw new Error(`Required resolution check failed: ${check.command}`);
+        }
+      }
 
       const files = await step.do("collect changed files", { retries: { limit: 0, delay: "1 second" }, timeout: "5 minutes" }, async () => {
         await executeWorkspace(sandbox, "git add -N .", { cwd: "/workspace/repository", timeout: 30_000 });
@@ -798,15 +740,23 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
       }
       finalStatus = "ready";
       if (files.length === 0) {
-        if (context.conflictCaseId) throw new Error("The conflict resolver produced no changes to integrate.");
-        const completion = await finishAgentRunWithoutChanges(runId, this.env.DB);
+        if (context.conflictCaseId) {
+          if (!await conflictExecutionAuthorized(runId, this.env.DB)) throw new Error("No-change resolution requires a current approved decision or compatible assessment.");
+          const repository: GitHubRepositoryOption = { id: context.repositoryId, nodeId: "no-change-verification", owner: context.repositoryOwner, name: context.repositoryName, fullName: context.repositoryFullName, private: true, defaultBranch: context.candidateBranch };
+          const actual = await getRepositoryRefSha(getGitHubAppConfig(), context.installationId, repository, context.candidateBranch);
+          if (actual !== context.candidateSha) {
+            await refreshConflictSnapshot(context.sessionId, context.conflictCaseId, runId, this.env.DB);
+            throw new Error("Candidate changed before no-change verification.");
+          }
+        }
+        const completion = context.conflictCaseId ? await finishConflictWithoutChanges(runId, this.env.DB) : await finishAgentRunWithoutChanges(runId, this.env.DB);
         if (!completion) {
           if (await isRunCancellationRequested(runId, this.env.DB)) return await this.complete(runId, "cancelled", "Agent run cancelled.");
           const latest = await getRunExecutionContext(runId, this.env.DB);
           if (latest && isAgentRunWorkflowTerminal(latest)) return { status: latest.status };
           throw new Error("Run state changed before no-change completion.");
         }
-        await notifyFloorChanged(completion.sessionId, completion.revision, ["queue", "runs"]);
+        await notifyFloorChanged(completion.sessionId, completion.revision, ["queue", "runs", "review"]);
         await pokeSessionRouter(completion.sessionId, "run_completed");
         return { status: "ready" };
       }
@@ -816,6 +766,10 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
 
       const bundle = await step.do("export run bundle", { retries: { limit: 1, delay: "5 seconds" }, timeout: "5 minutes" }, async () => {
         if (!context.runBranch) throw new Error("Run branch was not generated");
+      if (context.conflictCaseId && !await conflictExecutionAuthorized(runId, this.env.DB)) {
+        await refreshConflictSnapshot(context.sessionId, context.conflictCaseId, runId, this.env.DB);
+        throw new NonRetryableError("Candidate or approved decision changed before publication. Refreshing conflict versions.");
+      }
         const uploadToken = await signRunGatewayToken({
           runId, sessionId: context.sessionId, repositoryId: context.repositoryId,
           candidateSha: context.candidateSha, operation: "bundle_upload",
@@ -853,7 +807,7 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
       const published = await this.publishBundle(runId, context, files, bundle, publisher, step);
       const completion = await finishRunPublished(runId, published.commitSha, published.remoteSha, this.env.DB);
       if (completion) await notifyFloorChanged(completion.sessionId, completion.revision, ["queue", "runs", "review"]);
-      return await this.integrate(runId, step);
+      return await this.integrate(runId, step, publisher);
     } catch (error) {
       const current = await getRunExecutionContext(runId, this.env.DB);
       // A state mutation may have committed before a downstream realtime
@@ -1099,7 +1053,7 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
     }
   }
 
-  private async integrate(runId: string, step: WorkflowStep): Promise<{ status: string }> {
+  private async integrate(runId: string, step: WorkflowStep, publisher: Sandbox): Promise<{ status: string }> {
     try {
       const result = await step.do("serialize and integrate run", { retries: { limit: 20, delay: "5 seconds", backoff: "exponential" }, timeout: "20 minutes" }, async () => {
         // Checked on every attempt (not just once) so a cancellation requested
@@ -1119,29 +1073,45 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
         if (!/^[0-9a-f]{40}$/.test(candidateSha) || !/^[0-9a-f]{40}$/.test(baseSha) || runSha !== context.runCommitSha) {
           throw new Error("GitHub refs changed before serialized integration");
         }
-        try {
-          const merged = await mergeRepositoryBranch(
-            config, context.installationId, repository, context.candidateBranch, context.runCommitSha,
-            runCommitMessage((await getRunExecutionContext(runId, this.env.DB))?.prompts[0]?.text, runId),
-          );
-          const reconciled = await getRepositoryRefSha(config, context.installationId, repository, context.candidateBranch);
-          if (reconciled !== merged.sha) throw new Error("Candidate branch did not reconcile after integration");
-          const pullRequest = context.pullRequestNumber ? null : await createDraftPullRequest(config, context.installationId, repository, {
-            title: context.candidateName,
-            body: context.candidateDescription,
-            head: context.candidateBranch,
-            base: context.baseBranch,
-          });
-          return { conflicted: false as const, candidateSha: reconciled, pullRequest };
-        } catch (error) {
-          if (error instanceof GitHubApiError && error.status === 409) return { conflicted: true as const, reason: error.message };
-          throw error;
+        const execution = await getRunExecutionContext(runId, this.env.DB);
+        if (!execution) throw new NonRetryableError("Run disappeared before integration");
+        if (execution.conflictCaseId && !await conflictExecutionAuthorized(runId, this.env.DB)) {
+          return { conflicted: true as const, reason: "Conflict decision or candidate changed before integration.", trigger: "git" as const, paths: [] as string[] };
         }
+        const githubToken = await createInstallationToken(config, context.installationId, context.repositoryId);
+        const resultPath = `/tmp/integration-${runId}.json`;
+        const integrated = await publisher.exec("node /opt/openfloor/integrate-run.mjs", {
+          timeout: 18 * 60 * 1000, env: {
+            OPENFLOOR_INTEGRATION_ROOT: `/workspace/integration-${runId}`,
+            OPENFLOOR_REPOSITORY_URL: `https://github.com/${context.repositoryOwner}/${context.repositoryName}.git`,
+            OPENFLOOR_GITHUB_TOKEN: githubToken,
+            OPENFLOOR_CANDIDATE_BRANCH: context.candidateBranch,
+            OPENFLOOR_CANDIDATE_SHA: context.candidateSha,
+            OPENFLOOR_SOURCE_SHA: execution.candidateSha,
+            OPENFLOOR_RUN_BRANCH: context.runBranch,
+            OPENFLOOR_RUN_SHA: context.runCommitSha,
+            OPENFLOOR_RESOLUTION: execution.conflictCaseId ? "true" : "false",
+            OPENFLOOR_RESULT_PATH: resultPath,
+          },
+        });
+        if (!integrated.success) throw new Error(`Trusted integration failed: ${integrated.stderr.slice(-1000)}`);
+        const output = await publisher.exec('cat "$OPENFLOOR_RESULT_PATH"', { env: { OPENFLOOR_RESULT_PATH: resultPath } });
+        const result = JSON.parse(output.stdout) as { status: string; candidateSha?: string; reason?: string; trigger?: "git" | "overlap"; paths?: string[] };
+        if (result.status === "conflicted" || result.status === "moved") {
+          return { conflicted: true as const, reason: result.reason ?? "Candidate changed before integration.", trigger: result.trigger ?? "git", paths: result.paths ?? [] };
+        }
+        if (result.status !== "integrated" || !result.candidateSha || !/^[0-9a-f]{40}$/.test(result.candidateSha)) throw new Error("Invalid integration result");
+        const reconciled = await getRepositoryRefSha(config, context.installationId, repository, context.candidateBranch);
+        if (reconciled !== result.candidateSha) throw new Error("Candidate branch did not reconcile after integration");
+        const pullRequest = context.pullRequestNumber ? null : await createDraftPullRequest(config, context.installationId, repository, {
+          title: context.candidateName, body: context.candidateDescription, head: context.candidateBranch, base: context.baseBranch,
+        });
+        return { conflicted: false as const, candidateSha: reconciled, pullRequest };
       });
       if (result.conflicted) {
         const update = await markRunIntegrationConflicted(runId, result.reason, this.env.DB);
         if (update) {
-          await recordIntegrationConflict(runId, result.reason, this.env.DB);
+          await recordIntegrationConflict(runId, result.reason, this.env.DB, { trigger: result.trigger, paths: result.paths });
           await notifyFloorChanged(update.sessionId, update.revision, ["queue", "repository", "runs", "review"]);
           await pokeSessionRouter(update.sessionId, "run_completed");
         }
@@ -1203,9 +1173,13 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
         return { status: "cancelled" };
       }
       const reason = error instanceof Error ? error.message : "Candidate integration failed";
-      const update = await releaseRunIntegration(runId, reason, this.env.DB);
-      if (update) await notifyFloorChanged(update.sessionId, update.revision, ["queue", "repository", "runs", "review"]);
-      return { status: "published" };
+      const update = await markRunIntegrationConflicted(runId, `Integration needs recovery: ${reason}`, this.env.DB);
+      if (update) {
+        await recordIntegrationConflict(runId, reason, this.env.DB);
+        await notifyFloorChanged(update.sessionId, update.revision, ["queue", "repository", "runs", "review"]);
+        await pokeSessionRouter(update.sessionId, "run_completed");
+      }
+      return { status: "conflicted" };
     }
   }
 
@@ -1219,6 +1193,10 @@ export class AgentRunWorkflow extends WorkflowEntrypoint<AgentRunWorkflowEnv, Pa
   ) {
     return step.do("validate and publish run branch", { retries: { limit: 3, delay: "10 seconds", backoff: "exponential" }, timeout: "20 minutes" }, async () => {
       if (!context.runBranch) throw new Error("Run branch was not generated");
+      if (context.conflictCaseId && !await conflictExecutionAuthorized(runId, this.env.DB)) {
+        await refreshConflictSnapshot(context.sessionId, context.conflictCaseId, runId, this.env.DB);
+        throw new NonRetryableError("Candidate or approved decision changed before publication. Refreshing conflict versions.");
+      }
       const config = getGitHubAppConfig();
       const githubToken = await createInstallationToken(config, context.installationId, context.repositoryId);
       const bundleToken = await signRunGatewayToken({

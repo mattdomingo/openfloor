@@ -1,12 +1,28 @@
+import { ConflictSnapshotError } from "./conflict-resolution";
 import { FloorConflictError, FloorTargetError } from "@/db/floor";
 import { getActiveMembershipRole, getOwnerHourQuota, SessionEndedError, SessionRoutingError } from "@/db/sessions";
 import { getDb } from "@/db";
 import type { FloorDomain, FloorSnapshot } from "./floor-types";
 import { notifyFloorChanged } from "./presence-server";
 
-export async function readJson(request: Request): Promise<unknown | null> {
+export async function readJson(request: Request, maxBytes?: number): Promise<unknown | null> {
   try {
-    return await request.json();
+    if (maxBytes === undefined) return await request.json();
+    if (!request.body || Number(request.headers.get("content-length") ?? 0) > maxBytes) return null;
+    const reader = request.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let size = 0;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > maxBytes) { await reader.cancel(); return null; }
+      chunks.push(value);
+    }
+    const body = new Uint8Array(size);
+    let offset = 0;
+    for (const chunk of chunks) { body.set(chunk, offset); offset += chunk.byteLength; }
+    return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(body));
   } catch {
     return null;
   }
@@ -17,6 +33,7 @@ export async function readJson(request: Request): Promise<unknown | null> {
    to 409 rather than 404 because 404 means "kicked from the session" to
    usePersistentFloorData. */
 export function mutationErrorResponse(error: unknown): Response {
+  if (error instanceof ConflictSnapshotError) return Response.json({ error: error.message }, { status: 503 });
   if (error instanceof SessionEndedError) return Response.json({ error: error.message }, { status: 409 });
   if (error instanceof FloorConflictError) return Response.json({ error: error.message }, { status: 409 });
   if (error instanceof FloorTargetError) return Response.json({ error: error.message }, { status: 400 });

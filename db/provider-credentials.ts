@@ -199,14 +199,17 @@ export async function getRunAgentOwnerCredential(
 } | null> {
   return await database
     .prepare(
-      `SELECT fa.owner_user_id AS ownerUserId, fa.credential_kind AS requestedKind,
+      `SELECT fa.owner_user_id AS ownerUserId,
+              CASE WHEN mca.run_id IS NOT NULL THEN source.billed_kind ELSE fa.credential_kind END AS requestedKind,
               c.kind AS kind, c.ciphertext AS ciphertext, c.updated_at AS updatedAt
        FROM agent_runs r
        JOIN floor_agents fa ON fa.id = r.agent_id
+       LEFT JOIN merge_conflict_attempts mca ON mca.run_id = r.id
+       LEFT JOIN agent_runs source ON source.id = mca.source_run_id
        JOIN session_members sm ON sm.session_id = r.session_id AND sm.user_id = fa.owner_user_id AND sm.removed_at IS NULL
        LEFT JOIN user_provider_credentials c
          ON c.user_id = fa.owner_user_id AND c.provider = ?
-        AND (fa.credential_kind IS NULL OR c.kind = fa.credential_kind)
+        AND ((mca.run_id IS NULL AND fa.credential_kind IS NULL) OR c.kind = CASE WHEN mca.run_id IS NOT NULL THEN source.billed_kind ELSE fa.credential_kind END)
        WHERE r.id = ?
        ORDER BY CASE WHEN c.kind = 'api_key' THEN 0 ELSE 1 END
        LIMIT 1`,
@@ -235,7 +238,16 @@ export async function resolveRunProviderSecret(
   options: { serverKey: string | undefined; encryptionKey: string | undefined },
   database: D1DatabaseLike = getDb(),
 ): Promise<ResolvedRunSecret> {
+  const pinned = await database.prepare(`SELECT source.billed_kind AS kind FROM merge_conflict_attempts a
+    JOIN agent_runs source ON source.id = a.source_run_id WHERE a.run_id = ?`).bind(runId).first<{ kind: string | null }>();
+  if (pinned?.kind === "server") {
+    if (!options.serverKey) return { ok: false, message: "The original run's server credential is unavailable. No alternate payer will be used." };
+    await recordBilledKind(runId, "server", database);
+    return { ok: true, source: "server", kind: "api_key", secret: options.serverKey };
+  }
+  if (pinned && !pinned.kind) return { ok: false, message: "The original run's billing source is unknown. Use manual resolution." };
   const owner = await getRunAgentOwnerCredential(runId, provider, database);
+  if (pinned && !owner?.ciphertext) return { ok: false, message: "The original run's connected credential is unavailable. Reconnect it or use manual resolution." };
   const resolution = resolveRunCredentialSource({
     ownerCredentialPresent: Boolean(owner?.ciphertext),
     serverKeyPresent: Boolean(options.serverKey),

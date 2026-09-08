@@ -28,6 +28,7 @@ export default defineConfig({
         compatibilityDate: "2026-05-22",
         compatibilityFlags: ["nodejs_compat"],
         d1Databases: ["DB"],
+        r2Buckets: ["PREFLIGHT_LOGS"],
         durableObjects: { SESSION_PRESENCE: "SessionPresence" },
         bindings: {
           INVITE_SIGNING_SECRET: "worker-test-invite-secret",

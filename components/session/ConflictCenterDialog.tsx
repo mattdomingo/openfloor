@@ -1,129 +1,76 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { LocalDateTime } from "@/components/LocalDateTime";
-import type { ConflictChoice, MergeConflictCase } from "@/lib/floor-types";
-import { Icon, PersonName, useDialogDismiss } from "./primitives";
-import { Markdown } from "./Markdown";
+import { useState } from "react";
+import type { MergeConflictCase } from "@/lib/floor-types";
+import type { ConflictMutation } from "@/lib/conflict-resolution";
+import { Icon, useDialogDismiss } from "./primitives";
 import { ConflictResolverBody } from "./ConflictResolver";
 
-/* The hero "Conflicts" button's popup: one home for every merge-conflict case
-   on the candidate — what happened, what the automatic resolver already tried,
-   and the way forward (answer its questions, owner retry, or the manual
-   per-hunk resolver embedded as the last step). */
-
-function needsPerson(conflict: MergeConflictCase): boolean {
-  return conflict.status === "awaiting_input" || conflict.status === "failed";
-}
-
-export function ConflictCenterDialog({ sessionId, conflicts, initialCaseId, owner, currentUserId, busy, onClose, onResolve, onAnswer, onSubmitSelections }: {
-  sessionId: string;
-  conflicts: MergeConflictCase[];
-  initialCaseId: string | null;
-  owner: boolean;
-  currentUserId: string;
-  busy: boolean;
-  onClose: () => void;
-  onResolve: (caseId: string) => Promise<boolean>;
-  onAnswer: (caseId: string, answers: Array<{ questionId: string; answer: string }>) => Promise<boolean>;
-  onSubmitSelections: (caseId: string, snapshotRunId: string, selections: Array<{ path: string; hunkIndex: number; choice: ConflictChoice }>) => Promise<boolean>;
+export function ConflictCenterDialog({ sessionId, conflicts, initialCaseId, owner, currentUserId, busy, onClose, onMutation }: {
+  sessionId: string; conflicts: MergeConflictCase[]; initialCaseId: string | null; owner: boolean;
+  currentUserId: string; busy: boolean; onClose: () => void; onMutation: ConflictMutation;
 }) {
   const { dismiss, dialogProps } = useDialogDismiss(onClose);
-  // Open cases first, then most recently touched — the rail is a work list,
-  // not a history log.
-  const ordered = useMemo(() => [...conflicts].sort((a, b) => Number(b.status !== "resolved") - Number(a.status !== "resolved") || b.updatedAt - a.updatedAt), [conflicts]);
-  const [selectedId, setSelectedId] = useState<string | null>(() => initialCaseId
-    ?? conflicts.find((conflict) => conflict.status === "awaiting_input" || conflict.status === "failed" || conflict.status === "pending")?.id
-    ?? ordered[0]?.id
-    ?? null);
-  const [view, setView] = useState<"case" | "manual">("case");
-  const selected = conflicts.find((conflict) => conflict.id === selectedId) ?? ordered[0] ?? null;
-  const openCount = conflicts.filter((conflict) => conflict.status !== "resolved").length;
-
-  function selectCase(caseId: string) {
-    setSelectedId(caseId);
-    setView("case");
-  }
-
+  const ordered = [...conflicts].sort((a, b) => Number(b.status !== "resolved") - Number(a.status !== "resolved") || b.updatedAt - a.updatedAt);
+  const [selectedId, setSelectedId] = useState(initialCaseId ?? ordered[0]?.id);
+  const selected = ordered.find((item) => item.id === selectedId) ?? ordered[0];
   return <dialog className="dialog conflict-center" {...dialogProps} aria-labelledby="conflict-center-title">
-    <div className="dialog-head">
-      <div className="dialog-title">
-        <h2 id="conflict-center-title">Merge conflicts</h2>
-        <p>{conflicts.length === 0 ? "Nothing to resolve on this candidate." : `${openCount} open · ${conflicts.length} total`}</p>
-      </div>
-      <button type="button" className="dialog-close" onClick={dismiss} aria-label="Close"><Icon name="close" /></button>
-    </div>
+    <div className="dialog-head"><div className="dialog-title"><h2 id="conflict-center-title">Merge conflicts</h2><p>Preserve both features. Agree together when outcomes conflict.</p></div><button type="button" className="dialog-close" onClick={dismiss} aria-label="Close"><Icon name="close" /></button></div>
     <div className="dialog-body conflict-center-body">
-      {ordered.length === 0 ? <p className="review-empty">No merge conflicts. A run that hits a real GitHub integration conflict shows up here with its automatic-resolution history.</p>
-        : <>
-          {ordered.length > 1 && <nav className="conflict-center-rail" aria-label="Conflict cases">
-            <ul>{ordered.map((conflict) => <li key={conflict.id}>
-              <button type="button" className="conflict-center-case" data-selected={selected?.id === conflict.id ? "true" : undefined} data-status={conflict.status} data-attention={needsPerson(conflict) ? "action" : undefined} onClick={() => selectCase(conflict.id)}>
-                <strong>{conflict.agentName}</strong>
-                <span className="queue-chip" data-kind="status" data-status={conflict.status}>{conflict.status.replace("_", " ")}</span>
-                {conflict.prompts[0] && <span className="conflict-center-case-prompt">{conflict.prompts[0].text}</span>}
-                <small>{conflict.conflictPaths.length} file{conflict.conflictPaths.length === 1 ? "" : "s"} · {conflict.attempts.length} attempt{conflict.attempts.length === 1 ? "" : "s"}</small>
-              </button>
-            </li>)}</ul>
-          </nav>}
-          {selected && (view === "manual"
-            ? <ConflictResolverBody sessionId={sessionId} caseId={selected.id} busy={busy} onExit={() => setView("case")} onSubmitted={() => setView("case")} onSubmit={onSubmitSelections} />
-            : <ConflictCasePanel conflict={selected} owner={owner} canAnswer={owner || selected.prompts.some((prompt) => prompt.authorUserId === currentUserId)} busy={busy} onResolve={onResolve} onAnswer={onAnswer} onOpenResolver={() => setView("manual")} />)}
-        </>}
+      {ordered.length > 1 && <nav className="conflict-center-rail" aria-label="Conflict cases"><ul>{ordered.map((item) => <li key={item.id}><button type="button" className="conflict-center-case" aria-current={item.id === selected?.id ? "true" : undefined} onClick={() => setSelectedId(item.id)}><strong>{item.agentName}</strong><span>{item.status.replaceAll("_", " ")}</span><small>{item.prompts[0]?.text}</small></button></li>)}</ul></nav>}
+      {selected ? <ConflictCasePanel key={selected.id} sessionId={sessionId} conflict={selected} owner={owner} currentUserId={currentUserId} busy={busy} onMutation={onMutation} /> : <p>No conflicts need attention.</p>}
     </div>
   </dialog>;
 }
 
-function ConflictCasePanel({ conflict, owner, canAnswer, busy, onResolve, onAnswer, onOpenResolver }: {
-  conflict: MergeConflictCase;
-  owner: boolean;
-  canAnswer: boolean;
-  busy: boolean;
-  onResolve: (caseId: string) => Promise<boolean>;
-  onAnswer: (caseId: string, answers: Array<{ questionId: string; answer: string }>) => Promise<boolean>;
-  onOpenResolver: () => void;
+function ConflictCasePanel({ sessionId, conflict, owner, currentUserId, busy, onMutation }: {
+  sessionId: string; conflict: MergeConflictCase; owner: boolean; currentUserId: string; busy: boolean; onMutation: ConflictMutation;
 }) {
-  const unanswered = conflict.questions.filter((question) => question.answer === null);
-  const [answers, setAnswers] = useState<Record<string, string>>({});
+  const resolution = conflict.resolution;
+  const [instruction, setInstruction] = useState("");
+  const [draftSnapshot, setDraftSnapshot] = useState(resolution?.snapshotId);
+  const [overrideReason, setOverrideReason] = useState("");
+  const [manual, setManual] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const canSubmit = unanswered.length > 0 && unanswered.every((question) => answers[question.id]?.trim());
-  async function submitAnswers(event: React.FormEvent) {
-    event.preventDefault();
-    if (!canSubmit) return;
-    setSubmitting(true);
-    await onAnswer(conflict.id, unanswered.map((question) => ({ questionId: question.id, answer: answers[question.id].trim() })));
-    setSubmitting(false);
+  const prompts = resolution ? [...resolution.provenance.incoming, ...resolution.provenance.integrated] : conflict.prompts;
+  const canAct = resolution?.actions?.canPropose ?? (owner || prompts.some((prompt) => prompt.authorUserId === currentUserId) || (!resolution?.snapshotId && conflict.prompts.some((prompt) => prompt.authorUserId === currentUserId)));
+  const available = canAct && !busy && !submitting && !conflict.currentResolverRunId && conflict.status !== "resolved";
+  const proposal = resolution?.proposal;
+  const staleDraft = Boolean(instruction && draftSnapshot !== resolution?.snapshotId);
+  async function mutate(action: Parameters<ConflictMutation>[1], body?: unknown) {
+    setSubmitting(true); setError(null);
+    try {
+      const result = await onMutation(conflict.id, action, body);
+      if (!result.ok) setError(result.error ?? "This action could not be saved. Reload current state and retry.");
+      return result;
+    } finally { setSubmitting(false); }
   }
-  const automaticAttempts = conflict.attempts.filter((attempt) => attempt.launchKind === "automatic").length;
-  const canResolveManually = conflict.hasSnapshot && canAnswer && (conflict.status === "failed" || conflict.status === "awaiting_input");
+  if (manual) return <ConflictResolverBody sessionId={sessionId} conflict={conflict} busy={busy} onExit={() => setManual(false)} onMutation={onMutation} />;
   return <section className="conflict-case conflict-center-detail" data-status={conflict.status}>
-    <div className="conflict-case-head"><strong>Merge Resolver</strong><span className="queue-chip" data-kind="status" data-status={conflict.status}>{conflict.status.replace("_", " ")}</span></div>
-    {/* The guided narrative: say plainly that automation stopped, why, and
-        what the person in front of the screen can do about it. */}
-    {conflict.status === "awaiting_input" && <p className="conflict-center-nudge"><Icon name="alert" size={12} />Automatic resolution didn&rsquo;t finish — the resolver needs your answers below before it can continue.</p>}
-    {conflict.status === "failed" && <p className="conflict-center-nudge"><Icon name="alert" size={12} />Automatic resolution didn&rsquo;t succeed — the resolver stopped after {automaticAttempts} automatic attempt{automaticAttempts === 1 ? "" : "s"}.{canResolveManually ? " You can retry it, or resolve the conflict manually below." : ""}</p>}
+    <div className="conflict-case-head"><strong>{resolution?.trigger === "overlap" ? "Overlapping features" : "Conflicting changes"}</strong><span role="status">{conflict.status.replaceAll("_", " ")}</span></div>
     <p>{conflict.explanation ?? conflict.conflictReason}</p>
-    <dl><div><dt>Source</dt><dd>{conflict.agentName} · run {conflict.sourceRunId.slice(0, 8)}</dd></div><div><dt>Attempts</dt><dd>{conflict.automaticAttempts}/2 automatic attempts since last answer</dd></div></dl>
-    {conflict.prompts.length > 0 && <><span className="label">Original intent</span><ul className="conflict-answer-audit">{conflict.prompts.map((prompt) => <li key={prompt.id}><strong><PersonName name={prompt.authorName} /></strong><p>{prompt.text}</p></li>)}</ul></>}
-    {conflict.conflictPaths.length > 0 && <><span className="label">Affected paths</span><ul className="conflict-paths">{conflict.conflictPaths.map((path) => <li key={path}><code>{path}</code></li>)}</ul></>}
-    {conflict.attempts.length > 0 && <><span className="label">Resolver attempts</span><ul className="conflict-answer-audit">{conflict.attempts.map((attempt, index) => <li key={attempt.runId}><strong>Attempt {index + 1} · {attempt.launchKind} · {attempt.status.replace("_", " ")}</strong>{attempt.summary && <Markdown>{attempt.summary}</Markdown>}{attempt.checks.map((check) => <small key={check.command}>{check.status} · <code>{check.command}</code></small>)}</li>)}</ul></>}
-    {conflict.questions.some((question) => question.answer !== null) && <ul className="conflict-answer-audit">{conflict.questions.filter((question) => question.answer !== null).map((question) => <li key={question.id}><strong>{question.question}</strong><p>{question.answer}</p><small>Answered by {question.answeredByName ? <PersonName name={question.answeredByName} /> : "former member"}{question.answeredAt && <> · <LocalDateTime timestamp={question.answeredAt} /></>}</small></li>)}</ul>}
-    {conflict.status === "awaiting_input" && unanswered.length > 0 && canAnswer && <form className="conflict-answer-form" onSubmit={submitAnswers}>{unanswered.map((question) => <label key={question.id}><span>{question.question}</span><textarea required maxLength={2000} value={answers[question.id] ?? ""} onChange={(event) => setAnswers((current) => ({ ...current, [question.id]: event.target.value }))} /></label>)}<button type="submit" className="button" data-variant="primary" disabled={busy || submitting || !canSubmit}>Submit answers</button><small>First complete submission wins. Team chat remains available for discussion.</small></form>}
-    {conflict.status === "awaiting_input" && unanswered.length > 0 && !canAnswer && <p className="review-empty">Waiting for the session owner or an original prompt author to answer. Team chat remains available for discussion.</p>}
-    <div className="conflict-case-actions">
-      {owner && (conflict.status === "failed" || conflict.status === "pending") && <button type="button" className="button" disabled={busy} onClick={() => void onResolve(conflict.id)}>{conflict.status === "failed" ? "Retry Merge Resolver" : "Start Merge Resolver"}</button>}
-      {/* Manual resolution needs the same snapshot the automatic resolver
-          leaves behind on any attempt, and the same authorization as a
-          free-text answer — the owner, or whoever's prompt is in conflict.
-          It's the recommended next step once automation has failed, so it
-          carries the primary (emphasized) button treatment; Retry stays
-          plain since it's the already-tried path. */}
-      {canResolveManually && (
-        <button type="button" className="button" data-variant="primary" disabled={busy} onClick={onOpenResolver}>
-          Resolve manually
-        </button>
-      )}
-    </div>
-    {conflict.failureReason && <p className="objective-error">{conflict.failureReason}</p>}
+    <p role="status">{resolution?.waitingReason ?? (conflict.status === "resolving" ? resolution?.mode === "prepare" ? "Preparing exact file versions…" : resolution?.mode === "manual" ? "Applying the agreed result, then running checks…" : "AI is checking both intents and validating the result…" : conflict.status === "resolved" ? "Resolution verified against the candidate." : "Waiting for execution capacity.")}</p>
+    {([['Already in candidate', resolution?.provenance.integrated ?? []], ['Incoming feature', resolution?.provenance.incoming.length ? resolution.provenance.incoming : conflict.prompts]] as const).map(([label, items]) => <div key={label}><h3>{label}</h3>{items.length ? items.map((prompt) => <blockquote key={prompt.id}><strong>{prompt.authorName}</strong><p>{prompt.text}</p></blockquote>) : <p>Attribution unavailable. An explicit owner decision is required.</p>}</div>)}
+    {resolution?.assessment && <section aria-label="AI assessment"><h3>What AI found</h3><p>{resolution.assessment.explanation}</p><ul>{resolution.assessment.evidence.map((evidence, index) => <li key={index}>{evidence}</li>)}</ul><p>Preserved intents: {resolution.assessment.preservedPromptIds.map((id) => prompts.find((prompt) => prompt.id === id)?.text ?? id).join("; ") || "Not confirmed"}</p></section>}
+    {!!conflict.conflictPaths.length && <details><summary>{conflict.conflictPaths.length} affected files</summary><ul className="conflict-paths">{conflict.conflictPaths.map((path) => <li key={path}><code>{path}</code></li>)}</ul></details>}
+    {proposal && <section aria-label="Current proposal"><h3>Proposed outcome</h3>{proposal.payload.kind === "intent" ? <p>{proposal.payload.instruction}</p> : <><p>Apply the exact selected files and text. No AI rewrite.</p><details><summary>Review selected result</summary>{proposal.payload.selections.map((selection) => <div key={JSON.stringify([selection.path, selection.hunkIndex])}><code>{selection.path}</code><p>{selection.hunkIndex < 0 ? "Complete file" : `Section ${selection.hunkIndex + 1}`}: {selection.choice === "ours" ? "Candidate version" : selection.choice === "theirs" ? "Incoming version" : selection.choice === "both" ? "Concatenate candidate then incoming" : "Edited result"}</p>{selection.content !== undefined && <pre className="conflict-result-preview">{selection.content}</pre>}</div>)}</details></>}
+      <ul>{proposal.requiredAuthorIds.map((id) => <li key={id}>{prompts.find((prompt) => prompt.authorUserId === id)?.authorName ?? "Former member"}: {proposal.approvedAuthorIds.includes(id) ? "Approved" : "Agreement needed"}</li>)}</ul>
+      {proposal.requiresOwner && <p>Missing attribution or a departed author requires an explicit owner override.</p>}
+      {proposal.votes.map((vote, index) => <p key={index}>{vote.name ?? "Former member"}: {vote.action}{vote.reason && ` — ${vote.reason}`}</p>)}
+      {available && <div className="conflict-case-actions"><button className="button" disabled={proposal.approvedAuthorIds.includes(currentUserId)} onClick={() => void mutate("decisions", { revision: resolution!.revision, proposalId: proposal.id, action: "approve" })}>Approve proposal</button><button className="button" onClick={() => void mutate("decisions", { revision: resolution!.revision, proposalId: proposal.id, action: "reject" })}>Disagree</button></div>}
+      {owner && available && <details><summary>Owner override</summary><label>Reason for overriding agreement<textarea maxLength={2000} value={overrideReason} onChange={(event) => setOverrideReason(event.target.value)} /></label><button className="button" disabled={!overrideReason.trim()} onClick={() => void mutate("decisions", { revision: resolution!.revision, proposalId: proposal.id, action: "override", reason: overrideReason })}>Record owner override</button></details>}
+    </section>}
+    {canAct && conflict.status !== "resolved" && <>
+      {resolution?.snapshotId && <form className="conflict-answer-form" onSubmit={(event) => { event.preventDefault(); void mutate("answers", { revision: resolution.revision, snapshotId: resolution.snapshotId, instruction }); }}><label>Propose a shared outcome<textarea maxLength={6000} value={instruction} onChange={(event) => { if (!instruction) setDraftSnapshot(resolution.snapshotId); setInstruction(event.target.value); }} placeholder="Describe how both features should behave, or explain which outcome should win." /></label>
+        {staleDraft && <p role="alert">File versions changed. Your draft is preserved; compare current versions before reconfirming.<button type="button" className="button" onClick={() => setDraftSnapshot(resolution.snapshotId)}>I reviewed current versions</button></p>}
+        <button className="button" type="submit" disabled={!available || !instruction.trim() || staleDraft}>Propose for agreement</button><small>Your proposal includes your approval. All affected authors must approve the same result.</small></form>}
+      <div className="conflict-case-actions"><button className="button" disabled={!available || !resolution?.snapshotId} onClick={() => setManual(true)}>Resolve manually</button>
+        <button className="button" disabled={!available || Boolean(proposal && !proposal.approved)} onClick={() => void mutate("resolve", { revision: resolution?.revision })}>{resolution?.snapshotId ? "Retry AI / approved result" : "Prepare file versions"}</button>
+        <button className="button" disabled={!available} onClick={() => void mutate("snapshot", { revision: resolution?.revision })}>Refresh file versions</button></div>
+    </>}
+    {(error || conflict.failureReason) && <p className="objective-error" role="alert">{error ?? conflict.failureReason}</p>}
+    <button className="button" disabled={submitting} onClick={() => void mutate("reload")}>Reload current state</button>
+    {conflict.attempts.length > 0 && <details><summary>Execution and validation history</summary><ul>{conflict.attempts.map((attempt, index) => <li key={attempt.runId}><strong>Attempt {index + 1} · {attempt.status.replaceAll("_", " ")}</strong><p>{attempt.summary}</p>{attempt.checks.map((check) => <p key={check.command}>{check.status} · <code>{check.command}</code></p>)}</li>)}</ul></details>}
   </section>;
 }

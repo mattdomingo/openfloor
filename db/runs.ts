@@ -264,7 +264,7 @@ export async function getRunExecutionContext(runId: string, database = getDb()) 
             rc.repository_owner AS repositoryOwner, rc.repository_name AS repositoryName,
             rc.repository_full_name AS repositoryFullName,
             c.branch_name AS candidateBranch,
-            mca.case_id AS conflictCaseId,
+            mca.case_id AS conflictCaseId, mca.execution_mode AS conflictMode, mca.snapshot_id AS conflictSnapshotId, mca.proposal_id AS conflictProposalId,
             prior.codex_thread_id AS resumeThreadId, prior.attempt AS resumedFromAttempt, prior.status AS resumedFromStatus,
             store.r2_key AS resumeSessionStoreKey
      FROM agent_runs r
@@ -283,7 +283,7 @@ export async function getRunExecutionContext(runId: string, database = getDb()) 
     sandboxId: string; sandboxProcessId: string | null; model: string; sessionTitle: string; objective: string | null;
     agentName: string; agentRole: string; agentTask: string; provider: CredentialProvider; installationId: string; repositoryId: string;
     repositoryOwner: string; repositoryName: string; repositoryFullName: string; candidateBranch: string;
-    conflictCaseId: string | null;
+    conflictCaseId: string | null; conflictMode: import("@/lib/conflict-resolution").ConflictMode | null; conflictSnapshotId: string | null; conflictProposalId: string | null;
     resumeThreadId: string | null; resumedFromAttempt: number | null; resumedFromStatus: AgentRunStatus | null; resumeSessionStoreKey: string | null;
   }>();
   if (!run) return null;
