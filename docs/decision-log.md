@@ -1225,3 +1225,12 @@ Preview v1 supports only one JavaScript app at the repository root with exactly 
 **Rationale:** The existing managed certificate already covers the one-level `*.dev.app.opnflr.com` wildcard. The earlier multi-level wildcard would require paid certificate coverage without improving the preview trust boundary. Keeping the preview application and audience separate preserves per-request Access verification while reusing the approved developer/tester population.
 
 **Consequences:** `wrangler.jsonc` adds the development wildcard zone route, sets `OPENFLOOR_PREVIEW_HOSTNAME=dev.app.opnflr.com`, and enables the development gate. The deploy artifact verifier requires all three facts so an E2E artifact or incomplete release cannot deploy. Release deployment applies pending development migrations before the Worker. Acceptance uses disposable root JavaScript repositories; any boundary failure rolls the development gate back to false. No production DNS, Access, audience, flag, migration, or deployment is authorized by this decision.
+
+
+### 2026-09-09 — Patch release runtime dependency advisories
+
+**Decision:** Advance Next.js from 16.3.1 to 16.3.4 and refresh only lockfile-resolved production dependencies required to clear the release audit, including Sharp 0.35.4, Hono 4.13.7, and baseline-browser-mapping 2.11.21.
+
+**Rationale:** The release deployment gate began failing on newly published critical, high, and moderate production advisories. The patched Next.js version stays within the current major line and the transitive updates are allowed by existing dependency ranges.
+
+**Consequences:** `npm audit --omit=dev` must return zero vulnerabilities before deployment. No framework migration, product behavior change, or dependency-major upgrade is authorized by this patch; the complete application and browser gates remain required.
