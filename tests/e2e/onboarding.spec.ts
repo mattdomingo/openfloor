@@ -74,6 +74,7 @@ test("a direct user keeps profile state across steps and completes Free onboardi
 
   await expect(page.getByRole("dialog", { name: "Pick the repository" })).toBeVisible();
   // The default first-repository selection already satisfies this step.
+  await expect(page.getByRole("dialog", { name: "Pick the repository" }).getByRole("button", { name: "Next" })).toBeEnabled();
   await page.keyboard.press("Enter");
 
   await expect(page.getByRole("dialog", { name: "Name the candidate branch" })).toBeVisible();

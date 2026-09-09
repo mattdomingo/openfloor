@@ -214,9 +214,9 @@ test("owner and member persist, share live presence, reconnect, and leave", asyn
 
   await owner.getByRole("button", { name: "Queue settings" }).click();
   await owner.getByRole("group", { name: "Queue settings" }).getByRole("button", { name: /^On openfloor assigns/ }).click();
+  const composerTarget = owner.getByRole("region", { name: "Open floor" }).getByRole("combobox", { name: "Queue target" });
+  await expect(composerTarget).toHaveText("Auto");
   for (const prompt of ["Hold persistent for auto provisioning", "Hold generated for auto provisioning"]) {
-    await owner.getByRole("region", { name: "Open floor" }).getByRole("combobox", { name: "Queue target" }).click();
-    await owner.getByRole("option", { name: "Auto" }).click();
     await owner.getByLabel("Prompt to add to the queue").fill(prompt);
     await owner.getByRole("button", { name: "Add to queue" }).click();
     await expect(owner.locator("li.queue-item", { hasText: prompt })).toBeVisible();
