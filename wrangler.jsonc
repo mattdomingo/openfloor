@@ -257,8 +257,8 @@
 			"vars": {
 				"SANDBOX_TRANSPORT": "rpc",
 				"OPENFLOOR_RUNTIME_ORIGIN": "https://dev.app.opnflr.com",
-				"OPENFLOOR_PREVIEW_HOSTNAME": "preview.dev.opnflr.com",
-				"REPOSITORY_PREVIEW_ENABLED": "false",
+				"OPENFLOOR_PREVIEW_HOSTNAME": "dev.app.opnflr.com",
+				"REPOSITORY_PREVIEW_ENABLED": "true",
 				"PREFLIGHT_ENABLED": "false",
 				// Development execution is enabled after the isolated Access policy,
 				// GitHub App, runtime secrets, and first deployment were accepted.
@@ -293,6 +293,10 @@
 				{
 					"pattern": "dev.app.opnflr.com",
 					"custom_domain": true
+				},
+				{
+					"pattern": "*.dev.app.opnflr.com/*",
+					"zone_name": "opnflr.com"
 				}
 			],
 			"images": {

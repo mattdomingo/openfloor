@@ -99,7 +99,7 @@ Every agent run requires the agent owner's connected personal API key in Setting
 
 ## Configure Workflow, Sandbox, and R2
 
-`wrangler.jsonc` defines the `REPOSITORY_PREFLIGHT`, `AGENT_RUN_WORKFLOW`, and environment-isolated `REPOSITORY_PREVIEW` Workflows, `SANDBOX` container/Durable Object, and private `PREFLIGHT_LOGS` R2 binding. Repository preview remains separately dark behind `REPOSITORY_PREVIEW_ENABLED=false`; its wildcard DNS/TLS and Access prerequisites are documented in `docs/release-process.md` and are not part of the GitHub App rollout. Create the bucket once:
+`wrangler.jsonc` defines the `REPOSITORY_PREFLIGHT`, `AGENT_RUN_WORKFLOW`, and environment-isolated `REPOSITORY_PREVIEW` Workflows, `SANDBOX` container/Durable Object, and private `PREFLIGHT_LOGS` R2 binding. Repository preview is enabled only in development; production remains separately dark behind `REPOSITORY_PREVIEW_ENABLED=false`. Its environment-isolated wildcard DNS/TLS and Access prerequisites are documented in `docs/release-process.md` and are not part of the GitHub App rollout. Create the bucket once:
 
 ```bash
 npx wrangler r2 bucket create openfloor-preflight-logs

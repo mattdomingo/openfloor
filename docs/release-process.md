@@ -71,14 +71,14 @@ Record the new application's Audience tag. The development Worker secret
 `CF_ACCESS_AUD` contains only that development audience; never copy the
 production tag or combine environments.
 
-Repository preview has a separate deferred Access boundary. Keep `REPOSITORY_PREVIEW_ENABLED=false` until all of the following development-only prerequisites exist:
+Repository preview has a separate Access boundary. Development enables it with these isolated resources:
 
-- Wildcard DNS and TLS route `*.preview.dev.opnflr.com` to the development Worker without claiming the production preview zone.
-- One development self-hosted Access application protects `*.preview.dev.opnflr.com/*` and permits only named developers/testers.
+- Proxied wildcard DNS `*.dev.app.opnflr.com` points to the development Worker. This one-level wildcard is covered by the existing managed development certificate; the earlier `*.preview.dev.opnflr.com` plan was rejected because it would require paid multi-level wildcard certificate coverage.
+- A self-hosted Access application named `openfloor-development-preview` protects `*.dev.app.opnflr.com/*`, reuses only the named developer/tester policy, and is hidden from the App Launcher.
 - That preview application's Audience tag is appended to the development Worker's `CF_ACCESS_AUD` secret alongside the existing development application audience. Do not replace the existing audience and do not copy a production audience.
-- Migration `0046` is applied to development and the `REPOSITORY_PREVIEW` Workflow plus Sandbox image `v12` deploy successfully.
+- The development Worker claims `*.dev.app.opnflr.com/*` with a zone route, sets `OPENFLOOR_PREVIEW_HOSTNAME=dev.app.opnflr.com`, and enables `REPOSITORY_PREVIEW_ENABLED=true`. The release deployment applies pending migrations before code and deploys the isolated `REPOSITORY_PREVIEW` Workflow plus the pinned Sandbox image.
 
-After those prerequisites, enable only development and use a disposable root JavaScript repository to accept the feature. Verify npm, pnpm, Yarn, and Bun fixtures; owner start/rebuild/stop; member synchronized access; outsider and revoked-admission 404 concealment; exact candidate updates after integration and rollback; prior-preview fallback during a failed rebuild; expiry; session end; merge; abandonment; repository disconnect/unavailability; redirects, cookies, and WebSockets; responsive iframe layout; blocked outbound runtime traffic; and durable cleanup after a forced Sandbox destruction failure. Confirm the iframe cannot navigate the top-level application. Restore `REPOSITORY_PREVIEW_ENABLED=false` immediately if any boundary fails.
+Use a disposable root JavaScript repository to accept the feature. Verify npm, pnpm, Yarn, and Bun fixtures; owner start/rebuild/stop; member synchronized access; outsider and revoked-admission 404 concealment; exact candidate updates after integration and rollback; prior-preview fallback during a failed rebuild; expiry; session end; merge; abandonment; repository disconnect/unavailability; redirects, cookies, and WebSockets; responsive iframe layout; blocked outbound runtime traffic; and durable cleanup after a forced Sandbox destruction failure. Confirm the iframe cannot navigate the top-level application. Restore the development `REPOSITORY_PREVIEW_ENABLED=false` immediately if any boundary fails.
 
 Production rollout is a later reviewed change. It requires independent wildcard DNS/TLS for `*.preview.opnflr.com`, its own production preview Access application, that application's audience appended only to production `CF_ACCESS_AUD`, production migration deployment, and successful repetition of the accepted flow. The feature implementation does not authorize any DNS, TLS, Access, migration, or gate mutation by itself.
 

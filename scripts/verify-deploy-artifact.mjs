@@ -11,7 +11,7 @@ const TARGETS = {
   production: {
     environment: null,
     name: "openfloor",
-    route: "app.opnflr.com",
+    routes: [{ pattern: "app.opnflr.com", customDomain: true }],
     databaseName: "openfloor-production",
     databaseId: "1e5059bf-1f7b-4be8-8ea4-c424a191070a",
     r2Buckets: {
@@ -33,7 +33,10 @@ const TARGETS = {
   development: {
     environment: "development",
     name: "openfloor-development",
-    route: "dev.app.opnflr.com",
+    routes: [
+      { pattern: "dev.app.opnflr.com", customDomain: true },
+      { pattern: "*.dev.app.opnflr.com/*", zoneName: "opnflr.com" },
+    ],
     databaseName: "openfloor-development",
     databaseId: "fe7e3046-8cd8-4aae-a226-87534b2d9f15",
     r2Buckets: {
@@ -48,8 +51,8 @@ const TARGETS = {
     vars: {
       OPENFLOOR_RUNTIME_ORIGIN: "https://dev.app.opnflr.com",
       AGENT_RUN_ENABLED: "true",
-      OPENFLOOR_PREVIEW_HOSTNAME: "preview.dev.opnflr.com",
-      REPOSITORY_PREVIEW_ENABLED: "false",
+      OPENFLOOR_PREVIEW_HOSTNAME: "dev.app.opnflr.com",
+      REPOSITORY_PREVIEW_ENABLED: "true",
       STRIPE_CHECKOUT_ENABLED: "false",
       EARLY_ACCESS_GATE_ENABLED: "false",
     },
@@ -79,8 +82,13 @@ const problems = [];
 if (config.name !== target.name) {
   problems.push(`worker name is "${config.name}", expected "${target.name}"`);
 }
-if (!(config.routes ?? []).some((route) => route?.pattern === target.route && route?.custom_domain === true)) {
-  problems.push(`no custom-domain route for ${target.route}`);
+for (const route of target.routes) {
+  const found = (config.routes ?? []).some((candidate) => candidate?.pattern === route.pattern
+    && (route.customDomain === undefined || candidate?.custom_domain === route.customDomain)
+    && (route.zoneName === undefined || candidate?.zone_name === route.zoneName));
+  if (!found) {
+    problems.push(`no matching route for ${route.pattern}`);
+  }
 }
 
 const database = (config.d1_databases ?? []).find((binding) => binding?.binding === "DB");

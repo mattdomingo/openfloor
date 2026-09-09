@@ -23,7 +23,7 @@ Stateful authority is isolated:
 | `REPOSITORY_PREFLIGHT` | `openfloor-repository-preflight` | `openfloor-development-repository-preflight` |
 | `AGENT_RUN_WORKFLOW` | `openfloor-agent-run` | `openfloor-development-agent-run` |
 | `REPOSITORY_PREVIEW` | `openfloor-repository-preview` | `openfloor-development-repository-preview` |
-| Preview hostname | `preview.opnflr.com` | `preview.dev.opnflr.com` |
+| Preview hostname | `preview.opnflr.com` | `dev.app.opnflr.com` (`*.dev.app.opnflr.com`) |
 
 Each named Worker owns distinct Durable Object namespaces and container state.
 Runtime secrets, Access audiences, GitHub Apps, webhook signing, encryption keys,
@@ -33,7 +33,7 @@ one-time external setup and ongoing promotion/hotfix workflow.
 
 Cloudflare Containers requires a Workers Paid account. `PREFLIGHT_ENABLED` is the production rollout gate: production is enabled only after the container image, `SANDBOX`, and `REPOSITORY_PREFLIGHT` bindings deploy successfully. While disabled, the UI omits **Verify runner** and the start endpoint returns `503`; repository connection and candidate reconciliation remain available. Tests explicitly enable the deterministic test adapter.
 
-`REPOSITORY_PREVIEW_ENABLED` is `false` in both environments. While false, the Review UI omits Preview, preview mutations and source access return concealed `404` responses, and the preview hostname proxy is dark. The Workflow bindings and environment-specific `OPENFLOOR_PREVIEW_HOSTNAME` values are deployed code configuration, not rollout authorization. Enabling development later requires wildcard DNS and TLS for `*.preview.dev.opnflr.com`, one development preview Access application covering that wildcard, and the preview application's audience appended to the development `CF_ACCESS_AUD` value. Production requires the equivalent isolated `*.preview.opnflr.com` DNS/TLS, preview Access application, and production audience. Never share preview Access applications or audiences across environments. Complete the development acceptance runbook before any production enablement.
+`REPOSITORY_PREVIEW_ENABLED` is `true` only in development and remains `false` in production. Development uses the proxied `*.dev.app.opnflr.com` wildcard, its existing managed wildcard certificate, a dedicated developer-only Access application hidden from the App Launcher, and both development Access audiences in `CF_ACCESS_AUD`. The development Worker claims that wildcard through a zone route in addition to its `dev.app.opnflr.com` custom domain. Production remains dark: Review omits Preview, mutations and source access return concealed `404` responses, and `preview.opnflr.com` is not authorized for use. Production requires its own isolated wildcard DNS/TLS, preview Access application and audience, migration deployment, and successful repetition of the development acceptance runbook. Never share preview Access applications or audiences across environments.
 
 `EARLY_ACCESS_GATE_ENABLED` controls enforcement only. The disabled-mode production rollout, D1 waitlist writes, signed Sheet delivery, secrets, and the combined WAF rule have been accepted; production is now set to `true`, gating protected pages, APIs, desktop bootstrap, invitations/onboarding, and presence. Rollback is `false`; grants, revocations, and waitlist rows remain intact. See `docs/early-access.md`.
 

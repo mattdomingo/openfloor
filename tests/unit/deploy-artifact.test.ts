@@ -31,7 +31,10 @@ const productionConfig = {
 };
 const developmentConfig = {
   name: "openfloor-development",
-  routes: [{ pattern: "dev.app.opnflr.com", custom_domain: true }],
+  routes: [
+    { pattern: "dev.app.opnflr.com", custom_domain: true },
+    { pattern: "*.dev.app.opnflr.com/*", zone_name: "opnflr.com" },
+  ],
   d1_databases: [{
     binding: "DB",
     database_name: "openfloor-development",
@@ -49,8 +52,8 @@ const developmentConfig = {
   vars: {
     OPENFLOOR_RUNTIME_ORIGIN: "https://dev.app.opnflr.com",
     AGENT_RUN_ENABLED: "true",
-    OPENFLOOR_PREVIEW_HOSTNAME: "preview.dev.opnflr.com",
-    REPOSITORY_PREVIEW_ENABLED: "false",
+    OPENFLOOR_PREVIEW_HOSTNAME: "dev.app.opnflr.com",
+    REPOSITORY_PREVIEW_ENABLED: "true",
     STRIPE_CHECKOUT_ENABLED: "false",
     EARLY_ACCESS_GATE_ENABLED: "false",
   },
@@ -115,6 +118,15 @@ describe("deploy artifact verifier", () => {
     }, "development");
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('AGENT_RUN_ENABLED is "false"');
+  });
+
+  it("rejects development without the preview wildcard route", () => {
+    const result = verify({
+      ...developmentConfig,
+      routes: developmentConfig.routes.slice(0, 1),
+    }, "development");
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("no matching route for *.dev.app.opnflr.com/*");
   });
 
   it("rejects a mismatched rollout posture and test-only variables", () => {
