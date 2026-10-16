@@ -42,7 +42,7 @@
     "@openai/codex-sdk": "0.148.0",
     "drizzle-orm": "0.45.2",
     "ipaddr.js": "2.5.0",
-    "jose": "^6.2.9",
+    "jose": "^6.2.12",
     "next": "16.4.2",
     "react": "19.2.8",
     "react-dom": "19.2.8",
