@@ -1,6 +1,8 @@
 # Task: add Qwen Code (Alibaba/DashScope) and DeepSeek as agent-run providers in openfloor
 
-You are working in the openfloor repo (`/Users/aliharoon/Desktop/openfloor_repos/openfloor`). Read `AGENTS.md` first — it is the authoritative spec and its "Mandatory maintenance rule" (AGENTS.md:7) applies to every commit. `docs/kimi-grok-gemini-provider-prompt.md` is the precedent brief for adding providers; this task is its Gemini recipe applied twice. Before touching anything: `git fetch origin`, branch from `origin/main`, and check whether PR #256 (`ali/ao-thread-resume-pr-feedback`, thread resume + PR feedback nudges) has merged — if not, branch from that PR's head instead, because §5 builds on its `persistSessionStore`/`lib/run-resume.ts` seam and `RUN_SANDBOX_IMAGE_VERSION` is already `v5` there. Do not rebase or edit PR #256. Never put Claude session links in commits or PR bodies.
+> Historical implementation brief. These instructions record the original work and are not a current development task; use AGENTS.md for today's workflow.
+
+The Qwen/DeepSeek work built on the Gemini runner and the thread-resume/session-store seam. `docs/kimi-grok-gemini-provider-prompt.md` is the precedent brief. This document retains the provider research and acceptance evidence; current pins and rollout gates live in AGENTS.md and Dockerfile.sandbox.
 
 ## What exists today
 

@@ -1,0 +1,15 @@
+# The sandbox image only needs its Dockerfile and explicitly copied helpers.
+# Keep credentials, Git history, and local dependencies out of build contexts.
+**
+!Dockerfile.sandbox
+!scripts/
+!scripts/codex-runner.mjs
+!scripts/claude-runner.mjs
+!scripts/gemini-runner.mjs
+!scripts/gemini-proxy-preload.mjs
+!scripts/runner-env-preload.mjs
+!scripts/qwen-runner.mjs
+!scripts/openfloor-mcp.mjs
+!scripts/publish-bundle.mjs
+!scripts/github-git-auth.mjs
+!scripts/cleanup-branches.mjs

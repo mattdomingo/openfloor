@@ -1,5 +1,7 @@
 # Task: accept a Moonshot (Kimi) coding-subscription credential alongside API keys — ENG-120
 
+> Planning/research brief. This may describe an earlier state; consult AGENTS.md and implemented-features.md for current behavior. It is not an instruction to start new work.
+
 You are working in the openfloor repo, on branch `ali/eng-120-kimi-plan-usage`, branched off `main`. Read `AGENTS.md` completely first — its "Mandatory maintenance rule" (AGENTS.md:7) applies to every commit here, **including a refusal commit**. `docs/glm-grok-subscription-provider-prompt.md` §1 and §4 are the precedent briefs; §4 (Claude setup tokens) is the design you are copying.
 
 Linear ENG-120: *"Kimi usage is only API, import plan usage capabilities (if possible)."*

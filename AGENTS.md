@@ -2,7 +2,7 @@
 
 This file is the authoritative repository-level guide for engineers and coding agents working on openfloor. It applies to the entire repository unless a more specific `AGENTS.md` is added in a subdirectory.
 
-Last verified against `main`: 2026-08-26.
+Last reviewed for public release preparation: 2026-10-16.
 
 ## Mandatory maintenance rule
 
@@ -152,7 +152,7 @@ See `docs/agent-backend-gaps.md` for the focused backend-gap summary. When any d
 
 ## User experience and route map
 
-Production is mounted under `/app` on `opnflr.com`. Local `npm run dev` is mounted at the root.
+Production uses `app.opnflr.com` at the root. Local development also uses the root; `BASE_PATH` is empty in both environments.
 
 See [`docs/routes.md`](docs/routes.md) for the full production/local route table (path, access level, purpose).
 
@@ -233,7 +233,7 @@ The WebSocket path does not rely on the application handoff. `handlePresenceRequ
 ### Local development and tests
 
 - Local identity works only for loopback hosts (`localhost` or `127.0.0.1`) using `OPENFLOOR_DEV_USER_ID`, `OPENFLOOR_DEV_USER_EMAIL`, and `OPENFLOOR_DEV_USER_NAME`.
-- Protected production requests must reject requests without a valid Access identity; the `/app` landing page remains public by design.
+- Protected production requests must reject requests without a valid Access identity; the `/` landing page remains public by design.
 - Test-controlled identity headers work only when `OPENFLOOR_TEST_ALLOW_IDENTITY_HEADERS=true`, which test configuration provides explicitly.
 - Never broaden the development fallback to arbitrary hosts.
 - Never enable test identity headers in production.
@@ -355,7 +355,7 @@ Hidden is a local visibility preference. It does **not** disable sharing the cur
 
 ## API contracts
 
-All paths below are shown without the production `/app` prefix.
+All paths below are served at the root in production and local development.
 
 See [`docs/api-contracts.md`](docs/api-contracts.md) for the full method/path/authorization/behavior table.
 
@@ -450,22 +450,18 @@ See [`docs/repository-map.md`](docs/repository-map.md) for the full annotated di
 
 ### First setup
 
-```bash
-npm install
-cp .env.example .dev.vars
-openssl rand -hex 32
-```
-
-Put the generated value in `.dev.vars` as `INVITE_SIGNING_SECRET`. Choose local `OPENFLOOR_DEV_USER_*` values. Access placeholders may remain for loopback development.
-
-Apply migrations and start:
+Use Node.js >=22.13 (CI: Node 22) and npm 11.19.1. Install from the frozen lockfile:
 
 ```bash
-npx wrangler d1 migrations apply openfloor-production --local
-npm run dev
+npm ci
+npm run setup:local
+npm run db:migrate:local
+npm run dev:local
 ```
 
-Open the printed URL, normally `http://localhost:3000`, then use `/home`. Do not add `/app` in development.
+`setup:local` creates ignored `.dev.vars` with a loopback identity and random local secrets plus `.wrangler.local.jsonc` with container builds and remote execution/billing disabled. It preserves existing files. No external account or Docker is needed for this local UI/test path. Existing overrides remain the developer's responsibility; configure a real GitHub App for live repository onboarding. The original `npm run dev` path retains the production Wrangler bindings and needs Docker for container development.
+
+Use the printed loopback origin and `/home`, without an `/app` prefix. See README.md for external integration setup. Never commit local configuration, real credential values, or database state.
 
 ### Testing multiple local users manually
 
@@ -644,3 +640,13 @@ Before handing off a change, verify the applicable items:
 - New durable decisions are appended to [`docs/decision-log.md`](docs/decision-log.md).
 - No secrets, local environment files, build output, or test artifacts are included.
 - Deployment and production mutation occur only with explicit authorization. Merging to `main` is that authorization: it triggers the automatic production deploy. Agents still never run manual deploys or mutate production state directly without being asked.
+
+## Public source and distribution
+
+Both openfloor repositories use Apache-2.0, with LICENSE, NOTICE, contribution/security policies, and a direct runtime dependency license inventory. The Claude Agent SDK and provider/container executables keep their upstream terms; the project license does not relicense them. npm-registry publication remains unconfigured. Repository visibility changes require explicit maintainer authorization; this public-release preparation includes that authorization.
+
+Full-history Gitleaks runs before the application CI/deployment gate, using a checksum-pinned binary and redacted output. `.gitleaksignore` contains only three reviewed historical fingerprints (a synthetic test credential and two PEM parser-marker matches); never replace these with whole-path exclusions. Dependency updates are proposed by Dependabot. `deploy.sh` must keep the same audit/test/migration/build/verification/deploy order as CI and use the lockfile-selected Wrangler.
+
+Current production domain and D1 identifiers remain explicit deployment guards. Forks must provision their own resources and update the verifier's exact expected identity together with Wrangler configuration; test-variable rejection and the global security hold remain mandatory. Historical decision/research documents are retained as history, not active coding instructions. See docs/open-source-release.md for publication review and known limitations.
+
+The public-release dependency review updates Next.js and the MCP SDK to compatible patched releases and refreshes Cloudflare tooling/types together. The sandbox image uses MCP SDK 1.32.1 and undici 7.29.1; its run-pool namespace is v9. `.dockerignore` permits only the Dockerfile and explicitly copied runner helpers, keeping local credentials and dependencies out of the build context. These dependency fixes do not resolve the separate-user execution hold or authorize enabling runs. Current audit results and any upstream development-tool limitations are recorded in docs/open-source-release.md rather than inferred from older audit snapshots.

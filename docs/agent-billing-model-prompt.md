@@ -1,5 +1,7 @@
 # Task: let a member see and change an agent's **billing credential** and **model** — including after the agent exists
 
+> Planning/research brief. This may describe an earlier state; consult AGENTS.md and implemented-features.md for current behavior. It is not an instruction to start new work.
+
 You are working in the openfloor repo, branching off `main`. Read `AGENTS.md` completely first — its "Mandatory maintenance rule" (AGENTS.md:7) applies to every commit here. `docs/glm-grok-subscription-provider-prompt.md` is the direct precedent: its §1 shipped the credential-kind plumbing this brief exposes, and its **§6 (per-agent model selection) was written but never landed** — this brief is that section, finished, plus the billing-visibility gaps §1 left behind.
 
 Three sections, ordered by ascending risk: make the existing choice visible (§1), add model selection at creation (§2), and make both editable after creation (§3). §3 is the only section with a real hazard in it, and it is a billing hazard — read its opening paragraph before writing any code.

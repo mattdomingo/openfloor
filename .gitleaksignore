@@ -1,0 +1,6 @@
+# Reviewed historical false positives only. Do not add whole-file exclusions.
+# Synthetic Kimi plan-token fixture, stored by the isolated test without a live provider probe.
+ebfda9eb79d1fb51dd3d9b9333b5786e7f68810f:tests/render/credentials.test.ts:generic-api-key:195
+# PEM marker strings surrounding JavaScript in the PKCS#1-to-PKCS#8 parser, not key material.
+c12623412c61fda88574bb27b60156b6b9a5deb8:lib/github.ts:private-key:152
+c12623412c61fda88574bb27b60156b6b9a5deb8:lib/github.ts:private-key:161

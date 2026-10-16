@@ -1,5 +1,7 @@
 # Task: accept a ChatGPT-subscription credential for Codex runs — ENG-117
 
+> Planning/research brief. This may describe an earlier state; consult AGENTS.md and implemented-features.md for current behavior. It is not an instruction to start new work.
+
 You are working in the openfloor repo, on branch `ali/eng-117-openai-plan-usage`, branched off `main`. Read `AGENTS.md` completely first — its "Mandatory maintenance rule" (AGENTS.md:7) applies to every commit here, **including a refusal commit**.
 
 Linear ENG-117: *"OpenAI usage is only API, import plan usage capabilities (if possible)."*

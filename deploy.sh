@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-npx wrangler@latest d1 migrations apply openfloor-production --remote
+npm audit --omit=dev
+npm test
+npx --no-install wrangler d1 migrations apply DB --remote
 npm run build
-npx wrangler deploy --config dist/server/wrangler.json
+npm run verify:deploy-artifact
+npx --no-install wrangler deploy --config dist/server/wrangler.json

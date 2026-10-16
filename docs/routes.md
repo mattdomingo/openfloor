@@ -4,19 +4,21 @@
 
 ---
 
+Production uses `app.opnflr.com` at the root; local development uses the same paths on a loopback origin.
+
 | Production route | Local dev route | Access | Purpose |
 | --- | --- | --- | --- |
-| `/app` | `/` | Public | Product landing and entry into Cloudflare Access. |
-| `/app/home` | `/home` | Protected | Sessions where the current user is a member; session creation. |
-| `/app/home/settings` | `/home/settings` | Protected | Account settings: profile, plan and usage, connections, preferences, and account deletion. The account menu supplies an optional membership-checked `from` path so the header can return to the originating home/session/floor page. Nested under `/home` (not its own top-level route) so it shares the `home*` Access destination — see "Authentication and identity". |
-| `/app/onboarding` | `/onboarding` | Protected | Two-step first-login setup: profile + required GitHub App installation together, then optional AI provider connections. Every signup is enrolled on Free automatically — the plan step is hidden for now (2026-08-27 decision). Gates `/home`, `/join/*`, and `/session/*` until final submission. |
-| `/app/join/[token]` | `/join/[token]` | Protected | Valid invite preview followed by explicit acceptance. |
-| `/app/session/[id]` | `/session/[id]` | Protected/member-only | Session lobby, roster, invite controls, leave, and floor entry. |
-| `/app/session/[id]/floor` | `/session/[id]/floor` | Protected/member-only | Main collaborative Agent Floor. |
-| `/app/api/...` | `/api/...` | Protected | Authenticated application interfaces. |
-| `/app/api/sessions/[id]/presence` | `/api/sessions/[id]/presence` | Protected/member-only | WebSocket upgrade. |
-| `/app/webhooks/github` | `/webhooks/github` | Public/signed | GitHub delivery boundary; verifies payload size and HMAC before acknowledging. |
-| `/app/webhooks/stripe` | `/webhooks/stripe` | Public/signed | Stripe delivery boundary; caps the raw body, verifies Stripe's signature, and reconciles subscription entitlement. |
+| `/` | `/` | Public | Product landing and entry into Cloudflare Access. |
+| `/home` | `/home` | Protected | Sessions where the current user is a member; session creation. |
+| `/home/settings` | `/home/settings` | Protected | Account settings: profile, plan and usage, connections, preferences, and account deletion. The account menu supplies an optional membership-checked `from` path so the header can return to the originating home/session/floor page. Nested under `/home` (not its own top-level route) so it shares the `home*` Access destination — see "Authentication and identity". |
+| `/onboarding` | `/onboarding` | Protected | Two-step first-login setup: profile + required GitHub App installation together, then optional AI provider connections. Every signup is enrolled on Free automatically — the plan step is hidden for now (2026-08-27 decision). Gates `/home`, `/join/*`, and `/session/*` until final submission. |
+| `/join/[token]` | `/join/[token]` | Protected | Valid invite preview followed by explicit acceptance. |
+| `/session/[id]` | `/session/[id]` | Protected/member-only | Session lobby, roster, invite controls, leave, and floor entry. |
+| `/session/[id]/floor` | `/session/[id]/floor` | Protected/member-only | Main collaborative Agent Floor. |
+| `/api/...` | `/api/...` | Protected | Authenticated application interfaces. |
+| `/api/sessions/[id]/presence` | `/api/sessions/[id]/presence` | Protected/member-only | WebSocket upgrade. |
+| `/webhooks/github` | `/webhooks/github` | Public/signed | GitHub delivery boundary; verifies payload size and HMAC before acknowledging. |
+| `/webhooks/stripe` | `/webhooks/stripe` | Public/signed | Stripe delivery boundary; caps the raw body, verifies Stripe's signature, and reconciles subscription entitlement. |
 
 ## Important behavior (route-level invariants)
 

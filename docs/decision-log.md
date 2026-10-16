@@ -15,6 +15,11 @@ Append an entry using this structure:
 
 **Decision:** What is now true.
 
+**Rationale:** Why this choice was made.
+
+**Consequences:** What contributors and operators must preserve.
+```
+
 ## Entries
 
 ### 2026-08-19 — Pushes to main deploy production via GitHub Actions
@@ -862,3 +867,19 @@ Agent runtime posture is also tightened: Codex receives only an explicit safe SD
 **Rationale:** Invite links are https, so they always open in a browser — a desktop-only user had no way to bring an invite into the app. Universal links (Apple) and app URI handlers (Windows) would keep the https form but require signed builds and hosted association files, which the desktop app does not have yet; a custom scheme works today on unsigned builds. Putting the hand-off on the join page (rather than a second "desktop link" in the invite dialog) keeps one canonical invite URL and mirrors the Slack/Zoom pattern.
 
 **Consequences:** The scheme's route allowlist lives in the desktop app; adding a deep-linkable page means extending it there. Signed-in state is preserved across the hop: the desktop app carries the requested route through its sign-in as `return_to`. If universal links are adopted later, the `openfloor://` link can stay as the fallback.
+
+### 2026-10-16 — Prepare Apache-licensed source and repeatable contributor setup
+
+**Decision:** Both the app and CLI use Apache-2.0 and include license, attribution, contribution/security policies, runtime dependency notices, and public package metadata. Existing npm `private` guards stay in place; registry publication and GitHub visibility changes are separate maintainer actions. Account-specific grant SQL and Sites project metadata are removed from the current tree. Historical research and decision evidence stay available, with personal workspace paths removed from active source documentation.
+
+**Rationale:** Public contributors need a reproducible first run, clear reuse terms, a private security-reporting route, and release checks that preserve the application's existing production safety boundary.
+
+**Consequences:** `setup:local` creates private local secrets and a container-free Wrangler override without replacing existing files; `db:migrate:local` and `dev:local` operate only on the local workflow. Main app CI/deploy and CLI reusable checks run checksum-pinned, redacted full-history Gitleaks scans. Only exact reviewed false-positive fingerprints are ignored. CLI release archives include legal/security files, use immutable action references and release-only write permission, and wait for macOS/Linux package-install validation. The manual deployment shortcut now uses the lockfile-selected Wrangler and all documented gates. Global agent execution remains disabled. No source visibility, tag, deployment, or history rewrite is performed by this preparation.
+
+### 2026-10-16 — Apply compatible security dependency fixes before public release
+
+**Decision:** The app uses Next.js 16.4.2 and MCP SDK 1.32.1; Cloudflare Vite 1.64.0, Wrangler 4.151.0, and workers-types 5.20261016.1 are upgraded together without bypassing peer or integrity checks. Compatible transitive security fixes are retained in both lockfiles. The sandbox pins MCP SDK 1.32.1 and undici 7.29.1 and bumps the run pool to v9; an optional BuildKit CA secret supports trusted corporate proxies without copying trust files into images or disabling TLS verification.
+
+**Rationale:** Fresh audit data supersedes the dated audit snapshots. Two critical app dependency entries and compatible high/moderate issues can be removed while preserving the agent-execution hold and the existing runtime/API contracts.
+
+**Consequences:** The app production audit and full CLI audit are clean. The app development audit still has 13 high and four moderate entries tied to upstream glob, worker-test-runtime, and Drizzle chains. Suggested major downgrades and unvalidated dependency overrides are rejected. See docs/open-source-release.md for the residual scope. Source history is preserved by maintainer choice. Screenshots use isolated fixture accounts and are labeled accordingly; no fixture data enters production modules. The maintainer authorized remote pushes and an attempt to make the repositories public after validation.

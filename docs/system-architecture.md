@@ -8,8 +8,6 @@
 
 ## Important hosting topology
 
-### Important hosting topology
-
 - The marketing site owns the apex `opnflr.com` deployment (a separate Cloudflare Pages project, repo `openfloor-ai/openfloor.ai`).
 - The openfloor application is a sibling deployment on its own subdomain, `app.opnflr.com`, claimed by a Workers custom domain — not a path nested under the marketing site.
 - `next.config.ts` sets `basePath` to `components/basePath.ts`'s `BASE_PATH`, which is `""` in every environment now that the app owns its own origin.
@@ -18,4 +16,4 @@
 - Use `BASE_PATH` for manual `fetch`, `WebSocket`, and `public/` URLs.
 - `wrangler.jsonc` claims `app.opnflr.com` via a `custom_domain: true` route, which has Cloudflare provision and own the DNS record. There is no longer a marketing-site path prefix to reserve or guard against collisions.
 - Asset `not_found_handling` must remain `none` so asset requests that miss the static bundle can fall through to the Worker and be resolved through `ASSETS`.
-- `.openai/hosting.json` and `build/sites-vite-plugin.ts` package Sites metadata and migrations during builds, but the current production runbook deploys the built Worker directly with Wrangler because Durable Object presence is a required capability. Do not switch the deployment path without proving D1, Durable Object, Access, asset, and route behavior end to end.
+- `.openai/hosting.json` and `build/sites-vite-plugin.ts` package generic binding metadata and migrations during builds. No account-specific Sites project ID is checked in. The current production runbook deploys the built Worker directly with Wrangler because Durable Object presence is required. Do not switch the deployment path without proving D1, Durable Object, Access, asset, and route behavior end to end.

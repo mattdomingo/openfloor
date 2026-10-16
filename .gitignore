@@ -49,3 +49,10 @@ tsconfig.tsbuildinfo
 
 .playwright-mcp/
 .dev.vars.bak
+
+# Local Cloudflare overrides, credentials, and release scratch files
+/.wrangler.local.jsonc
+.dev.vars.*
+*.key
+auth.json
+SHA256SUMS

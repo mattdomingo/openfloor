@@ -1,5 +1,7 @@
 # Task: re-evaluate Grok (xAI) as an agent-run provider, and its plan usage — ENG-118
 
+> Planning/research brief. This may describe an earlier state; consult AGENTS.md and implemented-features.md for current behavior. It is not an instruction to start new work.
+
 You are working in the openfloor repo, on branch `ali/eng-118-grok-usage`, branched off `main`. Read `AGENTS.md` completely first — especially the two 2026-08-24 Grok decision-log entries. The "Mandatory maintenance rule" (AGENTS.md:7) applies to every commit here, **including a refusal commit**.
 
 Linear ENG-118: *"Grok API usage doesn't work work, also want to import plan usage capabilities (if possible). Similar to how we have claude plan usage."*

@@ -1,5 +1,7 @@
 # Task: add Claude as a second agent provider in openfloor
 
+> Planning/research brief. This may describe an earlier state; consult AGENTS.md and implemented-features.md for current behavior. It is not an instruction to start new work.
+
 You are working in the openfloor repo, branching off `main`. Read `AGENTS.md` before writing anything — it is the authoritative spec for this codebase, and the "Mandatory maintenance rule" at the top applies to this change. `README.md` covers setup and the manual plan-grant runbook.
 
 ## What exists today

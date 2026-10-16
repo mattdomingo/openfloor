@@ -1,5 +1,7 @@
 # Task: add Kimi (Moonshot), Grok (xAI), and Gemini (Google) as agent-run providers in openfloor
 
+> Planning/research brief. This may describe an earlier state; consult AGENTS.md and implemented-features.md for current behavior. It is not an instruction to start new work.
+
 You are working in the openfloor repo, branching off `main`. Read `AGENTS.md` first — it is the authoritative spec and its "Mandatory maintenance rule" (AGENTS.md:7) applies to every commit in this change. `docs/claude-provider-prompt.md` is the precedent brief; this task extends what that milestone built.
 
 ## What exists today

@@ -1,5 +1,7 @@
 # Task: add GLM (Z.ai) and Grok (xAI) as agent-run providers, accept Claude / ChatGPT **subscription** credentials alongside API keys, and let each agent pick its model
 
+> Planning/research brief. This may describe an earlier state; consult AGENTS.md and implemented-features.md for current behavior. It is not an instruction to start new work.
+
 You are working in the openfloor repo, branching off `main`. Read `AGENTS.md` completely first — its "Mandatory maintenance rule" (AGENTS.md:7) applies to every commit here. `docs/claude-provider-prompt.md` and `docs/kimi-grok-gemini-provider-prompt.md` are the precedent briefs; this task extends both and **reverses one of their outcomes** (the Grok exclusion).
 
 Six sections, ordered by ascending risk: shared credential plumbing (§1), two new providers (§2, §3), two subscription credential kinds (§4, §5), and per-agent model selection (§6). Each is separately shippable and separately gated. §5 has a decision gate that may end with "do not ship" — that is an acceptable, documented outcome, not a failure. §1 carries the only migration; §6 is the only section with no security seam in it.

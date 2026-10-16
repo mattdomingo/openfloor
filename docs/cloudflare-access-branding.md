@@ -8,7 +8,7 @@ The app-side companion is the `/` landing interstitial (`app/page.tsx`), which t
 
 ## What Cloudflare actually lets you control
 
-Confirmed by reading the live page's markup and CSS (`purple-brook-e270.cloudflareaccess.com`), not assumed from the dashboard's field labels:
+Confirmed by reading the hosted Access page's markup and CSS, not assumed from the dashboard's field labels:
 
 | Field | Controls | Notes |
 | --- | --- | --- |

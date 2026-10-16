@@ -174,8 +174,8 @@ describe("Cloudflare Access identity", () => {
 });
 
 describe("email normalization", () => {
-  const mixedCase = "  Matt@Opnflr.COM  ";
-  const expected = "matt@opnflr.com";
+  const mixedCase = "  User@Example.TEST  ";
+  const expected = "user@example.test";
 
   it("identityFromVerifiedAccessClaims lowercases and trims the email claim, leaving fullName untouched", () => {
     const identity = identityFromVerifiedAccessClaims({ sub: "access-user", email: mixedCase, name: "  Matt  " });
