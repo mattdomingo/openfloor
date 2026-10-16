@@ -24,7 +24,7 @@ The session list keeps active, archived, and ended work together.
 
 ![openfloor session list showing a release coordination workspace](docs/images/sessions-light.png)
 
-Screenshots were captured from the running app with isolated test accounts and repository fixtures. They contain no production data or credentials, and do not depict live agent execution. See [screenshot provenance](docs/images/README.md).
+Screenshots were captured from the app built and running in a cloud development environment, with isolated test accounts and repository fixtures. The [terminal client screenshots](https://github.com/mattdomingo/openfloor-cli#screenshots) show the same session through the CLI. These images contain no production data or credentials, and do not depict live agent execution. See [screenshot provenance](docs/images/README.md).
 
 ## Local development
 
